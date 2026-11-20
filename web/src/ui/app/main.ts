@@ -211,7 +211,16 @@ async function main(): Promise<void> {
     })
     .add("/credits/:mode", (m) => {
       const mode = m.params["mode"];
-      const known = mode === "return" || mode === "restore" || mode === "email" || mode === "removeEmail" || mode === "delete";
+      const known =
+        mode === "return" ||
+        mode === "restore" ||
+        mode === "email" ||
+        mode === "removeEmail" ||
+        mode === "delete" ||
+        mode === "signin" ||
+        mode === "signout" ||
+        mode === "unlinkApple" ||
+        mode === "unlinkGoogle";
       // Coming back from Stripe: no app-bar Back (it would return to Stripe).
       shell.setChrome({ title: "Splanc AI credits", back: mode !== "return", tabs: false });
       return CreditsFlowScreen(router, known ? mode : "buy");

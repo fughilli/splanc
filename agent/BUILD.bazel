@@ -58,6 +58,7 @@ LIGHT_TESTS = [
     "tests/billing_mode.test.ts",
     # Apple In-App Purchase (JWS chain, ASSN v2, App Store Server API) with a test chain.
     "tests/billing_apple.test.ts",
+    "tests/billing_signin.test.ts",
     # The ops (Grafana) events + the dashboards / alert rules that read them.
     "tests/ops.test.ts",
 ]

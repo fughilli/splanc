@@ -15,6 +15,11 @@
  *   store transaction credits exactly one account. Kept forever (no content);
  * - the Anthropic organization's month-to-date list cost (`org:spend:<YYYY-MM>`,
  *   µUSD), for the org spend-limit alert and guard (billing/proxy.ts);
+ * - sign-ins linked to AI-credit accounts (billing/signin.ts): `link:<provider>:<sub>`
+ *   -> account (one identity, one account; `link:production:<provider>:<sub>` in
+ *   production mode, so a sandbox account is never signed into in production),
+ *   and single-use sign-in nonces
+ *   `once:<key>` -> {exp} (the alarm purges them after they expire);
  * - the running AI-credit liability (`org:liability`, µcredits, one number;
  *   `org:liability:production` in production mode) for the ops dashboards (docs/design/ops-grafana.md).
  *
@@ -53,6 +58,8 @@ export const LIMITS = {
   /** New AI-credit accounts (POST /billing/account, billing/endpoint.ts). */
   billingAccountIp: [5, 3600],
   billingAccountGlobal: [2000, 86400],
+  /** Sign-in attempts (POST /billing/signin, billing/signin.ts) per client IP. */
+  signinIp: [60, 3600],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type LimitName = keyof typeof LIMITS;
@@ -111,6 +118,9 @@ export class Directory {
     for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "sevt:" })) {
       if ((v.exp ?? 0) <= t) dead.push(k);
     }
+    for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "once:" })) {
+      if ((v.exp ?? 0) <= t) dead.push(k);
+    }
     for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "fbi:" })) {
       if ((v.exp ?? 0) <= t) dead.push(k, `fb:${k.slice(4)}`);
     }
@@ -119,6 +129,7 @@ export class Directory {
       (await this.state.storage.list({ prefix: "rl:", limit: 1 })).size +
       (await this.state.storage.list({ prefix: "code:", limit: 1 })).size +
       (await this.state.storage.list({ prefix: "fbi:", limit: 1 })).size +
+      (await this.state.storage.list({ prefix: "once:", limit: 1 })).size +
       (await this.state.storage.list({ prefix: "sevt:", limit: 1 })).size;
     if (left > 0) await this.state.storage.setAlarm(now(this.env) + 600_000);
   }
@@ -203,6 +214,30 @@ export class Directory {
       }
       case "/org/get":
         return json({ total: (await this.state.storage.get<number>(`org:spend:${new Date(now(this.env)).toISOString().slice(0, 7)}`)) ?? 0 });
+      case "/link/get":
+        return json({ account: (await this.state.storage.get<string>(linkKey(body))) ?? null });
+      case "/link/claim": {
+        // First claim wins: one sign-in identity belongs to one account.
+        const k = linkKey(body);
+        const owner = await this.state.storage.get<string>(k);
+        if (owner !== undefined && owner !== body["account"]) return json({ ok: false, owner }, 409);
+        if (owner === undefined) await this.state.storage.put(k, body["account"]!);
+        return json({ ok: true });
+      }
+      case "/link/del": {
+        const k = linkKey(body);
+        if ((await this.state.storage.get<string>(k)) === body["account"]) await this.state.storage.delete([k]);
+        return json({ ok: true });
+      }
+      case "/once": {
+        // A key seen for the first time (single-use sign-in nonces), kept
+        // until `exp` (seconds) so a replay inside its lifetime is refused.
+        const k = `once:${body["k"]}`;
+        if ((await this.state.storage.get(k)) !== undefined) return json({ fresh: false });
+        await this.state.storage.put(k, { exp: Number(body["exp"]) || this.nowS() + 3600 });
+        await this.ensureAlarm();
+        return json({ fresh: true });
+      }
       case "/pur/pi/set":
         // Stripe PaymentIntent -> {account, ref}: refunds and disputes name the
         // PaymentIntent, not the Checkout Session.
@@ -275,4 +310,11 @@ export class Directory {
     await this.state.storage.delete([`code:${code}`, `bcode:${rec.bridge}`]);
     return json({ bridge: rec.bridge });
   }
+}
+
+/** A sign-in link's key, per billing mode like the liability counter: sandbox
+ * keeps the original key, production has its own (billing/signin.ts). */
+function linkKey(body: Record<string, unknown>): string {
+  const base = `${String(body["provider"])}:${String(body["sub"])}`;
+  return body["env"] === "production" ? `link:production:${base}` : `link:${base}`;
 }

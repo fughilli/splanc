@@ -83,6 +83,25 @@ if [ -n "$team" ] && [ -f "$pbxproj" ]; then
   echo "signing: DEVELOPMENT_TEAM = $team ($(grep -c 'DEVELOPMENT_TEAM = ' "$pbxproj") configs)"
 fi
 
+# --- Sign in with Apple (Splanc AI credit accounts; agent/relay/src/billing/
+# signin.ts, the WebAuth plugin's appleSignIn). The capability is the
+# `com.apple.developer.applesignin = [Default]` entitlement. OPT-IN with
+# SPLANC_IOS_SIGN_IN_WITH_APPLE=1: the distribution provisioning profile has
+# to include the capability first (enable it on the App ID, then regenerate
+# the profile), or a signed build fails. Idempotent.
+if [ "${SPLANC_IOS_SIGN_IN_WITH_APPLE:-0}" = "1" ] && [ -f "${pbxproj}" ]; then
+  ent="${here}/../ios/App/App/App.entitlements"
+  [ -f "$ent" ] || printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict/>\n</plist>\n' > "$ent"
+  "$pb" -c "Delete :com.apple.developer.applesignin" "$ent" 2>/dev/null || true
+  "$pb" -c "Add :com.apple.developer.applesignin array" "$ent"
+  "$pb" -c "Add :com.apple.developer.applesignin:0 string Default" "$ent"
+  if ! grep -q 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;' "$pbxproj"; then
+    perl -ni -e 'print unless /^\s*CODE_SIGN_ENTITLEMENTS = /' "$pbxproj"
+    perl -pi -e 's/^(\s*)CODE_SIGN_STYLE = (\w+);$/$1CODE_SIGN_STYLE = $2;\n$1CODE_SIGN_ENTITLEMENTS = App\/App.entitlements;/' "$pbxproj"
+  fi
+  echo "Sign in with Apple: entitlement on ($(grep -c 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;' "$pbxproj") configs)"
+fi
+
 # Set (or overwrite) a string key. PlistBuddy has no upsert, so try Set then Add.
 set_str() {
   local key="$1" val="$2"

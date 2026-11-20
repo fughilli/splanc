@@ -17,13 +17,22 @@
  *   email    add or change the recovery e-mail from the credits page
  *   removeEmail  remove it, after a warning (recovery won't be possible)
  *   delete   the danger-zone confirmation (forfeits the balance)
+ *   signin   Sign in with Apple / Google: link this device's account, or sign
+ *            in to an existing one (a conflict asks the user; never merged)
+ *   signout  forget this device's session (the credits stay on the account)
+ *   unlinkApple / unlinkGoogle  remove a sign-in (warns when it's the last way back)
+ *
+ * With sign-in available, the buy flow's "keep your credits safe" step offers
+ * Apple / Google first, a recovery e-mail second; restore offers the same.
  *
  * Steps already done are skipped (an account that exists and is 18+ goes from
  * the intro straight to the packs). Back pops the steps actually visited;
  * back on the first step, or cancel anywhere, exits the flow.
  */
 
-export type FlowMode = "buy" | "return" | "restore" | "email" | "removeEmail" | "delete";
+export type FlowMode = "buy" | "return" | "restore" | "email" | "removeEmail" | "delete" | "signin" | "signout" | "unlinkApple" | "unlinkGoogle";
+
+export type SigninProviderName = "apple" | "google";
 
 export type FlowStep =
   // buy
@@ -51,6 +60,13 @@ export type FlowStep =
   | "restoreCode"
   | "restored"
   | "removeEmailConfirm"
+  // Sign in with Apple / Google
+  | "signInChoice"
+  | "signInConflict"
+  | "signInDone"
+  | "signInNoAccount"
+  | "signOutConfirm"
+  | "unlinkConfirm"
   // danger zone
   | "deleteConfirm"
   | "deleted"
@@ -74,7 +90,14 @@ export interface FlowContext {
   emailVerified: boolean;
   /** The user already chose "Continue without email". */
   emailDeclined: boolean;
+  /** Sign in with Apple / Google is offered on this device (relay config). */
+  signinAvailable?: boolean | undefined;
+  /** The account has a linked sign-in. */
+  signedIn?: boolean | undefined;
 }
+
+/** How a sign-in ended (the relay's result). */
+export type SigninKind = "linked" | "already_linked" | "signed_in" | "created" | "switched";
 
 export interface FlowState {
   mode: FlowMode;
@@ -92,6 +115,10 @@ export interface FlowState {
   /** The purchase phases planned when the flow started (frozen, so the
    * "Step n of N" total doesn't shrink as steps complete). */
   phases?: Phase[] | undefined;
+  /** The sign-in provider of this step (sign-in result, unlink). */
+  provider?: SigninProviderName | undefined;
+  /** How the last sign-in ended. */
+  signinKind?: SigninKind | undefined;
   /** The flow is over: the screen leaves (to where the user came from). */
   exit?: { notice?: string | undefined } | undefined;
 }
@@ -124,17 +151,25 @@ export type FlowEvent =
   | { type: "restored"; balance: number }
   | { type: "deleted" }
   | { type: "emailRemoved" }
+  | { type: "signedIn"; kind: SigninKind; provider: SigninProviderName; balance: number; adult: boolean }
+  | { type: "signinConflict"; provider: SigninProviderName }
+  | { type: "keepCurrent" }
+  | { type: "noAccount"; provider: SigninProviderName }
+  | { type: "signedOut" }
+  | { type: "unlinked" }
   | { type: "fail"; message: string }
   | { type: "done" };
 
 /** The purchase phases shown in the progress bar ("Step 2 of 4"). */
-export type Phase = "account" | "email" | "consent" | "pack" | "payment";
+export type Phase = "account" | "email" | "signin" | "consent" | "pack" | "payment";
 const PHASE_OF: Partial<Record<FlowStep, Phase>> = {
   account: "account",
   emailChoice: "email",
   anonConfirm: "email",
   emailEntry: "email",
   emailCode: "email",
+  signInChoice: "signin",
+  signInConflict: "signin",
   appleConsent: "consent",
   packs: "pack",
   handoff: "payment",
@@ -144,6 +179,7 @@ const PHASE_OF: Partial<Record<FlowStep, Phase>> = {
 export const PHASE_LABEL: Record<Phase, string> = {
   account: "Account",
   email: "Recovery email",
+  signin: "Keep credits safe",
   consent: "Refund requests",
   pack: "Choose credits",
   payment: "Payment",
@@ -153,7 +189,7 @@ export const PHASE_LABEL: Record<Phase, string> = {
 export function buyPhases(ctx: FlowContext): Phase[] {
   const p: Phase[] = [];
   if (!ctx.hasSession || !ctx.adult) p.push("account");
-  if (!ctx.emailVerified && !ctx.emailDeclined) p.push("email");
+  if (!ctx.emailVerified && !ctx.emailDeclined && !ctx.signedIn) p.push(ctx.signinAvailable ? "signin" : "email");
   if (needsConsent(ctx)) p.push("consent");
   p.push("pack", "payment");
   return p;
@@ -183,7 +219,14 @@ export function startFlow(mode: FlowMode, ctx: FlowContext, checkout: CheckoutRe
       // No result in the URL (a reload, a bookmark): check the balance anyway.
       return { ...base, step: checkout === "cancel" ? "returnCancelled" : "confirming" };
     case "restore":
-      return { ...base, step: "restoreEmail" };
+      return { ...base, step: ctx.signinAvailable ? "signInChoice" : "restoreEmail" };
+    case "signin":
+      return ctx.signinAvailable ? { ...base, step: "signInChoice" } : { ...base, step: "unavailable" };
+    case "signout":
+      return ctx.hasSession ? { ...base, step: "signOutConfirm" } : { ...base, step: "unavailable" };
+    case "unlinkApple":
+    case "unlinkGoogle":
+      return ctx.hasSession ? { ...base, step: "unlinkConfirm", provider: mode === "unlinkApple" ? "apple" : "google" } : { ...base, step: "unavailable" };
     case "email":
       return ctx.hasSession ? { ...base, step: "emailEntry" } : { ...base, step: "intro", mode: "buy", phases: buyPhases(ctx) };
     case "removeEmail":
@@ -202,7 +245,8 @@ const needsConsent = (ctx: FlowContext) => ctx.ios && !ctx.consentAsked;
 /** The first buy step after `from` that still needs doing. */
 function nextBuyStep(ctx: FlowContext, from: "intro" | "account" | "email" | "consent"): FlowStep {
   if (from === "intro" && (!ctx.hasSession || !ctx.adult)) return "account";
-  if ((from === "intro" || from === "account") && !ctx.emailVerified && !ctx.emailDeclined) return "emailChoice";
+  if ((from === "intro" || from === "account") && !ctx.emailVerified && !ctx.emailDeclined && !ctx.signedIn)
+    return ctx.signinAvailable ? "signInChoice" : "emailChoice";
   if (from !== "consent" && needsConsent(ctx)) return "appleConsent";
   return "packs";
 }
@@ -308,9 +352,40 @@ export function reduce(s: FlowState, ev: FlowEvent): FlowState {
       return ev.type === "emailRemoved" ? exit(s, "Recovery email removed.") : s;
     case "deleteConfirm":
       return ev.type === "deleted" ? swap(s, "deleted", { history: [] }) : s;
+    case "signInChoice":
+    case "signInConflict":
+      return reduceSignin(s, ev);
+    case "signInNoAccount":
+      if (ev.type === "chooseEmail") return go(s, "restoreEmail");
+      return s;
+    case "signOutConfirm":
+      return ev.type === "signedOut" ? exit(s, "Signed out of Splanc AI on this device.") : s;
+    case "unlinkConfirm":
+      return ev.type === "unlinked" ? exit(s, `${s.provider === "apple" ? "Apple" : "Google"} sign-in removed.`) : s;
     default:
       return s;
   }
+}
+
+/** The sign-in choice + conflict steps, shared by buy, restore and signin. */
+function reduceSignin(s: FlowState, ev: FlowEvent): FlowState {
+  if (ev.type === "signinConflict") return go(s, "signInConflict", { provider: ev.provider });
+  if (ev.type === "noAccount") return go(s, "signInNoAccount", { provider: ev.provider });
+  if (ev.type === "keepCurrent") {
+    // Keep this device's account: back to the choice (buy / restore), or
+    // out of a plain sign-in.
+    return s.mode === "signin" ? exit(s, "Kept this device's account.") : reduce(s, { type: "back" });
+  }
+  if (ev.type === "chooseEmail" && s.step === "signInChoice") return go(s, s.mode === "restore" ? "restoreEmail" : "emailEntry");
+  if (ev.type === "skipEmail" && s.step === "signInChoice" && s.mode === "buy") return go(s, "anonConfirm");
+  if (ev.type !== "signedIn") return s;
+  const ctx = { ...s.ctx, hasSession: true, signedIn: true, adult: ev.adult };
+  const patch = { ctx, provider: ev.provider, signinKind: ev.kind, balance: ev.balance };
+  // Signed in counts as recoverable (no email step); the iOS refund-request
+  // consent (#587) still comes before the packs.
+  if (s.mode === "buy") return go({ ...s, ...patch }, ev.adult ? nextBuyStep(ctx, "email") : "account");
+  if (s.mode === "restore" && (ev.kind === "signed_in" || ev.kind === "switched")) return swap(s, "restored", { ...patch, history: [] });
+  return swap(s, "signInDone", { ...patch, history: [] });
 }
 
 /** Steps from which Back leaves the flow instead of stepping back. */
@@ -324,6 +399,7 @@ const TERMINAL = new Set<FlowStep>([
   "unavailable",
   "confirming",
   "purchasePending",
+  "signInDone",
 ]);
 
 /** Seconds left before "Resend code" is allowed again. */

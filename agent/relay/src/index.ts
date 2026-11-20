@@ -204,6 +204,8 @@ export default {
                   env.STRIPE_SECRET_KEY,
                   env.STRIPE_WEBHOOK_SECRET,
                   env.APPLE_IAP_KEY,
+                  env.APPLE_SIGNIN_PRIVATE_KEY,
+                  env.APPLE_SIGNIN_TOKEN_KEY,
                 ].filter((x): x is string => !!x),
                 waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
               }),

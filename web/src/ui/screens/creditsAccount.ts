@@ -1,6 +1,7 @@
 /**
  * Settings ▸ AI ▸ "Splanc AI credits" — the account card: balance (with the
- * low / empty state), buy more, the recovery e-mail (masked; add / change),
+ * low / empty state), buy more, Sign in with Apple / Google (link, unlink,
+ * sign out), the recovery e-mail (masked; add / change),
  * recent activity (the statement) and the danger zone. Every multi-step task
  * (buying, e-mail, restore, delete) opens the dedicated flow
  * (ui/screens/creditsFlow.ts); this card only shows state and entry points.
@@ -40,7 +41,7 @@ export function creditsAccountCard(group: (legend: string) => HTMLElement): HTML
       dim("Use Claude without an API key: buy a pack of prepaid credits and pay only for what you use. Your prompts aren't stored."),
       row(
         Button({ label: "Get Splanc AI credits", icon: "sparkles", onClick: () => openCreditsFlow("buy") }),
-        Button({ label: "Restore an existing account", variant: "quiet", onClick: () => openCreditsFlow("restore") }),
+        Button({ label: "Sign in or restore an account", variant: "quiet", onClick: () => openCreditsFlow("restore") }),
       ),
     );
     return g;
@@ -56,7 +57,7 @@ export function creditsAccountCard(group: (legend: string) => HTMLElement): HTML
         // account was deleted. Offer to restore; or start over.
         box.replaceChildren(
           callout(
-            "This device is signed out of your Splanc AI account. That happens when the account is restored on another device, or deleted. Restore it here with your recovery email.",
+            "This device is signed out of your Splanc AI account. That happens when the account is restored on another device, or deleted. Sign in again, or restore it with your recovery email.",
             true,
           ),
           row(
@@ -111,6 +112,8 @@ function account(b: CreditsBalance, reload: () => void): HTMLElement[] {
     );
   }
   out.push(row(Button({ label: empty ? "Buy credits" : "Buy more credits", icon: "sparkles", onClick: () => openCreditsFlow("buy") })));
+
+  out.push(signinSection(b));
 
   // Recovery e-mail.
   const email = creditsEmail(b);
@@ -218,6 +221,47 @@ function appStoreSections(b: CreditsBalance, reload: () => void): HTMLElement[] 
     ),
   );
   return [store, consent];
+}
+
+/** Sign in with Apple / Google: what's linked (one line each, its own
+ * action beside it), link another, sign out. Every change opens its flow. */
+function signinSection(b: CreditsBalance): HTMLElement {
+  const sec = section("Sign-in");
+  const ids = b.identities ?? [];
+  if (ids.length === 0) {
+    sec.append(
+      b.available_credits > 0
+        ? callout("Not signed in. Sign in with Apple or Google so these credits follow you to a new device.", true)
+        : dim("Sign in with Apple or Google so your credits follow you to a new device."),
+      row(Button({ label: "Sign in with Apple or Google", onClick: () => openCreditsFlow("signin") })),
+    );
+    return sec;
+  }
+  for (const id of ids) {
+    const name = id.provider === "apple" ? "Apple" : "Google";
+    sec.append(
+      line(
+        `Signed in with ${name} · linked ${formatDay(id.linked_at)}`,
+        Button({ label: "Remove…", variant: "quiet", onClick: () => openCreditsFlow(id.provider === "apple" ? "unlinkApple" : "unlinkGoogle") }),
+      ),
+    );
+  }
+  const missing = (["apple", "google"] as const).filter((p) => !ids.some((i) => i.provider === p));
+  if (missing.length) {
+    sec.append(
+      line(
+        `Add ${missing.map((p) => (p === "apple" ? "Apple" : "Google")).join(" or ")} as another way to sign in.`,
+        Button({ label: "Add sign-in", variant: "quiet", onClick: () => openCreditsFlow("signin") }),
+      ),
+    );
+  }
+  sec.append(line("Sign out on this device. Your credits stay on your account.", Button({ label: "Sign out…", variant: "quiet", onClick: () => openCreditsFlow("signout") })));
+  return sec;
+}
+
+function formatDay(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function activityRow(e: StatementEntry): HTMLElement {

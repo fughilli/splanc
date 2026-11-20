@@ -105,6 +105,21 @@ export interface Env {
   APPLE_APP_ID?: string;
   /** Where Checkout sends the user back (default https://splanc.io/app/). */
   BILLING_APP_URL?: string;
+  /** Sign in with Apple (billing/signin.ts). Apple is offered when the team,
+   * key id, key, token key and at least one client (app or web) are set.
+   * Vars: the team id, the key id, the app's bundle id (native audience), the
+   * Services ID + its return URL (web). SECRETS: the .p8 key (PEM) and a
+   * 32-byte base64url key that encrypts the stored Apple refresh tokens. */
+  APPLE_SIGNIN_TEAM_ID?: string;
+  APPLE_SIGNIN_KEY_ID?: string;
+  APPLE_SIGNIN_PRIVATE_KEY?: string;
+  APPLE_SIGNIN_TOKEN_KEY?: string;
+  APPLE_SIGNIN_BUNDLE_ID?: string;
+  APPLE_SIGNIN_SERVICES_ID?: string;
+  APPLE_SIGNIN_REDIRECT_URI?: string;
+  /** Sign in with Google: the OAuth client ids (web, iOS). Not secrets. */
+  GOOGLE_SIGNIN_WEB_CLIENT_ID?: string;
+  GOOGLE_SIGNIN_IOS_CLIENT_ID?: string;
   /** Worker SECRET: the owner's token for /billing/admin/* (suspensions). */
   BILLING_ADMIN_TOKEN?: string;
   /** Grafana Cloud Logs push (ops.ts: billing, feedback); all three or none. */

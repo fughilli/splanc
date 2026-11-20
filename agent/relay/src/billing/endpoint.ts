@@ -13,6 +13,8 @@
  *                                         apple: {jws} = StoreKit 2's signed transaction
  *   POST   /billing/notify/<channel>      store / processor server notifications: Stripe's
  *                                         webhook (web), App Store Server Notifications v2 (apple)
+ *   GET    /billing/signin/config, POST /billing/signin[/nonce|/switch|/unlink|/apple/notify]
+ *                                          Sign in with Apple / Google: link, recover, conflicts (signin.ts)
  *   POST   /ai/v1/messages                the metered AI proxy (proxy.ts)
  *
  * MODES (`billingReady`). Everything answers 503 not_configured unless
@@ -48,6 +50,7 @@ import { purchaseMoney, refundUsdEstimate } from "./metrics";
 import { StripeError, createCheckoutSession, stripeAction, verifyStripeSignature, type StripeAction } from "./stripe";
 import { safeEqual } from "../crypto";
 import { AppStoreConsumptionSender, AppleStoreVerifier, appStoreApiKeyFrom, type AppleVerifierOptions } from "./apple";
+import { SIGNIN_PATHS, SigninError, identityList, signinEndpoint, unlinkAllForDeletion, type SigninDeps } from "./signin";
 import {
   FakeConsumptionSender,
   FakeStoreVerifier,
@@ -78,6 +81,8 @@ export interface BillingContext {
   /** Trusted roots for App Store signed data (tests: a test root). Default:
    * Apple Root CA G3, pinned in apple.ts. */
   appleRoots?: Uint8Array<ArrayBuffer>[] | undefined;
+  /** Sign-in provider calls + JWKS (tests: fake Apple / Google). */
+  signin?: Partial<SigninDeps> | undefined;
 }
 
 function appleOptions(env: Env, ctx: BillingContext): AppleVerifierOptions {
@@ -303,7 +308,7 @@ export const BILLING_PATHS = [
   "/billing/statement",
 ];
 export const isBillingPath = (p: string) =>
-  BILLING_PATHS.includes(p) || /^\/billing\/(purchase|notify)\/[a-z]+$/.test(p);
+  BILLING_PATHS.includes(p) || SIGNIN_PATHS.includes(p) || /^\/billing\/(purchase|notify)\/[a-z]+$/.test(p);
 
 type Ready = {
   /** AI_BILLING: which store / processor environment this relay accepts. */
@@ -426,18 +431,49 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       const channel = (CHANNELS as readonly string[]).includes(ch ?? "") ? (ch as Channel) : null;
       return ctx.json({ ...publicPricing(pricing, channel), environment: ready.environment }, 200, { "cache-control": "public, max-age=300" });
     }
-    if (path === "/billing/account" && req.method === "POST") {
+    /** A new account (rate-limited per IP); null when the limit is spent. */
+    const openAccount = async (): Promise<{ id: string; balance: number } | null> => {
       const lim = await dir(env, "/limit", { name: "billingAccountIp", key: ctx.clientIp, global: "billingAccountGlobal" });
-      if (lim.status === 429) return ctx.json({ error: "rate_limited", message: "Too many new accounts from here; try later." }, 429, { "retry-after": "3600" });
+      if (lim.status === 429) return null;
       const id = newAccountId();
       const a = await new DoLedger(ready.ns, id).open(Math.round(pricing.trial_credits * MICRO), ready.environment);
       log({ ev: "ai_account_opened", account: id, trial_credits: pricing.trial_credits });
       await bumpLiability(env, ready.environment, log, Math.round(pricing.trial_credits * MICRO));
+      return { id, balance: a.balance };
+    };
+    if (path === "/billing/account" && req.method === "POST") {
+      const a = await openAccount();
+      if (!a) return ctx.json({ error: "rate_limited", message: "Too many new accounts from here; try later." }, 429, { "retry-after": "3600" });
       return ctx.json(
-        { account_id: id, token: await mintSession(ready.secret, id, nowS, ready.environment), account_ref: await accountRefFor(id), balance_credits: a.balance / MICRO },
+        { account_id: a.id, token: await mintSession(ready.secret, a.id, nowS, ready.environment), account_ref: await accountRefFor(a.id), balance_credits: a.balance / MICRO },
         201,
       );
     }
+    const signin = await signinEndpoint(req, path, {
+      env,
+      secret: ready.secret,
+      ns: ready.ns,
+      nowS,
+      clientIp: ctx.clientIp,
+      json: ctx.json,
+      log,
+      environment: ready.environment,
+      // The one place a sign-in reads this request's session (with #557's
+      // session generations, check the generation here too).
+      session: async () => {
+        const t = bearer(req);
+        if (!t) return null;
+        const id = await verifySession(ready.secret, t, nowS, ready.environment);
+        if (!id) return "invalid";
+        const a = (await new DoLedger(ready.ns, id).account()).account;
+        return a && a.status !== "closed" ? id : "invalid";
+      },
+      mintSession: (id) => mintSession(ready.secret, id, nowS, ready.environment),
+      openAccount: async () => (await openAccount())?.id ?? null,
+      accountRef: accountRefFor,
+      deps: ctx.signin ?? {},
+    });
+    if (signin) return signin;
     const notify = /^\/billing\/notify\/([a-z]+)$/.exec(path);
     if (notify && req.method === "POST") {
       const channel = notify[1] as Channel;
@@ -499,6 +535,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         apple_consumption_asked: a.apple_consumption_consent !== undefined,
         // StoreKit's appAccountToken for this account (purchases.ts accountRefFor).
         account_ref: await accountRefFor(account),
+        identities: identityList(a),
         pricing_version: pricing.version,
       });
     }
@@ -589,6 +626,9 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       return ctx.json({ credited_credits: r.entry.amount / MICRO, balance_credits: r.entry.balance / MICRO, replay: r.replay }, r.replay ? 200 : 201);
     }
     if (path === "/billing/account" && req.method === "DELETE") {
+      // Apple's rule: revoke the Sign in with Apple token, then unlink every
+      // sign-in. A failure (Apple unreachable) stops here with nothing changed.
+      await unlinkAllForDeletion(account, { env, ns: ready.ns, nowS, log, deps: ctx.signin ?? {} });
       const before = (await ledger.account()).account;
       await ledger.close();
       const forfeited = before && before.status !== "closed" ? Math.max(0, before.balance) : 0;
@@ -603,6 +643,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
     return ctx.json({ error: "method_not_allowed" }, 405);
   } catch (e) {
     if (e instanceof PurchaseError) return ctx.json({ error: e.code, message: e.message }, e.status);
+    if (e instanceof SigninError) return ctx.json({ error: e.code, message: e.message }, e.status);
     log({ ev: "ai_billing_error", path, detail: String(e) });
     return ctx.json({ error: "billing_error", message: "Something went wrong with Splanc AI credits." }, 500);
   }
