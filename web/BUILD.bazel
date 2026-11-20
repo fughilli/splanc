@@ -218,6 +218,8 @@ ts_project(
         exclude = [
             # Read at runtime from the test's data (tests/diffuseRope.test.ts), never imported.
             "tests/testdata/diffuse_rope/**",
+            # Bench tooling + reference data (tests/tools/diffuse_capture/README.md), not test sources.
+            "tests/tools/diffuse_capture/**",
             "src/solver/spawn.ts",
             # Browser-only: import.meta worker URL / `self` — syntax-invalid or
             # meaningless under the CJS test compile (see their docstrings). The
