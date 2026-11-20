@@ -41,6 +41,8 @@ enum {
   IMPROV_JOIN_FAILURE_NONE = 0x00,
   IMPROV_JOIN_FAILURE_NOT_FOUND = 0x01,          // the SSID isn't on the air (wifi_scan.h)
   IMPROV_JOIN_FAILURE_PASSWORD_REJECTED = 0x02,  // the AP refused our 4-way M2 (psk_reject.h)
+  // ... and the board is going back to its previous network (psk_reject.h LastGoodNetwork)
+  IMPROV_JOIN_FAILURE_PASSWORD_REJECTED_FELL_BACK = 0x03,
 };
 
 static inline uint8_t improv_checksum_(const uint8_t *p, size_t n) {

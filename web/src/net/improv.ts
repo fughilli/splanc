@@ -50,6 +50,8 @@ const CMD_WIFI_SETTINGS = 0x01;
  * connect"; this app reads byte 1 to say why. Older firmware sends no byte 1. */
 export const JOIN_FAILURE_NOT_FOUND = 0x01;
 export const JOIN_FAILURE_PASSWORD_REJECTED = 0x02;
+/** The password was rejected and the device is going back to the network it was on. */
+export const JOIN_FAILURE_PASSWORD_REJECTED_FELL_BACK = 0x03;
 
 /** What went wrong with a provisioning attempt, for the UI to react to. */
 export type ImprovFailureKind =
@@ -87,6 +89,15 @@ export function improvErrorFromState(bytes: Uint8Array, ssid: string): ImprovErr
     return new ImprovError(
       "wrong-password",
       `Wrong Wi-Fi password: "${ssid}" rejected it. Check the password and try again.`,
+      code,
+    );
+  }
+  if (code === ERROR_UNABLE_TO_CONNECT && reason === JOIN_FAILURE_PASSWORD_REJECTED_FELL_BACK) {
+    // The device did NOT join `ssid`: it is going back to the network it was on.
+    return new ImprovError(
+      "wrong-password",
+      `Wrong Wi-Fi password: "${ssid}" rejected it. The device is going back to its previous ` +
+        `network. Check the password and try again.`,
       code,
     );
   }

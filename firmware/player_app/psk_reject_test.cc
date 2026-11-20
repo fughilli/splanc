@@ -4,6 +4,7 @@
 #include "firmware/player_app/psk_reject.h"
 
 #include <cassert>
+#include <cstring>
 
 #include "rr_case.h"
 
@@ -152,6 +153,39 @@ static void test_quick_window_is_wrap_safe() {
   assert(w.on_session_end(true, 0x00000100u) == A::kAbandon);  // 512 ms later, wrapped
 }
 
+// D-74 fallback: a board with a network that leased goes back to it after a report; a
+// fresh board, or one whose remembered network IS the rejected one, has nowhere to go.
+static void test_last_good_network_fallback() {
+  lm_join::LastGoodNetwork g;
+  assert(!g.has() && !g.fallback_for("Home", "wrong-pass"));  // fresh board
+  g.remember("Home", "right-pass");
+  assert(g.has());
+  assert(g.fallback_for("Home", "wrong-pass"));      // same SSID, mistyped password
+  assert(g.fallback_for("Cafe", "anything"));        // another network refused
+  assert(!g.fallback_for("Home", "right-pass"));     // the remembered set itself refused
+  assert(strcmp(g.ssid(), "Home") == 0 && strcmp(g.pass(), "right-pass") == 0);
+  // Over-long input is clipped, never overrun (SSID <= 32, passphrase <= 64).
+  char longs[80];
+  memset(longs, 'x', sizeof longs - 1);
+  longs[sizeof longs - 1] = 0;
+  g.remember(longs, longs);
+  assert(strlen(g.ssid()) == 32 && strlen(g.pass()) == 64);
+}
+
+// The fallback's lease must not clear the reported error (it is not the reported join).
+static void test_fell_back_lease_does_not_clear() {
+  PskRejectWatch w;
+  w.on_fresh_join(0);
+  w.on_m1_answered(1000);
+  w.on_m1_answered(1100);
+  w.on_m1_answered(2100);
+  w.on_m1_answered(3000);
+  w.on_m1_answered(3100);
+  assert(w.on_m1_answered(4100) == A::kReportRejected);
+  w.on_fell_back();
+  assert(!w.take_clear_on_lease());
+}
+
 int main(int argc, char **argv) {
   return rr::RunCases(
       argc, argv, "psk_reject",
@@ -167,5 +201,7 @@ int main(int argc, char **argv) {
           {"unarmed_or_cancelled_never_reports", test_unarmed_or_cancelled_never_reports},
           {"fresh_join_rearms", test_fresh_join_rearms},
           {"quick_window_is_wrap_safe", test_quick_window_is_wrap_safe},
+          {"last_good_network_fallback", test_last_good_network_fallback},
+          {"fell_back_lease_does_not_clear", test_fell_back_lease_does_not_clear},
       });
 }

@@ -34,6 +34,7 @@
 // and the corrected SendWifi is a fresh join like any other (the owner's rule: Improv creds
 // always scan + join right then). A later lease (the watch misjudged) clears the error.
 #include <cstdint>
+#include <cstring>
 
 namespace lm_join {
 
@@ -92,6 +93,9 @@ class PskRejectWatch {
     reset_session();
     return Action::kNone;
   }
+  // The board went back to its previous network after the report: that lease is not the
+  // reported network joining, so it must not clear the error (take_clear_on_lease).
+  void on_fell_back() { reported_ = false; }
   // The link leased: true once after a report (clear the Improv error).
   bool take_clear_on_lease() {
     if (!reported_) return false;
@@ -124,6 +128,42 @@ class PskRejectWatch {
   uint32_t answered_ = 0;
   uint32_t last_m2_ms_ = 0;
   uint32_t start_ms_ = 0;
+};
+
+// Owner decision (desk D-74, "fall back after reporting"): once a rejected password is
+// reported, a board that had a working network goes back to it instead of retrying the
+// rejected credentials forever. LastGoodNetwork remembers the credentials that last
+// leased (or that the board restored from NVS at boot: they leased before being stored),
+// and says whether a rejected set has somewhere to fall back to. A fresh board has nothing
+// remembered and keeps today's behaviour (stays provisionable, keeps retrying, reported).
+// The rejected credentials are never persisted (NVS is only written on a lease); in RAM
+// they are replaced by the fallback at once, and a corrected SendWifi is a fresh join as
+// always (owner rule: Improv creds are always an immediate scan + join).
+class LastGoodNetwork {
+ public:
+  // These credentials leased (or were restored from the store at boot).
+  void remember(const char *ssid, const char *pass) {
+    copy(ssid_, sizeof ssid_, ssid);
+    copy(pass_, sizeof pass_, pass);
+  }
+  bool has() const { return ssid_[0] != 0; }
+  // A fallback target for these rejected credentials: something remembered, and not the
+  // very credentials that were just refused (an AP whose password changed under a stored
+  // network has nothing better to go back to).
+  bool fallback_for(const char *ssid, const char *pass) const {
+    return has() && (strcmp(ssid_, ssid) != 0 || strcmp(pass_, pass) != 0);
+  }
+  const char *ssid() const { return ssid_; }
+  const char *pass() const { return pass_; }
+
+ private:
+  static void copy(char *dst, size_t cap, const char *src) {
+    size_t n = src ? strnlen(src, cap - 1) : 0;
+    memcpy(dst, src, n);
+    dst[n] = 0;
+  }
+  char ssid_[33] = {};
+  char pass_[65] = {};
 };
 
 }  // namespace lm_join

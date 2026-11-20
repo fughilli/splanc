@@ -76,6 +76,8 @@ pub mod join_failure {
     pub const NOT_FOUND: u8 = 0x01;
     /// The AP rejected the password (4-way M2 refused).
     pub const PASSWORD_REJECTED: u8 = 0x02;
+    /// The password was rejected and the board is going back to its previous network.
+    pub const PASSWORD_REJECTED_FELL_BACK: u8 = 0x03;
 }
 
 /// The error-state characteristic value: 1 byte, or 2 with Splanc's reason byte.

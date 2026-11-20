@@ -46,6 +46,7 @@ ERROR_NAMES = {
 JOIN_FAILURE_NAMES = {
     1: "not_found",
     2: "password_rejected",
+    3: "password_rejected_fell_back",
 }
 
 

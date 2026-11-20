@@ -117,6 +117,12 @@ test("error state: byte 0 is the Improv code, byte 1 Splanc's join-failure reaso
   assert.equal(pw.kind, "wrong-password");
   assert.equal(pw.code, 0x03);
   assert.match(pw.message, /Wrong Wi-Fi password: "HomeNet"/);
+  // [0x03, 0x03]: rejected, and the device is back on its previous network (D-74): the
+  // message must not claim it joined the new one.
+  const fb = improvErrorFromState(new Uint8Array([0x03, 0x03]), "Cafe");
+  assert.equal(fb.kind, "wrong-password");
+  assert.match(fb.message, /going back to its previous network/);
+  assert.doesNotMatch(fb.message, /joined|connected to "Cafe"/);
   // [0x03, 0x01]: the SSID isn't on the air (firmware wifi_scan.h).
   assert.equal(improvErrorFromState(new Uint8Array([0x03, 0x01]), "x").kind, "not-found");
   // Older firmware: a 1-byte UNABLE_TO_CONNECT keeps the generic message.

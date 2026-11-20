@@ -8,13 +8,22 @@ UNABLE_TO_CONNECT + Splanc's "password rejected" reason byte (psk_reject.h). Thi
 proves it on a real C6 against the rig AP, in ONE reservation (grading lives in
 improv_wrong_password_core):
 
-  setup     flash --erase-fs, Improv-provision the rig AP (the right password);
+  fresh     flash --erase-fs; the rig SSID with a wrong password on the FRESH board (no
+            network to fall back to): the plain password-rejected error, in budget;
+  setup     Improv-provision the rig AP (the right password): the fresh board's fix;
   baseline  past the re-send window, the right password again: PROVISIONED (the
             correct-password join is unchanged);
   rounds    --rounds times: `wrong` = the rig SSID with a wrong password -> the
-            password-rejected error inside --wrong-budget (SendWifi -> error), then
-            `fixed` = straight away the right password -> PROVISIONED inside
+            "password rejected, fell back" error inside --wrong-budget (SendWifi ->
+            error); the board goes back to its previous network (owner decision D-74:
+            serial fallback line -> DHCP lease inside --fallback-budget, no redirect);
+            after --fallback-wait, `fixed` = the right password -> PROVISIONED inside
             --join-budget (the corrected re-send is a fresh join).
+
+With one rig AP, "network B" is the rig SSID with a different (wrong, then right)
+password and "network A" the rig SSID with its password: the fallback swaps the rejected
+credentials for the last ones that leased, so this exercises the same path a second AP
+would.
 
 The reservation's serial capture is parsed for the firmware's password-rejected report
 (never the password itself) and dumped on failure. The not-found report and the other
@@ -106,6 +115,7 @@ def run(args) -> int:
     res = Reservation(server=args.server, owner=args.owner, device=args.device, sku="esp32c6")
     res.acquire()
     setup: dict | None = None
+    fresh: dict | None = None
     baseline: dict | None = None
     rounds: list[dict] = []
     sent: list[str] = []
@@ -130,6 +140,13 @@ def run(args) -> int:
                 raise HarnessError(f"hitl-flash exited {proc.returncode}:\n{flash_log[-2000:]}")
             ensure_booted(res, flash_log, 12.0)
         address = reserved_board_ble_mac(res)
+        if not args.no_flash:
+            # The fresh board (erased: no stored network): nothing to fall back to.
+            res.scp_to([_PROVISIONER, _CODEC], "/tmp/")
+            wrong0 = password[:-1] + secrets.token_hex(3) if password else secrets.token_hex(6)
+            sent.append(wrong0)
+            _log("[fresh] the rig SSID with a wrong password on the erased board")
+            fresh = _improv(res, ssid, wrong0, args.wrong_timeout, address)
         _log(f"[setup] Improv ssid={ssid!r} (board {address})")
         try:
             url = provision_dut(res, ssid, password, 60.0, address=address)
@@ -150,6 +167,9 @@ def run(args) -> int:
                 _log(f"[wrong#{i}] the rig SSID with a wrong password: want password_rejected fast")
                 w = _improv(res, ssid, wrong, args.wrong_timeout, address)
                 _log(f"[fixed#{i}] the right password straight away: want PROVISIONED")
+                # The board goes back to its previous network; graded from serial.
+                _log(f"  wait {args.fallback_wait:g}s for the fallback to the previous network")
+                time.sleep(args.fallback_wait)
                 f = _improv(res, ssid, password, args.join_budget, address)
                 rounds.append({"wrong": w, "fixed": f})
                 if i < args.rounds:
@@ -159,7 +179,16 @@ def run(args) -> int:
 
     log = "\n".join(res.serial_logs.values()) if res.serial_logs else ""
     serial = core.parse_serial(log, tuple(sent)) if log else None
-    g = core.grade(setup, baseline, rounds, serial, args.wrong_budget, args.join_budget)
+    g = core.grade(
+        setup,
+        baseline,
+        rounds,
+        serial,
+        args.wrong_budget,
+        args.join_budget,
+        fresh=fresh,
+        fallback_budget_s=args.fallback_budget,
+    )
     if g["verdict"] == "FAIL" and log:
         tail = log[-12000:]
         for s in sent:  # the gate's own log never carries a password
@@ -170,7 +199,14 @@ def run(args) -> int:
     _log(
         "IMPROV_WRONG_PASSWORD_JSON "
         + json.dumps(
-            {"setup": setup, "baseline": baseline, "rounds": rounds, "serial": serial, **g},
+            {
+                "fresh": fresh,
+                "setup": setup,
+                "baseline": baseline,
+                "rounds": rounds,
+                "serial": serial,
+                **g,
+            },
             sort_keys=True,
         )
     )
@@ -178,6 +214,11 @@ def run(args) -> int:
         f"RESULT unit={res._unit} wrong_budget={args.wrong_budget:g}s rounds={len(rounds)} "
         + "wrong_s="
         + ",".join(f"{s:.1f}" for s in g["wrong_s"])
+        + " fallback_s="
+        + ",".join(
+            "none" if ms is None else f"{ms / 1000:.1f}"
+            for ms in ((serial or {}).get("fallback_ms") or [])
+        )
         + f" verdict={g['verdict']}"
         + (f" skip={g['skip']!r}" if g["skip"] else "")
     )
@@ -207,6 +248,18 @@ def main() -> None:
         help="how long the provisioner waits on the wrong password (the app's join timeout)",
     )
     ap.add_argument("--join-budget", type=float, default=20.0)
+    ap.add_argument(
+        "--fallback-budget",
+        type=float,
+        default=20.0,
+        help="report -> DHCP lease on the previous network (firmware serial clock)",
+    )
+    ap.add_argument(
+        "--fallback-wait",
+        type=float,
+        default=20.0,
+        help="wait after the wrong password before the corrected send (lets the fallback land)",
+    )
     ap.add_argument(
         "--coalesce-wait",
         type=float,
