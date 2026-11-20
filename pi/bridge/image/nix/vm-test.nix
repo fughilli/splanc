@@ -25,6 +25,9 @@
 #      NetworkManager; a failed join (real nmcli) rolls the store back;
 #   6. the display renders the HDMI page (PNG sink; copied out as hdmi.png) and
 #      `splanc-bridge status` shows the pairing code.
+#   7. a restore bundle on the boot partition (tools/bridge_migrate) is imported
+#      into /var/lib/splanc-bridge by splanc-flash-config (owner splanc, 0600 /
+#      0700), deleted from the FAT partition, and the bridge restarts with it.
 { pkgs, bridgeModules }:
 let
   stubVersion = "9.9.9";
@@ -205,5 +208,45 @@ pkgs.testers.runNixOSTest {
         assert "TEST-CODE" in out, out
         out = machine.succeed("splanc-bridge version")
         assert '"board":"vm"' in out and "agent/9.9.9" in out, out
+
+    with subtest("restore bundle imported at boot"):
+        import hashlib
+        import shlex
+
+        ident = json.dumps({
+            "v": 1,
+            "key": {"private_pkcs8": "UkVTVE9SRUQ=", "public_raw": "restored-pub"},
+            "bridges": {"https://relay.example": "RESTOREDBRIDGE"},
+        })
+        hub = json.dumps({"players": {}, "groups": {"Den": []}, "poses": {}})
+        files = {"bridge.json": ident, "config/hub.json": hub}
+        manifest = json.dumps({
+            "format": "splanc-bridge-restore",
+            "v": 1,
+            "bridge_ids": {"https://relay.example": "RESTOREDBRIDGE"},
+            "files": [
+                {"path": k, "size": len(v.encode()), "sha256": hashlib.sha256(v.encode()).hexdigest()}
+                for k, v in files.items()
+            ],
+        })
+        b = "/boot/firmware/splanc-restore"
+        machine.succeed("systemctl stop splanc-bridge.service")
+        machine.succeed(f"mkdir -p {b}/state/config")
+        for k, v in files.items():
+            machine.succeed(f"printf %s {shlex.quote(v)} > {b}/state/{k}")
+        machine.succeed(f"printf %s {shlex.quote(manifest)} > {b}/manifest.json")
+        machine.succeed("systemctl restart splanc-flash-config.service")
+        st = "/var/lib/splanc-bridge"
+        assert machine.succeed(f"stat -c '%a %U' {st}/bridge.json").strip() == "600 splanc"
+        assert machine.succeed(f"stat -c '%a %U' {st}/config/hub.json").strip() == "600 splanc"
+        assert machine.succeed(f"stat -c '%a %U' {st}/config").strip() == "700 splanc"
+        assert machine.succeed(f"stat -c '%a %U' {st}").strip() == "700 splanc"
+        machine.succeed(f"runuser -u splanc -- grep -q restored-pub {st}/bridge.json")
+        machine.fail(f"test -e {b}")
+        machine.succeed("grep -q '^ok ' /boot/firmware/splanc-restore-result.txt")
+        machine.succeed("journalctl -u splanc-flash-config -o cat | grep -q 'restore: imported 2 file'")
+        machine.succeed("systemctl start splanc-bridge.service")
+        machine.wait_until_succeeds("test -s /run/splanc-bridge/status.json", timeout=60)
+        machine.succeed("systemctl is-active splanc-bridge.service")
   '';
 }

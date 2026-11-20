@@ -171,7 +171,11 @@ image/ota-public-keys.txt   Nix public keys a system update must be signed with
   sets the hostname and Wi-Fi country from `/boot/firmware/splanc-bridge.conf`, moves
   `system-connections/*.nmconnection` into NetworkManager (root, 0600) and deletes them from the
   FAT partition, writes the other settings to `/run/splanc-flash/bridge.env` for the services, and
-  merges `authorized_keys` (sshd only starts if there are keys; there are no passwords).
+  merges `authorized_keys` (sshd only starts if there are keys; there are no passwords). A
+  `splanc-restore/` bundle (from `tools/bridge_migrate`) is imported into `/var/lib/splanc-bridge`
+  (all or nothing after checking every path and SHA-256; owner `splanc`, 0600; replaced files
+  kept in `pre-restore-<time>/`), then deleted from the FAT partition, with the outcome in
+  `splanc-restore-result.txt`.
 - **WiFi from the phone (Improv over BLE):** `splanc-improv` (started when a Bluetooth adapter
   appears, advertising for as long as it runs, like the LED Mapper Pi's `sbc-improv`) is the Pi
   player's Improv GATT service (`pi/provisioning/nix/improv`, reused as is) with a bridge-specific
@@ -202,7 +206,10 @@ image/ota-public-keys.txt   Nix public keys a system update must be signed with
   `noatime`. A fully read-only root wasn't worth it: the first boot grows the root partition and
   registers the Nix store, so it would need an overlay.
 - **System updates:** over the air, see [System updates](#system-updates). Writing a newer image
-  still works but resets the bridge identity (agents pair again).
+  still works but resets the bridge identity (agents pair again), unless the state is carried over
+  with [`tools/bridge_migrate`](../../tools/bridge_migrate/README.md) (the way off the pre-OTA
+  v1.0.x images): it backs up `/var/lib/splanc-bridge` over SSH and writes it to the new card as a
+  restore bundle that `splanc-flash-config` imports before the bridge first starts.
 - **Boards:** Pi 5 (bcm2712 kernel) and Pi 3 / Pi 4 / Zero 2 W (one shared bcm2711 kernel, so they
   cost one kernel build between them). All four ship; the Zero 2 W (512 MB) gets zram swap.
 
@@ -536,7 +543,7 @@ under Bazel, which has neither; run it in a venv that has the lockfile plus `gpi
 | luma.oled SH1106 over SPI with the gpiozero DC/RST adapter; gpiozero Buttons                                                                                                                                           | `test_luma_gpiozero.py` with gpiozero MockFactory and a fake spidev, on Bookworm's versions (Python 3.11, Pillow 9.4, gpiozero 2.0.1, cbor2 5.4.6) |
 | Installer: install, upgrade, prune, settings kept, sha256/no-pi-bridge refusals, I2C, uninstall/purge                                                                                                                  | `installer_test` (fake root)                                                                                                                       |
 | Real downloads: latest.json → bundle sha256, pinned Node tarball sha256, venv + hash-locked pip                                                                                                                        | manual dry run into a fake root, with the display then run against the fake bridge                                                                 |
-| Image: boot-partition settings parsing/validation, keyfile move off the FAT partition, SSH key merge                                                                                                                   | `//pi/bridge/image:image_py_test`                                                                                                                  |
+| Image: boot-partition settings parsing/validation, keyfile move off the FAT partition, SSH key merge, restore-bundle import                                                                                            | `//pi/bridge/image:image_py_test`                                                                                                                  |
 | Image: self-update (sha256, hostile tarballs, rollback by publishing an older version, pruning); check only records the offer, install installs what was shown                                                         | `//pi/bridge/image:image_py_test`                                                                                                                  |
 | Image: Improv WiFi: phone-app RPC bytes -> Pi codec -> keyfile byte-identical to the flasher's (tricky SSIDs/PSKs), add vs dedupe, fresh scan + join, hidden fallback, rollback on failure                             | `//pi/bridge/image:image_py_test` (fake nmcli)                                                                                                     |
 | Image: boots; flash config applied; bridge on the baked bundle, then self-updated onto a newer one with the flash-time relay; NetworkManager reads the flasher's tricky keyfile exactly; HDMI page renders; CLI        | `checks.aarch64-linux.vm` (QEMU, generic aarch64; CI `vm-test` job)                                                                                |
