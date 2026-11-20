@@ -212,7 +212,7 @@ def test_golden_margin_override():
 
 # -- absolute floor (fixed per-frame layout cost) ---------------------------- #
 
-# The committed goldens' sweep16 values and margins (device-bench-esp32c6[-jit].json).
+# The #371-era goldens' sweep16 values (34.5 K; re-baselined to 38.3 K since) and margins.
 _SWEEP16_GOLDEN = {"interp": 34_496, "jit": 34_774}
 
 
