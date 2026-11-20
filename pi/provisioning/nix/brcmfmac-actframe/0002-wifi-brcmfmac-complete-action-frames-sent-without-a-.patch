@@ -1,0 +1,64 @@
+wifi: brcmfmac: complete action frames sent without a dwell time
+
+brcmf_p2p_tx_action_frame() waits for
+BRCMF_E_ACTION_FRAME_OFF_CHAN_COMPLETE unless P2P discovery is listening
+on the frame's channel. The firmware
+only sends that event after an off-channel dwell: for an action frame
+sent with a dwell time of 0 it reports BRCMF_E_ACTION_FRAME_COMPLETE
+alone, so the driver waits until P2P_AF_MAX_WAIT_TIME (2 s) for every
+such frame, and when the frame was not acknowledged it does not wake up
+at all before the timeout.
+
+Do not wait for the off-channel completion when there is no dwell
+time, and complete the transmission on BRCMF_E_STATUS_NO_ACK as well
+when no off-channel completion is expected.
+
+P2P frames always carry a dwell time (brcmf_p2p_send_action_frame()
+sets one), so they keep waiting for the off-channel completion.
+
+Tool use: this change was prepared with the help of an AI coding
+assistant (Claude), which read the driver, wrote the change and the
+changelog, and ran the test described in the cover letter; the
+submitter reviewed and tested it.
+
+(Upstream series for wireless-next, carried in Splanc's Pi images: pi/provisioning/nix/brcmfmac-actframe.nix.)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+index f8e6cb4fa..ac5ecda6c 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+@@ -1547,6 +1547,8 @@ int brcmf_p2p_notify_action_tx_complete(struct brcmf_if *ifp,
+ 			 * WLC_E_ACTION_FRAME_OFFCHAN_COMPLETE event
+ 			 */
+ 			brcmf_p2p_stop_wait_next_action_frame(cfg);
++			if (!p2p->wait_for_offchan_complete)
++				complete(&p2p->send_af_done);
+ 		}
+ 
+ 	} else {
+@@ -1574,6 +1576,7 @@ static s32 brcmf_p2p_tx_action_frame(struct brcmf_if *ifp,
+ 				     struct brcmf_fil_af_params_le *af_params)
+ {
+ 	struct brcmf_pub *drvr = p2p->cfg->pub;
++	u32 listen_chan;
+ 	s32 err = 0;
+ 
+ 	brcmf_dbg(TRACE, "Enter\n");
+@@ -1592,9 +1595,14 @@ static s32 brcmf_p2p_tx_action_frame(struct brcmf_if *ifp,
+ 	p2p->af_sent_channel = le32_to_cpu(af_params->channel);
+ 	p2p->af_tx_sent_jiffies = jiffies;
+ 
+-	if (test_bit(BRCMF_P2P_STATUS_DISCOVER_LISTEN, &p2p->status) &&
+-	    p2p->af_sent_channel ==
+-	    ieee80211_frequency_to_channel(p2p->remain_on_channel.center_freq))
++	/* Without a dwell time the firmware sends no
++	 * BRCMF_E_ACTION_FRAME_OFF_CHAN_COMPLETE.
++	 */
++	listen_chan =
++		ieee80211_frequency_to_channel(p2p->remain_on_channel.center_freq);
++	if (!af_params->dwell_time ||
++	    (test_bit(BRCMF_P2P_STATUS_DISCOVER_LISTEN, &p2p->status) &&
++	     p2p->af_sent_channel == listen_chan))
+ 		p2p->wait_for_offchan_complete = false;
+ 	else
+ 		p2p->wait_for_offchan_complete = true;

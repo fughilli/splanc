@@ -6,6 +6,10 @@
 //! | [`Monitor`] | radiotap injection on a monitor vif | AF_PACKET, radiotap RSSI + TSF | a mac80211 USB adapter (or nexmon) |
 //! | [`Nl80211Mgmt`] | NL80211_CMD_FRAME | REGISTER_FRAME | mac80211 driver; category 4/9 only (cfg80211 refuses 127 from a station) |
 //! | [`BrcmActframe`] | brcmfmac vendor DCMD, `actframe` iovar | REGISTER_FRAME (firmware decides) | the Pi's own radio, stock firmware |
+//!
+//! [`auto_via`] picks between the last two on a Pi: [`Nl80211Mgmt`] when the loaded brcmfmac
+//! is the image's patched one (pi/provisioning/nix/brcmfmac-actframe.nix), else
+//! [`BrcmActframe`] with the kprobe tap.
 
 use std::io;
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -110,11 +114,52 @@ impl RawRadio for Monitor {
     }
 }
 
+/// The raw radio for a managed interface: what `pimesh --via auto` uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Via {
+    /// [`Nl80211Mgmt`]: plain `NL80211_CMD_FRAME` + registration.
+    Nl80211,
+    /// [`BrcmActframe`]: firmware passthrough + the kprobe tap.
+    Brcm,
+}
+
+/// The patched brcmfmac's source version, written by the Pi image
+/// (pi/provisioning/nix/brcmfmac-actframe.nix).
+pub const BRCMFMAC_ACTFRAME_SRCVERSION: &str = "/etc/splanc/brcmfmac-actframe.srcversion";
+
+/// Pick the radio from the interface's driver and brcmfmac's source versions: the loaded
+/// module's (`/sys/module/brcmfmac/srcversion`) and the patched one the image carries.
+/// mac80211 drivers send and receive Public Action through nl80211 as they are. brcmfmac
+/// drops it ("Unknown Frame") and reports no RSSI unless it is the patched module, so it
+/// gets nl80211 only when the two versions match: a stock kernel, or a patched module that
+/// did not load, keeps the passthrough + tap.
+pub fn choose_via(driver: &str, loaded_srcversion: Option<&str>, patched_srcversion: Option<&str>) -> Via {
+    if driver != "brcmfmac" {
+        return Via::Nl80211;
+    }
+    match (loaded_srcversion.map(str::trim), patched_srcversion.map(str::trim)) {
+        (Some(l), Some(p)) if !l.is_empty() && l == p => Via::Nl80211,
+        _ => Via::Brcm,
+    }
+}
+
+/// [`choose_via`] for `ifname` on this host.
+pub fn auto_via(ifname: &str) -> Via {
+    let driver = std::fs::read_link(format!("/sys/class/net/{ifname}/device/driver"))
+        .ok()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_default();
+    let loaded = std::fs::read_to_string("/sys/module/brcmfmac/srcversion").ok();
+    let patched = std::fs::read_to_string(BRCMFMAC_ACTFRAME_SRCVERSION).ok();
+    choose_via(&driver, loaded.as_deref(), patched.as_deref())
+}
+
 /// Management-frame TX/RX through nl80211 on a managed interface (associated or not), no
 /// monitor mode. cfg80211 (net/wireless/mlme.c, `cfg80211_mlme_mgmt_tx`) refuses any
 /// non-Public action frame from a station unless it goes to its own AP, so this radio only
-/// works with [`Category::PublicVendor`]. On brcmfmac the driver then refuses it too (p2p.c
-/// "Unknown Frame"): use [`BrcmActframe`] there.
+/// works with [`Category::PublicVendor`]. Stock brcmfmac then refuses it too (p2p.c
+/// "Unknown Frame") and reports no RSSI: use [`BrcmActframe`] there. The Pi images carry a
+/// patched brcmfmac that sends it with a real ACK status and reports RSSI ([`auto_via`]).
 pub struct Nl80211Mgmt {
     nl: Nl80211,
     ifindex: u32,

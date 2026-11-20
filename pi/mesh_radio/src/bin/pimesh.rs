@@ -8,7 +8,8 @@
 //!   pimesh ping   <if> [opts]               send probes, measure round trips and loss
 //!   pimesh node   <if> --id N [opts]        run a mesh node; --app-ms M broadcasts app data
 //!
-//! opts: --via brcm|nl80211|monitor|udp  --cat vendor|public  --count N  --interval-ms M
+//! opts: --via auto|brcm|nl80211|monitor|udp (auto: nl80211 on a patched brcmfmac or a
+//!       mac80211 driver, else brcm)  --cat vendor|public  --count N  --interval-ms M
 //!       --len L  --da MAC  --channel C  --dwell MS  --freq MHz  --rate KBPS  --secs S
 //!       --mac MAC (monitor: our A2)
 
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant};
 use splanc_mesh::{Backhaul, Node, NodeConfig};
 use splanc_mesh_linux::frame::{self, Category};
 use splanc_mesh_linux::nl80211::{self, Nl80211};
-use splanc_mesh_linux::radio::{BrcmActframe, BrcmRx, Monitor, Nl80211Mgmt, RawRadio, TxRecord};
+use splanc_mesh_linux::radio::{self, BrcmActframe, BrcmRx, Monitor, Nl80211Mgmt, RawRadio, TxRecord, Via};
 use splanc_mesh_linux::sys;
 use splanc_mesh_linux::udp::UdpRadio;
 use splanc_mesh_linux::{WifiBackhaul, WifiConfig};
@@ -54,7 +55,7 @@ fn opts() -> Opts {
     let mut o = Opts {
         cmd: a[0].clone(),
         ifname: a[1].clone(),
-        via: "brcm".into(),
+        via: "auto".into(),
         cat: Category::PublicVendor,
         count: 10,
         interval_ms: 100,
@@ -103,7 +104,15 @@ fn opts() -> Opts {
 }
 
 fn radio(o: &Opts) -> io::Result<Box<dyn RawRadio>> {
-    Ok(match o.via.as_str() {
+    let via = match o.via.as_str() {
+        "auto" => {
+            let v = radio::auto_via(&o.ifname);
+            eprintln!("--via auto: {}", if v == Via::Nl80211 { "nl80211" } else { "brcm" });
+            if v == Via::Nl80211 { "nl80211" } else { "brcm" }
+        }
+        v => v,
+    };
+    Ok(match via {
         "brcm" => Box::new(BrcmActframe::open(&o.ifname, o.cat, o.channel, o.dwell, o.rx)?),
         "nl80211" => Box::new(Nl80211Mgmt::open(&o.ifname, o.cat, o.freq)?),
         "monitor" => {

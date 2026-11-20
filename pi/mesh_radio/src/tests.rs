@@ -253,3 +253,18 @@ fn c6_coprocessor_link_carries_the_mesh() {
     assert!(s.rx > 0 && s.rx_other == 0, "{s:?}");
     assert!(nodes[0].backhaul.stats.acked > 0);
 }
+
+#[test]
+fn auto_via_uses_nl80211_only_on_the_patched_brcmfmac() {
+    use crate::radio::{choose_via, Via};
+    let patched = Some("A1B2C3D4E5F60718293A4B5\n");
+    // The image's patched module is loaded: plain nl80211.
+    assert_eq!(choose_via("brcmfmac", Some("A1B2C3D4E5F60718293A4B5\n"), patched), Via::Nl80211);
+    // Stock module (another source version), no image marker, or brcmfmac not loaded.
+    assert_eq!(choose_via("brcmfmac", Some("0F0E0D0C0B0A090807060504\n"), patched), Via::Brcm);
+    assert_eq!(choose_via("brcmfmac", Some("A1B2C3D4E5F60718293A4B5"), None), Via::Brcm);
+    assert_eq!(choose_via("brcmfmac", None, patched), Via::Brcm);
+    assert_eq!(choose_via("brcmfmac", Some(""), Some("")), Via::Brcm);
+    // mac80211 drivers carry Public Action through nl80211 as they are.
+    assert_eq!(choose_via("mt7921u", None, None), Via::Nl80211);
+}

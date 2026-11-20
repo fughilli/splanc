@@ -110,7 +110,7 @@ Where the events could reach userspace:
   nl80211 copy of each frame by sender and body; when nl80211 registration is impossible (AP
   mode, §4.3) the tap's body *is* the RX path.
 
-**The kernel fix (prepared for upstream, owner's decision: keep the tap meanwhile).** A
+**The kernel fix (sent upstream; carried in our Pi images).** A
 four-patch series for brcmfmac on wireless-next makes the plain nl80211 path work: (1) pass
 `rxframe->rssi` to cfg80211; (2) complete action frames sent without a dwell time on
 ACTION_FRAME_COMPLETE (the firmware sends no OFF_CHAN_COMPLETE for them, so each waited the
@@ -123,9 +123,22 @@ distinct received), `NL80211_CMD_REGISTER_FRAME` 92/100 received with
 `NL80211_ATTR_RX_SIGNAL_DBM`. Two limits remain: ~50 ms per send (the driver's 40 ms
 `P2P_AF_RETRY_DELAY_TIME` sleep before the first attempt, left alone), and the 6.12 trees lack
 upstream's mgmt_tx channel fix (f2d7c3c380bf): without it, `NL80211_CMD_FRAME` without a
-frequency sends with a bogus channel and the firmware answers `BCME_BUSY`. So the passthrough
-stays faster (~1–5 ms) and stays the Pi path until a kernel with the series ships. Patches,
-cover letter and `git send-email` steps: `/workspace/.claude/pimesh/upstream/` (not sent).
+frequency sends with a bogus channel and the firmware answers `BCME_BUSY`. The passthrough
+is faster (~1–5 ms per send).
+
+**Carried in the Pi images (owner's decision).** The player image
+(`pi/provisioning/nix/brcmfmac-actframe.nix`) carries the four patches plus a backport of the
+f2d7c3c380bf channel hunk (`brcmfmac-actframe/0005-*.patch`). Only the driver is rebuilt, from
+the image kernel's own source, config and patches; the modules go to
+`lib/modules/<ver>/updates`, which depmod prefers over the kernel's. The kernel's `dev` output
+is in no binary cache we pull from (the kernel itself is, on fugstudio.cachix.org), so the
+build reads the MODVERSIONS CRCs of every imported symbol from the stock modules and fails
+unless nothing is undefined and every export the stock modules import keeps its stock CRC
+(the rebuilt driver is ABI-identical to the stock one). The image writes the patched module's
+source version to `/etc/splanc/brcmfmac-actframe.srcversion`; `pimesh --via auto` (the
+default, `radio::auto_via`) uses `Nl80211Mgmt` when `/sys/module/brcmfmac/srcversion` matches
+it, and falls back to `BrcmActframe` + the kprobe tap on any other kernel or module.
+`--via brcm|nl80211` still forces either.
 
 **Per-send cost** (measured, §4.2): 0.3–0.5 ms CPU per `actframe`. Wall time is dominated by
 the SDIO control round trip: ~1.1–1.5 ms when the bus is awake, ~4.4 ms when it has clocked
@@ -353,14 +366,18 @@ link, receive filters, pacing). mac80211_hwsim needs a kernel with modules (§6)
 ## 7. Running the mesh stack on Linux
 
 The mesh crates are `no_std` and build unchanged for the host. A Pi node is
-`splanc_mesh::Node<WifiBackhaul<BrcmActframe>, P>`, driven every ≤ 5 ms; `actframe` sends
-should move to a TX thread so the loop never waits on SDIO. Needs root (or `CAP_NET_ADMIN` for
-the vendor command and registration, plus tracefs access for the tap). No kernel module.
+`splanc_mesh::Node<WifiBackhaul<R>, P>` with `R` = `Nl80211Mgmt` on the image's patched
+brcmfmac, else `BrcmActframe` (`radio::auto_via`), driven every ≤ 5 ms; sends should move to a
+TX thread so the loop never waits on SDIO (or, on the patched driver, its ~50 ms per send).
+Needs root (or `CAP_NET_ADMIN` for the registration and the vendor command, plus tracefs access
+for the tap on a stock kernel). The patched driver comes with the image (§2.1).
 
 ## 8. Decisions for the owner
 
-1. **Kernel patch**: decided (keep the tap, send the series upstream). The series is ready for
-   the owner to sign off and send (§2.1).
+1. **Kernel patch**: decided (carry it in our Pi kernels now; the tap and passthrough stay
+   as the fallback for stock kernels, §2.1). Open: the ~50 ms per send on the plain path. A
+   local sixth patch could skip the 40 ms `P2P_AF_RETRY_DELAY_TIME` before the first attempt
+   for non-P2P action frames (not tested on hardware).
 2. **Buy one AR9271 adapter** (~$15–35) for a HITL mesh sniffer. Nothing else is needed.
 3. **Open UDP 47811** in the Pi images when the IP backhaul ships (M10).
 
