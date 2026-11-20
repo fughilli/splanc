@@ -117,6 +117,14 @@ Limits:
     notification, not on the frame.
 - **Cost on the hot path.** The RX drain does one byte load per frame
   (`LAST_RSSI`), plus one EWMA update for frames sent by our AP.
+- **Measured cost** (`-c opt //firmware/player_app:esp32c6_netstack`, against
+  main at 8fa5dc56c):
+  - DRAM `.bss` +24 B, `.data` +0, IRAM +0, RTC no-init +20 B;
+  - flash `.text` +5,376 B, `.rodata` +320 B, image +5,856 B (2,024,720 to
+    2,030,576 B).
+  - The same whether or not anyone opts in: the counters are always kept, and
+    the reply is built only on request, on the handler's stack (under 128 B on
+    the wire).
 - **Kiosk.** A locked kiosk refuses `get_device_metrics`, like every arm it
   doesn't list, so a visitor's app can't report an owner's device.
 - **RSSI.** The RX vector's first byte is the frame's RSSI on the C6. Readings
