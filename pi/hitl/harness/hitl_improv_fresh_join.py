@@ -209,9 +209,13 @@ def run(args) -> int:
     if g["verdict"] == "FAIL" and log:
         _log("----- DUT serial log (tail) -----")
         _log(log[-12000:])
+    mx = core.metrics(log) if log else None  # dashboard numbers (core.metrics names/units)
     _log(
         "IMPROV_FRESH_JOIN_JSON "
-        + json.dumps({"setup": setup, "phases": phases, "serial": serial, **g}, sort_keys=True)
+        + json.dumps(
+            {"setup": setup, "phases": phases, "serial": serial, "metrics": mx, **g},
+            sort_keys=True,
+        )
     )
     _log(
         f"RESULT unit={res._unit} budget={args.join_budget:g}s "

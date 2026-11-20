@@ -91,6 +91,61 @@ RECOVER = "recover"
 ALL_PHASES = PHASES + (ABSENT, RECOVER)
 
 
+# Metric lines (each carries the firmware's [t=ms] uptime stamp).
+T_RE = re.compile(r"\[t=(\d+)\]")
+NOTIFY_ACK_RE = re.compile(r"\[ble\] improv notify acked in (\d+) ms")
+DROP_ANY_RE = re.compile(r"\[ble\] link state=6 connected=0 leased=(\d) disc=0x08")
+SUPERVISION_MS = 6000  # the connect-time supervision timeout (ble_ffi.rs)
+
+
+def metrics(log: str, absent_prefix: str = "hitl-absent-") -> dict:
+    """Numbers for the HITL dashboards (units in the names):
+
+    ble_notify_ack_ms: every Improv notification burst, firmware send -> the central's LL
+      ack (it has the bytes); ble_notify_ack_ms_max / _p50 summarize it.
+    absent_report_ms: Improv write of the absent SSID -> the firmware's not-found report.
+    absent_ble_drops: BLE supervision timeouts (0x08) that killed the link inside the
+      absent window (the window open, or the timeout firing < 6 s after the report: the
+      link was already dead when the report went out).
+    """
+    acks: list[int] = []
+    reports: list[int] = []
+    drops = 0
+    absent_t = None  # fresh-join time of the absent SSID, while its window is open
+    report_t = None
+    for line in (log or "").splitlines():
+        m = NOTIFY_ACK_RE.search(line)
+        if m:
+            acks.append(int(m.group(1)))
+            continue
+        t = T_RE.search(line)
+        if t is None:
+            continue
+        now = int(t.group(1))
+        m = FRESH_RE.search(line)
+        if m:
+            absent_t = now if m.group(1).startswith(absent_prefix) else None
+            report_t = None
+            continue
+        if absent_t is not None and NOT_FOUND_RE.search(line):
+            reports.append(now - absent_t)
+            absent_t, report_t = None, now
+            continue
+        m = DROP_ANY_RE.search(line)
+        if m and m.group(1) == "0":
+            if absent_t is not None or (report_t is not None and now - SUPERVISION_MS < report_t):
+                drops += 1
+            absent_t = report_t = None
+    srt = sorted(acks)
+    return {
+        "ble_notify_ack_ms": acks,
+        "ble_notify_ack_ms_max": srt[-1] if srt else None,
+        "ble_notify_ack_ms_p50": srt[len(srt) // 2] if srt else None,
+        "absent_report_ms": reports,
+        "absent_ble_drops": drops,
+    }
+
+
 def parse_serial(log: str) -> dict:
     """The Improv facts the DUT serial log shows (whole run)."""
     log = log or ""
