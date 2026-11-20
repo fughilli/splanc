@@ -12,6 +12,8 @@
  *   bluetooth  — a Web Bluetooth seam so the add-device BLE button appears
  *                (instead of the "not available in this browser" note).
  *   camera     — a simulated camera frame for the mapping/capture screen.
+ *   fxstub     — effect compiles answered from the declared uniforms (no
+ *                compiler wasm on a static screenshot server).
  *   devmap-none / devmap-saved / devmap-unsaved — `device`, plus a stored map
  *                on it (none; one this phone already has; one it doesn't) and a
  *                running IMU, for the Maps tab's "On <device>" card.
@@ -28,8 +30,6 @@
  *                moved to another Wi-Fi), so its row shows what to do about it.
  *   nousb      — no Web Serial / WebUSB (an iPhone-like browser), so "Flash a
  *                new device" shows the plug-into-a-laptop pictogram.
- *   fxstub     — effect compiles answered from the declared uniforms (no
- *                compiler wasm on a static screenshot server).
  *   play / play-revert / play-nomap / play-off — Halloween play mode: a
  *                connected "SpookySplanc1" in kiosk mode (countdown 1:42) with a
  *                stored map; `play-revert` fires an idle revert after 5 s;
