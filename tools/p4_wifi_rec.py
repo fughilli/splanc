@@ -20,10 +20,10 @@ sends again: the lamp's /lh/pose replies come here meanwhile, and are ignored.
 
 import argparse
 import gzip
-import tempfile
 import socket
 import struct
 import sys
+import tempfile
 import time
 
 IFACE = {0: "IMU", 1: "Lightcap", 2: "Buttons"}
@@ -34,7 +34,11 @@ def osc_message(addr, *floats):
         return b + b"\0" * (4 - len(b) % 4)
 
     tags = "," + "f" * len(floats)
-    return pad(addr.encode() + b"\0") + pad(tags.encode() + b"\0") + b"".join(struct.pack(">f", f) for f in floats)
+    return (
+        pad(addr.encode() + b"\0")
+        + pad(tags.encode() + b"\0")
+        + b"".join(struct.pack(">f", f) for f in floats)
+    )
 
 
 def parse_batch(b):
@@ -121,8 +125,10 @@ def main():
                         else:
                             _, iface, us, data = r
                             t0 = us if t0 is None else t0
+                            rel = us - t0
+                            name = IFACE.get(iface, iface)
                             tmp.write(
-                                f"{(us - t0) / 1e6:.6f} {a.name} HIDIN {IFACE.get(iface, iface)} {us - t0} {len(data)} {data.hex()}\n"
+                                f"{rel / 1e6:.6f} {a.name} HIDIN {name} {rel} {len(data)} {data.hex()}\n"
                             )
                             n["R"] += 1
                     continue
@@ -136,7 +142,9 @@ def main():
     # Features first, at t=0 (they happened at the handshake, before the reports).
     with gzip.open(a.out, "wt", compresslevel=3) as out:
         for (us, _), (setf, rtn, data) in sorted(features.items()):
-            out.write(f"0.000000 {a.name} HIDFEAT {'SET' if setf else 'GET'} 0 {rtn} {data.hex()}\n")
+            out.write(
+                f"0.000000 {a.name} HIDFEAT {'SET' if setf else 'GET'} 0 {rtn} {data.hex()}\n"
+            )
         n["F"] = len(features)
         tmp.seek(0)
         for line in tmp:
