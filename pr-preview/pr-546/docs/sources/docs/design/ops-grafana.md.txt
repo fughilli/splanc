@@ -172,8 +172,8 @@ The four dashboards:
 
 Each rule is a LogQL query, reduced to its last value, then a threshold or a
 math condition. The group evaluates every 5 minutes. The rules watch
-`env=~"production|sandbox"` (`alert_env`); narrow that to production once it
-exists.
+`env=~"production|sandbox"` (`alert_env`); narrow that to production at the
+go-live ([docs/ops/billing-go-live.md](../ops/billing-go-live.md#grafana-alert_env)).
 
 | Rule | Fires when | Severity |
 | --- | --- | --- |
