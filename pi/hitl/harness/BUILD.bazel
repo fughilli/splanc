@@ -111,9 +111,11 @@ py_test(
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
     },
-    # 4/5 on the rigs: one unexplained BLE link drop just after the stage-2
-    # configure (ATT 0x0e, DUT `[ble] link state=6`). Open follow-up in the
-    # Halloween CLEANUP list; retry so it can't wedge main's merge queue.
+    # The "unexplained" ATT 0x0e drops were hitl-rig-2's central losing the link
+    # (DUT `disc=0x08`; 26/58 rig-2 attempts vs 1/57 on rig-1, Nov 2026). The driver
+    # now rides them out like the app (ble_link_core.MAX_LINK_LOSSES) and reports
+    # each; flaky stays as the backstop for reservation-deadline infra until the
+    # rig-2 central is fixed and the drop rate is back to rig-1's.
     flaky = True,
     imports = ["."],
     main = "hitl_ble_capture_e2e.py",
@@ -133,6 +135,7 @@ py_test(
 py_library(
     name = "harness",
     srcs = [
+        "ble_link_core.py",
         "ble_rename_core.py",
         "board_caps.py",
         "ctrl_budget_core.py",
@@ -145,6 +148,7 @@ py_library(
         "hardware_config_pattern.py",
         "heap_census.py",
         "heavy_effect_reachability_core.py",
+        "hitl_ble_player.py",
         "hitl_client.py",
         "hitl_improv.py",
         "hitl_metrics.py",
