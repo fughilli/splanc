@@ -1039,6 +1039,7 @@ rust_static_library(
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player:player_fw",
+        "//firmware/ramp",
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
