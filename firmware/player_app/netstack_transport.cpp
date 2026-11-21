@@ -922,6 +922,10 @@ int netstack_osc_stats(char *buf, size_t cap, bool *run_ended) {
                   (unsigned)g_tx_run_last_ms, improv_ble_central_connected() ? 1 : 0, (unsigned)g_coex_yields);
 }
 
+// Set by a rename (netstack_mdns_renamed, loop task); taken by the netstack loop.
+static volatile bool g_mdns_rename_pending = false;
+void netstack_mdns_renamed(void) { g_mdns_rename_pending = true; }
+
 namespace {
 
 // IGMPv2 Membership Report for 224.0.0.251 (TTL 1, Router Alert), so an IGMP-snooping
@@ -942,6 +946,15 @@ static void send_igmp_mdns_report() {
 }
 
 static uint32_t g_mdns_replies = 0, g_mdns_announces = 0;
+
+// Withdraw the name the last announcement carried (RFC 6762 §10.1), after a rename.
+static void send_mdns_goodbye() {
+  int n = lm_mdns_goodbye_reply(g_offer_ip, tx_ip_slot() + kUdpPayloadOff, kTxIpCap - kUdpPayloadOff);
+  if (n > 0) {
+    send_udp_slot(kMdnsGroup, 5353, 5353, n, 255, kMdnsMac);
+    Serial.printf("[mdns] renamed: goodbye for the old name (%d B), re-announcing\n", n);
+  }
+}
 
 // Announce every record on the group (RFC 6762 §8.3); caller gates on no live wss.
 static void send_mdns_announce() {
@@ -3164,10 +3177,22 @@ void netstack_loop() {
         mdns_ms = 0;
       }
     }
+    // A rename: goodbye for the old name, then the burst again under the new one (RFC
+    // 6762 §8.4). Group-addressed, so it waits for idle (and no group-TX quiet window)
+    // like the rest; meanwhile a query is answered (unicast, during a wss) with the new
+    // name already.
+    bool renamed = false;
+    if (g_mdns_rename_pending && st == DONE && g_leased && idle && !group_tx_quiet()) {
+      g_mdns_rename_pending = false;
+      renamed = true;
+      mdns_sent = 0;
+      mdns_ms = 0;
+    }
     if (st == DONE && g_leased && idle && !group_tx_quiet() &&
-        millis() - mdns_ms > (mdns_sent < 3 ? 1000u : 60000u)) {
+        (renamed || millis() - mdns_ms > (mdns_sent < 3 ? 1000u : 60000u))) {
       mdns_ms = millis();
       send_igmp_mdns_report();
+      if (renamed) send_mdns_goodbye();
       send_mdns_announce();
       if (mdns_sent++ == 0)
         Serial.printf("[mdns] announcing _splanc._tcp on %u.%u.%u.%u\n", g_offer_ip[0],

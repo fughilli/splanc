@@ -63,6 +63,9 @@ int32_t lm_mdns_respond(const uint8_t *query, size_t qlen, uint16_t src_port,
 // An unsolicited mDNS announcement of every record (send to 224.0.0.251:5353);
 // returns its length or <0.
 int32_t lm_mdns_announce(const uint8_t *ip, uint8_t *out, size_t cap);
+// After a rename: a goodbye (TTL 0) for the name the last announcement carried (send to
+// 224.0.0.251:5353, then announce); 0 when there is nothing to withdraw, <0 on error.
+int32_t lm_mdns_goodbye(const uint8_t *ip, uint8_t *out, size_t cap);
 // Room pose (set_fixture_pose): change generation (poll after each message) and
 // whether the last change asked to be persisted (commit, unset = true).
 uint32_t lm_fixture_pose_gen(void);

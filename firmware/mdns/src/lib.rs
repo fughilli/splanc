@@ -234,6 +234,26 @@ pub fn announce(svc: &Service, out: &mut [u8]) -> Option<usize> {
     w.ok.then_some(w.n)
 }
 
+/// A goodbye (RFC 6762 §10.1) for a service this device no longer advertises under
+/// `svc`'s names, for the multicast group: its PTR, SRV and TXT (and the display-name
+/// host, `alias`) with TTL 0, so browsers drop them now instead of when their TTLs
+/// (up to 4500 s) run out. Sent after a rename with the OLD names, followed by an
+/// announcement of the new ones. The MAC host's A record is left alone: it doesn't
+/// change with the name. No cache-flush bit (a goodbye only removes these records).
+pub fn goodbye(svc: &Service, out: &mut [u8]) -> Option<usize> {
+    let names = Names::new(svc);
+    let mut w = Writer { out, n: 0, ok: true };
+    let set = R_PTR | R_SRV | R_TXT | if names.has_alias() { R_ALIAS } else { 0 };
+    w.u16(0);
+    w.u16(0x8400);
+    w.u16(0);
+    w.u16(set.count_ones() as u16);
+    w.u16(0);
+    w.u16(0);
+    write_records(&mut w, &names, svc, set, &|_| 0, 0);
+    w.ok.then_some(w.n)
+}
+
 /// An IGMPv2 Membership Report for 224.0.0.251 (RFC 2236): the 8-byte IGMP
 /// message. The transport wraps it in IPv4 (proto 2, TTL 1, dst = the group,
 /// Router Alert option) — so a snooping AP forwards the mDNS group to us.
