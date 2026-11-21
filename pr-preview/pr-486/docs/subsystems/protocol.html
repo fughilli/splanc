@@ -231,8 +231,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -266,6 +268,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-demo.html">Effects demo</a></li>
@@ -344,8 +347,8 @@ Pydantic models (<code class="docutils literal notranslate"><span class="pre">Ou
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">ledmapper_pb</span></code> / <code class="docutils literal notranslate"><span class="pre">ledmapper_pb_fw</span></code></strong> — micropb structs. The <code class="docutils literal notranslate"><span class="pre">_fw</span></code> profile
 is the firmware’s capacity profile, which caps the repeated fields and skips
 the fat arms. These are used for encoding replies and on the host.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">ledmapper_view</span></code></strong> — zero-copy <a class="reference external" href="https://github.com/fughilli/splanc/tree/main/oss/pbview">pbview</a>
-views (<code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code>, <code class="docutils literal notranslate"><span class="pre">pbview_library</span></code>). A view is a borrowed two-word handle
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ledmapper_view</span></code></strong> — zero-copy <a class="reference external" href="https://github.com/fughilli/pbview">pbview</a>
+views (the <code class="docutils literal notranslate"><span class="pre">pbview</span></code> Bazel module, <code class="docutils literal notranslate"><span class="pre">pbview_library</span></code>). A view is a borrowed two-word handle
 with lazy accessors over the wire bytes. <code class="docutils literal notranslate"><span class="pre">parse</span></code> validates once, and there is
 no allocation, no <code class="docutils literal notranslate"><span class="pre">unsafe</span></code> and no panic on any input. The firmware decodes
 <strong>every</strong> <code class="docutils literal notranslate"><span class="pre">ClientMessage</span></code> in place from the RX frame
@@ -356,8 +359,8 @@ sized by its largest arm, lands on a task stack.</p></li>
 already encoded (<code class="docutils literal notranslate"><span class="pre">Player::encode_reply</span></code>). Examples are the board-capabilities
 catalog, <code class="docutils literal notranslate"><span class="pre">Welcome.features</span></code> and the fixture pose. <code class="docutils literal notranslate"><span class="pre">envelope_size_test</span></code> pins
 the by-value sizes (<code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> 656 B on the firmware).</p>
-<p><code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code> is self-contained (its own README, Cargo workspace and tests,
-including fuzzing) so it can be published separately.</p>
+<p>pbview lives in its own repository (README, Cargo workspace and tests, including
+fuzzing, plus a C++ runtime and generator) and comes in as a pinned Bazel module.</p>
 </section>
 <section id="versioning-and-feature-detection">
 <h2>Versioning and feature detection<a class="headerlink" href="#versioning-and-feature-detection" title="Link to this heading">¶</a></h2>
