@@ -23,6 +23,34 @@ pub const SECTOR: u32 = 4096;
 /// Largest `ota_chunk.data`: one sector, and what fits the netstack's 6 KiB WS
 /// receive buffer with the envelope.
 pub const MAX_CHUNK: u32 = 4096;
+/// The P4's chunk limit, as written (a compressed chunk's INFLATED size: "ota_deflate",
+/// ota_chunk.inflated_len). On the wire a chunk stays at most MAX_CHUNK (ota_status
+/// .max_chunk): its C6 front end's mbedTLS takes records of at most 6 KB (embedded's TLS
+/// record buffer), and a client sends a chunk as one record; 8 KB plain chunks dropped
+/// the connection (PixieLamp2, 2026-11-18).
+pub const MAX_CHUNK_P4: u32 = 4 * MAX_CHUNK;
+
+/// How far ahead the P4 erases: whole 64 KB blocks (the flash driver erases an aligned
+/// block with one block-erase command, far quicker per byte than its 16 sectors), so most
+/// chunks have no erase at all. Other chips erase only the sectors a chunk touches.
+pub const ERASE_BLOCK_P4: u32 = 64 * 1024;
+
+fn erase_granule_for_chip(chip: u16) -> u32 {
+    if chip == image::CHIP_ESP32P4 {
+        ERASE_BLOCK_P4
+    } else {
+        SECTOR
+    }
+}
+
+/// The largest chunk a chip's receiver takes (ota_status.max_chunk advertises it).
+pub fn max_chunk_for_chip(chip: u16) -> u32 {
+    if chip == image::CHIP_ESP32P4 {
+        MAX_CHUNK_P4
+    } else {
+        MAX_CHUNK
+    }
+}
 /// Persist progress at most this often (NVS wear: ~32 writes per 2 MB image).
 pub const PERSIST_EVERY: u32 = 64 * 1024;
 /// The resume record: the manifest, then the offset (u32 LE).
@@ -163,6 +191,9 @@ pub struct Session {
     next: u32,
     erased: u32,
     persisted: u32,
+    max_chunk: u32,
+    erase_granule: u32,
+    slot_size: u32,
 }
 
 const fn align_down(x: u32) -> u32 {
@@ -194,7 +225,15 @@ impl Session {
             }
             _ => 0,
         };
-        Ok(Session { manifest: m, next, erased: align_down(next), persisted: next })
+        Ok(Session {
+            manifest: m,
+            next,
+            erased: align_down(next),
+            persisted: next,
+            max_chunk: max_chunk_for_chip(t.chip),
+            erase_granule: erase_granule_for_chip(t.chip),
+            slot_size: t.slot_size,
+        })
     }
 
     /// The next byte wanted (= bytes received and durably written).
@@ -222,7 +261,7 @@ impl Session {
             return Err(Refusal::OutOfOrder { want: self.next });
         }
         let len = data.len() as u32;
-        if len == 0 || len > MAX_CHUNK {
+        if len == 0 || len > self.max_chunk {
             return Err(Refusal::BadChunk);
         }
         let end = offset.checked_add(len).ok_or(Refusal::Overflow)?;
@@ -232,7 +271,11 @@ impl Session {
         if offset == 0 {
             image::check_header(data, chip).map_err(Refusal::Image)?;
         }
-        let erase_end = align_up(end);
+        // At least the sectors the chunk touches; on the P4 up to the block's end (never
+        // past the slot).
+        let g = self.erase_granule;
+        let ahead = end.div_ceil(g).saturating_mul(g).min(align_down(self.slot_size.max(SECTOR)));
+        let erase_end = align_up(end).max(ahead);
         let erase = (erase_end > self.erased).then(|| (self.erased, erase_end - self.erased));
         Ok(Plan { erase, write_at: offset, len })
     }

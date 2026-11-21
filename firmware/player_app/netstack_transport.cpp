@@ -918,6 +918,10 @@ bool netstack_osc_send(const uint8_t *data, size_t len) {
   return true;
 }
 
+bool netstack_log_subscribed() {
+  return g_leased && g_log_peer_port != 0 && (int32_t)(millis() - g_log_until_ms) <= 0;
+}
+
 int netstack_log_send(const uint8_t *data, size_t len) {
   if (!g_leased || g_log_peer_port == 0 || (int32_t)(millis() - g_log_until_ms) > 0) return 0;
   if (len > (size_t)(kTxIpCap - kUdpPayloadOff)) len = (size_t)(kTxIpCap - kUdpPayloadOff);
@@ -1455,7 +1459,13 @@ struct Session {
   // windows, so a single inbound frame never exceeds ~4KB + protobuf overhead — 6KB is ample.
   // Kept small on purpose: on the C6 all internal SRAM is DMA-capable, and oversized BSS here
   // starves the WiFi driver's DMA RX-buffer allocation (esp_wifi_init fails, beacons=0).
+#if defined(LM_NS_BIG_WINDOWS)
+  // A P4's front end (big TCP windows): several pipelined OTA chunks (4 KB each + overhead)
+  // can land in one pump; a frame is still at most a TLS record (6 KB).
+  uint8_t ws_rx[14336];
+#else
   uint8_t ws_rx[6144];
+#endif
   size_t ws_rxlen = 0;
   // A best-effort live-control reply (a ControlAck) that found the send window full: held,
   // newest first (the client paces on the latest seq), and sent as soon as the window has

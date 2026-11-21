@@ -44,6 +44,11 @@ extern "C" void lm_link_identity(const char *mac, const char *name);  // main.cp
 
 #include "serial_log.h"
 
+// Whether a console subscriber listens on the front end's udp/9001 (LK_OP_LOG): the P4's
+// lines go over the link only then. Starts false: a front end that knows about one says so
+// within ~100 ms.
+static volatile bool g_log_listened = false;
+
 namespace {
 
 constexpr uart_port_t kUart = UART_NUM_0;
@@ -339,6 +344,8 @@ void on_frame(const lk_header &h, const uint8_t *p) {
         b[h.len - 1] = 0;
         const size_t m = strnlen(b, h.len - 1);
         if (m < h.len - 1) lm_link_identity(b, b + m + 1);
+      } else if (p[0] == LK_OP_LOG && h.len >= 2) {
+        g_log_listened = p[1] != 0;
       } else if (p[0] == LK_OP_RESET && h.len >= 3) {
         // The host closed a session: stop pushing to it.
         const uint16_t s = (uint16_t)(p[1] | p[2] << 8);
@@ -362,8 +369,10 @@ extern "C" size_t link_log_write(const uint8_t *data, size_t len) {
 #if defined(LM_LINK_SDIO)
   // The UART is the console's alone; the lines also go to the C6 as LOG frames, which it
   // sends on to a subscriber on udp/9001 (netstack_log_send): the console over Wi-Fi.
+  // Only while one listens (LK_OP_LOG): otherwise every line crossed the link and was
+  // parsed by the front end just to be dropped there.
   const size_t n = fwrite(data, 1, len, stdout);
-  if (g_up) {
+  if (g_up && g_log_listened) {
     for (size_t off = 0; off < n; off += LK_MTU) send_msg(LK_LOG, 0, data + off, n - off < LK_MTU ? n - off : LK_MTU);
   }
   return n;
@@ -380,6 +389,9 @@ extern "C" size_t link_log_write(const uint8_t *data, size_t len) {
 // which the C6 sends to the log subscriber as one datagram. Not on the UART.
 extern "C" bool lm_dump_send(const uint8_t *data, size_t len) {
   if (!g_up || len > LK_MTU) return false;
+#if defined(LM_LINK_SDIO)
+  if (!g_log_listened) return false;  // nobody on udp/9001 to receive it
+#endif
   send_msg(LK_LOG, 0, data, len);
   return true;
 }

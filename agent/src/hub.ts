@@ -355,6 +355,7 @@ export class Hub {
     const live = this.liveness.get(s);
     if (!live) return true; // forSession's fixed session: as it is
     if (live.dead) return false;
+    if (s.updating) return true; // restarting on purpose; the update's driver reconnects
     if (!s.client.isConnected) {
       const grace = this.opts.reconnectGraceMs ?? 10_000;
       const t0 = performance.now();
@@ -425,7 +426,10 @@ export class Hub {
       grace = setTimeout(() => {
         grace = null;
         const now = this.liveness.get(s);
-        if (now && !s.released && !s.client.isConnected) now.kill(`the connection closed and didn't come back within ${ms / 1000} s`);
+        // A firmware update restarts the player and its driver reconnects by itself (a P4
+        // takes longer than the grace): closing its client then left the update waiting on
+        // a dead socket until reboot_timeout, every time (2026-11-18).
+        if (now && !s.released && !s.client.isConnected && !s.updating) now.kill(`the connection closed and didn't come back within ${ms / 1000} s`);
       }, ms);
       grace.unref?.();
     };
@@ -497,7 +501,7 @@ export class Hub {
           `actively using it; try again when it is idle, or ask the user to close it.`,
       );
     }
-    const live = new Liveness((t) => s.client.ping(t), (why) => this.lost(s, why), this.opts.liveness);
+    const live = new Liveness((t) => s.client.ping(t), (why) => this.lost(s, why), { ...this.opts.liveness, paused: () => s.updating });
     this.watchSession(s, host, live);
     return s;
   }
@@ -589,7 +593,7 @@ export class Hub {
     try {
       const w = await s.connect();
       progress(`${w.deviceName || name}: connected ${ms(t0)}${w.fwVersion ? ` (firmware ${w.fwVersion})` : ""}`);
-      live = new Liveness((t) => s.client.ping(t), (why) => this.lost(s, why), this.opts.liveness);
+      live = new Liveness((t) => s.client.ping(t), (why) => this.lost(s, why), { ...this.opts.liveness, paused: () => s.updating });
       this.watchSession(s, host, live);
       return { s, w, ...(fp ? { fp } : {}) };
     } catch (e) {

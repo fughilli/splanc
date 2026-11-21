@@ -9,7 +9,14 @@
 const IP_HDR: usize = 20;
 const TCP_HDR: usize = 20;
 // Receive buffer / max advertised window. ~3 TLS records in flight (see the `rx` field note).
+#[cfg(not(feature = "big_windows"))]
 const RX_BUF: usize = 4096;
+/// `big_windows`: a C6 with RAM to spare (a P4's front end: the P4 holds the LED buffers)
+/// takes a bulk transfer (an OTA, a big reply) a window at a time rather than ~4 KB per
+/// network-loop round trip: the small windows capped every bulk transfer through a C6 at
+/// ~25-30 KB/s (6 min for a P4 package; //pi/hitl/harness:ota_bench, 2026-11-18).
+#[cfg(feature = "big_windows")]
+const RX_BUF: usize = 12288;
 /// Out-of-order ranges we remember (each a [start, end) sequence span whose bytes already
 /// sit in `rx` past the in-order data). Holes beyond this many are simply not buffered.
 const OOO_MAX: usize = 4;
@@ -245,7 +252,10 @@ const MAX_RTO_RETRIES: u32 = 8;
 /// is a byte off the contiguous heap that mbedtls's ~8.5KB record buffer must fit into on
 /// each new connection (the C6's tight, un-growable Arduino-mbedtls budget). 2KB still lets
 /// many small replies coalesce + pipeline (the uniform-blast / LED-stream win) vs stop-and-wait.
+#[cfg(not(feature = "big_windows"))]
 const SND_BUF: usize = 2048;
+#[cfg(feature = "big_windows")]
+const SND_BUF: usize = 4096;
 /// Max TCP payload per segment (matches the MSS we advertise on SYN).
 const SND_MSS: usize = 1400;
 

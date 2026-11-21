@@ -5,7 +5,7 @@
 use splanc_ota::boot::{self, AppState, Handoff, Health, LoaderAction, LoaderInputs, Reason, Reset, Verdict};
 use splanc_ota::image::{self, ImageError, CHIP_ESP32C3, CHIP_ESP32C6, CHIP_ESP32P4};
 use splanc_ota::manifest::{self, Manifest, ENCODED_LEN, FLAG_LOADER};
-use splanc_ota::session::{self, Refusal, Resume, Session, Target, MAX_CHUNK, PERSIST_EVERY, SECTOR};
+use splanc_ota::session::{self, Refusal, Resume, Session, Target, MAX_CHUNK, MAX_CHUNK_P4, PERSIST_EVERY, SECTOR};
 use splanc_ota::sha256::{sha256, Sha256};
 
 fn hex(b: &[u8]) -> String {
@@ -570,4 +570,37 @@ mod keyring_tests {
         b[0] ^= 1;
         assert_eq!(EpochRecord::decode(&b), None, "magic");
     }
+}
+
+/// Chunks are capped per chip (the P4's front end's TLS records cap it at a C6's 4 KB).
+#[test]
+fn chunks_are_capped_per_chip() {
+    assert_eq!(session::max_chunk_for_chip(CHIP_ESP32C6), MAX_CHUNK);
+    assert_eq!(session::max_chunk_for_chip(CHIP_ESP32P4), MAX_CHUNK_P4);
+    let img = vec![0u8; 3 * MAX_CHUNK as usize];
+    let c6 = Session::begin(manifest_for(&img, 1), true, &target(0), false, None).unwrap();
+    assert_eq!(c6.plan(0, &vec![0u8; MAX_CHUNK as usize + 1], CHIP_ESP32C6), Err(Refusal::BadChunk));
+}
+
+/// The P4 erases a 64 KB block ahead (one block erase), then writes into it with no erase;
+/// a C6 erases just the sectors each chunk touches.
+#[test]
+fn p4_erases_a_block_ahead() {
+    let img = vec![0u8; 200_000];
+    let mut m = manifest_for(&img, 1);
+    m.flags = splanc_ota::keyring::flags(splanc_ota::keyring::KEY_RELEASE, 0)
+        | ((manifest::BOARD_P4 as u32) << manifest::BOARD_SHIFT);
+    let p4t = Target { slot_size: SLOT, chip: CHIP_ESP32P4, installed_version: 0, board: manifest::BOARD_P4 };
+    let mut p4 = Session::begin(m, true, &p4t, false, None).unwrap();
+    // The first chunk (it carries the image header) erases a whole block ahead...
+    let first = p4.plan(0, &app_image(CHIP_ESP32P4, 4096), CHIP_ESP32P4).unwrap();
+    assert_eq!(first.erase, Some((0, session::ERASE_BLOCK_P4)));
+    p4.commit(&first);
+    // ...so the next is written with no erase.
+    let at = |s: &Session, off: u32| s.plan(off, &vec![0u8; 4096], CHIP_ESP32P4);
+    let second = at(&p4, 4096).unwrap();
+    assert_eq!(second.erase, None, "inside the block erased ahead");
+    let c6 = Session::begin(manifest_for(&img, 1), true, &target(0), false, None).unwrap();
+    let p = c6.plan(0, &app_image(CHIP_ESP32C6, 4096)[..4096], CHIP_ESP32C6).unwrap();
+    assert_eq!(p.erase, Some((0, SECTOR)));
 }

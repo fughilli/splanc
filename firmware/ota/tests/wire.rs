@@ -78,7 +78,14 @@ fn client_arms_decode() {
     chunk.r#offset = 0x1234_5000;
     chunk.r#data.extend_from_slice(&data).unwrap();
     let f = encode(CMsg::OtaChunk(chunk));
-    assert_eq!(wire::decode_client(&f).unwrap(), ClientArm::OtaChunk { offset: 0x1234_5000, data: &data });
+    assert_eq!(wire::decode_client(&f).unwrap(), ClientArm::OtaChunk { offset: 0x1234_5000, data: &data, inflated_len: 0 });
+    // A compressed chunk ("ota_deflate"): inflated_len rides along.
+    let mut z = pb::OtaChunk::default();
+    z.r#offset = 0x8000;
+    z.r#data.extend_from_slice(&data[..100]).unwrap();
+    z.r#inflated_len = 16384;
+    let f = encode(CMsg::OtaChunk(z));
+    assert_eq!(wire::decode_client(&f).unwrap(), ClientArm::OtaChunk { offset: 0x8000, data: &data[..100], inflated_len: 16384 });
 
     assert_eq!(wire::decode_client(&encode(CMsg::OtaFinish(Default::default()))).unwrap(), ClientArm::OtaFinish);
     assert_eq!(wire::decode_client(&encode(CMsg::OtaAbort(Default::default()))).unwrap(), ClientArm::OtaAbort);

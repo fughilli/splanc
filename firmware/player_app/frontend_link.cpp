@@ -230,7 +230,16 @@ void frontend_link_poll() {
     g_hello_sent_us = now;
     send_hello();
     // The identity once a second: the P4 applies it only when it changed.
-    if (g_ident_len && g_hellos++ % 10 == 0) send_frame(LK_LINK, 0, 0, g_ident, g_ident_len);
+    const bool second = g_hellos++ % 10 == 0;
+    if (g_ident_len && second) send_frame(LK_LINK, 0, 0, g_ident, g_ident_len);
+    // Whether anyone listens to the P4's console (LK_OP_LOG): on a change, and once a
+    // second (a P4 that restarted starts from "no one").
+    static int last_sub = -1;
+    const int sub = netstack_log_subscribed() ? 1 : 0;
+    if (sub != last_sub || second) {
+      const uint8_t b[2] = {LK_OP_LOG, (uint8_t)sub};
+      if (send_frame(LK_LINK, 0, 0, b, sizeof b)) last_sub = sub;
+    }
   }
   if (now - g_stats_sent_us >= 5000 * 1000) {
     g_stats_sent_us = now;

@@ -1262,6 +1262,22 @@ py_test(
     ],
 )
 
+# OTA transfer bench: streams a .ota into a reachable in-app updater (P4 / C6 app),
+# times each chunk, aborts before installing (unless --install). Chunk size and the
+# number in flight are flags: the measuring stick for the OTA speed-up.
+py_binary(
+    name = "ota_bench",
+    srcs = ["hitl_ota_bench.py"],
+    imports = ["."],
+    main = "hitl_ota_bench.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        requirement("websockets"),
+    ],
+)
+
 # A slider drag in the fx workspace moves the fixture DURING the drag (live channel:
 # seq'd commit:false set_uniforms paced on ControlAck), on any reachable player, C6 or
 # P4 (--device-ws, repeatable). Drags a slider of the running effect, echoes the

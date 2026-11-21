@@ -39,8 +39,9 @@ const REACQUIRE_S: f64 = 0.5;
 /// Light back after a coast -> Locked within this (s): fused, no fresh solve.
 const RELOCK_S: f64 = 0.05;
 /// A Locked pose is within this of the truth (m): the σ limit it's Locked under
-/// (POS_SIGMA_LIMIT_M), and within 2σ + 2 mm of its own reported σ (an honest covariance).
-const LOCKED_ERR_M: f64 = 0.02;
+/// (POS_SIGMA_ENTER_M), and within 2σ + 2 mm of its own reported σ (an honest covariance:
+/// the check that matters, since the limit is loose for a one-station room).
+const LOCKED_ERR_M: f64 = lh_health::POS_SIGMA_ENTER_M as f64;
 /// A coasting (dead-reckoned) pose is within this of the truth (m): the 2 cm σ limit
 /// (POS_SIGMA_LIMIT_M) the kernel ends coasting at, with margin for σ underestimating.
 const COAST_ERR_M: f64 = 0.03;
