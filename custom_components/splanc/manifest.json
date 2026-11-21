@@ -1,0 +1,15 @@
+{
+  "domain": "splanc",
+  "name": "Splanc",
+  "codeowners": ["@fughilli"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/fughilli/splanc/blob/main/docs/guides/home-assistant.md",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/fughilli/splanc/issues",
+  "loggers": ["custom_components.splanc"],
+  "requirements": [],
+  "version": "0.1.0",
+  "zeroconf": ["_splanc._tcp.local."]
+}

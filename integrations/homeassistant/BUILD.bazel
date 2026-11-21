@@ -1,0 +1,22 @@
+"""The Home Assistant integration's Bazel checks (the code is in
+//custom_components, the HACS layout).
+
+  :protocol_test  the hand-written protobuf codec against ledmapper.proto: every
+                  field number it uses, and round trips through the protoc-made
+                  ledmapper_pb2 (stdlib + protobuf only; no Home Assistant).
+
+The Home Assistant tests (tests/, pytest-homeassistant-custom-component) need
+Home Assistant itself and run in .github/workflows/homeassistant.yaml.
+"""
+
+load("@rules_python//python:defs.bzl", "py_test")
+
+py_test(
+    name = "protocol_test",
+    srcs = ["protocol_test.py"],
+    data = [
+        "//custom_components:splanc/protocol.py",
+        "//shared/protocol/proto:ledmapper.proto",
+    ],
+    deps = ["//shared/protocol/proto:ledmapper_py_proto"],
+)

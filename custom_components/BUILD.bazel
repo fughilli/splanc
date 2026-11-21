@@ -1,0 +1,9 @@
+"""custom_components/ — the Home Assistant integration, at the repo root for HACS.
+
+HACS installs custom_components/splanc/ as is; this BUILD file sits one level up
+so it never ships to users. Tests: //integrations/homeassistant.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["splanc/**"]))
