@@ -113,6 +113,9 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::GetEthernetState(_)
         | CMsg::DiscoverControllers(_)
         | CMsg::SetNetworkOutput(_)
+        | CMsg::SetPower(_)
+        | CMsg::GetPower(_)
+        | CMsg::SetPowerConfig(_)
         | CMsg::OtaBegin(_)
         | CMsg::OtaChunk(_)
         | CMsg::OtaFinish(_)
@@ -209,6 +212,9 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetEthernetState(_) => "get_ethernet_state",
         CMsg::DiscoverControllers(_) => "discover_controllers",
         CMsg::SetNetworkOutput(_) => "set_network_output",
+        CMsg::SetPower(_) => "set_power",
+        CMsg::GetPower(_) => "get_power",
+        CMsg::SetPowerConfig(_) => "set_power_config",
         CMsg::OtaBegin(_) => "ota_begin",
         CMsg::OtaChunk(_) => "ota_chunk",
         CMsg::OtaFinish(_) => "ota_finish",

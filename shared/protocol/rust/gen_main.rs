@@ -272,6 +272,14 @@ fn main() -> std::io::Result<()> {
     // ("ws281x", "ddp") and a color order ("GRB"), sized to fit them, which keeps
     // the 8-channel state smaller than the old 4-channel one with 64-byte strings.
     g.configure(".ledmapper.v1.HardwareConfigState.channels", Config::new().max_len(8));
+    // Lamp power (docs/design/lamp-power.md): the firmware reads the power arms in
+    // place (pbview) and writes power_state zero-copy, so its by-value envelopes
+    // never carry a transition's uniform preset.
+    g.configure(".ledmapper.v1.PowerTransition.label", Config::new().max_bytes(32));
+    g.configure(
+        ".ledmapper.v1.PowerTransition.uniforms",
+        if firmware { Config::new().skip(true) } else { Config::new().max_len(8) },
+    );
     g.configure(".ledmapper.v1.HardwareChannel.led_type", Config::new().max_bytes(16));
     g.configure(".ledmapper.v1.HardwareChannel.color_order", Config::new().max_bytes(8));
     // Ethernet + network outputs (docs/design/p4-ethernet-ddp.md): the P4 answers

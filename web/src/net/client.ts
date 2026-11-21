@@ -74,6 +74,12 @@ import {
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
+import {
+  flatPowerState,
+  type PowerState,
+  type PowerStateMessage,
+  type SetPowerConfigMessage,
+} from "./proto";
 import { LiveControl, applyAt } from "./liveControl";
 export { applyAt } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
@@ -375,6 +381,8 @@ export class LedMapperClient {
   // Kiosk mode: visitor activity this client sends (the countdown restarts on it).
   private activitySubs = new Set<() => void>();
   private kioskSubs = new Set<(s: KioskStatusMessage) => void>();
+  // Lamp power: power_state replies AND the device's unsolicited pushes.
+  private powerSubs = new Set<(s: PowerState) => void>();
 
   /**
    * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
@@ -1313,6 +1321,56 @@ export class LedMapperClient {
     return () => this.kioskSubs.delete(fn);
   }
 
+  // -- Lamp power (docs/design/lamp-power.md; the "power" feature) -------------
+
+  /** Turn the lamp on (`on`) / off, or `toggle` it. The configured ON/OFF
+   * transition plays unless `instant`; `durationMs` overrides its length for
+   * this change. Reply: the new power state. */
+  async setPower(
+    req: { on?: boolean; toggle?: boolean; instant?: boolean; durationMs?: number },
+    timeoutMs = 5000,
+  ): Promise<PowerState> {
+    const msg = { type: "set_power", ...req } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** The lamp's power state + config. */
+  async getPower(timeoutMs = 5000): Promise<PowerState> {
+    const msg = { type: "get_power" } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** Configure boot behaviour / the ON + OFF transitions (unset fields keep
+   * their value). Reply: the new power state. */
+  async setPowerConfig(cfg: Omit<SetPowerConfigMessage, "type">, timeoutMs = 5000): Promise<PowerState> {
+    const msg = { type: "set_power_config", ...cfg } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** Store a compiled effect on the device as the ON (`slot` 1) or OFF (2)
+   * transition effect (SubmitEffect.power_slot). It is validated and kept, not
+   * played: a transition with style EFFECT plays it. deck 1 + activate false
+   * keep it harmless on firmware without the "power" feature. Reply:
+   * result_ready (the new power state is pushed too). */
+  async storeTransitionEffect(slot: 1 | 2, effectId: string, fxb: Uint8Array): Promise<ResultReadyMessage> {
+    for (const fn of this.activitySubs) fn();
+    return this.sendChunked("EFFECT", {
+      type: "submit_effect",
+      effectId,
+      fxb,
+      activate: false,
+      deck: 1,
+      powerSlot: slot,
+    } as unknown as ClientMessage);
+  }
+
+  /** Subscribe to power_state frames: replies AND the unsolicited pushes (a lid
+   * tap, another client, a transition settling). Returns an unsubscribe fn. */
+  onPowerState(fn: (s: PowerState) => void): () => void {
+    this.powerSubs.add(fn);
+    return () => this.powerSubs.delete(fn);
+  }
+
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
    * "sensors" feature. */
   async getSensors(): Promise<SensorStateMessage> {
@@ -1759,6 +1817,11 @@ export class LedMapperClient {
     if ((msg.type as string) === "kiosk_status") {
       // Subscribers see every kiosk_status (pushes included), then any waiter.
       for (const fn of this.kioskSubs) fn(msg as unknown as KioskStatusMessage);
+    }
+    if ((msg.type as string) === "power_state" && this.powerSubs.size > 0) {
+      // Likewise power_state: every push reaches the subscribers, then a waiter.
+      const st = flatPowerState(msg as unknown as PowerStateMessage);
+      for (const fn of this.powerSubs) fn(st);
     }
     const w = this.waiters.get(msg.type);
     if (w) {
