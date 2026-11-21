@@ -1006,6 +1006,7 @@ rust_static_library(
     name = "player_ffi_frontend",
     srcs = [
         "driver_ffi.rs",
+        "effect_store.rs",
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
