@@ -354,7 +354,11 @@ microseconds, and the index is read once per wake period.
   - `deploy_effect {library_id}`: the relay puts the entry's source and an `effect_id` in the
     call and strips the library arguments, so any bridge version deploys it. After a successful
     deploy (and a `measure_effect`), the library is updated and a note added to the result.
-  - Bridge offline: `tools/list` answers the library tools; `initialize` gets a relay session
+  - Bridge offline: `tools/list` answers the last list the relay served while the bridge was
+    online (kept in the bridge's Durable Object; the library tools alone until there is one),
+    so the host's tool set never shrinks and grows back (a host may treat reappearing tools as
+    new and ask again for approvals the user already gave). Calling a bridge tool says the bridge is
+    offline. `initialize` gets a relay session
     (`Mcp-Session-Id: relay-…`, `serverInfo.name: splanc-relay`, instructions saying the bridge
     is offline) serving the library, `ping` and notifications (`202`); other calls on it get a
     JSON-RPC error. Once the bridge is back, that session gets `404` for anything but library

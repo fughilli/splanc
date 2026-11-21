@@ -7,7 +7,7 @@
 // fetches it server-side (no CORS there) and re-serves it with
 // Access-Control-Allow-Origin. Locked to this repo's release URLs — not an open proxy.
 //
-// The effects demo endpoint below relays only approved free models. The cloud relay's
+// The effects demo endpoint below relays only an approved model list. The cloud relay's
 // public paths (RELAY_PATHS, below) are forwarded to the splanc-relay Worker. On
 // splanc.pages.dev every other request 301s to https://splanc.io/app (retiredOrigin,
 // below); on other hosts (ledmapper.pages.dev) it passes through to the static site
@@ -57,17 +57,84 @@ async function ghAsset(request) {
 }
 
 // Public effects-demo relay. Credentials never enter a browser or static asset.
-export const FREE_DEMO_MODELS = Object.freeze([
-  "minimax/minimax-m3.1-flash:free",
-  "nvidia/nemotron-3.5-super-vl:free",
-  "google/gemma-4-31b-it:free",
+// Owner, 2026-11-18 (#548, docs/design/ai-tiers.md): the shared demo (website
+// playground, Acid Mode / kiosk with no AI set up) behaves like the app's FREE
+// tier: the same OpenRouter free models in the same order as FREE_MODELS in
+// web/src/effects/ai/providers/openrouter.ts (minus the private pick), reasoning
+// off, and the app's own system prompt passed through unchanged (the client
+// builds it exactly as for the free tier). No paid models: every request is
+// zero-priced, so the key's credit can't be spent here. Order = fallback order.
+// A request carrying an image (capture_preview) goes only to the vision models.
+const FREE = Object.freeze({ prompt: 0, completion: 0, request: 0, image: 0 });
+const DEMO_MODEL_SPECS = Object.freeze([
+  { id: "nvidia/nemotron-3.5-lightning:free", maxPrice: FREE, vision: false },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", maxPrice: FREE, vision: false },
+  { id: "nvidia/nemotron-3.5-super-vl:free", maxPrice: FREE, vision: true },
 ]);
+export const DEMO_MODELS = Object.freeze(DEMO_MODEL_SPECS.map(m => m.id));
 const DEMO_PATH = "/api/demo-ai/chat/completions";
 const DEMO_ORIGINS = new Set([
   "https://splanc.io", "https://www.splanc.io", "https://splanc.pages.dev",
   "https://ledmapper.pages.dev", "https://fughilli.github.io",
+  // The iOS (Capacitor) app's page origin. Origin is a hotlink guard, not
+  // authentication (any non-browser client can send it); the limits below are
+  // what protect the shared quota.
+  "capacitor://localhost",
 ]);
-const DEMO_TOOLS = new Set([
+// Acid Mode play (the Halloween kiosk, #/acid?play=1). The shipped app (incl. the
+// iOS build in review) sends a terse persona and shows set_script's `summary` as
+// the whole reply. Owner, 2026-10-31: give visitors an engaging conversation, not
+// a 5-word status. So the relay swaps the play persona (the system prompt's tail,
+// from PLAY_MARKER on) and the summary's description, offers capture_preview
+// again, and lifts the token cap,
+// without an app release. The fixture and cost rules are kept from the app's text.
+const PLAY_MARKER = 'You are "Acid Mode" on a Halloween LED install';
+const PLAY_PERSONA = `You are "Acid Mode", the friendly spirit living in a Halloween LED install at a front door. A visitor (often a kid, sometimes a grown-up, maybe a whole family) just SPOKE a wish into their phone and is watching the lights. Make this the coolest thing that happens to them tonight.
+- Make their wish real with ONE set_script call, right away. Don't ask questions first: if the wish is vague, silly or impossible, still make a fun spooky effect inspired by it.
+- The set_script \`summary\` is your spoken reply, shown to them in the chat. Write it like a delighted, slightly spooky friend: 2 to 4 short sentences. Tell them what they're seeing in vivid, specific words (what moves, which colours, where to look), give it a little personality or a playful spooky twist, then invite them to keep going with one concrete idea they could say next (e.g. "Want the ghosts to go faster, or should a storm roll in?"). No jargon, no code, no talk about uniforms, devices or maths. Family-friendly: spooky fun, never gory or scary-mean.
+- They may be refining the last effect ("faster!", "more purple", "add lightning"): the current effect source is included with their wish, so build on it and say what you changed.
+- The fixture: an LED curtain draped over pumpkins (the first LEDs, channel 0), then an LED rope snaked between the pumpkins (the remaining LEDs, channel 1). Counts are unknown and the LEDs may be UNMAPPED, so build the look along the wiring: \`fixed u = fixed(led.idx) / fixed(led.count);\` is a 0..1 coordinate, \`hash(float(led.idx))\` gives per-LED randomness, plus phases in state. Do not use led.pos, led.uv, led.dist, textures or buffers.
+- Halloween palette: pumpkin orange, ghost blue-white, witch purple, slime green, blood-moon red, with dark gaps. Never all black: keep a dim glow everywhere.
+- It runs on a tiny ESP32-C6 driving hundreds of LEDs, so keep it CHEAP: fixed maths per LED with fixed() around every literal, phases advanced in update(), no loops in shade(), no pow/exp/length/smoothstep per LED. Make it rich through motion and colour, not expensive maths.
+- Expose 1 or 2 uniforms (e.g. speed and a colour).
+- If the set_script result reports an error, a dark frame or "too slow", send a simpler fixed version with set_script, with a fresh spoken reply in its summary.
+- You can SEE your effect: capture_preview renders it on a stand-in for the curtain (a 240-LED serpentine grid; the real counts differ). Use it when seeing the result matters (judging colours, motion, coverage), in the same response as set_script; skip it after a compile error or for a tiny tweak. Capture at most once per wish. After you see it, either fix the effect with set_script (summary = your spoken reply), or give your spoken reply as plain text: the same 2 to 4 vivid, friendly sentences ending with one idea they could ask for next.`;
+const PLAY_SUMMARY = "Your spoken reply to the visitor, shown to them in the chat: 2 to 4 short, " +
+  "vivid, friendly sentences about what they're seeing, ending with one idea they could ask for next. Emit this field FIRST.";
+// Workers only accepts handlers/objects as named exports (a bare string export
+// fails to start the runtime), so the tests see these through one frozen object.
+export const DEMO_PLAY = Object.freeze({ marker: PLAY_MARKER, persona: PLAY_PERSONA });
+const PLAY_MAX_TOKENS = 4000;
+// The app withholds capture_preview in play mode but still answers it (owner: the
+// visitor's turn should see previews like the editor does). Same text as chatPrompt.ts.
+const CAPTURE_PREVIEW_TOOL = Object.freeze({ type: "function", function: Object.freeze({
+  name: "capture_preview",
+  description: "Render the current live preview to a PNG image so you can SEE how the " +
+    "effect looks on the LED map right now. Call this ONLY when actually seeing " +
+    "the result matters (e.g. to judge colours, motion, or coverage). Do NOT " +
+    "capture after a compile error (there's nothing new to see — fix the code " +
+    "first), and don't capture on every change; skipping it when unneeded is " +
+    "faster and cheaper.",
+  parameters: { type: "object", additionalProperties: false, properties: {} },
+}) });
+/** Rewrite an Acid play request (see PLAY_MARKER); any other request is unchanged. */
+export function engagePlay(body) {
+  const sys = body.messages[0];
+  const at = sys?.role === "system" && typeof sys.content === "string" ? sys.content.indexOf(PLAY_MARKER) : -1;
+  if (at < 0) return body;
+  return {
+    ...body,
+    max_tokens: PLAY_MAX_TOKENS,
+    messages: [{ ...sys, content: sys.content.slice(0, at) + PLAY_PERSONA }, ...body.messages.slice(1)],
+    tools: body.tools && [...body.tools.map(t => {
+      const summary = t.function.name === "set_script" && t.function.parameters?.properties?.summary;
+      if (!obj(summary)) return t;
+      const properties = { ...t.function.parameters.properties, summary: { ...summary, description: PLAY_SUMMARY } };
+      return { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
+    }), ...(body.tools.some(t => t.function.name === "capture_preview") ? [] : [CAPTURE_PREVIEW_TOOL])],
+  };
+}
+export const DEMO_TOOLS = new Set([
   "set_script", "capture_preview", "estimate_performance", "list_midi_controls", "set_midi_mapping",
 ]);
 const BODY_LIMIT = 2 * 1024 * 1024;
@@ -155,12 +222,92 @@ function completion(json, tools) {
 
 // The isolate budget is a coarse burst guard, not globally coordinated abuse
 // prevention. Operators can bind AI_RATE_LIMITER for Cloudflare edge enforcement.
-// Every upstream request is additionally constrained to zero-priced models.
+// Every upstream request is additionally capped at zero price (free models only).
+//
+// Sizing (2026-10-29): the key has credit, so OpenRouter allows ~1000 free-model
+// requests/day and ~20/minute. A crowd at a Halloween stoop shares that, and an
+// Acid Mode prompt costs 1-3 requests. So: 20/minute per isolate (the upstream
+// per-minute cap; more only buys upstream 429s), and per client 6/minute (a prompt
+// plus repairs, twice) and 30/hour (~10-15 prompts), so one visitor can burn at
+// most a few percent of the day. (2026-10-31 raised it to 60/hour while paid
+// Claude led; 2026-11-18 the demo is free-models-only again, so the shared
+// 1000/day free cap binds once more and the hourly share is back to 30.)
+export const DEMO_LIMITS = Object.freeze({
+  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 30, clientActive: 2, clients: 2000,
+});
+
+/** Rate-limit key for a visitor: the IPv4 address, or the /64 of an IPv6 one.
+ * Phones on cellular are usually IPv6 and rotate privacy addresses inside their
+ * /64, so the /64 is the device; a carrier-NAT IPv4 may be shared (the hourly
+ * cap still leaves room for a few visitors per address). */
+export function clientKey(ip) {
+  if (!ip || !ip.includes(":")) return ip || "unknown";
+  const [head] = ip.split("%");
+  let groups;
+  if (head.includes("::")) {
+    const [l, r] = head.split("::");
+    const left = l ? l.split(":") : [], right = r ? r.split(":") : [];
+    groups = [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
+  } else groups = head.split(":");
+  return groups.slice(0, 4).map(g => (g || "0").toLowerCase().replace(/^0+(?=.)/, "")).join(":") + "::/64";
+}
+
+// -- Ops metrics (docs/design/ops-grafana.md) -------------------------------------
+// One content-free `demo_request` event per POST to Grafana Cloud Logs, when the
+// three GRAFANA_LOKI_* settings are present on the Pages project (off otherwise).
+// The JS twin of agent/relay/src/ops.ts for this one event: ONLY these fields,
+// each type-checked; never the IP / client key, origin, prompt, tools or reply.
+export const DEMO_OPS_FIELDS = Object.freeze({
+  outcome: /^[a-z_]{1,40}$/, status: "num", model: /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/,
+  attempts: "num", ms: "num", images: "bool",
+});
+export function demoOpsLine(ev) {
+  const out = { ev: "demo_request" };
+  for (const [k, t] of Object.entries(DEMO_OPS_FIELDS)) {
+    const v = ev[k];
+    if (t === "num" ? typeof v === "number" && Number.isFinite(v)
+      : t === "bool" ? typeof v === "boolean"
+      : typeof v === "string" && t.test(v)) out[k] = v;
+  }
+  return out;
+}
+export function demoOpsPush(env, ev, { fetchImpl = (...args) => fetch(...args), waitUntil, now = Date.now } = {}) {
+  if (!env.GRAFANA_LOKI_PUSH_URL || !env.GRAFANA_LOKI_USER || !env.GRAFANA_LOKI_TOKEN) return Promise.resolve();
+  const envName = /^[a-z][a-z0-9-]{0,19}$/.test(env.OPS_ENV ?? "") ? env.OPS_ENV : "production";
+  const stream = { service: "splanc-pages", component: "demo-relay", env: envName, event: "demo_request", alert: "false" };
+  let p;
+  try {
+    p = fetchImpl(env.GRAFANA_LOKI_PUSH_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Basic ${btoa(`${env.GRAFANA_LOKI_USER}:${env.GRAFANA_LOKI_TOKEN}`)}` },
+      body: JSON.stringify({ streams: [{ stream, values: [[`${BigInt(now()) * 1000000n}`, JSON.stringify(demoOpsLine(ev))]] }] }),
+    }).then(() => undefined, () => undefined);
+  } catch { p = Promise.resolve(); }
+  waitUntil?.(p);
+  return p;
+}
+
 export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now = Date.now,
-  attemptMs = 45000, totalMs = 100000 } = {}) {
+  attemptMs = 30000, totalMs = 70000, limits = DEMO_LIMITS, opsFetch } = {}) {
+  const handle = createDemoHandler({ fetchImpl, now, attemptMs, totalMs, limits });
+  return async function demoAi(request, env, ctx) {
+    const meta = {};
+    const started = now();
+    const res = await handle(request, env, meta);
+    if (request.method === "POST") {
+      demoOpsPush(env, {
+        outcome: meta.outcome ?? "unknown", status: res.status, model: meta.model,
+        attempts: meta.attempts, ms: Math.max(0, now() - started), images: meta.images,
+      }, { fetchImpl: opsFetch, waitUntil: ctx?.waitUntil?.bind(ctx), now });
+    }
+    return res;
+  };
+}
+
+function createDemoHandler({ fetchImpl, now, attemptMs, totalMs, limits }) {
   const clients = new Map();
   let windowStart = 0, requests = 0, inFlight = 0;
-  return async function demoAi(request, env) {
+  return async function demoAi(request, env, meta) {
     const origin = request.headers.get("origin");
     const allowed = DEMO_ORIGINS.has(origin) || (env.DEMO_DEV_ORIGIN && origin === env.DEMO_DEV_ORIGIN);
     const headers = { "content-type": "application/json", "cache-control": "no-store", vary: "Origin" };
@@ -170,28 +317,42 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       "access-control-expose-headers": "Retry-After",
     });
     const reply = (status, body, extra = {}) => new Response(JSON.stringify(body), { status, headers: { ...headers, ...extra } });
-    const error = (status, code, extra) => reply(status, { error: { code } }, extra);
+    // meta: the ops event's outcome (our own error-code vocabulary only).
+    const error = (status, code, extra) => { meta.outcome = code; return reply(status, { error: { code } }, extra); };
     if (!allowed) return error(403, "origin_not_allowed");
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (request.method === "GET") return reply(200, { configured: Boolean(env.OPENROUTER_API_KEY), models: FREE_DEMO_MODELS });
+    if (request.method === "GET") return reply(200, { configured: Boolean(env.OPENROUTER_API_KEY), models: DEMO_MODELS });
     if (request.method !== "POST") return error(405, "method_not_allowed", { allow: "POST, GET, OPTIONS" });
     if (!env.OPENROUTER_API_KEY) return error(503, "not_configured");
     if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return error(415, "json_required");
     if (request.signal.aborted) return error(499, "cancelled");
     const stamp = now();
     if (stamp - windowStart >= 60000) { windowStart = stamp; requests = 0; }
-    for (const [key, value] of clients) if (stamp - value.start >= 60000) clients.delete(key);
-    const ip = request.headers.get("cf-connecting-ip") || "unknown";
-    const client = clients.get(ip) ?? { start: stamp, count: 0, active: 0 };
-    if (requests >= 120 || inFlight >= 8 || client.count >= 24 || client.active >= 2 || (clients.size >= 2000 && !clients.has(ip))) {
-      return error(429, "demo_busy", { "retry-after": "60" });
+    for (const [key, value] of clients) {
+      if (stamp - value.start >= 60000) { value.start = stamp; value.count = 0; }
+      if (stamp - value.hourStart >= 3600000) {
+        if (value.active === 0) clients.delete(key);
+        else { value.hourStart = stamp; value.hourCount = 0; }
+      }
+    }
+    const ip = clientKey(request.headers.get("cf-connecting-ip"));
+    const client = clients.get(ip) ?? { start: stamp, count: 0, hourStart: stamp, hourCount: 0, active: 0 };
+    // Busy for everyone (try again in a minute) vs this visitor's own share.
+    if (requests >= limits.perMinute || inFlight >= limits.inFlight || (clients.size >= limits.clients && !clients.has(ip))) {
+      return error(429, "demo_busy", { "retry-after": String(Math.max(1, Math.ceil((windowStart + 60000 - stamp) / 1000))) });
+    }
+    if (client.count >= limits.clientPerMinute || client.active >= limits.clientActive) {
+      return error(429, "client_rate_limited", { "retry-after": String(Math.max(1, Math.ceil((client.start + 60000 - stamp) / 1000))) });
+    }
+    if (client.hourCount >= limits.clientPerHour) {
+      return error(429, "client_hourly_limit", { "retry-after": String(Math.max(1, Math.ceil((client.hourStart + 3600000 - stamp) / 1000))) });
     }
     if (env.AI_RATE_LIMITER) {
       try {
         if (!(await env.AI_RATE_LIMITER.limit({ key: ip })).success) return error(429, "demo_busy", { "retry-after": "60" });
       } catch { return error(503, "limiter_unavailable"); }
     }
-    client.count++; client.active++; requests++; inFlight++; clients.set(ip, client);
+    client.count++; client.hourCount++; client.active++; requests++; inFlight++; clients.set(ip, client);
     const total = new AbortController();
     const cancel = () => total.abort();
     request.signal.addEventListener("abort", cancel, { once: true });
@@ -206,11 +367,15 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
         return error(e instanceof RangeError ? 413 : 400, "invalid_request");
       }
       if (!validPayload(body)) return error(400, "invalid_request");
+      body = engagePlay(body);
       const attempts = [];
-      for (const model of FREE_DEMO_MODELS) {
+      const images = body.messages.some(m => Array.isArray(m.content) && m.content.some(p => p?.type === "image_url"));
+      meta.images = images;
+      for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS.filter(m => !images || m.vision)) {
         if (total.signal.aborted) break;
         const diagnostic = { model, outcome: "pending" };
         attempts.push(diagnostic);
+        meta.attempts = attempts.length; meta.model = model;
         const attempt = new AbortController();
         const stop = () => attempt.abort();
         total.signal.addEventListener("abort", stop, { once: true });
@@ -224,11 +389,10 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               "HTTP-Referer": "https://splanc.io", "X-OpenRouter-Title": "Splanc effects playground" },
             body: JSON.stringify({ model, messages: body.messages, stream: false,
               max_tokens: Math.min(body.max_tokens ?? 4000, 4000),
-              // MiniMax defaults to max reasoning; this is an interactive editor.
-              // The other two models support disabling optional reasoning.
-              reasoning: model === "minimax/minimax-m3.1-flash:free" ? { effort: "low" } : { enabled: false },
+              // Optional reasoning off (latency) unless the model needs a setting.
+              reasoning: reasoning ?? { enabled: false },
               ...(body.tools?.length ? { tools: body.tools, tool_choice: "auto" } : {}),
-              provider: { max_price: { prompt: 0, completion: 0, request: 0, image: 0 }, require_parameters: true },
+              provider: { max_price: maxPrice, require_parameters: true },
             }),
           });
           if (result.status >= 300 && result.status < 400) {
@@ -263,6 +427,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               String(metadata?.limit_source ?? "").startsWith("openrouter_");
             if (!providerQuota || platformQuota) {
               const retry = result.headers.get("retry-after") || quotaHeaders.get("retry-after") || "60";
+              meta.outcome = platformQuota ? "upstream_rate_limited_platform" : "upstream_rate_limited";
               return reply(429, { error: { code: "rate_limited", scope: platformQuota ? "platform" : "unknown" } }, { "retry-after": retry });
             }
             continue;
@@ -279,10 +444,10 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           else if (diagnostic.outcome !== "output_limit") diagnostic.outcome = "empty_or_invalid_finish";
           const parsed = completion(json, body.tools);
           if (parsed?.refusal) return error(422, "request_declined");
-          if (parsed) return reply(200, { ...parsed, model });
+          if (parsed) { meta.outcome = "ok"; return reply(200, { ...parsed, model }); }
         } catch {
           diagnostic.outcome = attempt.signal.aborted ? "timeout" : "transport_error";
-          // Network failures/attempt deadlines may try the next free model.
+          // Network failures/attempt deadlines may try the next model.
           // A visitor cancellation or overall deadline exits below.
         } finally {
           clearTimeout(timer);
@@ -291,6 +456,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       }
       // Fixed model IDs, numeric status and our own outcome vocabulary only.
       // Never expose provider raw payloads, prompts, generated code or credentials.
+      meta.outcome = request.signal.aborted ? "cancelled" : total.signal.aborted ? "timeout" : "models_unavailable";
       return reply(request.signal.aborted ? 499 : total.signal.aborted ? 504 : 503, {
         error: { code: request.signal.aborted ? "cancelled" : "models_unavailable" }, attempts,
       });
@@ -310,9 +476,19 @@ const demoAi = createDemoRelay();
 // The relay's landing page (/) and the other .well-known paths stay with the site.
 export const RELAY_PATHS = new Set([
   "/mcp", "/healthz", "/register", "/authorize", "/token", "/revoke", "/pair",
-  "/bridge/register", "/bridge/connect", "/live", "/bugs",
+  "/bridge/register", "/bridge/connect", "/live", "/bugs", "/feedback", "/feedback/status",
   "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp",
   "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration",
+  // Splanc AI credits (agent/relay/src/billing, docs/design/ai-billing.md). The
+  // relay answers 503 on all of them until billing is enabled there. Stripe's
+  // webhook and the admin route use the workers.dev address directly.
+  "/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance",
+  "/billing/checkout", "/billing/consent", "/billing/pricing", "/billing/statement",
+  "/billing/purchase/apple",
+  // Sign in with Apple / Google (billing/signin.ts). Apple's server
+  // notifications use the workers.dev address directly.
+  "/billing/signin", "/billing/signin/config", "/billing/signin/nonce",
+  "/billing/signin/switch", "/billing/signin/unlink",
 ]);
 
 export function relayRoute(request, url, env) {
@@ -345,6 +521,13 @@ self.addEventListener("activate", (e) => e.waitUntil((async () => {
 })()));
 `;
 
+// A home-screen icon installed from this origin launches its start_url (?source=pwa).
+// The redirect tags that launch with retired=1: the app then opens inside the old
+// icon's window, which reports display-mode standalone and can't install, and this
+// tag is the only way the app can tell it apart from a real install
+// (src/ui/app/pwa.ts launchMode()).
+const RETIRED_PARAM = "retired";
+
 export function retiredOrigin(url) {
   if (!RETIRED_HOST.test(url.hostname)) return null;
   if (url.pathname === "/sw.js") {
@@ -353,16 +536,20 @@ export function retiredOrigin(url) {
     });
   }
   const base = SITE_ROOT_PATH.test(url.pathname) ? "https://splanc.io" : "https://splanc.io/app";
+  let search = url.search;
+  if (url.searchParams.get("source") === "pwa" && !url.searchParams.has(RETIRED_PARAM)) {
+    search += `&${RETIRED_PARAM}=1`;
+  }
   return new Response(null, {
     status: 301,
-    headers: { location: `${base}${url.pathname}${url.search}`, "cache-control": "public, max-age=86400" },
+    headers: { location: `${base}${url.pathname}${search}`, "cache-control": "public, max-age=86400" },
   });
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname === DEMO_PATH) return demoAi(request, env);
+    if (url.pathname === DEMO_PATH) return demoAi(request, env, ctx);
     if (url.pathname === "/gh-asset") return ghAsset(request);
     const relayed = relayRoute(request, url, env);
     if (relayed) return relayed;
