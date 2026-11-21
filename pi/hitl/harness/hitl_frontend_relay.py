@@ -71,6 +71,57 @@ async def probe(ws_url: str) -> dict:
     return out
 
 
+async def concurrent(ws_url: str, n: int, hold_s: float) -> list[bool]:
+    """Open `n` wss sessions at once, each answered (get_wifi_policy, the front end's own
+    arm), and hold them all open for `hold_s` (the heap lines then report ws=n)."""
+    import websockets
+    from server import proto_wire
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    async def one(i: int):
+        try:
+            sock = await websockets.connect(ws_url, ssl=ctx, open_timeout=hitl_ws.OPEN_TIMEOUT)
+        except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as e:
+            print(f"[ws{i}] did not open: {type(e).__name__}: {e}", flush=True)
+            return None
+        try:
+            await sock.send(proto_wire.encode_client({"type": "get_wifi_policy"}))
+            reply = proto_wire.decode_server(
+                await asyncio.wait_for(sock.recv(), timeout=hitl_ws.RPC_TIMEOUT)
+            )
+            print(f"[ws{i}] open, get_wifi_policy -> {reply.get('type')}", flush=True)
+            return sock if reply.get("type") == "wifi_policy_state" else None
+        except Exception as e:  # noqa: BLE001 — a failed session is the result
+            print(f"[ws{i}] failed: {type(e).__name__}: {e}", flush=True)
+            await sock.close()
+            return None
+
+    socks = await asyncio.gather(*(one(i) for i in range(n)))
+    print(
+        f"[ws] {sum(s is not None for s in socks)}/{n} sessions open; holding {hold_s:g} s",
+        flush=True,
+    )
+    await asyncio.sleep(hold_s)
+    ok = []
+    for s in socks:
+        if s is None:
+            ok.append(False)
+            continue
+        try:  # still alive after the hold
+            await s.send(proto_wire.encode_client({"type": "get_tls_info"}))
+            r = proto_wire.decode_server(
+                await asyncio.wait_for(s.recv(), timeout=hitl_ws.RPC_TIMEOUT)
+            )
+            ok.append(r.get("type") == "tls_info")
+        except Exception:  # noqa: BLE001
+            ok.append(False)
+        await s.close()
+    return ok
+
+
 def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     remote = "/tmp/" + os.path.basename(bundle)
     res.scp_to([bundle], "/tmp/")
@@ -113,7 +164,12 @@ def run(args) -> int:
         redirect = provision_dut(res, creds[0], creds[1], args.improv_timeout)
         host, port = dut_target(redirect, "wss")
         with res.forward(host, port) as local_port:
-            result["replies"] = asyncio.run(probe(f"wss://localhost:{local_port}/ws"))
+            url = f"wss://localhost:{local_port}/ws"
+            result["replies"] = asyncio.run(probe(url))
+            if args.sessions > 1:
+                result["concurrent"] = asyncio.run(
+                    concurrent(url, args.sessions, args.idle_seconds)
+                )
         print(f"[idle] {args.idle_seconds:g} s joined and idle…", flush=True)
         time.sleep(args.idle_seconds)
     except (HarnessError, ReserveError) as e:
@@ -128,6 +184,10 @@ def run(args) -> int:
     print(f"[heap] {msg}", flush=True)
     if "replies" in result:
         errs += check_replies(result["replies"])
+    if args.sessions > 1 and not all(result.get("concurrent") or [False]):
+        errs.append(
+            f"concurrent sessions: {result.get('concurrent')} (wanted {args.sessions} answered)"
+        )
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:
             json.dump({**result, "verdict": msg, "errors": errs}, f, indent=1)
@@ -158,6 +218,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--improv-timeout", type=float, default=60.0)
     ap.add_argument(
         "--idle-seconds", type=float, default=40.0, help="idle, joined, before reading the heap"
+    )
+    ap.add_argument(
+        "--sessions",
+        type=int,
+        default=1,
+        help="also hold this many wss sessions open at once through the idle window",
     )
     ap.add_argument("--json-out", help="write the replies and heap samples here")
     ap.add_argument(

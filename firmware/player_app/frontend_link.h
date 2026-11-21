@@ -21,5 +21,7 @@ void frontend_link_set_identity(const char *mac, const char *name);
 // Forward one OSC datagram (udp/9000) to the P4: its uniforms and modules live there.
 // Network task; drops it when the link is down or full (OSC is latest-value-wins).
 void frontend_link_osc(const uint8_t *data, size_t len);
+// One line (newline-terminated) for the P4's console, which prints it as "[c6] ...".
+void frontend_link_log(const char *line);
 // One "[link] ..." status fragment.
 int frontend_link_stats(char *buf, size_t cap);
