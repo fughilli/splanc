@@ -573,9 +573,10 @@ pub fn stride_lit(led: u32, phase: u32, spacing: u32, anchor_density: u32) -> bo
 /// staggered LEDs D-1 = 3 whole own cycles per dwell, one more than the
 /// decoder's two confirmations need; D = 3 leaves exactly two).
 pub const ROLLING_DWELL_DEFAULT: u32 = 4;
-/// The smallest dwell the kernel runs (a 1-cycle dwell leaves a staggered LED
-/// no whole own cycle at all); smaller requests are clamped up.
-pub const ROLLING_DWELL_MIN: u32 = 2;
+/// The smallest dwell the kernel runs; smaller requests are clamped up. A
+/// 2-cycle dwell leaves a staggered LED one whole own cycle (no decode), and
+/// the block-start LED that yields at the wrap none at all.
+pub const ROLLING_DWELL_MIN: u32 = 3;
 /// The largest dwell accepted (bounds the i64 schedule arithmetic; far longer
 /// than any useful dwell).
 pub const ROLLING_DWELL_MAX: u32 = 64;
@@ -1664,7 +1665,7 @@ mod tests {
     #[test]
     fn rolling_block_shift_is_a_one_cycle_wave() {
         for spec in rolling_specs(60) {
-            for (s, d) in [(2u32, 2u32), (3, 4), (5, 3)] {
+            for (s, d) in [(2u32, 3u32), (3, 4), (5, 5)] {
                 let rs = RollingStride::new(s, 3, d, 0, 0);
                 let p = rs.period_frames(&spec);
                 assert_eq!(p, s * d * spec.cycle_frames);
@@ -1681,7 +1682,7 @@ mod tests {
     fn rolling_keeps_spacing_lights_whole_own_cycles_and_covers_everyone() {
         for s in [2u32, 3, 4, 6] {
             for a in [0u32, 3, 4] {
-                for d in [2u32, 3, 4] {
+                for d in [3u32, 4, 5] {
                     let rs0 = RollingStride::new(s, a, d, 0, 0);
                     let b = rs0.block_len();
                     let n = 4 * b + 3;
@@ -1711,8 +1712,9 @@ mod tests {
                                 }
                             }
                             let inner: Vec<(u32, u32)> =
-                                runs.iter().copied().filter(|&(t0, len)| t0 > 0 && t0 + len < frames).collect();
-                            assert!(inner.len() >= 2, "S={s} A={a} D={d} led {x}: runs {runs:?}");
+                                runs.iter().copied().filter(|&(t0, len)| t0 >= p && t0 + len < frames).collect();
+                            // (The first period's dwells are clipped at the epoch.)
+                            assert!(!inner.is_empty(), "S={s} A={a} D={d} led {x}: runs {runs:?}");
                             let floor = if x % b == 0 { d - 2 } else { d - 1 };
                             for &(t0, len) in &inner {
                                 assert_eq!((t0 + c - own % c) % c, 0, "led {x} starts mid own cycle at {t0}");
