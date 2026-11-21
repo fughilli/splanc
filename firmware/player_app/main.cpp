@@ -66,6 +66,7 @@
 #include "firmware/player_app/agent_bundle.h"  // generated: LM_AGENT_BUNDLE_URL / _SHA256
 #endif
 #include "firmware/player_app/color_correction.h"
+#include "firmware/player_app/identify_blink.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/board_caps_res.h"  // board_caps_binaryproto[] / _len
 #include "firmware/player_app/led_config.h"
@@ -2293,6 +2294,15 @@ static void modules_frame(uint32_t leds) {
   }
 }
 
+// Improv Identify blink (D-259, identify_blink.h): millis() | 1 when the connect
+// picker's Blink asked (0 = none). Written on the app loop, read by render_once.
+static volatile uint32_t g_identify_start_ms = 0;
+
+void player_identify_start() {
+  g_identify_start_ms = (uint32_t)millis() | 1u;
+  Log().printf("[identify] blink requested\n");
+}
+
 static uint32_t render_once() {
   static uint32_t last_shown_frame = 0xffffffff;
   static bool was_active = false;
@@ -2313,6 +2323,9 @@ static uint32_t render_once() {
   // split at the channel-0 boundary just before the transmit.
   bool direct_split = false;
   uint32_t direct0 = 0, direct1 = 0;
+  // A mapping capture, a counting probe or a paused FX debugger owns the strip:
+  // an Identify blink must not draw over it (it would corrupt the capture).
+  bool strip_owned = false;
 
   // Active strip length to clock out this frame, split across the two output
   // channels at the channel-0 boundary. Default total: set_led_count(0) +
@@ -2427,6 +2440,7 @@ static uint32_t render_once() {
     int64_t d = next_ms - (int64_t)millis();
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
+    strip_owned = true;
   }
 #if defined(LM_NETOUT)
   else if (lm_counting_channel() >= 2 && lm_counting_color(0, rgb)) {
@@ -2448,6 +2462,7 @@ static uint32_t render_once() {
     }
     xmit_len = end;
     net_probe = true;
+    strip_owned = true;
     lm_counting_color_order(net_probe_perm);
     show = true;
     was_active = true;
@@ -2498,6 +2513,7 @@ static uint32_t render_once() {
     // order doesn't matter there.)
     lm_counting_color_order(frame_order);
     use_frame_order = true;
+    strip_owned = true;
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
@@ -2506,6 +2522,7 @@ static uint32_t render_once() {
     // renders or transmits — the strip latches the last frame. Re-check soon for
     // a step / resume / lease expiry.
     next_delay_ms = kFxDbgHoldPollMs;
+    strip_owned = true;
   } else if (lm_fx_active()) {
     // User effect (.fxb shader): run update() once, then shade() per LED over the
     // stored map position. Bounded execution guards each invocation (instruction budget + wall-time
@@ -2671,6 +2688,43 @@ static uint32_t render_once() {
       }
     }
   }
+  // Improv Identify blink (D-259): replace this frame's OUTPUT with the blink on
+  // every port for min(the port's buffer share, the 60 fps wire length). Whatever
+  // branch ran above still ran (an effect's update()/shade() keep its animation
+  // going), so the show resumes where it would have been. One black frame over the
+  // same span ends it, so LEDs past the show's own length don't stay lit.
+  uint32_t identify_wake_ms = 0;
+  if (g_identify_start_ms != 0) {
+    if (strip_owned) {
+      g_identify_start_ms = 0;  // never over a capture / probe / paused debugger
+      Log().printf("[identify] skipped: the strip is in use\n");
+    } else {
+      uint32_t elapsed = (uint32_t)millis() - g_identify_start_ms;
+      lm_identify::Phase ph = lm_identify::phase_at(elapsed);
+      int ports = ws2812_channels();
+      uint32_t np = ports >= 2 ? 2 : (ports == 1 ? 1 : 0);
+      uint32_t len = lm_identify::per_port_len(g_led_cap, np);
+      if (len > 0) {
+        Rgb c = ph == lm_identify::Phase::kOn
+                    ? Rgb(lm_identify::kLevel, lm_identify::kLevel, lm_identify::kLevel)
+                    : Rgb::Black;
+        fill_rgb(leds, len * np, c);  // channel 0's run, then channel 1's
+        direct_split = true;
+        direct0 = len;
+        direct1 = np == 2 ? len : 0;
+        use_frame_order = false;  // grey/black read the same in any wire order
+        show = true;
+      }
+      if (ph == lm_identify::Phase::kClear) {
+        g_identify_start_ms = 0;
+        was_active = true;               // idle: blank again next frame
+        last_shown_frame = 0xffffffff;   // a static pattern repaints
+        Log().printf("[identify] blink done (%u LEDs x %u ports)\n", (unsigned)len, (unsigned)np);
+      } else {
+        identify_wake_ms = lm_identify::ms_to_next_edge(elapsed);
+      }
+    }
+  }
   if (!fx_frame_rendered) s_fx_last_ms = 0;  // the next effect frame starts fresh
   g_render_in_frame = false;
   xSemaphoreGive(player_mutex);
@@ -2795,6 +2849,8 @@ static uint32_t render_once() {
     }
     xSemaphoreGive(player_mutex);
   }
+  // Wake for the blink's next on/off edge (an idle board otherwise sleeps 100 ms).
+  if (identify_wake_ms != 0 && identify_wake_ms < next_delay_ms) next_delay_ms = identify_wake_ms;
   return next_delay_ms;
 }
 
@@ -4164,6 +4220,8 @@ void setup() {
 #if !defined(LM_NETSTACK)
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).
 static void provisioning_poll() {
+  // Improv Identify (the connect picker's Blink): a brief blink on every output.
+  if (improv_ble_take_identify()) player_identify_start();
   char ssid[33], pass[65];
   if (improv_ble_take_credentials(ssid, sizeof ssid, pass, sizeof pass)) {
     Log().printf("[player] provisioning: joining \"%s\"\n", ssid);
