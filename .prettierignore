@@ -22,3 +22,8 @@ pi/hitl/observability/fxbench/data/
 # minified by run_capacity.py backfill. Data, not source: pretty-printing it would
 # push it past the 600 KB large-file gate.
 pi/hitl/observability/capacity/data/
+
+# The per-gate HITL metrics ledger (#576), written by the same ingest cron as the fx_bench
+# dataset above, one id per line by json.dump: prettier re-packs it, so every cron commit
+# re-failed lint on every PR.
+pi/hitl/observability/metrics/data/
