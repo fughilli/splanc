@@ -24,6 +24,8 @@ bazel test  //solver:rust_parity_test     # parity vs the Python reference
 
 The math and the joint pose+LED formulation are covered in
 {doc}`../design/index` (VIO exploration) and the reconstruction reference below.
+{doc}`../docs/design/strided-capture` covers the solver under strided (diffuse)
+capture: bridges, gauge and scale, decode-lock gaps and the scale diagnostics.
 
 ---
 

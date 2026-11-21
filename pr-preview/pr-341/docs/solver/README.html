@@ -231,8 +231,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -254,6 +256,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/ram-budget.html">RAM budget</a></li>
@@ -265,6 +268,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-demo.html">Effects demo</a></li>
@@ -387,6 +391,11 @@ that both implementations solve the same synthetic session to the same map.</p>
 a floating focal is a scale-drift channel; calibration studies keep the
 Python solver, which also remains the automatic fallback when the binary is
 missing from runfiles).</p>
+<p>One deliberate difference: the outlier loop’s best-round rollback ranks
+rounds degeneracy-first (diag.rs <code class="docutils literal notranslate"><span class="pre">better</span></code>: non-degenerate, then solved LEDs,
+then rms), where the Python reference ranks (solved, rms) only. They agree
+unless a round goes degenerate — a scale collapse keeps most LEDs within
+8 px, since reprojection is scale-invariant, so (solved, rms) can’t see it.</p>
 </section>
 <section id="strip-prior-options-stripprior-off-by-default">
 <h2>Strip prior (<code class="docutils literal notranslate"><span class="pre">options.stripPrior</span></code>, off by default)<a class="headerlink" href="#strip-prior-options-stripprior-off-by-default" title="Link to this heading">¶</a></h2>
@@ -409,6 +418,17 @@ unmapped ids is placed on the straight segment between its mapped
 neighbours at equal spacing. End runs stay unmapped. Placed LEDs are
 emitted as ordinary entries with <code class="docutils literal notranslate"><span class="pre">nViews</span> <span class="pre">=</span> <span class="pre">0,</span> <span class="pre">confidence</span> <span class="pre">=</span> <span class="pre">0</span></code> (the web app’s
 <code class="docutils literal notranslate"><span class="pre">geom/inferred.ts</span></code> keys on that), so any real measurement outranks them.</p></li>
+<li><p><strong>Candidate protection</strong> — the rope solve does not replace the
+pre-strip state outright. Both are assembled (demote + fill, each with
+its own pitch/breaks) and assessed on their measured LEDs (diag.rs), and
+<code class="docutils literal notranslate"><span class="pre">strip_candidate_policy</span></code> decides: a strip result that is degenerate (e.g.
+a scale collapse) while the retained one is not is rolled back
+(<code class="docutils literal notranslate"><span class="pre">rollback-to-pre-strip</span></code> stage); otherwise the strip result stands, even
+with fewer measured LEDs or a higher residual — demoting off-chain LEDs
+is the prior’s job. Both candidates (measured/removed/inferred counts,
+camera distance, spread, rms, degeneracy) and the decision are in the
+diagnostics’ <code class="docutils literal notranslate"><span class="pre">stripCandidates</span></code>. The scale warnings come from whichever
+candidate is returned.</p></li>
 </ol>
 <p>Rust-only: the Python reference doesn’t implement it, and with the option off
 (the default) the solve is unchanged, so <code class="docutils literal notranslate"><span class="pre">rust_parity_test</span></code> is unaffected. The

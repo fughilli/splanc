@@ -948,9 +948,22 @@ there: the editor uploads it over the same path as "Send to device" (skipped
 when the fixture already runs that exact program; the result says so if it
 replaced a different effect), sets perf FULL, reads `get_perf_report` every
 0.5 s for `seconds` (1–10, default 3), and turns perf back off. The result is
-the measured `PerfContext` (`contextFromReport`) plus mean / p95 / max frame
-time, the per-window means and a predicted-vs-measured line against the
-estimate's error band. Device work is serialized with the editor's push and
+the measured `PerfContext` (`contextFromReport`) plus a predicted-vs-measured
+line against the estimate's error band. One capture yields three sample
+populations, and the result labels each instead of mixing them (#453):
+
+- **Rolling windows**: each poll's firmware summary over the frames buffered in
+  its 16-entry perf ring. Window sizes are not reported and consecutive windows
+  can overlap, so the headline is an *unweighted* mean of the window means, with
+  the per-window means and the largest window max. The perf-context frame time
+  and the estimate comparison use this same mean.
+- **Tick samples**: the raw per-frame ticks a reply returns (at most the reply's
+  field capacity per poll, so a subset). Their mean / p95 / max are labelled as
+  sample statistics, not full-capture guarantees; with no ticks the result says
+  there are no per-frame percentiles.
+- **Device counters** over every frame: overruns and dropped rendering frames,
+  plus `samplesDropped` (perf-ring overflow: frames missing from the ticks and
+  windows), summed over the capture and printed separately. Device work is serialized with the editor's push and
 auto-push and every call times out. The guidance (iterate with the estimate,
 confirm on the device, optimize against the measurement when they disagree,
 since the estimate models the interpreter and the device may JIT) is added to
