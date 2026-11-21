@@ -320,6 +320,13 @@ repeated float value }` records; `firmware/player_app/ffi.rs` decodes them and
   device reports current values the same way. Firmware since #400 also accepts
   up to 16 floats in one value. OSC addresses: see `firmware/osc` (`/pose` + 16
   floats, `/pose/<i>` flat component, `/pose/<c>/<r>` element).
+- **Ramps (firmware feature `ramps`):** when the endpoint, duration and ease are
+  known (an agent's "rain to 0.8 over 20 s", a timed crossfade, a keypoint
+  morph), one `ramp_uniforms` / `ramp_crossfade` request has the player
+  interpolate per frame on its own clock, and nothing is streamed. The ease is
+  evaluated once per request per frame in Q16, then there is one lerp per ramped
+  float, never per LED. A live `set_uniforms` / OSC write on a uniform cancels
+  its ramp (last writer wins). Design: [docs/design/ramps.md](docs/design/ramps.md).
 
 ## Textures and video-texture streaming
 

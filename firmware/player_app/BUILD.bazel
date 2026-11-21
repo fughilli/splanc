@@ -146,6 +146,7 @@ rust_static_library(
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player:player_fw",
+        "//firmware/ramp",
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
@@ -188,6 +189,7 @@ rust_library(
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player",
+        "//firmware/ramp",
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
@@ -270,6 +272,23 @@ rust_test(
     edition = "2021",
     # 96 MiB (main): debug-build frames of the decode/handle path hold several
     # by-value host-profile envelopes (the OTA arms and the 2048-LED config both grew them).
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Canned interpolation profiles (ramp_uniforms / ramp_crossfade / cancel_ramp,
+# the keypoint morph as a ramp, live-set cancellation, events + the landing
+# commit) through the C ABI. Own binary.
+rust_test(
+    name = "ramps_test",
+    srcs = ["tests/ramps.rs"],
+    edition = "2021",
+    # As decks_keypoints_test: debug-build frames hold by-value host-profile envelopes.
     env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
@@ -1020,6 +1039,7 @@ rust_static_library(
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player:player_fw",
+        "//firmware/ramp",
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",

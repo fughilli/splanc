@@ -593,6 +593,17 @@ int32_t lm_kiosk_build_push(uint8_t src, uint32_t now_ms, uint8_t *out, size_t c
 void lm_kiosk_push_done(void);
 // Console "kiosk off|status" (the text after "kiosk "): a one-line reply, -1 unknown.
 int32_t lm_kiosk_console(const uint8_t *line, size_t len, uint8_t *out, size_t cap);
+// -- Canned interpolation profiles (docs/design/ramps.md) --------------------
+// Advance every ramp (uniforms, crossfade) and keypoint morph to the device
+// clock now_ms (millis()). Once per rendered frame, before lm_fx_update.
+// Returns the number of things moved this frame.
+uint32_t lm_ramp_tick(int64_t now_ms);
+// Pop one pending ramp completion event as an encoded ramp_state frame. 0 =
+// none pending, -2 = out_cap too small.
+int32_t lm_ramp_take_event_frame(uint8_t *out, size_t out_cap);
+// A committed deck-A ramp landed: encode deck A's current uniforms as a
+// set_uniforms frame to persist. 0 = nothing to persist, -2 = doesn't fit.
+int32_t lm_ramp_take_commit_frame(uint8_t *out, size_t cap);
 
 #ifdef __cplusplus
 }  // extern "C"

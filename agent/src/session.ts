@@ -25,6 +25,9 @@ import { applyAt, LedMapperClient, ServerErrorReply, type SocketFactory } from "
 import type { ClientMessage } from "@ledmapper/protocol";
 import {
   encodeClient,
+  flatRampState,
+  RAMP_CANCELLED,
+  RAMP_DONE,
   type EffectUniformsMessage,
   type FpsStateMessage,
   type HardwareConfigStateMessage,
@@ -54,7 +57,7 @@ import type { Pose } from "./config";
 import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { cancellation, progress } from "./progress";
-import type { ClockSync } from "./timesync";
+import { RESYNC_MS, type ClockSync } from "./timesync";
 import { applyAtOf, type Scheduled } from "./schedule";
 import {
   currentByName,
@@ -121,12 +124,22 @@ export type Feature =
   | "drivers"
   | "wifi_policy"
   | "apply_at"
+  | "ramps"
   | (string & {});
 
 export type Deck = 0 | 1;
 
-/** The shape of a crossfade over time: progress u (0..1) -> mix (0..1). */
-export type Curve = "linear" | "ease" | "ease_in" | "ease_out";
+/** The shape of a ramp / crossfade over time: progress u (0..1) -> mix (0..1).
+ * The same curves the firmware runs for canned ramps (docs/design/ramps.md;
+ * firmware/ramp ease_q16), so the stepped fallback for older firmware looks the
+ * same: ease = cubic in-out, ease_in / ease_out = cubic, smoothstep = 3t² − 2t³. */
+export const CURVES = ["linear", "ease", "ease_in", "ease_out", "smoothstep"] as const;
+export type Curve = (typeof CURVES)[number];
+
+/** A curve's wire value (RampUniforms.ease). */
+export function curveWire(curve: Curve): number {
+  return CURVES.indexOf(curve);
+}
 
 export function curveAt(curve: Curve, u: number): number {
   const t = Math.min(1, Math.max(0, u));
@@ -134,13 +147,18 @@ export function curveAt(curve: Curve, u: number): number {
     case "linear":
       return t;
     case "ease_in":
-      return t * t;
+      return t * t * t;
     case "ease_out":
-      return 1 - (1 - t) * (1 - t);
-    default:
+      return 1 - (1 - t) ** 3;
+    case "smoothstep":
       return t * t * (3 - 2 * t);
+    default:
+      return t < 0.5 ? 4 * t * t * t : 1 - (2 - 2 * t) ** 3 / 2;
   }
 }
+
+/** How a canned ramp ended, from this bridge's point of view. */
+export type RampOutcome = "done" | "cancelled" | "unconfirmed" | "running";
 
 /** One deck as list_decks reports it. */
 export interface DeckView {
@@ -990,7 +1008,15 @@ export class DeviceSession {
    * device, over `seconds` (0 = at once). One weight = recall. */
   async blendKeypoints(
     weights: Record<string, number>,
-    opts: { seconds?: number | undefined; colorMode?: "rgb" | "hsv" | undefined; commit?: boolean | undefined; deck?: number | undefined } = {},
+    opts: {
+      seconds?: number | undefined;
+      colorMode?: "rgb" | "hsv" | undefined;
+      commit?: boolean | undefined;
+      deck?: number | undefined;
+      /** Firmware with "ramps": the morph's curve (default smoothstep) + a shared start. */
+      curve?: Curve | undefined;
+      t0?: number | undefined;
+    } = {},
   ): Promise<Record<string, unknown>> {
     this.assertUnlocked();
     this.requireKeypoints();
@@ -1000,6 +1026,10 @@ export class DeviceSession {
     const seconds = opts.seconds ?? 0;
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const total = entries.reduce((s, [, w]) => s + w, 0);
+    // A timed morph on firmware with "ramps" is a canned ramp: any curve, and one
+    // start across players (t0). Older firmware morphs with smoothstep on its own.
+    const canned = this.rampsUsable() && seconds > 0;
+    const startAt = canned && opts.t0 !== undefined ? this.deviceTime(opts.t0) : undefined;
     await this.rpc(
       {
         type: "blend_keypoints",
@@ -1008,6 +1038,8 @@ export class DeviceSession {
         seconds,
         colorMode: opts.colorMode === "hsv" ? 1 : 0,
         ...(opts.commit ? { commit: true } : {}),
+        ...(canned && opts.curve ? { ease: curveWire(opts.curve) } : {}),
+        ...(startAt !== undefined ? { startAtMs: startAt } : {}),
       },
       "playback_state",
     );
@@ -1016,6 +1048,8 @@ export class DeviceSession {
       seconds,
       color_mode: opts.colorMode ?? "rgb",
       committed: opts.commit === true,
+      ...(seconds > 0 ? { curve: canned ? (opts.curve ?? "smoothstep") : "smoothstep" } : {}),
+      ...(startAt !== undefined ? { synced_start: true } : {}),
     };
   }
 
@@ -1130,17 +1164,31 @@ export class DeviceSession {
     await this.run(async () => this.sendUniforms(values, false, d.deck));
   }
 
-  /** Interpolate uniforms to `targets` over `seconds`, uncommitted, at the
-   * stream rate; then one committed set of the targets. `at` (several players)
-   * runs the ramp on the shared time base: it starts at `at.atHubMs` and each step
-   * is scheduled for its own instant on the ramp's timeline (sent a lead ahead),
-   * so every player shows the same step on the same frame; a player that falls
-   * behind skips steps rather than drifting late. */
+  /**
+   * Glide uniforms to `targets` over `seconds` with `curve`.
+   *
+   * Firmware advertising "ramps" runs it ITSELF (docs/design/ramps.md): one
+   * ramp_uniforms request, no traffic while it runs, the targets landing exactly
+   * and committed per the usual rules. Several players get one start in their own
+   * clocks: `at.atHubMs` (a scheduled instant) or `t0` (Hub.rampStart). Older
+   * firmware: the hub steps it at the stream rate, uncommitted, then one committed
+   * set. `at` runs those steps on the shared time base (each scheduled for its own
+   * instant, sent a lead ahead, so every player shows the same step on the same
+   * frame); otherwise each step is paced on the player's ack (live channel).
+   */
   async rampUniforms(
     targets: Record<string, UniformInput>,
     seconds: number,
-    opts: { hz?: number; sleep?: (ms: number) => Promise<void>; at?: Scheduled; now?: () => number } = {},
-  ): Promise<{ steps: number; final: UniformValueFlat[]; scheduled?: boolean }> {
+    opts: {
+      hz?: number;
+      sleep?: (ms: number) => Promise<void>;
+      at?: Scheduled;
+      now?: () => number;
+      curve?: Curve;
+      t0?: number;
+      wait?: boolean;
+    } = {},
+  ): Promise<Record<string, unknown> & { steps: number; final: UniformValueFlat[]; scheduled?: boolean }> {
     this.assertUnlocked();
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const a = await this.activeEffect();
@@ -1148,22 +1196,43 @@ export class DeviceSession {
     // One full-width value per named uniform (the interpolation is per uniform;
     // the wire chunks mat3/mat4 itself).
     const final = resolveFull(a.uniforms, targets);
+    const curve = opts.curve ?? "linear";
+    const names = Object.keys(targets);
+    if (this.rampsUsable()) {
+      const deck = this.liveDeck();
+      const r = await this.cannedRamp(
+        {
+          type: "ramp_uniforms",
+          // The device ramps at most 4 floats per target: a mat3/mat4 goes as
+          // consecutive 4-slot chunks (one ramp lane each, landing together).
+          targets: chunkUniformValues(final),
+          durationMs: Math.round(seconds * 1000),
+          ease: curveWire(curve),
+          ...(deck !== 0 ? { deck } : {}),
+          commit: true,
+        },
+        seconds,
+        { t0: opts.at?.atHubMs ?? opts.t0, wait: opts.wait },
+      );
+      this.noteSent(final, deck);
+      if (seconds >= 2 && opts.wait !== false) progress(`ramping ${names.join(", ")} over ${seconds} s on the player…`);
+      return { steps: 1, final, on_device: true, curve, ...r };
+    }
     const byName = new Map(a.uniforms.map((u) => [u.name, u]));
     // Never faster than the player renders (its autoscaled rate, once a perf
     // report or fps_state has told us), nor 60 Hz.
     const hz = Math.max(1, Math.min(opts.hz ?? this.streamHz, 60, this.playerFps || 60));
     const steps = Math.max(1, Math.round(seconds * hz));
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-    const names = Object.keys(targets);
     const from = names.map((n) => a.current.get(n) ?? byName.get(n)!.default);
     if (seconds >= 2) progress(`ramping ${names.join(", ")} over ${seconds} s…`);
     const at = opts.at && this.canApplyAt() ? opts.at : undefined;
-    if (at) return this.rampScheduled(at, names, byName, from, final, seconds, hz, steps, sleep, opts.now);
+    if (at) return this.rampScheduled(at, names, byName, from, final, seconds, hz, steps, sleep, opts.now, curve);
     for (let i = 1; i < steps; i++) {
       if (seconds >= 2 && i % Math.max(1, Math.round(hz * Math.max(1, seconds / 5))) === 0) {
         progress(`ramp ${Math.round((100 * i) / steps)}%`);
       }
-      const t = i / steps;
+      const t = curveAt(curve, i / steps);
       const vals = names.map((n, k) => ({
         slot: byName.get(n)!.slot,
         value: lerpValues(byName.get(n)!, from[k]!, final[k]!.value, t),
@@ -1174,6 +1243,71 @@ export class DeviceSession {
     }
     await this.run(async () => this.sendUniforms(final, true));
     return { steps, final };
+  }
+
+  // -- canned ramps (docs/design/ramps.md) ---------------------------------------
+
+  /** Whether this player interpolates timed transitions itself (firmware
+   * advertises "ramps" AND this bundle's proto carries the arms). */
+  rampsUsable(): boolean {
+    return this.has("ramps") && RAMPS_IN_PROTO;
+  }
+
+  /** A hub time (performance.now() ms) in this player's clock, when the last
+   * clock sync is fresh; undefined otherwise. */
+  deviceTime(hubMs: number): number | undefined {
+    const c = this.clock;
+    if (!c || performance.now() - c.at >= RESYNC_MS) return undefined;
+    return Math.round(hubMs + c.offsetMs);
+  }
+
+  private rampSeq = 0;
+
+  /**
+   * Send one canned ramp request (`msg` without id / start) and, unless
+   * `wait === false`, wait for its ramp_state DONE / CANCELLED push. A ramp
+   * whose event never arrives (a link without pushes) resolves "unconfirmed"
+   * a little after its end — the device still lands it.
+   */
+  private async cannedRamp(
+    msg: Record<string, unknown> & { type: string },
+    seconds: number,
+    opts: { t0?: number | undefined; wait?: boolean | undefined },
+  ): Promise<{ outcome: RampOutcome; start_at_ms: number; end_at_ms: number; synced: boolean }> {
+    const id = (this.rampSeq = (this.rampSeq % 0x7ffffffe) + 1);
+    // A shared start needs a fresh clock sync (alignTime may have used the
+    // disciplined model instead): sync now rather than start on receipt.
+    if (opts.t0 !== undefined && this.deviceTime(opts.t0) === undefined) await this.syncClock().catch(() => undefined);
+    const startAt = opts.t0 !== undefined ? this.deviceTime(opts.t0) : undefined;
+    let settle: (o: RampOutcome) => void = () => undefined;
+    const ended = new Promise<RampOutcome>((res) => (settle = res));
+    const unsub = this.client.onRampState((st) => {
+      if (st.id !== id) return;
+      if (st.state === RAMP_DONE) settle("done");
+      else if (st.state === RAMP_CANCELLED) settle("cancelled");
+    });
+    try {
+      const reply = await this.rpc<Record<string, unknown>>(
+        { ...msg, id, ...(startAt !== undefined ? { startAtMs: startAt } : {}) },
+        "ramp_state",
+      );
+      const st = flatRampState(reply as never);
+      const sched = { start_at_ms: st.startAtMs, end_at_ms: st.endAtMs, synced: startAt !== undefined };
+      if (opts.wait === false) return { outcome: "running", ...sched };
+      const lead = opts.t0 !== undefined ? Math.max(0, opts.t0 - performance.now()) : 0;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        ended,
+        new Promise<RampOutcome>((res) => {
+          timer = setTimeout(() => res("unconfirmed"), lead + seconds * 1000 + 3000);
+          timer.unref?.();
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+      return { outcome, ...sched };
+    } finally {
+      unsub();
+    }
   }
 
   /** rampUniforms on the shared time base: step i lands at at + i/hz s, sent the
@@ -1190,6 +1324,7 @@ export class DeviceSession {
     steps: number,
     sleep: (ms: number) => Promise<void>,
     now: () => number = () => performance.now(),
+    curve: Curve = "linear",
   ): Promise<{ steps: number; final: UniformValueFlat[]; scheduled: boolean }> {
     const lead = at.leadMs ?? Math.max(0, at.atHubMs - now());
     const stepMs = (seconds * 1000) / steps;
@@ -1201,7 +1336,7 @@ export class DeviceSession {
       const tHub = at.atHubMs + i * stepMs;
       const wait = tHub - lead - now();
       if (wait > 1) await sleep(wait);
-      const t = i / steps;
+      const t = curveAt(curve, i / steps);
       const vals = names.map((n, k) => ({
         slot: byName.get(n)!.slot,
         value: lerpValues(byName.get(n)!, from[k]!, final[k]!.value, t),
@@ -1302,14 +1437,14 @@ export class DeviceSession {
    * fade back to it over `seconds` (0 = at once). Otherwise re-upload its
    * bytecode to deck A, then its last-known uniform values (the defaults where
    * none were set). */
-  async rollback(seconds = 0): Promise<Record<string, unknown>> {
+  async rollback(seconds = 0, t0?: number): Promise<Record<string, unknown>> {
     this.assertUnlocked();
     this.effectGen++;
     const prev = this.previous;
     this.activatedAt = performance.now();
     if (prev?.onDevice && this.decksUsable()) {
       await this.run(() => this.client.setEffect(prev.effectId, prev.deck));
-      await this.fadeCrossfade(prev.deck === 1 ? 1 : 0, seconds, { curve: "ease" });
+      await this.fadeCrossfade(prev.deck === 1 ? 1 : 0, seconds, { curve: "ease", ...(t0 !== undefined ? { t0 } : {}) });
       this.swapIfParked(prev.deck);
       this.live = prev.deck;
       return {
@@ -1608,6 +1743,11 @@ export class DeviceSession {
    * fire-and-forget sets at 25 Hz fell ~20 s behind (its wss queue backed up), so
    * the step rate follows what the player can take while the fade still ends on
    * time. When it lands, the target side is the live deck.
+   *
+   * Firmware advertising "ramps" runs the whole fade itself from ONE
+   * ramp_crossfade (docs/design/ramps.md): `t0` becomes a start in the player's
+   * own clock, so a room fades in lockstep with no traffic during the fade. A
+   * live crossfade move (the app's fader, MIDI) cancels it on the device.
    */
   async fadeCrossfade(
     target: number,
@@ -1624,13 +1764,32 @@ export class DeviceSession {
        * for, sent the lead ahead — every player shows the same mix on the same frame. */
       at?: Scheduled;
     } = {},
-  ): Promise<{ from: number; to: number; seconds: number; steps: number }> {
+  ): Promise<{ from: number; to: number; seconds: number; steps: number; on_device?: boolean; outcome?: RampOutcome }> {
     this.assertUnlocked();
     this.requireDecks();
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const mode = opts.mode ?? this.crossfadeMode();
     const from = opts.from ?? this.crossfadePosition();
     const at = opts.at && this.canApplyAt() ? opts.at : undefined;
+    if (seconds > 0 && this.rampsUsable()) {
+      // The device ramps from where IT is: put it at `from` first if we know better.
+      if (opts.from !== undefined && Math.abs(opts.from - (this.xf ?? opts.from)) > 1e-3) await this.snapCrossfade(from, mode);
+      const curve = opts.curve ?? "ease";
+      if (seconds >= 2) progress(`crossfading over ${seconds} s on the player…`);
+      const r = await this.cannedRamp(
+        { type: "ramp_crossfade", position: target, mode, durationMs: Math.round(seconds * 1000), ease: curveWire(curve) },
+        seconds,
+        { t0: opts.at?.atHubMs ?? opts.t0 },
+      );
+      if (r.outcome !== "cancelled") {
+        this.xf = Math.min(1, Math.max(0, target));
+        this.xfMode = mode;
+        this.live = target >= 0.5 ? 1 : 0;
+      } else {
+        this.xf = null; // someone moved it live: re-read it next time
+      }
+      return { from: +from.toFixed(3), to: target, seconds, steps: 1, on_device: true, outcome: r.outcome };
+    }
     const t0 = at?.atHubMs ?? opts.t0 ?? performance.now();
     // Scheduled: each position is for one lead from now, and goes out that early.
     const lead = at ? (at.leadMs ?? Math.max(0, t0 - performance.now())) : 0;
@@ -2193,6 +2352,9 @@ interface SensorStateReply {
   mountPoses?: number;
   mountResidualDeg?: number;
 }
+
+/** Whether this build's protocol carries the canned-ramp arms (docs/design/ramps.md). */
+export const RAMPS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "ramp_uniforms");
 
 interface KeypointListReply {
   effectId: string;

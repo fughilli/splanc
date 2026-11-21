@@ -42,7 +42,12 @@ libhal.a:spi_flash_hal_gpspi
 # short sweeps (sweep16) and moved with unrelated layout changes; ~2.2 KB of
 # IRAM makes it layout-independent. The interpreter (`run`, 37 KB) stays in
 # flash, as do the two-deck blend and every cold path.
-iram: .text.lm_fx_shade .text._ZN15ledmapper_fx_vm7Program5parse* .text._ZN15ledmapper_fx_vm2Vm17run_shade_bounded*
+# The interpreter's opcode-dispatch jump tables (`.rodata` of fx_vm::run, ~0.9 KB)
+# ride along: they are read on EVERY opcode of every LED, and from flash they share
+# the cache with the interpreter's own code, so their offset decided fx_bench. An
+# 8-byte shift of .flash.rodata (a shorter `fw_version` string: CI stamps
+# "0.0.0-dev") cost sweep256 +45% / absfM +12% (#325); in SRAM no layout can.
+iram: .text.lm_fx_shade .text._ZN15ledmapper_fx_vm7Program5parse* .text._ZN15ledmapper_fx_vm2Vm17run_shade_bounded* .rodata._ZN15ledmapper_fx_vm3run*
 
 # --- the per-frame render path that stays in flash, pinned FIRST in .flash.text ---
 # Everything the active-effect frame runs from flash outside the IRAM shade entry:
