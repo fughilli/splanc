@@ -426,6 +426,7 @@ fn ramps_through_the_c_abi() {
     match handle(CMsg::SetCrossfade(pb::SetCrossfade {
         r#position: 0.25,
         r#mode: 0,
+        ..Default::default()
     })) {
         Some(SMsg::Welcome(w)) => assert_eq!(w.crossfade(), Some(&0.25)),
         other => panic!("{other:?}"),

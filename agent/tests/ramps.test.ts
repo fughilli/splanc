@@ -138,7 +138,7 @@ describe("canned ramps (one player)", { skip }, () => {
     assert.ok(performance.now() - t0 < 5000);
   });
 
-  test("older firmware: acknowledged steps paced off the wall clock, then one commit", async () => {
+  test("older firmware: hub-stepped on the live channel (paced on acks), then one commit", async () => {
     player = await newPlayer(OLD);
     session = await connect(player);
     await session.deployEffect("storm", STORM, true);
@@ -149,8 +149,11 @@ describe("canned ramps (one player)", { skip }, () => {
     const took = performance.now() - t0;
     assert.ok(took >= 400 && took < 1500, `took ${took} ms`);
     assert.equal(r["on_device"], undefined);
+    await settle(); // the final committed set is fire-and-forget
     const sets = player.received.slice(before).filter((m) => m.type === "set_uniforms");
-    assert.equal(sets.length, r.steps);
+    // The live channel coalesces a step the player hasn't acked yet (last value wins),
+    // so the player can see fewer sets than the hub planned steps.
+    assert.ok(sets.length <= r.steps + 1 && sets.length >= 5, `${sets.length} sets for ${r.steps} steps`);
     assert.ok(r.steps >= 5 && r.steps <= 10, `${r.steps} steps`);
     assert.equal(sets.at(-1)!["commit"], true);
     assert.equal(player.ramps.length, 0);

@@ -2231,6 +2231,41 @@ static void modules_frame(uint32_t leds) {
   }
 }
 
+// -- canned ramps' per-frame tick + its cost line (docs/design/ramps.md) ------
+// Out of line so render_once's frame (on the render task's worst stack path, see
+// stack_bound.json) carries none of it.
+static uint32_t g_ramp_cyc_max = 0;
+static uint32_t g_ramp_n_max = 0;
+static uint32_t g_ramp_cyc_sum = 0;  // mean = sum / ticks (the max is ISR-inflated)
+static uint32_t g_ramp_ticks = 0;
+
+// Advance every ramp to `now` (device ms); returns the cycle count after it.
+static __attribute__((noinline)) uint32_t ramp_frame_tick(uint32_t now, uint32_t c_start) {
+  uint32_t ramp_n = lm_ramp_tick((int64_t)now);
+  uint32_t c_end = esp_cpu_get_cycle_count();
+  if (ramp_n > 0) {
+    uint32_t rc = c_end - c_start;
+    if (rc > g_ramp_cyc_max) g_ramp_cyc_max = rc;
+    if (ramp_n > g_ramp_n_max) g_ramp_n_max = ramp_n;
+    g_ramp_cyc_sum += rc;
+    g_ramp_ticks++;
+  }
+  return c_end;
+}
+
+// Once a second with the [fx] line: the ramp ticks since the last one — things
+// moved, worst + mean CPU cycles (160/us).
+static __attribute__((noinline)) void ramp_log_second(uint32_t now) {
+  if (g_ramp_n_max == 0) return;
+  Log().printf("[ramp] now=%u n=%u cyc=%u mean=%u ticks=%u\n", (unsigned)now, (unsigned)g_ramp_n_max,
+               (unsigned)g_ramp_cyc_max, (unsigned)(g_ramp_ticks ? g_ramp_cyc_sum / g_ramp_ticks : 0),
+               (unsigned)g_ramp_ticks);
+  g_ramp_cyc_max = 0;
+  g_ramp_n_max = 0;
+  g_ramp_cyc_sum = 0;
+  g_ramp_ticks = 0;
+}
+
 static uint32_t render_once() {
   static uint32_t last_shown_frame = 0xffffffff;
   static bool was_active = false;
@@ -2511,19 +2546,7 @@ static uint32_t render_once() {
     // Canned ramps (docs/design/ramps.md): move ramped uniforms, the crossfade
     // and keypoint morphs to this frame's device time first (time based, so the
     // autoscaled frame rate never stretches a ramp). Costed into the frame.
-    static uint32_t ramp_cyc_max = 0;
-    static uint32_t ramp_n_max = 0;
-    static uint32_t ramp_cyc_sum = 0;  // mean = sum / ticks (the max is ISR-inflated)
-    static uint32_t ramp_ticks = 0;
-    uint32_t ramp_n = lm_ramp_tick((int64_t)now);
-    uint32_t c_update_start = esp_cpu_get_cycle_count();
-    if (ramp_n > 0) {
-      uint32_t rc = c_update_start - c_frame_start;
-      if (rc > ramp_cyc_max) ramp_cyc_max = rc;
-      if (ramp_n > ramp_n_max) ramp_n_max = ramp_n;
-      ramp_cyc_sum += rc;
-      ramp_ticks++;
-    }
+    uint32_t c_update_start = ramp_frame_tick(now, c_frame_start);
     bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
     uint32_t c_update_end = esp_cpu_get_cycle_count();
     if (updated) {
@@ -2561,16 +2584,7 @@ static uint32_t render_once() {
         Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u\n",
                      fx_time_s, this_seq, kOc[oc <= 3 ? oc : 0], shade_bad, n);
         ft_due = true;  // the cadence line goes out after the timed span (below)
-        if (ramp_n_max > 0) {
-          // Ramp ticks this second: things moved, worst + mean CPU cycles (160/us).
-          Log().printf("[ramp] now=%u n=%u cyc=%u mean=%u ticks=%u\n", (unsigned)now,
-                       (unsigned)ramp_n_max, (unsigned)ramp_cyc_max,
-                       (unsigned)(ramp_ticks ? ramp_cyc_sum / ramp_ticks : 0), (unsigned)ramp_ticks);
-          ramp_cyc_max = 0;
-          ramp_n_max = 0;
-          ramp_cyc_sum = 0;
-          ramp_ticks = 0;
-        }
+        ramp_log_second(now);
       }
     } else {
       // Effect active but no deck loaded (shouldn't happen): hold the last frame.
