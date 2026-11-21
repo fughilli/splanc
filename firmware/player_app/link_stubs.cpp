@@ -49,3 +49,12 @@ uint32_t device_cert_gen_ms() { return 0; }
 
 void tls_region_install() {}
 const TlsRegionStats &tls_region_stats() { return g_tls; }
+
+// The mesh gateway (mesh M5) is the C6 players' (netstack_transport.cpp); the P4 has no
+// mesh radio: its player core answers mesh_send / get_mesh with error{unsupported}.
+extern "C" int32_t lm_mesh_app(uint32_t, const uint8_t *, size_t, uint8_t *, size_t, const uint8_t **, uint32_t *) {
+  return -2;
+}
+extern "C" void lm_mesh_app_done(uint32_t) {}
+extern "C" void lm_mesh_note_time_base(uint32_t) {}
+extern "C" void lm_mesh_sessions(uint32_t, uint32_t) {}
