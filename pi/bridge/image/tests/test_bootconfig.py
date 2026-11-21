@@ -42,7 +42,7 @@ def test_parse_conf_validates_and_normalizes():
     s = bc.parse_conf(
         "﻿# comment\r\nHOSTNAME=Living-Room\r\nWIFI_COUNTRY=gb\nOLED='spi'\n"
         "SPLANC_RELAY=wss://relay.example/x\nOLED_ROTATE=9\nPATH=/evil\nnonsense\n"
-        'SPLANC_DISPLAY_HDMI="off"\nSPLANC_AUTO_UPDATE=0\n'
+        'SPLANC_DISPLAY_HDMI="off"\nSPLANC_AUTO_UPDATE=0\nSPLANC_MATTER=0\n'
     )
     assert s.values == {
         "HOSTNAME": "living-room",
@@ -51,7 +51,10 @@ def test_parse_conf_validates_and_normalizes():
         "SPLANC_RELAY": "wss://relay.example/x",
         "SPLANC_DISPLAY_HDMI": "off",
         "SPLANC_AUTO_UPDATE": "0",
+        "SPLANC_MATTER": "0",
     }
+    assert "SPLANC_MATTER=0" in bc.render_env(s)
+    assert "SPLANC_MATTER" not in bc.parse_conf("SPLANC_MATTER=yes").values
     assert len(s.ignored) == 3  # OLED_ROTATE=9, PATH, nonsense
 
 

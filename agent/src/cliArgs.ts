@@ -63,9 +63,11 @@ Cloud agents (docs/guides/cloud-agent.md; docs/design/cloud-relay.md):
   bridge [--relay <url>]               serve this LAN's players to cloud agents through a relay
                                        (default: $SPLANC_RELAY, else the Splanc relay)
          [--state-dir d] [--status f] [--control sock]   (plus --host/--no-mdns/--pin as above)
+         [--no-matter] [--matter-port 5540]  the Matter bridge (Apple Home, HA, ...;
+                                       docs/guides/matter.md); SPLANC_MATTER=0 turns it off
          [--live-port 8443]            the app's direct LAN endpoint for live VJ (0 = relay only;
                                        docs/design/live-vj-relay.md)
-  bridge-ctl new-code|revoke-all|identify|status   control a running bridge (its unix socket)
+  bridge-ctl new-code|revoke-all|identify|status|matter-pair|matter-reset   control a running bridge (its unix socket)
   relay [--port 8787] [--listen 127.0.0.1] [--public-url https://...] [--data-dir d] [--trust-proxy]
                                        host the relay yourself (e.g. behind tailscale funnel)
 
@@ -138,6 +140,7 @@ const BOOL = new Set([
   "user-confirmed",
   "lan",
   "no-open",
+  "no-matter",
 ]);
 
 export function parseArgs(argv: string[]): Parsed {

@@ -83,7 +83,7 @@ let
   # the screens (via status.json) and wait for the updater to bring a newer one.
   bridgeRun = pkgs.writeShellScript "splanc-bridge-run" ''
     set -u
-    PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep ]}
+    PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep pkgs.gnused ]}
     pick() {
       if [ -f ${agentState}/current/mcp/splanc-agent.mjs ]; then
         agent=${agentState}/current
@@ -103,6 +103,10 @@ let
     done
     set --
     if [ -n "''${SPLANC_RELAY:-}" ]; then set -- --relay "$SPLANC_RELAY"; fi
+    # 512 MB boards (Pi 3 A+, Zero 2 W): cap the V8 heap so the hub + the Matter
+    # bridge garbage-collect before the kernel's OOM killer has to step in.
+    mem_kb="$(sed -n 's/^MemTotal: *\([0-9]*\) kB/\1/p' /proc/meminfo)"
+    if [ "''${mem_kb:-0}" -lt 800000 ]; then export NODE_OPTIONS="--max-old-space-size=160 ''${NODE_OPTIONS:-}"; fi
     exec ${node}/bin/node "$agent/mcp/splanc-agent.mjs" bridge "$@"
   '';
 
@@ -110,7 +114,7 @@ let
   cli = pkgs.writeShellScriptBin "splanc-bridge" ''
     set -eu
     case "''${1:-status}" in
-      status | new-code | identify | revoke-all | clients | revoke)
+      status | new-code | identify | revoke-all | clients | revoke | matter-pair | matter-reset)
         SPLANC_BRIDGE_STATUS=${statusFile} SPLANC_BRIDGE_CONTROL=${controlSock} \
           PYTHONPATH=${bp.splancPy} exec ${bp.pyEnv}/bin/python3 -m splanc_display.ctl "$@" ;;
       logs) shift; exec journalctl -u splanc-bridge -u splanc-display -u splanc-agent-update -u splanc-agent-check -u splanc-agent-install -u splanc-update-request -u splanc-flash-config --no-pager -n 200 "$@" ;;
@@ -119,7 +123,7 @@ let
       check) exec systemctl start splanc-agent-check.service ;;
       restart) exec systemctl restart splanc-bridge.service splanc-display.service ;;
       version) cat /etc/splanc-bridge/image.json; echo; readlink ${agentState}/current || echo "agent: baked ${bp.agentBundle.version}" ;;
-      *) echo "usage: splanc-bridge [status|new-code|identify|revoke-all|clients|revoke <id>|logs|check|update|restart|version]" >&2; exit 2 ;;
+      *) echo "usage: splanc-bridge [status|new-code|identify|revoke-all|clients|revoke <id>|matter-pair|matter-reset|logs|check|update|restart|version]" >&2; exit 2 ;;
     esac
   '';
 
@@ -168,6 +172,9 @@ in
     # The app's direct LAN endpoint for live VJ (`splanc-agent bridge --live-port`,
     # default 8443; docs/design/live-vj-relay.md). TLS + a ticket minted via the relay.
     networking.firewall.allowedTCPPorts = [ 8443 ];
+    # The Matter bridge (`splanc-agent bridge`, docs/guides/matter.md): Matter's UDP
+    # port; its DNS-SD rides on mDNS (5353, opened for avahi by sbc-base).
+    networking.firewall.allowedUDPPorts = [ 5540 ];
 
     # Nobody logs in: no passwords anywhere. SSH (root, key-only) exists only when
     # the boot partition carries an authorized_keys file (see services.openssh).

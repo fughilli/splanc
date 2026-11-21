@@ -286,6 +286,63 @@ def _qr(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         d.text(dr, (x, 28 + i * 15), part, cf, ON)
 
 
+def _matter(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
+    """The Matter bridge: its pairing QR + manual code while it takes a new
+    controller, else who has it and how to let another one in."""
+    m = s.matter
+    small = F("small")
+    if m is None or m.state in ("", "stopped"):
+        _header(dr, "Matter")
+        _center(dr, 28, "Matter is off", small)
+        return
+    if m.state == "error":
+        _header(dr, "Matter", "error")
+        pitch = max(12, d.line_height(dr, small))
+        for i, line in enumerate(_wrap(dr, m.error or "unknown error", small, W - 2 * M, 3)):
+            d.text(dr, (M, _body_y() + i * pitch), line, small, ON)
+        return
+    if m.state == "starting":
+        _header(dr, "Matter")
+        _center(dr, 28, "Starting…", small)
+        return
+    matrix = d.qr_matrix(m.qr) if m.show_code else None
+    if not matrix:
+        lamps = f"{m.lamps} lamp" + ("" if m.lamps == 1 else "s")
+        _header(dr, "Matter", lamps)
+        n = len(m.fabrics)
+        who = m.fabrics[0] if n == 1 else f"{n} controllers"
+        pitch = max(12, d.line_height(dr, small))
+        y = _body_y() + 1
+        for line in (f"Added to {who}", "", "Press: add it to", "another app"):
+            if line:
+                d.text(dr, (M, y), d.ellipsize(dr, line, small, W - 2 * M), small, ON)
+            y += pitch if line else pitch // 3
+        return
+    # Same layout as the relay QR page: the code on the left (dark on light), text right.
+    n = len(matrix)
+    box = 2 if n * 2 + 4 <= H else 1
+    size = n * box
+    y = (H - size) // 2
+    q = 2 if size + 4 * box <= H else 1
+    dr.rectangle([0, y - q * box, size + 2 * q * box - 1, y + size + q * box - 1], fill=ON)
+    d.draw_qr(dr, matrix, q * box, y, box, dark=OFF)
+    x = size + 2 * q * box + 3
+    tw = W - x - 1
+    groups = m.manual_grouped.split("-")
+    cf = _fit(dr, max(groups, key=len), "code_qr", tw)
+    lh = small.height if d.is_bitmap(small) else 10
+    d.text(dr, (x, 1), "Matter", small, ON)
+    # 11 digits as 4-3-4 under the label; shrink the digits until all three groups fit.
+    room = H - 3 - lh
+    fits = [f for f in _fs.fonts("code_qr") if d.is_bitmap(f) and 3 * (f.height + 1) <= room]
+    if fits and d.text_size(dr, max(groups, key=len), fits[0])[0] <= tw:
+        cf = fits[0]
+    pitch = (cf.height + 1) if d.is_bitmap(cf) else 13
+    y0 = max(2 + lh, H - 1 - len(groups) * pitch)
+    for i, part in enumerate(groups):
+        d.text(dr, (x, y0 + i * pitch), part, cf, ON)
+
+
 ROW_H = 12  # list / detail row pitch
 BODY_Y = 14  # where the rows start (under the header rule)
 BODY_H = H - BODY_Y
@@ -670,7 +727,7 @@ def _update(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v:
     _rows(img, dr, update_rows(t, now, _fs, s.clients), v.update_scroll, UPDATE_LABELS)
 
 
-PAGE_RENDERERS = {"home": _home, "qr": _qr, "network": _network}
+PAGE_RENDERERS = {"home": _home, "qr": _qr, "matter": _matter, "network": _network}
 LIST_RENDERERS = {
     "players": _players,
     "detail": _detail,
@@ -681,7 +738,7 @@ LIST_RENDERERS = {
 }
 DETAIL_PAGES = ("detail", "client", "update")
 # Pages that show the "update available" arrow (not the details: their glyph is there).
-TOP_PAGES = ("home", "qr", "players", "network", "clients", "updates")
+TOP_PAGES = ("home", "qr", "matter", "players", "network", "clients", "updates")
 
 
 def _boot(img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames) -> None:
