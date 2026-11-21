@@ -1,0 +1,1059 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Matter on the lamp’s ESP32-C6 (port spike, D-189) - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/matter-on-c6.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/matter-on-c6.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="matter-on-the-lamp-s-esp32-c6-port-spike-d-189">
+<h1>Matter on the lamp’s ESP32-C6 (port spike, D-189)<a class="headerlink" href="#matter-on-the-lamp-s-esp32-c6-port-spike-d-189" title="Link to this heading">¶</a></h1>
+<p>Status: spike. This doc has measured numbers and a recommendation. No Matter code is
+in the player yet. Owner decision D-189: <em>“Start a port spike now”</em> and <em>“We should be
+able to fit this.”</em> The smart-home study (<code class="docutils literal notranslate"><span class="pre">docs/design/smart-home-integrations.md</span></code>
+§3, PR #582) said Matter does not fit today’s C6 image. This doc tests that claim by
+measuring instead of estimating.</p>
+<p><strong>The answer in one paragraph.</strong> It fits, but not by adding Espressif’s SDK. The C++
+CHIP SDK (esp-matter) needs ⟦ESPM_FLASH_KB⟧ KB of flash for a size-optimised light
+(§3). Today’s image has 68 KB left under the <code class="docutils literal notranslate"><span class="pre">layout_test</span></code> gate, with the mesh in. A
+Rust Matter stack (<code class="docutils literal notranslate"><span class="pre">rs-matter</span></code>, no_std, no heap to speak of) needs about 400 KB for the
+same light, BLE commissioning included (§4). Today’s image also still links about
+290 KB of code it never runs (§2.2). The largest piece is the whole lwIP stack,
+130 KB, which the netstack replaced. Cutting that dead code, using our mbedTLS in
+place of RustCrypto, and adding IPv6 (link-local + SLAAC, ND, MLD, UDP) to the
+netstack makes room for Matter in the existing 2.25 MB app slot, with a margin of
+⟦B_MARGIN⟧ KB. Option (a), CHIP next to the netstack, overshoots the slot by
+⟦A_OVER⟧ KB after the same cuts. It also needs a second IP stack demuxing our MAC.
+Option (c), a separate Matter image, cannot fit a third app slot in 4 MB. It would
+also stop the effects. <strong>Recommendation: (b), rs-matter on the netstack, in five
+milestones, about 6–8 weeks of focused work (§6).</strong> The first milestone is the size
+diet: about two weeks, and the image is better for it whatever happens to Matter. A
+PoC (§7) commissioned a stock esp-matter light on a rig-2 C6 from this container and
+toggled it. That gave the real heap profile of a Matter session on this chip.</p>
+<section id="what-was-measured-and-how">
+<h2>1. What was measured, and how<a class="headerlink" href="#what-was-measured-and-how" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Thing</p></th>
+<th class="head"><p>How</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Our image today</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-c</span> <span class="pre">opt</span></code> <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:esp32c6_netstack</span></code> at main <code class="docutils literal notranslate"><span class="pre">b5564b58f</span></code> (2026-11-21: #569’s size diet and mesh M2–M5 in). Flash attributed to source files through the ELF’s DWARF line info (<code class="docutils literal notranslate"><span class="pre">nm</span> <span class="pre">-S</span> <span class="pre">-l</span></code>). Symbols without debug info are the vendor blobs plus our Rust.</p></td>
+</tr>
+<tr class="row-odd"><td><p>A Matter light built with the CHIP SDK</p></td>
+<td><p>Espressif’s esp-matter <code class="docutils literal notranslate"><span class="pre">light</span></code> example: esp-matter <code class="docutils literal notranslate"><span class="pre">release/v1.5</span></code> (<code class="docutils literal notranslate"><span class="pre">2563685</span></code>), connectedhomeip <code class="docutils literal notranslate"><span class="pre">9c2a636</span></code>, ESP-IDF v5.5.5 (esp-matter v1.5’s pin; our prebuilt SDK is v5.5.4). Built for <code class="docutils literal notranslate"><span class="pre">esp32c6</span></code> with the size-optimised config below.</p></td>
+</tr>
+<tr class="row-even"><td><p>Its heap at runtime</p></td>
+<td><p>the same image on a rig-2 C6. Free, minimum and largest block are printed every 5 s through boot, Wi-Fi join, commissioning and on/off traffic (§7).</p></td>
+</tr>
+<tr class="row-odd"><td><p>A Matter stack in Rust</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rs-matter</span></code> (<code class="docutils literal notranslate"><span class="pre">project-chip/rs-matter</span></code> <code class="docutils literal notranslate"><span class="pre">4e4105a</span></code>, v0.4.1). Its <code class="docutils literal notranslate"><span class="pre">bloat-check</span></code> binary is an On/Off light with Wi-Fi network commissioning, BTP (BLE commissioning), the built-in mDNS responder, PASE and the CASE responder, crypto by RustCrypto. Built for <code class="docutils literal notranslate"><span class="pre">riscv32imac-unknown-none-elf</span></code> with <code class="docutils literal notranslate"><span class="pre">opt-level</span> <span class="pre">=</span> <span class="pre">&quot;z&quot;</span></code> and fat LTO, on esp-hal + esp-rtos.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The tools and raw logs are in <code class="docutils literal notranslate"><span class="pre">/workspace/.claude/mattersp/</span></code> on the dev container:
+<code class="docutils literal notranslate"><span class="pre">build_light.sh</span></code>, <code class="docutils literal notranslate"><span class="pre">configs/*.defaults</span></code>, <code class="docutils literal notranslate"><span class="pre">classify.py</span></code>, <code class="docutils literal notranslate"><span class="pre">poc/</span></code>, and the per-symbol
+dumps. They are not committed.</p>
+<p>The size-optimised esp-matter config (<code class="docutils literal notranslate"><span class="pre">configs/opt.defaults</span></code>) applies every option in
+esp-matter’s <code class="docutils literal notranslate"><span class="pre">docs/en/optimizations.rst</span></code> that does not change behaviour, plus <code class="docutils literal notranslate"><span class="pre">-Os</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">CONFIG_COMPILER_OPTIMIZATION_SIZE</span><span class="o">=</span><span class="n">y</span>              <span class="n">CONFIG_ENABLE_CHIP_SHELL</span><span class="o">=</span><span class="n">n</span>
+<span class="n">CONFIG_ENABLE_OTA_REQUESTOR</span><span class="o">=</span><span class="n">n</span>                    <span class="n">CONFIG_NEWLIB_NANO_FORMAT</span><span class="o">=</span><span class="n">y</span>
+<span class="n">CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT</span><span class="o">=</span><span class="mi">2</span>   <span class="n">CONFIG_ESP_MATTER_MAX_DEVICE_TYPE_COUNT</span><span class="o">=</span><span class="mi">2</span>
+<span class="n">NimBLE</span><span class="p">:</span> <span class="mi">1</span> <span class="n">connection</span><span class="p">,</span> <span class="n">peripheral</span> <span class="n">only</span><span class="p">,</span> <span class="n">no</span> <span class="n">security</span> <span class="o">/</span> <span class="mf">5.0</span> <span class="o">/</span> <span class="n">bonds</span><span class="p">,</span> <span class="n">small</span> <span class="n">msys</span> <span class="n">pools</span>
+<span class="n">CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING</span><span class="o">=</span><span class="n">y</span>          <span class="n">event</span><span class="o">-</span><span class="n">log</span> <span class="n">buffers</span> <span class="mi">256</span> <span class="n">B</span>
+<span class="n">FreeRTOS</span><span class="p">,</span> <span class="n">ringbuf</span> <span class="ow">and</span> <span class="n">heap</span> <span class="n">functions</span> <span class="ow">in</span> <span class="n">flash</span><span class="p">;</span> <span class="n">SPI</span> <span class="n">flash</span> <span class="n">driver</span> <span class="kn">from</span><span class="w"> </span><span class="nn">ROM</span>
+<span class="n">task</span> <span class="n">stacks</span><span class="p">:</span> <span class="n">main</span> <span class="mi">3</span> <span class="n">KB</span><span class="p">,</span> <span class="n">esp_timer</span> <span class="mi">2</span> <span class="n">KB</span><span class="p">,</span> <span class="n">CHIP</span> <span class="mi">6</span> <span class="n">KB</span><span class="p">;</span> <span class="n">log</span> <span class="n">level</span> <span class="n">WARN</span>
+</pre></div>
+</div>
+<p>The example’s <code class="docutils literal notranslate"><span class="pre">sdkconfig.defaults</span></code> already compiles out about 110 unused clusters.</p>
+</section>
+<section id="our-image-today">
+<h2>2. Our image today<a class="headerlink" href="#our-image-today" title="Link to this heading">¶</a></h2>
+<section id="budget">
+<h3>2.1 Budget<a class="headerlink" href="#budget" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head text-right"><p>Bytes</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">app</span></code> slot (<code class="docutils literal notranslate"><span class="pre">firmware/loader/partitions_ota.csv</span></code>)</p></td>
+<td class="text-right"><p>2,359,296</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x240000</span></code> at <code class="docutils literal notranslate"><span class="pre">0x1C0000</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">layout_test</span></code> gate (slot − 64 KB)</p></td>
+<td class="text-right"><p>2,293,760</p></td>
+<td><p>the headroom <code class="docutils literal notranslate"><span class="pre">docs/design/ota.md</span></code> promises</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>app image at main</strong> (<code class="docutils literal notranslate"><span class="pre">esp32c6_netstack.bin</span></code>)</p></td>
+<td class="text-right"><p><strong>2,224,096</strong></p></td>
+<td><p>mesh M2–M5 in</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>left under the gate</strong></p></td>
+<td class="text-right"><p><strong>69,664</strong></p></td>
+<td><p>68 KB</p></td>
+</tr>
+<tr class="row-even"><td><p>static SRAM (<code class="docutils literal notranslate"><span class="pre">_heap_start</span></code> − <code class="docutils literal notranslate"><span class="pre">0x40800000</span></code>)</p></td>
+<td class="text-right"><p>331,472</p></td>
+<td><p>IRAM 100.6 KB, <code class="docutils literal notranslate"><span class="pre">.data</span></code> 71.4 KB, <code class="docutils literal notranslate"><span class="pre">.bss</span></code> 159.4 KB</p></td>
+</tr>
+<tr class="row-odd"><td><p>free heap, running, mesh off / on</p></td>
+<td class="text-right"><p>93,112 / 49,292</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">docs/design/mesh-m5.md</span></code> (rig-1)</p></td>
+</tr>
+<tr class="row-even"><td><p>minimum free heap, 2048-LED max config</p></td>
+<td class="text-right"><p>29,676</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">docs/design/ram-budget.md</span></code>; the floor is 24 KB</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The 4 MB flash is fixed: every C6 we ship and every rig DUT is an ESP32-C6FH4.</p>
+</section>
+<section id="what-is-in-the-2-17-mb-and-what-never-runs">
+<h3>2.2 What is in the 2.17 MB (and what never runs)<a class="headerlink" href="#what-is-in-the-2-17-mb-and-what-never-runs" title="Link to this heading">¶</a></h3>
+<p>Flash (<code class="docutils literal notranslate"><span class="pre">.flash.text</span></code> + <code class="docutils literal notranslate"><span class="pre">.flash.rodata</span></code> + IRAM text) by source, from DWARF:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Component</p></th>
+<th class="head text-right"><p>KB</p></th>
+<th class="head"><p>Runs on the netstack image?</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>vendor blobs (Wi-Fi/PHY <code class="docutils literal notranslate"><span class="pre">libpp</span></code>/<code class="docutils literal notranslate"><span class="pre">libnet80211</span></code>/<code class="docutils literal notranslate"><span class="pre">libphy</span></code>, BLE controller) + all our Rust</p></td>
+<td class="text-right"><p>1,156</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>mbedTLS (from source since #569)</p></td>
+<td class="text-right"><p>151</p></td>
+<td><p>yes (TLS, OTA signature)</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>lwIP + <code class="docutils literal notranslate"><span class="pre">esp_netif</span></code></strong> (tcp/udp/ip4/ip6/nd6/mld6/dhcp/dhcpserver/NAPT/sockets/<strong>PPP 20 KB</strong>)</p></td>
+<td class="text-right"><p><strong>127</strong></p></td>
+<td><p><strong>no</strong>: <code class="docutils literal notranslate"><span class="pre">esp_netif_init()</span></code> is never called (<code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp:1831</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>our C++ (<code class="docutils literal notranslate"><span class="pre">firmware/player_app</span></code>)</p></td>
+<td class="text-right"><p>112</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">wpa_supplicant</span></code> (common, rsn, <code class="docutils literal notranslate"><span class="pre">src/ap</span></code>, <code class="docutils literal notranslate"><span class="pre">esp_supplicant</span></code>, crypto)</p></td>
+<td class="text-right"><p>61</p></td>
+<td><p>mostly no: the netstack does its own 4-way handshake (<code class="docutils literal notranslate"><span class="pre">netstack/src/wpa.rs</span></code>) and AP role</p></td>
+</tr>
+<tr class="row-odd"><td><p>IDF drivers, FreeRTOS, NVS, littlefs, HAL</p></td>
+<td class="text-right"><p>~210</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">.eh_frame</span></code> (unwind tables)</p></td>
+<td class="text-right"><p>40</p></td>
+<td><p>only for C++ exceptions and IDF panic backtraces</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">espcoredump</span></code></p></td>
+<td class="text-right"><p>9</p></td>
+<td><p>no: the coredump partition was dropped (ota.md)</p></td>
+</tr>
+<tr class="row-even"><td><p>Arduino <code class="docutils literal notranslate"><span class="pre">Network</span></code> + <code class="docutils literal notranslate"><span class="pre">WiFi</span></code> libraries</p></td>
+<td class="text-right"><p>12</p></td>
+<td><p>only the vendor build and the boot scan</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network_provisioning</span></code></p></td>
+<td class="text-right"><p>3</p></td>
+<td><p>no</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Why lwIP is still linked: the linker map of the main build (<code class="docutils literal notranslate"><span class="pre">--linkopt=-Wl,-Map</span></code>)
+shows four ways in:</p>
+<ul class="simple">
+<li><p>the Arduino <code class="docutils literal notranslate"><span class="pre">Network</span></code> library (<code class="docutils literal notranslate"><span class="pre">NetworkManager.o</span></code>, <code class="docutils literal notranslate"><span class="pre">NetworkInterface.o</span></code>), reached
+from the <code class="docutils literal notranslate"><span class="pre">WiFi.*</span></code> calls in <code class="docutils literal notranslate"><span class="pre">main.cpp</span></code> that the <code class="docutils literal notranslate"><span class="pre">LM_NETSTACK</span></code> gates do not cover
+(lines 1477, 3384, 3939–4143);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">esp_wifi</span></code>’s <code class="docutils literal notranslate"><span class="pre">wifi_default.c</span></code> (the default STA/AP netif handlers);</p></li>
+<li><p>mbedTLS’s <code class="docutils literal notranslate"><span class="pre">net_sockets.c</span></code> (<code class="docutils literal notranslate"><span class="pre">MBEDTLS_NET_C</span></code>, the BSD-socket BIO, which we never use:
+our TLS runs over the netstack’s BIO);</p></li>
+<li><p>the Arduino core’s <code class="docutils literal notranslate"><span class="pre">esp32-hal-time.c</span></code> (<code class="docutils literal notranslate"><span class="pre">configTime</span></code> / SNTP takes the tcpip core
+lock).</p></li>
+</ul>
+<p>With <code class="docutils literal notranslate"><span class="pre">--gc-sections</span></code>, the linker keeps every function that is reachable, even if it
+never runs.</p>
+<p><strong>The cuts, with their size:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Cut</p></th>
+<th class="head text-right"><p>Saves (est.)</p></th>
+<th class="head"><p>Effort</p></th>
+<th class="head"><p>Risk</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>C1. Cut those four references in the netstack build (gate the <code class="docutils literal notranslate"><span class="pre">WiFi.*</span></code> calls, <code class="docutils literal notranslate"><span class="pre">MBEDTLS_NET_C</span></code> off, stub the default Wi-Fi netif handlers and the SNTP lock), so lwIP, <code class="docutils literal notranslate"><span class="pre">esp_netif</span></code>, PPP and the Arduino <code class="docutils literal notranslate"><span class="pre">Network</span></code>/<code class="docutils literal notranslate"><span class="pre">WiFi</span></code> libraries stop linking</p></td>
+<td class="text-right"><p>130–140 KB</p></td>
+<td><p>2–3 days</p></td>
+<td><p>low: the netstack never calls them. Check that the boot scan still runs: it uses <code class="docutils literal notranslate"><span class="pre">esp_wifi_scan_*</span></code>, not <code class="docutils literal notranslate"><span class="pre">WiFi.scan*</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>C2. Drop the <code class="docutils literal notranslate"><span class="pre">wpa_supplicant</span></code> parts the netstack does not use (<code class="docutils literal notranslate"><span class="pre">src/ap</span></code>, WPS/EAP, <code class="docutils literal notranslate"><span class="pre">esp_supplicant</span></code> glue)</p></td>
+<td class="text-right"><p>30–45 KB</p></td>
+<td><p>2–3 days</p></td>
+<td><p>medium: <code class="docutils literal notranslate"><span class="pre">esp_wifi_init</span></code> registers supplicant callbacks, so some must stay as stubs. Needs the Wi-Fi HITL lane (join, rekey, commercial AP)</p></td>
+</tr>
+<tr class="row-even"><td><p>C3. <code class="docutils literal notranslate"><span class="pre">espcoredump</span></code>, <code class="docutils literal notranslate"><span class="pre">network_provisioning</span></code> out of the link</p></td>
+<td class="text-right"><p>12 KB</p></td>
+<td><p>½ day</p></td>
+<td><p>low</p></td>
+</tr>
+<tr class="row-odd"><td><p>C4. No unwind tables for our own code: <code class="docutils literal notranslate"><span class="pre">-fno-asynchronous-unwind-tables</span></code> for <code class="docutils literal notranslate"><span class="pre">firmware/player_app</span></code> C++, <code class="docutils literal notranslate"><span class="pre">-C</span> <span class="pre">force-unwind-tables=no</span></code> for the Rust (<code class="docutils literal notranslate"><span class="pre">panic</span> <span class="pre">=</span> <span class="pre">abort</span></code>)</p></td>
+<td class="text-right"><p>10–20 KB of the 40 KB <code class="docutils literal notranslate"><span class="pre">.eh_frame</span></code></p></td>
+<td><p>1 day</p></td>
+<td><p>low. The prebuilt SDK keeps C++ exceptions on (<code class="docutils literal notranslate"><span class="pre">CONFIG_COMPILER_CXX_EXCEPTIONS=y</span></code>) and its own tables. <code class="docutils literal notranslate"><span class="pre">CONFIG_ESP_SYSTEM_USE_EH_FRAME</span></code> is already off, so panic backtraces do not use them</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Total</strong></p></td>
+<td class="text-right"><p><strong>185–235 KB</strong></p></td>
+<td><p><strong>about 2 weeks</strong></p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>These cuts are worth making anyway. They also give the mesh and the next features
+room. With them, the image has about <strong>255–300 KB</strong> under the gate.</p>
+</section>
+</section>
+<section id="a-matter-light-built-with-the-chip-sdk-esp-matter-measured">
+<h2>3. A Matter light built with the CHIP SDK (esp-matter), measured<a class="headerlink" href="#a-matter-light-built-with-the-chip-sdk-esp-matter-measured" title="Link to this heading">¶</a></h2>
+<p>⟦ESPM_SECTION⟧</p>
+</section>
+<section id="a-matter-light-in-rust-rs-matter-measured">
+<h2>4. A Matter light in Rust (rs-matter), measured<a class="headerlink" href="#a-matter-light-in-rust-rs-matter-measured" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">bloat-check</span></code> (<code class="docutils literal notranslate"><span class="pre">riscv32imac-unknown-none-elf</span></code>, <code class="docutils literal notranslate"><span class="pre">opt-level</span> <span class="pre">=</span> <span class="pre">&quot;z&quot;</span></code>, fat LTO,
+<code class="docutils literal notranslate"><span class="pre">sha2</span></code>/<code class="docutils literal notranslate"><span class="pre">aes</span></code> compact soft backends):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Section</p></th>
+<th class="head text-right"><p>Bytes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">.text</span></code></p></td>
+<td class="text-right"><p>389,296</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">.rodata</span></code></p></td>
+<td class="text-right"><p>45,280</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">.data</span></code> + <code class="docutils literal notranslate"><span class="pre">.rwtext</span></code> + <code class="docutils literal notranslate"><span class="pre">.trap</span></code></p></td>
+<td class="text-right"><p>7,612</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>flash total</strong></p></td>
+<td class="text-right"><p><strong>442,188</strong></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">.bss</span></code></p></td>
+<td class="text-right"><p>71,004</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Flash by crate (symbol sizes, demangled):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Crates</p></th>
+<th class="head text-right"><p>KB</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rs-matter-im</span></code>, <code class="docutils literal notranslate"><span class="pre">-dm</span></code>, <code class="docutils literal notranslate"><span class="pre">-dm-core</span></code>, <code class="docutils literal notranslate"><span class="pre">-im-core</span></code> (interaction model, data model)</p></td>
+<td class="text-right"><p>101</p></td>
+<td><p>Read/Write/Invoke/Subscribe, the root endpoint’s clusters</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">rs-matter-transport</span></code> (MRP, sessions, exchanges, BTP, mDNS)</p></td>
+<td class="text-right"><p>29</p></td>
+<td><p>BTP ≈ 12 KB, mDNS ≈ 19 KB of the symbols that name them</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rs-matter-dm-clusters</span></code> (generated cluster codecs)</p></td>
+<td class="text-right"><p>23</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">rs-matter-sc</span></code> (PASE, CASE)</p></td>
+<td class="text-right"><p>20</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rs-matter-cert</span></code>, <code class="docutils literal notranslate"><span class="pre">-tlv</span></code>, <code class="docutils literal notranslate"><span class="pre">-crypto</span></code>, <code class="docutils literal notranslate"><span class="pre">-utils</span></code>, <code class="docutils literal notranslate"><span class="pre">-node*</span></code>, <code class="docutils literal notranslate"><span class="pre">-pairing</span></code></p></td>
+<td class="text-right"><p>33</p></td>
+<td><p>Matter certificates in TLV, TLV codec</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">embassy-futures</span></code> + <code class="docutils literal notranslate"><span class="pre">core</span></code> (async select/join glue, formatting)</p></td>
+<td class="text-right"><p>52</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>RustCrypto (<code class="docutils literal notranslate"><span class="pre">p256</span></code>, <code class="docutils literal notranslate"><span class="pre">primeorder</span></code>, <code class="docutils literal notranslate"><span class="pre">crypto-bigint</span></code>, <code class="docutils literal notranslate"><span class="pre">der</span></code>, <code class="docutils literal notranslate"><span class="pre">x509-cert</span></code>, <code class="docutils literal notranslate"><span class="pre">aes</span></code>, <code class="docutils literal notranslate"><span class="pre">ccm</span></code>, <code class="docutils literal notranslate"><span class="pre">sha2</span></code>, <code class="docutils literal notranslate"><span class="pre">hmac</span></code>, <code class="docutils literal notranslate"><span class="pre">hkdf</span></code>, <code class="docutils literal notranslate"><span class="pre">pbkdf2</span></code>)</p></td>
+<td class="text-right"><p>42</p></td>
+<td><p>replaceable by our mbedTLS (<code class="docutils literal notranslate"><span class="pre">rs-matter-crypto</span></code> has an mbedTLS backend)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">qrcodegen</span></code> (setup QR printed to the log)</p></td>
+<td class="text-right"><p>7</p></td>
+<td><p>not needed on the lamp</p></td>
+</tr>
+<tr class="row-even"><td><p>esp-hal, esp-rtos, embassy-executor, defmt/RTT</p></td>
+<td class="text-right"><p>35</p></td>
+<td><p><strong>not</strong> part of the cost on our image: we bring FreeRTOS and our own drivers</p></td>
+</tr>
+<tr class="row-odd"><td><p>C runtime, unattributed</p></td>
+<td class="text-right"><p>40</p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>So the Matter stack itself costs about <strong>400 KB</strong> of flash: 442 KB minus the 35 KB
+platform and the 7 KB QR code. With RustCrypto swapped for our mbedTLS it is about
+<strong>360 KB</strong>, plus the glue to the netstack (§5.2, about 15 KB).</p>
+<p>RAM: <code class="docutils literal notranslate"><span class="pre">.bss</span></code> is 71 KB, but the Matter state is the 51 KB <code class="docutils literal notranslate"><span class="pre">MatterStack</span></code> cell: 5 fabrics
+(the spec minimum), sessions, exchanges, the 1,583-byte RX/TX buffers, subscriptions,
+3 Wi-Fi networks, BTP. The async tasks’ futures add about 12 KB, and a 4 KB heap
+covers rs-matter’s small <code class="docutils literal notranslate"><span class="pre">alloc</span></code> use. The defaults are sized for a hub-class node.
+For one lamp with one or two controllers, the features <code class="docutils literal notranslate"><span class="pre">max-fabrics-*</span></code>,
+<code class="docutils literal notranslate"><span class="pre">max-exchanges-per-session-*</span></code>, fewer subscriptions and one network bring it to an
+estimated <strong>30–40 KB</strong>. CASE needs about 2 KB of stack for P-256 on top. The spec
+requires 5 fabrics for certification, so a certified lamp keeps 5 (§8).</p>
+</section>
+<section id="the-three-ways-to-put-matter-on-the-lamp">
+<h2>5. The three ways to put Matter on the lamp<a class="headerlink" href="#the-three-ways-to-put-matter-on-the-lamp" title="Link to this heading">¶</a></h2>
+<section id="a-the-chip-sdk-on-lwip-next-to-the-netstack">
+<h3>5.1 (a) The CHIP SDK on lwIP, next to the netstack<a class="headerlink" href="#a-the-chip-sdk-on-lwip-next-to-the-netstack" title="Link to this heading">¶</a></h3>
+<p>What it takes:</p>
+<ul class="simple">
+<li><p>lwIP has to run again, fed by <strong>our</strong> MAC. The netstack owns the RX ring and does its
+own MLME and WPA (<code class="docutils literal notranslate"><span class="pre">radio_bringup</span></code>, <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp:1820</span></code>). The vendor Wi-Fi
+driver never associates, so <code class="docutils literal notranslate"><span class="pre">esp_netif</span></code>’s Wi-Fi glue has nothing to attach to. We
+would write a custom lwIP <code class="docutils literal notranslate"><span class="pre">netif</span></code>: <code class="docutils literal notranslate"><span class="pre">linkoutput</span></code> into the netstack’s <code class="docutils literal notranslate"><span class="pre">tx_l2</span></code>, and an
+RX demux in <code class="docutils literal notranslate"><span class="pre">handle_l3</span></code> that hands IPv6 frames and UDP 5540 to lwIP. Two IP stacks
+then share one MAC address, and ARP/ND, DHCP and mDNS have to agree on who answers.</p></li>
+<li><p>The CHIP ESP32 platform layer assumes <code class="docutils literal notranslate"><span class="pre">esp_wifi</span></code> events, <code class="docutils literal notranslate"><span class="pre">esp_netif</span></code>, the default
+event loop and NVS. It needs a new CHIP platform for us (connectivity manager,
+network commissioning driver, KVS), as an “external platform” (<code class="docutils literal notranslate"><span class="pre">ext_plat</span></code>).</p></li>
+<li><p>esp-matter v1.5 builds against IDF v5.5.5 with its own sdkconfig. Our IDF is the
+prebuilt Arduino SDK v5.5.4 with a frozen sdkconfig. CHIP would have to be built
+against that frozen config, by hand, outside esp-matter’s CMake.</p></li>
+<li><p>Size: ⟦A_SIZE⟧.</p></li>
+<li><p>RAM: ⟦A_RAM⟧.</p></li>
+</ul>
+<p><strong>Verdict: does not fit, and it is the most fragile of the three.</strong> It brings back
+the vendor heap the RAM audits removed. It also adds a second, unaudited stack in
+front of the radio.</p>
+</section>
+<section id="b-a-matter-server-on-our-own-stack-rs-matter-ipv6-in-the-netstack">
+<h3>5.2 (b) A Matter server on our own stack (rs-matter + IPv6 in the netstack)<a class="headerlink" href="#b-a-matter-server-on-our-own-stack-rs-matter-ipv6-in-the-netstack" title="Link to this heading">¶</a></h3>
+<p>What the netstack has today: IPv4, ARP, DHCP, UDP (DHCP, OSC on 9000, mDNS on 5353),
+our TCP, TLS and wss, a single-service mDNS responder (<code class="docutils literal notranslate"><span class="pre">firmware/mdns</span></code>) and a
+heapless BLE host with a fixed GATT server (<code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/gatt.rs</span></code>,
+<code class="docutils literal notranslate"><span class="pre">gap.rs</span></code>). What Matter adds:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Piece</p></th>
+<th class="head"><p>Where</p></th>
+<th class="head text-right"><p>Size (est.)</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>IPv6 RX/TX: EtherType <code class="docutils literal notranslate"><span class="pre">0x86DD</span></code> in <code class="docutils literal notranslate"><span class="pre">handle_l3</span></code>, next-header walk, ICMPv6 checksum</p></td>
+<td><p>netstack_transport + a small Rust crate</p></td>
+<td class="text-right"><p>3 KB</p></td>
+<td><p>today <code class="docutils literal notranslate"><span class="pre">handle_l3</span></code> drops anything that is not <code class="docutils literal notranslate"><span class="pre">0x08xx</span></code> (line 1134)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Link-local <code class="docutils literal notranslate"><span class="pre">fe80::/64</span></code> from the MAC (EUI-64), DAD (one NS)</p></td>
+<td><p></p></td>
+<td class="text-right"><p>1 KB</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Neighbour Discovery: answer NS for our addresses, send NS / learn from NA, a 4-entry neighbour cache like the IPv4 one</p></td>
+<td><p></p></td>
+<td class="text-right"><p>3 KB</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>SLAAC from Router Advertisements (ULA / global /64)</p></td>
+<td><p></p></td>
+<td class="text-right"><p>2 KB</p></td>
+<td><p>link-local is enough on one LAN; Apple and Google hubs prefer a ULA</p></td>
+</tr>
+<tr class="row-even"><td><p>MLDv2 reports for <code class="docutils literal notranslate"><span class="pre">ff02::fb</span></code> and our solicited-node groups</p></td>
+<td><p></p></td>
+<td class="text-right"><p>1 KB</p></td>
+<td><p>needed so APs with multicast snooping forward mDNS</p></td>
+</tr>
+<tr class="row-odd"><td><p>UDP over IPv6 (mandatory checksum) to a Matter mailbox, like the OSC one</p></td>
+<td><p></p></td>
+<td class="text-right"><p>1 KB</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>mDNS: <code class="docutils literal notranslate"><span class="pre">_matterc._udp</span></code> (commissionable, with <code class="docutils literal notranslate"><span class="pre">_L</span></code>/<code class="docutils literal notranslate"><span class="pre">_S</span></code>/<code class="docutils literal notranslate"><span class="pre">_CM</span></code> subtypes) and <code class="docutils literal notranslate"><span class="pre">_matter._tcp</span></code> (operational), AAAA records, over IPv6</p></td>
+<td><p>rs-matter’s built-in responder on 5353, or <code class="docutils literal notranslate"><span class="pre">firmware/mdns</span></code> generalised to several services</p></td>
+<td class="text-right"><p>0 (in rs-matter)</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>CHIPoBLE: one more GATT service (C1/C2/C3 characteristics) on the heapless host, mapped to rs-matter’s <code class="docutils literal notranslate"><span class="pre">Btp</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">gatt.rs</span></code> + glue</p></td>
+<td class="text-right"><p>2 KB</p></td>
+<td><p>optional: on-network commissioning needs no BLE (§8)</p></td>
+</tr>
+<tr class="row-even"><td><p>An executor: rs-matter is async. One FreeRTOS task polls its futures (a small <code class="docutils literal notranslate"><span class="pre">block_on</span></code> with a waker per mailbox)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/player_app</span></code></p></td>
+<td class="text-right"><p>1 KB</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Persistence: fabrics, ACLs and counters in NVS (the <code class="docutils literal notranslate"><span class="pre">KvBlobStore</span></code> trait)</p></td>
+<td><p></p></td>
+<td class="text-right"><p>1 KB</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>The data model: root endpoint + endpoint 1 Dimmable Light (On/Off, Level Control, Identify, Groups, Scenes minimal), wired to the power machine (§9)</p></td>
+<td><p></p></td>
+<td class="text-right"><p>in rs-matter</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Total glue</strong></p></td>
+<td><p></p></td>
+<td class="text-right"><p><strong>about 15 KB</strong></p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Two netstack rules this has to respect:</p>
+<ul class="simple">
+<li><p><strong>Group-addressed TX while wss is live drops the wss session</strong>
+(<code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp:808</span></code>). The mDNS announcements and MLD reports are
+multicast. Today mDNS answers unicast when a wss session is up. Matter needs the
+same rule: unicast (QU) answers during a session, announcements only between
+sessions. Better still, find and fix the root cause in the TX path. That is a
+prerequisite, and it needs its own HITL gate.</p></li>
+<li><p><strong>The Rust toolchain.</strong> rs-matter needs Rust ≥ 1.92. <code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code> pins 1.85.0 for
+the C6, so the toolchain has to move up. That touches every Rust crate, so it is a
+PR of its own with the full HITL lane.</p></li>
+</ul>
+<p>Size: 360 KB (rs-matter with the mbedTLS backend) + 15 KB glue = <strong>about 375 KB</strong>.
+After the §2.2 cuts there are 255–300 KB left. So it is short by about 75–120 KB. The
+gap closes in one of these ways (owner decision §10):</p>
+<ol class="arabic simple">
+<li><p><strong>Trim rs-matter to what one lamp needs</strong>: no QR code (7 KB), no Wi-Fi network
+commissioning cluster when Improv owns credentials (on-network commissioning
+only), no BTP when there is no BLE commissioning (12 KB), the IM features a light
+never uses (events, timed requests on non-lock clusters, the Groups key cluster
+beyond the mandatory stubs). Estimated 40–70 KB. Some of this needs upstream
+feature flags; rs-matter is small enough to carry patches.</p></li>
+<li><p><strong>Grow the app slot.</strong> The loader holds 1,300,704 B in a 1,376,256 B slot. It also
+links the dead lwIP (it is the same netstack build without the player). With C1–C4
+it drops to about 1.08 MB. Moving the loader/littlefs/app boundaries by 192 KB
+needs a one-time partition-table migration. The loader can do it the way it already
+migrated littlefs (<code class="docutils literal notranslate"><span class="pre">docs/design/ota.md</span></code> “Migration”), but it is the riskiest step
+in this plan.</p></li>
+<li><p><strong>Build Matter as an opt-in feature</strong> at first: “Matter” images for lamps that
+want it, with one of the bigger features left out (see the decision).</p></li>
+</ol>
+<p>RAM: 30–40 KB of Matter state, trimmed (§4). The running image has 93 KB free with
+the mesh off and 49 KB with the mesh on. <strong>Matter and the mesh do not both fit at the
+2048-LED max config</strong> (29.7 KB minimum today). Matter’s state can share the mesh’s
+arena: both are heap blocks that are allocated when the feature is switched on (the
+mode-union design in the RAM audit). Or the two features can be exclusive at max
+LEDs (owner decision §10). CASE runs inside the TLS region’s budget: P-256 is
+already there for TLS. Releasing BLE after commissioning returns 33–43 KB
+(<code class="docutils literal notranslate"><span class="pre">fug71-device-heap-ble</span></code>). The heapless host makes that smaller on the netstack, but
+it is still there.</p>
+<p><strong>Verdict: fits, with the §2.2 cuts plus one of the three gap closers.</strong> It is a
+sizeable port, but every piece sits on code we already own and test.</p>
+</section>
+<section id="c-a-separate-matter-mode-image-ota-slot-partition">
+<h3>5.3 (c) A separate Matter-mode image (OTA slot / partition)<a class="headerlink" href="#c-a-separate-matter-mode-image-ota-slot-partition" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>No room for a third slot.</strong> 4 MB = 64 KB (boot/table/nvs/otadata) + 1,344 KB
+loader + 384 KB littlefs + 2,304 KB app. A Matter image of ⟦ESPM_FLASH_KB⟧ KB
+(§3) needs its own slot. The only way to get one is to drop littlefs (the map and
+effects) or the loader (OTA recovery).</p></li>
+<li><p><strong>A Matter image in the app slot instead</strong> (the user picks “Splanc” or “Matter”
+firmware, and the loader switches between them): a lamp in Matter mode has no
+effects, no app control and no mesh, just a dimmable white light. That breaks
+“effects keep running” and the product.</p></li>
+<li><p><strong>What (c) is good for: this spike’s PoC.</strong> A stock esp-matter light in the app
+slot proves commissioning and the heap profile on our exact chip (§7). It is also
+a fallback if (b) slips: a factory-test or certification-lab image.</p></li>
+</ul>
+<p><strong>Verdict: not a product path, but the right tool to measure with.</strong></p>
+</section>
+</section>
+<section id="recommendation-and-timeline-b">
+<h2>6. Recommendation and timeline: (b)<a class="headerlink" href="#recommendation-and-timeline-b" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Milestone</p></th>
+<th class="head"><p>What</p></th>
+<th class="head"><p>Gate</p></th>
+<th class="head"><p>Effort</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>M0 size diet</p></td>
+<td><p>§2.2 C1–C4</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">layout_test</span></code>, full HITL lane, Wi-Fi join/rekey on a commercial AP</p></td>
+<td><p>2 weeks</p></td>
+</tr>
+<tr class="row-odd"><td><p>M1 IPv6</p></td>
+<td><p>link-local + SLAAC, ND, MLD, ICMPv6 echo, UDP/IPv6, <code class="docutils literal notranslate"><span class="pre">ping6</span></code> from the rig; fix or gate group-addressed TX during wss</p></td>
+<td><p>new HITL gate <code class="docutils literal notranslate"><span class="pre">ipv6_basics</span></code> (DUT answers NS/ping6, keeps wss through MLD and mDNS)</p></td>
+<td><p>1–1.5 weeks</p></td>
+</tr>
+<tr class="row-even"><td><p>M2 rs-matter in the image</p></td>
+<td><p>Rust 1.92+ toolchain bump (own PR); rs-matter via crate_universe with the mbedTLS backend; executor task; NVS store; root endpoint + On/Off light; on-network commissioning</p></td>
+<td><p>chip-tool / the CHIP python controller commissions a rig DUT and toggles it (§7’s harness, as a HITL test)</p></td>
+<td><p>2 weeks</p></td>
+</tr>
+<tr class="row-odd"><td><p>M3 the lamp’s clusters</p></td>
+<td><p>On/Off + Level + Identify mapped onto lamp power (§9); attribute reports on <code class="docutils literal notranslate"><span class="pre">power_state</span></code> changes; BLE commissioning (CHIPoBLE on the heapless host) if D-189b says so</p></td>
+<td><p>HITL: Matter toggles and dims while the app’s wss session stays up, effects keep running; touch-tap reports arrive as subscription reports</p></td>
+<td><p>1–1.5 weeks</p></td>
+</tr>
+<tr class="row-even"><td><p>M4 ecosystems + certification prep</p></td>
+<td><p>Apple Home, Home Assistant, Alexa on a real home network (IPv6 multicast through a real AP); DAC/PAI provisioning per lamp (per-device certs already exist, <code class="docutils literal notranslate"><span class="pre">docs/design/per-device-cert.md</span></code>); Test Harness pre-runs</p></td>
+<td><p>manual + one HITL smoke</p></td>
+<td><p>1–2 weeks</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Total: about 6–8 weeks</strong>, with M0 useful on its own.</p>
+<p>Why not the bridge alone? It already exists (PR #600, matter.js in the Splanc
+bridge, Phase 1 of the study). It stays the fastest way to get Matter for lamps that
+have a bridge, and the mapping in §9 is the same, so a lamp acts the same either way.
+On-lamp Matter is what a lamp without a bridge needs, and certification (“Works with
+Google Home”) needs the device itself to be Matter.</p>
+</section>
+<section id="poc-a-matter-light-on-a-rig-2-c6-commissioned-from-the-container">
+<h2>7. PoC: a Matter light on a rig-2 C6, commissioned from the container<a class="headerlink" href="#poc-a-matter-light-on-a-rig-2-c6-commissioned-from-the-container" title="Link to this heading">¶</a></h2>
+<p>⟦POC_SECTION⟧</p>
+</section>
+<section id="commissioning-without-ble">
+<h2>8. Commissioning without BLE<a class="headerlink" href="#commissioning-without-ble" title="Link to this heading">¶</a></h2>
+<p>The lamp is already on Wi-Fi after Improv. Matter allows <strong>on-network commissioning</strong>:
+the device advertises <code class="docutils literal notranslate"><span class="pre">_matterc._udp</span></code> with the commissioning window open, and the
+QR / manual code says <code class="docutils literal notranslate"><span class="pre">DiscoveryCapabilities</span> <span class="pre">=</span> <span class="pre">OnNetwork</span></code>. That saves CHIPoBLE
+(≈ 14 KB with BTP) and keeps one owner for the Wi-Fi credentials (Improv; the
+“fresh join” rule). The catch: Apple Home and Google Home support on-network
+commissioning, but their certification programmes expect BLE for Wi-Fi devices that
+are not yet on a network. A lamp that is always onboarded through the Splanc app is
+always on the network first. Needs checking against each ecosystem’s current rules
+(M4).</p>
+</section>
+<section id="mapping-on-off-and-level-onto-lamp-power">
+<h2>9. Mapping On/Off and Level onto lamp power<a class="headerlink" href="#mapping-on-off-and-level-onto-lamp-power" title="Link to this heading">¶</a></h2>
+<p>The lamp-power work (branch <code class="docutils literal notranslate"><span class="pre">agent/lamp-touch-power</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/design/lamp-power.md</span></code>
+there; protocol arms <code class="docutils literal notranslate"><span class="pre">set_power</span></code> 130, <code class="docutils literal notranslate"><span class="pre">get_power</span></code> 131, <code class="docutils literal notranslate"><span class="pre">set_power_config</span></code> 132, push
+<code class="docutils literal notranslate"><span class="pre">power_state</span></code> 70) is the seam. On-lamp Matter calls the same state machine
+(<code class="docutils literal notranslate"><span class="pre">firmware/power</span></code>, <code class="docutils literal notranslate"><span class="pre">Machine::request</span></code>) that <code class="docutils literal notranslate"><span class="pre">set_power</span></code> does, with a new request
+source <code class="docutils literal notranslate"><span class="pre">MATTER</span></code>. It uses the same mapping as the bridge (PR #600,
+<code class="docutils literal notranslate"><span class="pre">agent/src/bridge/matter.ts</span></code>), so a lamp behaves the same through either path.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Matter</p></th>
+<th class="head"><p>Lamp</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>OnOff <code class="docutils literal notranslate"><span class="pre">On</span></code> / <code class="docutils literal notranslate"><span class="pre">Off</span></code> / <code class="docutils literal notranslate"><span class="pre">Toggle</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Request</span> <span class="pre">{</span> <span class="pre">on,</span> <span class="pre">instant:</span> <span class="pre">false,</span> <span class="pre">duration_ms:</span> <span class="pre">0,</span> <span class="pre">source:</span> <span class="pre">MATTER</span> <span class="pre">}</span></code></p></td>
+<td><p>plays the configured ON/OFF transition (FADE or EFFECT); a reversal mid-transition stays smooth</p></td>
+</tr>
+<tr class="row-odd"><td><p>OnOff attribute <code class="docutils literal notranslate"><span class="pre">OnOff</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PowerState.on</span></code> (the target)</p></td>
+<td><p>reported on every <code class="docutils literal notranslate"><span class="pre">power_state</span></code> change, touch taps included</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">OnWithTimedOff</span></code>, <code class="docutils literal notranslate"><span class="pre">OnTime</span></code>, <code class="docutils literal notranslate"><span class="pre">OffWaitTime</span></code> (Lighting feature)</p></td>
+<td><p>a timer in the Matter glue that issues an <code class="docutils literal notranslate"><span class="pre">Off</span></code> request</p></td>
+<td><p>the light device type requires the Lighting feature</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">OffWithEffect</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Off</span></code> with the configured OFF transition</p></td>
+<td><p>Matter’s dying-light/fade variants all map to our transition</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">StartUpOnOff</span></code> (null / 0 / 1 / 2)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PowerConfig.boot</span></code> (0 last / 2 off / 1 on; 2 = toggle has no equivalent, so reject it with CONSTRAINT_ERROR or add it to the boot enum)</p></td>
+<td><p>persisted by the power config, not by Matter</p></td>
+</tr>
+<tr class="row-odd"><td><p>Level <code class="docutils literal notranslate"><span class="pre">CurrentLevel</span></code> 1..254</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">set_brightness(level</span> <span class="pre">/</span> <span class="pre">254)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">levelOf</span></code> / <code class="docutils literal notranslate"><span class="pre">brightnessOf</span></code> exactly as <code class="docutils literal notranslate"><span class="pre">matter.ts</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">MoveToLevel(transitionTime)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">set_brightness</span></code> now; <code class="docutils literal notranslate"><span class="pre">transitionTime</span></code> (1/10 s) ignored at first</p></td>
+<td><p>a brightness ramp in the render path is a small follow-up</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">MoveToLevelWithOnOff</span></code> to the minimum</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Off</span></code>; from off to a level: <code class="docutils literal notranslate"><span class="pre">On</span></code> then the level</p></td>
+<td><p>the “with on/off” commands drive power</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">OnOffTransitionTime</span></code>, <code class="docutils literal notranslate"><span class="pre">OnTransitionTime</span></code>, <code class="docutils literal notranslate"><span class="pre">OffTransitionTime</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PowerTransition.duration_ms</span></code> (× 100) for the ON / OFF transition</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">OnLevel</span></code> (nullable)</p></td>
+<td><p>the brightness to turn on at (null = the previous)</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Move</span></code> / <code class="docutils literal notranslate"><span class="pre">Step</span></code> / <code class="docutils literal notranslate"><span class="pre">Stop</span></code></p></td>
+<td><p>slider gestures: integrate in the glue, then <code class="docutils literal notranslate"><span class="pre">set_brightness</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Identify <code class="docutils literal notranslate"><span class="pre">Identify(time)</span></code></p></td>
+<td><p>brightness dips for <code class="docutils literal notranslate"><span class="pre">time</span></code> seconds, then the brightness is restored: what the agent’s <code class="docutils literal notranslate"><span class="pre">identify_player</span></code> does from the client side (<code class="docutils literal notranslate"><span class="pre">agent/src/session.ts</span></code>), done in the glue</p></td>
+<td><p>the firmware has no identify arm today</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Reports: every <code class="docutils literal notranslate"><span class="pre">power_state</span></code> the lamp pushes (<code class="docutils literal notranslate"><span class="pre">lm_power_push_due</span></code> /
+<code class="docutils literal notranslate"><span class="pre">lm_power_build_push</span></code>) also marks the Matter attributes dirty, so subscriptions get
+touch taps and app changes within one report interval.</p>
+</section>
+<section id="owner-decisions">
+<h2>10. Owner decisions<a class="headerlink" href="#owner-decisions" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p><strong>Go ahead with M0 (the size diet) now?</strong> It frees about 185–235 KB with no Matter code.
+Options: <em>yes (recommended)</em> / after the mesh settles / no.</p></li>
+<li><p><strong>How to close the last 75–120 KB for Matter</strong> (§5.2). Options: <em>trim rs-matter to a
+lamp’s needs (recommended first)</em> / grow the app slot with a one-time partition
+migration / ship Matter as an opt-in image.</p></li>
+<li><p><strong>Commissioning transport.</strong> Options: <em>on-network only at first, BLE (CHIPoBLE) in
+M3 if an ecosystem needs it (recommended)</em> / BLE from the start.</p></li>
+<li><p><strong>Matter + mesh at the 2048-LED max config.</strong> Options: <em>one shared arena for the
+two feature states (recommended)</em> / mutually exclusive at max LEDs / cap LEDs when
+both are on.</p></li>
+<li><p><strong>Fabric count.</strong> Options: <em>5 (the spec minimum, needed for certification;
+recommended)</em> / 2–3 for an uncertified first release (saves RAM).</p></li>
+<li><p><strong>Rust toolchain bump to ≥ 1.92</strong> for the whole firmware (needed by rs-matter).
+Options: <em>yes, as its own PR before M2 (recommended)</em> / vendor an older rs-matter
+(0.1.x, much larger, unmaintained).</p></li>
+</ol>
+</section>
+<section id="risks-and-open-questions">
+<h2>11. Risks and open questions<a class="headerlink" href="#risks-and-open-questions" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>rs-matter is young (v0.4.1). Its CASE/PASE and IM have passed parts of the Matter
+test harness upstream, but not certification. Budget time for conformance fixes.</p></li>
+<li><p>IPv6 multicast through home APs (snooping, multicast-to-unicast) is where Matter
+devices fail in the field. M4 has to test on real APs, not only the rig’s
+hostapd.</p></li>
+<li><p>The group-addressed-TX rule (§5.2) has to be root-caused, not worked around.</p></li>
+<li><p>Our CHIP numbers (§3) come from IDF v5.5.5 + esp-matter v1.5 with their own
+sdkconfig, not our frozen v5.5.4 SDK. The difference is small next to the gap.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Matter on the lamp’s ESP32-C6 (port spike, D-189)</a><ul>
+<li><a class="reference internal" href="#what-was-measured-and-how">1. What was measured, and how</a></li>
+<li><a class="reference internal" href="#our-image-today">2. Our image today</a><ul>
+<li><a class="reference internal" href="#budget">2.1 Budget</a></li>
+<li><a class="reference internal" href="#what-is-in-the-2-17-mb-and-what-never-runs">2.2 What is in the 2.17 MB (and what never runs)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#a-matter-light-built-with-the-chip-sdk-esp-matter-measured">3. A Matter light built with the CHIP SDK (esp-matter), measured</a></li>
+<li><a class="reference internal" href="#a-matter-light-in-rust-rs-matter-measured">4. A Matter light in Rust (rs-matter), measured</a></li>
+<li><a class="reference internal" href="#the-three-ways-to-put-matter-on-the-lamp">5. The three ways to put Matter on the lamp</a><ul>
+<li><a class="reference internal" href="#a-the-chip-sdk-on-lwip-next-to-the-netstack">5.1 (a) The CHIP SDK on lwIP, next to the netstack</a></li>
+<li><a class="reference internal" href="#b-a-matter-server-on-our-own-stack-rs-matter-ipv6-in-the-netstack">5.2 (b) A Matter server on our own stack (rs-matter + IPv6 in the netstack)</a></li>
+<li><a class="reference internal" href="#c-a-separate-matter-mode-image-ota-slot-partition">5.3 (c) A separate Matter-mode image (OTA slot / partition)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#recommendation-and-timeline-b">6. Recommendation and timeline: (b)</a></li>
+<li><a class="reference internal" href="#poc-a-matter-light-on-a-rig-2-c6-commissioned-from-the-container">7. PoC: a Matter light on a rig-2 C6, commissioned from the container</a></li>
+<li><a class="reference internal" href="#commissioning-without-ble">8. Commissioning without BLE</a></li>
+<li><a class="reference internal" href="#mapping-on-off-and-level-onto-lamp-power">9. Mapping On/Off and Level onto lamp power</a></li>
+<li><a class="reference internal" href="#owner-decisions">10. Owner decisions</a></li>
+<li><a class="reference internal" href="#risks-and-open-questions">11. Risks and open questions</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
