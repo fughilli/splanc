@@ -61,8 +61,9 @@ constexpr const char *kTlsIdentityPath = "/lfs/tls_id.bin";
 // The loop's priority: the level the player's loop takes while a client is on (#371). The
 // front end renders nothing, so nothing else needs the CPU more; it sleeps a tick per pass.
 constexpr UBaseType_t kLoopPrio = 10;
-// The session id the P4 answers to (frontend_link.h). One wss session or the BLE central.
-constexpr uint16_t kSession = 1;
+// The BLE central's session id over the link; the wss sessions are 1..LM_WSS_SESSIONS
+// (netstack_ws_session()). Its pushes aren't relayed (the P4 pushes to wss sessions).
+constexpr uint16_t kBleSession = 0x100;
 
 // ClientMessage arms routed here (shared/protocol/proto/ledmapper.proto).
 constexpr int32_t kArmSetDeviceName = 27;
@@ -92,6 +93,8 @@ bool g_tls_persisted = false;
 struct {
   uint32_t forwarded, unavailable, local;
 } g_stats;
+// The lowest free internal heap seen since the last status line (sampled every loop).
+uint32_t g_heap_window_min = UINT32_MAX;
 
 int reply_error(const char *code, const char *msg) {
   const int32_t n = ota_encode_error(code, msg, tx, sizeof tx);
@@ -112,9 +115,9 @@ void apply_rename(const uint8_t *msg, size_t len) {
   Log().printf("[relay] renamed to \"%s\"\n", g_name);
 }
 
-// One player message from wss or BLE: the reply's length in tx, 0 for none, or -1 to drop
-// the session (the client resumes).
-int handle(const uint8_t *msg, size_t len) {
+// One player message from wss session `session` (or the BLE central): the reply's length
+// in tx, 0 for none, or -1 to drop the session (the client resumes).
+int handle(uint16_t session, const uint8_t *msg, size_t len) {
   const int32_t arm = lm_envelope_arm(msg, len);
   // The TLS identity and the Wi-Fi policy are this chip's: answered here, P4 or not.
   if (arm == kArmGetTlsInfo) {
@@ -136,7 +139,7 @@ int handle(const uint8_t *msg, size_t len) {
   // so a client watching an update sees the board still there; the other arms get no
   // reply, and the client's resume retries them once the P4 is back.
   if (arm >= kArmOtaBegin && arm <= kArmOtaReboot) {
-    const int n = frontend_forward(kSession, msg, len, tx, sizeof tx, 10000);
+    const int n = frontend_forward(session, msg, len, tx, sizeof tx, 10000);
     if (n > 0) return n;
     if (n == -2) return -1;  // undelivered: drop the session, the client resumes
     if (n == 0 || arm != kArmGetOtaStatus) return 0;
@@ -147,7 +150,7 @@ int handle(const uint8_t *msg, size_t len) {
   // P4's reply is the Welcome that echoes it.
   if (arm == kArmSetDeviceName && p4_up) apply_rename(msg, len);
   if (p4_up) {
-    const int n = frontend_forward(kSession, msg, len, tx, sizeof tx, 1000);
+    const int n = frontend_forward(session, msg, len, tx, sizeof tx, 1000);
     g_stats.forwarded++;
     if (n >= 0) return n;
     if (n == -2) return -1;  // the P4's, undelivered: drop the session, the client retries
@@ -317,13 +320,22 @@ bool is_release_version(const char *v) {
 
 void log_status() {
   const TlsRegionStats &tls = tls_region_stats();
-  Log().printf("[relay] heap=%u max=%u min=%u rekeys=%u tls=%u/%u slots=%u/%u fb=%u fwd=%u unavail=%u local=%u\n",
-               (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-               (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)netstack_rekey_count(),
-               (unsigned)tls.small_peak, (unsigned)tls.small_size, (unsigned)tls.slots_peak, (unsigned)tls.slots,
-               (unsigned)tls.fallbacks, (unsigned)g_stats.forwarded, (unsigned)g_stats.unavailable,
-               (unsigned)g_stats.local);
+  const uint32_t f = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  // win= the lowest free heap since the last line; ws= wss sessions upgraded now. The P4's
+  // console gets the line too (this chip's console isn't wired on the P4 boards).
+  char line[220];
+  snprintf(line, sizeof line,
+           "[relay] heap=%u max=%u min=%u win=%u ws=%d rekeys=%u tls=%u/%u slots=%u/%u fb=%u fwd=%u unavail=%u "
+           "local=%u\n",
+           (unsigned)f, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)(g_heap_window_min == UINT32_MAX ? f : g_heap_window_min), netstack_sessions_open(),
+           (unsigned)netstack_rekey_count(), (unsigned)tls.small_peak, (unsigned)tls.small_size,
+           (unsigned)tls.slots_peak, (unsigned)tls.slots, (unsigned)tls.fallbacks, (unsigned)g_stats.forwarded,
+           (unsigned)g_stats.unavailable, (unsigned)g_stats.local);
+  g_heap_window_min = UINT32_MAX;
+  Log().print(line);
+  frontend_link_log(line);
   char net[200];
   netstack_net_stats(net, sizeof net);
   Log().printf("[net] t=%lu %s\n", (unsigned long)millis(), net);
@@ -343,7 +355,7 @@ void log_status() {
 
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   *reply = tx;
-  return handle(in, len);
+  return handle(netstack_ws_session(), in, len);
 }
 
 // Every reply is the P4's or a must-deliver of ours: none may be dropped on a full window.
@@ -357,7 +369,7 @@ void lm_netstack_osc_rx(const uint8_t *data, size_t len) { frontend_link_osc(dat
 // The BLE player transport (improv_ble_netstack.cpp): the same contract as lm_ws_dispatch.
 int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
   *reply = tx;
-  return handle(in, len);
+  return handle(kBleSession, in, len);
 }
 
 // Kiosk mode (docs/design/kiosk-mode.md) is the P4's player state; this chip never takes
@@ -475,6 +487,10 @@ void setup() {
 }
 
 void loop() {
+  {
+    const uint32_t f = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (f < g_heap_window_min) g_heap_window_min = f;
+  }
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatches here)
   frontend_link_poll();
   poll_wifi_policy();

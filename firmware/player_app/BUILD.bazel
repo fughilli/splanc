@@ -1000,6 +1000,11 @@ rust_test(
 # link frames over the SDIO slave (frontend_link.cpp). No player core, no effects engine,
 # no rendering and no LED or sensor pins: GPIO20-23 are the SDIO link on the P4 boards. The
 # P4 image carries this one and flashes it onto the board's C6 (//firmware/p4/c6flash).
+# Concurrent wss sessions the front end serves (LM_WSS_SESSIONS; the players keep 1). The
+# cap the reachability model proves fits (//firmware/sysmode, Profile::FrontEnd) and the
+# bench confirmed: docs/design/p4-c6-split.md §4.3.1.
+_FRONTEND_SESSIONS = 2
+
 rust_static_library(
     name = "relay_ffi",
     srcs = [
@@ -1078,7 +1083,7 @@ cc_binary(
         ":device_cert",
         ":improv_ble_netstack",
         ":improv_codec",
-        ":netstack_transport",
+        ":netstack_transport_sessions%d" % _FRONTEND_SESSIONS,
         ":ota_app",
         ":relay_ffi",
         "//firmware/p4/link:link_codec",
@@ -1185,24 +1190,34 @@ cc_library(
         ":device_cert",
         ":improv_codec",
         ":ws_codec",
-        "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
+        ffi,  # ns_* heapless MAC/CCMP/TCP FFI
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:wifi",
     ],
     alwayslink = True,
-) for sfx, extra in [
-    ("", []),
+) for sfx, extra, ffi in [
+    ("", [], "//firmware/netstack:wifi_sta_ffi"),
     (
         "_ctrltrace",
         ["LM_CTRL_TRACE=1"],
+        "//firmware/netstack:wifi_sta_ffi",
     ),
     (
         "_meshspike",
         ["LM_MESH_SPIKE=1"],
+        "//firmware/netstack:wifi_sta_ffi",
     ),
     (
         "_meshdev",
         ["LM_MESH_DEVKEY=1"],
+        "//firmware/netstack:wifi_sta_ffi",
+    ),
+    # Two concurrent wss sessions (the two-slot netstack FFI): the P4's C6 front end, which
+    # has the RAM (docs/design/p4-c6-split.md §4.3.1). The players keep one.
+    (
+        "_sessions2",
+        ["LM_WSS_SESSIONS=2"],
+        "//firmware/netstack:wifi_sta_ffi_sessions2",
     ),
 ]]
 
