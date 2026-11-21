@@ -1,0 +1,656 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="Run your own relay with Tailscale" href="relay-tailscale.html"><link rel="prev" title="Use Splanc from a cloud agent" href="cloud-agent.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Splanc lamps in Apple Home and other Matter apps - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Splanc lamps in Apple Home and other Matter apps</a></li>
+<li class="toctree-l1"><a class="reference internal" href="relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/strided-capture.html">Strided (diffuse) capture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/guides/matter.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/guides/matter.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="splanc-lamps-in-apple-home-and-other-matter-apps">
+<h1>Splanc lamps in Apple Home and other Matter apps<a class="headerlink" href="#splanc-lamps-in-apple-home-and-other-matter-apps" title="Link to this heading">¶</a></h1>
+<p>The <strong>Splanc bridge</strong> includes a <strong>Matter bridge</strong>. Matter is the smart-home standard that Apple
+Home, Home Assistant, Amazon Alexa, Samsung SmartThings and Google Home all use. You add the
+bridge to your smart-home app <strong>once</strong>. Every Splanc lamp the bridge finds then appears as a
+dimmable light, including lamps you add later.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Apple Home / Home Assistant / Alexa / SmartThings
+        │  Matter, on your home network (no cloud)
+        ▼
+  Splanc bridge (Pi, or any always-on computer)
+        │  the Splanc app protocol
+        ▼
+  your Splanc lamps
+</pre></div>
+</div>
+<p>What each lamp can do in your smart-home app:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>In the app</p></th>
+<th class="head"><p>On the lamp</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>On / off</p></td>
+<td><p>The lamp turns on or off, with the ON/OFF transition you set in the Splanc app.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Brightness</p></td>
+<td><p>The lamp’s brightness (the same master dimmer as in the Splanc app).</p></td>
+</tr>
+<tr class="row-even"><td><p>Its state</p></td>
+<td><p>A tap on the lamp’s lid, or a change in the Splanc app, shows up in the smart-home app.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Its name</p></td>
+<td><p>The lamp’s name in the Splanc app, with its room: <em>Coil (Bedroom)</em>.</p></td>
+</tr>
+<tr class="row-even"><td><p>Unreachable</p></td>
+<td><p>Shown when the bridge can’t reach the lamp (it is unplugged, or off your Wi-Fi).</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Effects, colours and saved looks stay in the Splanc app: Matter has no way to describe a Splanc
+effect. Colour control from the smart-home app is planned. If you use Home Assistant, the
+<a class="reference internal" href="#home-assistant.md"><span class="xref myst">Splanc integration for Home Assistant</span></a> also lets you pick saved looks.</p>
+<p>On/off needs lamp firmware with the <strong>power</strong> feature (the touch lid and the ON/OFF
+transitions). On older firmware, “off” sets the brightness to 0 and “on” brings the last
+brightness back. Update the lamp from the Splanc app to get real on/off.</p>
+<section id="what-works-with-which-app">
+<h2>What works with which app<a class="headerlink" href="#what-works-with-which-app" title="Link to this heading">¶</a></h2>
+<p>The Splanc bridge is <strong>not Matter-certified</strong> yet. It identifies itself with the Matter test
+vendor ID, so some apps warn before adding it:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>App</p></th>
+<th class="head"><p>Works?</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Apple Home</strong> (iOS 18+)</p></td>
+<td><p>Yes</p></td>
+<td><p>iOS says <strong>Uncertified Accessory</strong>. Tap <strong>Add Anyway</strong>. Remote control and automations need a home hub (HomePod or Apple TV).</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Home Assistant</strong></p></td>
+<td><p>Yes</p></td>
+<td><p>Through its <strong>Matter</strong> integration (it adds a Matter server). Or use the <a class="reference internal" href="#home-assistant.md"><span class="xref myst">Splanc integration</span></a> instead.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Amazon Alexa</strong></p></td>
+<td><p>Not tested by us yet</p></td>
+<td><p>Alexa is reported to accept uncertified devices. Needs an Echo that is a Matter controller.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Samsung SmartThings</strong></p></td>
+<td><p>Not tested by us yet</p></td>
+<td><p>Needs a SmartThings hub or a Matter-capable SmartThings device.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Google Home</strong></p></td>
+<td><p><strong>No</strong> (for now)</p></td>
+<td><p>Google only lets <strong>certified</strong> Matter devices into normal accounts. Use Home Assistant’s Google Assistant link meanwhile (see below).</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>We are working on certification. Until it is done, Splanc does not claim “Works with” any of
+these platforms.</p>
+</section>
+<section id="what-you-need">
+<h2>What you need<a class="headerlink" href="#what-you-need" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>A <strong>Splanc bridge</strong> on the same network as your lamps: the Splanc Bridge box, a Raspberry Pi you
+set up yourself (<a class="reference internal" href="../pi-bridge.html"><span class="std std-doc">Set up a Splanc bridge on a Raspberry Pi</span></a>), or any always-on
+computer (see <a class="reference internal" href="#build-your-own-bridge">Build your own bridge</a>).</p></li>
+<li><p>Your smart-home app’s <strong>hub</strong> where it needs one (a HomePod or Apple TV for Apple Home away from
+home; an Echo for Alexa; a SmartThings hub).</p></li>
+<li><p><strong>IPv6</strong> turned on in your router. It is on by default almost everywhere; Matter needs it on
+your local network, not on the internet.</p></li>
+</ul>
+</section>
+<section id="find-the-bridge-s-matter-code">
+<h2>1. Find the bridge’s Matter code<a class="headerlink" href="#find-the-bridge-s-matter-code" title="Link to this heading">¶</a></h2>
+<p>The bridge has its own Matter pairing code. It is different from the cloud pairing code (the
+<code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code> one) and it doesn’t expire.</p>
+<ul class="simple">
+<li><p><strong>OLED screen:</strong> move the joystick to the <strong>Matter</strong> page (right after <strong>Scan to pair</strong>). It
+shows a QR code and the 11-digit code, like <code class="docutils literal notranslate"><span class="pre">3497-011-2332</span></code>.</p></li>
+<li><p><strong>HDMI screen:</strong> while no cloud pairing code is up, the page shows <strong>Add to your smart home
+(Matter)</strong> with the code and the QR code.</p></li>
+<li><p><strong>Over SSH:</strong> <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">matter-pair</span></code> prints the code.</p></li>
+</ul>
+<p><img alt="The OLED Matter page: the QR code and the 11-digit code" src="docs/img/matter/oled-matter-code.png" /></p>
+</section>
+<section id="add-the-bridge-in-your-app">
+<h2>2. Add the bridge in your app<a class="headerlink" href="#add-the-bridge-in-your-app" title="Link to this heading">¶</a></h2>
+<p><strong>Apple Home:</strong> tap <strong>+</strong> ▸ <strong>Add Accessory</strong>, and scan the QR code on the bridge’s screen (or
+tap <strong>More options</strong> and type the 11 digits). When iOS says <strong>Uncertified Accessory</strong>, tap <strong>Add
+Anyway</strong>. Pick a room for the bridge. Each lamp then shows up as a light; give each one its own
+room in the Home app.</p>
+<p><strong>Home Assistant:</strong> go to <strong>Settings ▸ Devices &amp; services ▸ Add integration ▸ Matter</strong>. Home
+Assistant installs its Matter server the first time. Then add the bridge from the <strong>Home
+Assistant Companion app</strong> on your phone (<strong>Settings ▸ Devices &amp; services ▸ Devices ▸ Add device ▸
+Add Matter device</strong>) and scan the QR code. The lamps appear as lights under one <strong>Splanc Bridge</strong>
+device.</p>
+<p><strong>Amazon Alexa:</strong> in the Alexa app, tap <strong>Devices ▸ +</strong> ▸ <strong>Add Device ▸ Other ▸ Matter</strong>, then
+scan the QR code or type the code.</p>
+<p><strong>SmartThings:</strong> tap <strong>+</strong> ▸ <strong>Add device ▸ Scan QR code</strong>.</p>
+<p>Once the bridge is added, the OLED’s Matter page says <strong>Added to</strong> and the app’s name, and the
+code is hidden.</p>
+<p><img alt="The OLED Matter page once the bridge is added" src="docs/img/matter/oled-matter-added.png" /></p>
+</section>
+<section id="add-it-to-a-second-app">
+<h2>3. Add it to a second app<a class="headerlink" href="#add-it-to-a-second-app" title="Link to this heading">¶</a></h2>
+<p>Matter lets several apps control the same lamps (for example Apple Home and Home Assistant).
+There are two ways to add the bridge to another app:</p>
+<ul class="simple">
+<li><p>In the first app, use its <strong>share</strong> or <strong>pairing mode</strong> option (Apple Home: the bridge’s
+settings ▸ <strong>Turn On Pairing Mode</strong>). It gives you a new code for the other app.</p></li>
+<li><p>On the bridge, go to the OLED’s <strong>Matter</strong> page and <strong>press the joystick</strong>, or run
+<code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">matter-pair</span></code> over SSH. The bridge shows its code again for 15 minutes.</p></li>
+</ul>
+</section>
+<section id="one-controller-at-a-time">
+<h2>One controller at a time<a class="headerlink" href="#one-controller-at-a-time" title="Link to this heading">¶</a></h2>
+<p>A Splanc lamp talks to one app at a time. When you open the Splanc app and use a lamp, the app
+takes over, and you can work on effects and maps without any lag. Meanwhile:</p>
+<ul class="simple">
+<li><p>turning the lamp on or off from your smart-home app still works (the bridge takes the lamp
+back when the Splanc app has been idle for 15 seconds);</p></li>
+<li><p>the smart-home app may show the lamp’s old state for a few minutes. The bridge checks the lamp
+again within 1 to 10 minutes, and at once when you control the lamp from the smart-home app.</p></li>
+</ul>
+<p>Use one smart-home path per lamp: either the Matter bridge, or the Home Assistant integration
+talking to the lamp directly, not both.</p>
+</section>
+<section id="remove-the-bridge-from-your-apps">
+<h2>Remove the bridge from your apps<a class="headerlink" href="#remove-the-bridge-from-your-apps" title="Link to this heading">¶</a></h2>
+<p>Remove it in each app as usual (Apple Home: the bridge’s settings ▸ <strong>Remove Bridge</strong>). To make
+the bridge forget <strong>every</strong> app at once, run <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">matter-reset</span> <span class="pre">--yes</span></code> over SSH. The
+lamps and the cloud pairing are not affected, and the bridge shows a code again.</p>
+<p>To turn the Matter bridge off, put <code class="docutils literal notranslate"><span class="pre">SPLANC_MATTER=0</span></code> in <code class="docutils literal notranslate"><span class="pre">splanc-bridge.conf</span></code> on the card’s boot
+partition (<a class="reference internal" href="../pi-bridge.html#changing-settings-later"><span class="std std-ref">Changing settings later</span></a>).</p>
+</section>
+<section id="google-home">
+<h2>Google Home<a class="headerlink" href="#google-home" title="Link to this heading">¶</a></h2>
+<p>Google Home accepts only Matter devices that the Connectivity Standards Alliance has certified.
+Until the Splanc bridge is certified:</p>
+<ul class="simple">
+<li><p><strong>With Home Assistant:</strong> add your lamps to Home Assistant (with the Matter bridge or the
+<a class="reference internal" href="#home-assistant.md"><span class="xref myst">Splanc integration</span></a>), then expose them to Google with Home Assistant’s
+<strong>Google Assistant</strong> integration (Home Assistant Cloud, or the manual setup).</p></li>
+<li><p><strong>Developers only:</strong> a Google Home Developer Console project with a Matter integration for
+vendor ID <code class="docutils literal notranslate"><span class="pre">0xFFF1</span></code> and product ID <code class="docutils literal notranslate"><span class="pre">0x8001</span></code> lets the members of that project add the bridge to
+their own home. This is a developer tool, not a way to share the lamps with your household.</p></li>
+</ul>
+</section>
+<section id="build-your-own-bridge">
+<h2>Build your own bridge<a class="headerlink" href="#build-your-own-bridge" title="Link to this heading">¶</a></h2>
+<p>The Matter bridge is part of the free, open Splanc bridge software. You don’t need to buy the
+Splanc Bridge box.</p>
+<p><strong>On a Raspberry Pi</strong> (Pi 5, 4, 3 B/B+/A+, or Zero 2 W): follow
+<a class="reference internal" href="../pi-bridge.html"><span class="std std-doc">Set up a Splanc bridge on a Raspberry Pi</span></a>. The Matter bridge is on by default.
+An OLED HAT is optional but handy, because it shows the Matter code; without one, use the HDMI
+page or <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">matter-pair</span></code> over SSH. The Splanc Bridge box is a Pi 3 A+ with the
+Waveshare 1.3” OLED HAT in a case: the same image, the same software.</p>
+<p><strong>On Raspberry Pi OS or any Linux computer:</strong> install the bridge service with
+<code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-fsSL</span> <span class="pre">https://splanc.io/bridge/install.sh</span> <span class="pre">|</span> <span class="pre">sudo</span> <span class="pre">sh</span></code> (see the Pi guide). The Matter bridge
+starts with it.</p>
+<p><strong>On any always-on computer</strong> (Linux, macOS, Windows, Node.js 20 or newer):</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz<span class="w"> </span>bridge
+<span class="c1"># in another terminal:</span>
+npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz<span class="w"> </span>bridge-ctl<span class="w"> </span>status<span class="w">       </span><span class="c1"># &quot;matter&quot;: the code + QR payload</span>
+npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz<span class="w"> </span>bridge-ctl<span class="w"> </span>matter-pair<span class="w">  </span><span class="c1"># pairing again, for another app</span>
+</pre></div>
+</div>
+<p>Things to check on a computer you set up yourself:</p>
+<ul class="simple">
+<li><p>It is on the <strong>same network</strong> (the same subnet, no client isolation) as the lamps and the
+smart-home hub.</p></li>
+<li><p>The firewall lets in <strong>UDP 5540</strong> (Matter) and <strong>UDP 5353</strong> (mDNS). Use another port with
+<code class="docutils literal notranslate"><span class="pre">--matter-port</span> <span class="pre">&lt;port&gt;</span></code> if 5540 is taken.</p></li>
+<li><p>In Docker, use <strong>host networking</strong> (<code class="docutils literal notranslate"><span class="pre">--network</span> <span class="pre">host</span></code>): Matter’s discovery doesn’t cross a
+Docker bridge network.</p></li>
+<li><p>The bridge keeps its Matter identity and the apps it was added to under <code class="docutils literal notranslate"><span class="pre">matter/</span></code> in its
+state directory (<code class="docutils literal notranslate"><span class="pre">--state-dir</span></code>; by default <code class="docutils literal notranslate"><span class="pre">~/.local/state/splanc</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">$SPLANC_BRIDGE_STATE_DIR</span></code>). Back it up, or you will need to add the bridge to your apps
+again.</p></li>
+</ul>
+</section>
+<section id="troubleshooting">
+<h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>What you see</p></th>
+<th class="head"><p>What to do</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>The app can’t find the bridge after scanning the code</p></td>
+<td><p>Make sure the phone is on the same Wi-Fi as the bridge (not a guest network) and IPv6 is on in your router. A Pi 3 or Zero 2 W only sees 2.4 GHz Wi-Fi.</p></td>
+</tr>
+<tr class="row-odd"><td><p>The Matter page says <strong>Matter is off</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SPLANC_MATTER=0</span></code> is set in <code class="docutils literal notranslate"><span class="pre">splanc-bridge.conf</span></code>: remove the line.</p></td>
+</tr>
+<tr class="row-even"><td><p>The Matter page shows an error</p></td>
+<td><p>Usually another program uses UDP port 5540. <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">logs</span></code> shows the details.</p></td>
+</tr>
+<tr class="row-odd"><td><p>A lamp is <strong>Not Responding</strong> / unreachable</p></td>
+<td><p>The bridge can’t reach the lamp: check that it is powered and on the Wi-Fi (the bridge’s <strong>Fixtures</strong> page shows a red dot for it).</p></td>
+</tr>
+<tr class="row-even"><td><p>A lamp shows the wrong on/off state for a while</p></td>
+<td><p>Someone is using it in the Splanc app (see <a class="reference internal" href="#one-controller-at-a-time">One controller at a time</a>). It catches up within minutes.</p></td>
+</tr>
+<tr class="row-odd"><td><p>A new lamp doesn’t show up</p></td>
+<td><p>The bridge looks for new lamps every 5 minutes. Make sure the lamp is on the same network.</p></td>
+</tr>
+<tr class="row-even"><td><p>Google Home refuses the bridge</p></td>
+<td><p>Expected until the bridge is certified: see <a class="reference internal" href="#google-home">Google Home</a>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="relay-tailscale.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Run your own relay with Tailscale</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="cloud-agent.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Use Splanc from a cloud agent</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Splanc lamps in Apple Home and other Matter apps</a><ul>
+<li><a class="reference internal" href="#what-works-with-which-app">What works with which app</a></li>
+<li><a class="reference internal" href="#what-you-need">What you need</a></li>
+<li><a class="reference internal" href="#find-the-bridge-s-matter-code">1. Find the bridge’s Matter code</a></li>
+<li><a class="reference internal" href="#add-the-bridge-in-your-app">2. Add the bridge in your app</a></li>
+<li><a class="reference internal" href="#add-it-to-a-second-app">3. Add it to a second app</a></li>
+<li><a class="reference internal" href="#one-controller-at-a-time">One controller at a time</a></li>
+<li><a class="reference internal" href="#remove-the-bridge-from-your-apps">Remove the bridge from your apps</a></li>
+<li><a class="reference internal" href="#google-home">Google Home</a></li>
+<li><a class="reference internal" href="#build-your-own-bridge">Build your own bridge</a></li>
+<li><a class="reference internal" href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>

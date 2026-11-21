@@ -1,0 +1,604 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Matter certification of the Splanc Bridge - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/matter.html">Splanc lamps in Apple Home and other Matter apps</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/matter-certification.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/matter-certification.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="matter-certification-of-the-splanc-bridge">
+<h1>Matter certification of the Splanc Bridge<a class="headerlink" href="#matter-certification-of-the-splanc-bridge" title="Link to this heading">¶</a></h1>
+<p>Status: <strong>preparation.</strong> Written 2026-11-20 for owner decisions D-187 and D-188. D-187: build a
+certified bridge, submit it for approval and ask for a fee exception; D-188: don’t spend
+$20-35 k on certification now. This page lists what a certified bridge needs, how far the
+uncertified bridge (<code class="docutils literal notranslate"><span class="pre">agent/src/bridge/matter.ts</span></code>, docs/guides/matter.md) is from it, and the
+cost and time. The fee-waiver request to the CSA is drafted separately; the owner sends it.
+Figures marked <strong>(est.)</strong> are our estimates. Fee figures come from the study
+(<code class="docutils literal notranslate"><span class="pre">docs/design/smart-home-integrations.md</span></code> §3.5, read 2026-11-20).</p>
+<section id="why-certify-at-all">
+<h2>Why certify at all<a class="headerlink" href="#why-certify-at-all" title="Link to this heading">¶</a></h2>
+<p>One reason only: <strong>Google Home.</strong> Google lets consumer accounts commission certified Matter
+devices only. A test vendor ID “cannot be used in a consumer device” (study §3.6). Apple Home,
+Home Assistant and (reportedly) Alexa already take the uncertified bridge: Apple warns first,
+then offers “Add Anyway”. Certification also removes Apple’s warning, and lets the store page
+use the Matter logo.</p>
+</section>
+<section id="what-gets-certified">
+<h2>What gets certified<a class="headerlink" href="#what-gets-certified" title="Link to this heading">¶</a></h2>
+<p>The product is the <strong>Splanc Bridge</strong> box: a Raspberry Pi 3 A+ with the Waveshare 1.3” OLED HAT,
+running the Splanc bridge SD image. It is certified as a Matter <strong>Bridge</strong>: an Aggregator
+endpoint plus bridged device types (Dimmable Light today, Extended Color Light once colour
+exists).</p>
+<ul class="simple">
+<li><p>Bridged lamps are <strong>not</strong> certified one by one. The bridge carries the certification, and
+bridged endpoints are tested as part of it.</p></li>
+<li><p>The certified product must match what ships. Do-it-yourself bridges (any Pi, <code class="docutils literal notranslate"><span class="pre">npx</span> <span class="pre">splanc-agent</span> <span class="pre">bridge</span></code>) stay uncertified and keep the test VID. They are “the same software”,
+but not a certified product, and they can’t carry a production DAC (below).</p></li>
+<li><p>matter.js is <strong>not</strong> a CSA “certified software component” or a Matter Compliant Platform, as
+far as we know. The CHIP SDK-based stacks from silicon vendors are. So the whole Matter stack is
+tested at the lab, not only our application layer. matter.js targets the official test
+harness, and Matterbridge and Home Assistant Matter Hub ship on it. We found no certified
+product built on matter.js (<strong>verify with the lab before quoting</strong>).</p></li>
+<li><p>Precedent for open source: in March 2025 the CSA certified Home Assistant (a User Interface
+Component) and the Open Home Foundation Matter Server (a software component) through the
+test lab Resillion. The project’s own write-up says certification “would be very difficult”
+for other open-source projects without comparable funding [HA-cert].</p></li>
+</ul>
+</section>
+<section id="requirements-and-the-gap-list">
+<h2>Requirements and the gap list<a class="headerlink" href="#requirements-and-the-gap-list" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Requirement</p></th>
+<th class="head"><p>What it is</p></th>
+<th class="head"><p>Where we are</p></th>
+<th class="head"><p>Gap</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>CSA membership</strong></p></td>
+<td><p>Adopter ($7,500 / year) is the cheapest tier that can certify. Associate (free) can only rebrand an already certified product (Certification Transfer Program), which doesn’t fit our own firmware.</p></td>
+<td><p>None</p></td>
+<td><p>Join (or get the fee waived: the waiver request).</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Vendor ID (VID)</strong></p></td>
+<td><p>Issued with membership. Each device reports it in BasicInformation, and it is encoded in the QR code. Google checks that the developer owns it.</p></td>
+<td><p>Test VID <code class="docutils literal notranslate"><span class="pre">0xFFF1</span></code>, product ID <code class="docutils literal notranslate"><span class="pre">0x8001</span></code> (<code class="docutils literal notranslate"><span class="pre">TEST_VENDOR_ID</span></code> / <code class="docutils literal notranslate"><span class="pre">TEST_PRODUCT_ID</span></code> in matter.ts)</p></td>
+<td><p>A production VID; then a PID for the bridge. Both are constants in one file plus the DCL entries.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Device attestation: PAA → PAI → DAC</strong></p></td>
+<td><p>Every unit carries a unique Device Attestation Certificate and private key. The DAC is signed by a Product Attestation Intermediate, which chains to a CSA-approved PAA. Controllers check the chain against the DCL.</p></td>
+<td><p>matter.js’s built-in <strong>test</strong> DAC/PAI (chained to the test PAA). Every bridge presents the same test identity.</p></td>
+<td><p>Buy a PAI from a PAA operator (DigiCert, SSL.com, Kudelski, …); set-up in the low thousands plus about $0.10-1 per DAC (est.). Add a <strong>factory step</strong> that writes a per-unit DAC + key onto each box (below). Load them in matter.ts instead of the test credentials.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Certification Declaration (CD)</strong></p></td>
+<td><p>A CSA-signed statement that the VID/PID is certified, included in attestation. Issued by the CSA on certification.</p></td>
+<td><p>matter.js’s test CD</p></td>
+<td><p>Comes with certification. Must be built into the image.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>DCL entries</strong></p></td>
+<td><p>The Distributed Compliance Ledger holds the vendor, the model (VID/PID), each software version, and the compliance record. Controllers query it.</p></td>
+<td><p>None</p></td>
+<td><p>Add the vendor + model entries at certification. Add a ModelVersion entry for each software version that ships (see “Software updates”).</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Authorised Test Lab (ATL)</strong></p></td>
+<td><p>A lab runs the Matter Test Harness cases for the device types and features declared in the PICS (Protocol Implementation Conformance Statement).</p></td>
+<td><p>Pre-test only: in-container interop with the CHIP SDK’s Python controller (<code class="docutils literal notranslate"><span class="pre">chip-core</span></code>) and matter.js’s controller</p></td>
+<td><p>Write the PICS. Run the official test harness ourselves first: it is free and catches the easy failures. Then book a lab.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Commissioning</strong></p></td>
+<td><p>On-network commissioning with QR + manual code; a unique random passcode + discriminator per unit; no forbidden passcodes. The code must be printed on the product (a label), not only shown on a screen.</p></td>
+<td><p>Random per-install passcode + discriminator, persisted; QR + manual code on the OLED/HDMI.</p></td>
+<td><p>A <strong>printed QR label</strong> on each box and its packaging, generated at the factory from the unit’s passcode. The passcode must then be fixed at the factory (today it is made on first boot).</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Factory reset</strong></p></td>
+<td><p>Clears every fabric and the Matter state.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">matter-reset</span></code> (SSH) and the control socket</p></td>
+<td><p>A button path on the box: for example a long press on the HAT joystick, with a confirm screen.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Security</strong></p></td>
+<td><p>No debug ports open, signed updates, protected keys.</p></td>
+<td><p>SSH only when the user puts a key on the card; agent updates sha256-checked against splanc.io; system OTA unsigned (<code class="docutils literal notranslate"><span class="pre">file://</span></code> channel)</p></td>
+<td><p>Sign the system OTA. Put the DAC key in a file readable only by the bridge user (a Pi has no secure element). Document the threat model for the lab.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Software updates</strong></p></td>
+<td><p>Each shipped software version is listed on the DCL. Matter’s OTA Requestor is optional; an out-of-band updater is allowed, but the reported <code class="docutils literal notranslate"><span class="pre">softwareVersion</span></code> must match the DCL.</p></td>
+<td><p>Daily self-update of the agent bundle; <code class="docutils literal notranslate"><span class="pre">softwareVersion</span></code> is fixed at 1</p></td>
+<td><p>Pin the certified box to a release channel. Map <code class="docutils literal notranslate"><span class="pre">softwareVersion</span></code> to the agent release. Add a DCL ModelVersion step to the release workflow. Ask the lab which changes need recertification.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Interop evidence</strong></p></td>
+<td><p>Not formally required, but the lab and Google expect it to work with the big controllers.</p></td>
+<td><p>CHIP SDK controller (in container), matter.js controller (CI)</p></td>
+<td><p>Test with Apple Home, Google Home (via a developer project), Alexa, SmartThings and Home Assistant on real hardware.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Wi-Fi / Bluetooth</strong></p></td>
+<td><p>The Pi 3 A+ radio module has its own approvals. Matter doesn’t require Wi-Fi certification of the end product (programmes may; study §3.5).</p></td>
+<td><p></p></td>
+<td><p>Confirm with the lab; probably nothing to do.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Google Home</strong></p></td>
+<td><p>A production VID verified in the Google Home Developer Console, a Matter integration there, and passing Google’s own checks. A “Works with Google Home” badge is a separate programme.</p></td>
+<td><p>None</p></td>
+<td><p>After CSA certification: register the integration, run Google’s test suite, submit.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="code-changes-still-needed-in-the-bridge">
+<h2>Code changes still needed in the bridge<a class="headerlink" href="#code-changes-still-needed-in-the-bridge" title="Link to this heading">¶</a></h2>
+<p>These are small and can be done before any money is spent. They need no decision beyond D-188:</p>
+<ol class="arabic simple">
+<li><p>Load attestation from files when they are present (<code class="docutils literal notranslate"><span class="pre">&lt;state&gt;/matter/attestation/{dac.der,</span> <span class="pre">dac.key,</span> <span class="pre">pai.der,</span> <span class="pre">cd.der}</span></code>). Fall back to the test credentials otherwise, so DIY bridges keep
+working. The VID/PID then come from the same place.</p></li>
+<li><p>A factory mode: a fixed passcode/discriminator from the factory file instead of a random one,
+so it matches the printed label.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">softwareVersion</span></code> derived from the agent release (an integer that increases with each
+release), and <code class="docutils literal notranslate"><span class="pre">softwareVersionString</span></code> set to the release name. Today these are 1 and the
+version string.</p></li>
+<li><p>A factory-reset button path on the HAT.</p></li>
+<li><p>A PICS file and a pre-test run of the official Matter Test Harness in CI.</p></li>
+</ol>
+</section>
+<section id="cost-and-time">
+<h2>Cost and time<a class="headerlink" href="#cost-and-time" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Item</p></th>
+<th class="head"><p>Cost</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>CSA Adopter membership</p></td>
+<td><p>$7,500 / year</p></td>
+<td><p>Waiver or reduction requested</p></td>
+</tr>
+<tr class="row-odd"><td><p>Product certification fee</p></td>
+<td><p>$3,000 per product (Adopter)</p></td>
+<td><p>$2,500 for a derivative</p></td>
+</tr>
+<tr class="row-even"><td><p>Authorised test lab</p></td>
+<td><p><strong>$8-20 k (est.)</strong></p></td>
+<td><p>Quoted per project. More if re-tests are needed. Pre-testing reduces that risk.</p></td>
+</tr>
+<tr class="row-odd"><td><p>PAI set-up + DACs</p></td>
+<td><p><strong>$1-5 k set-up + $0.10-1 per unit (est.)</strong></p></td>
+<td><p>Quoted by volume</p></td>
+</tr>
+<tr class="row-even"><td><p>Engineering</p></td>
+<td><p><strong>3-5 weeks (est.)</strong></p></td>
+<td><p>Code changes 1-5 above, factory provisioning, test harness pre-runs, lab support</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>First year</strong></p></td>
+<td><p><strong>about $20-35 k (est.)</strong></p></td>
+<td><p>Unchanged from the study. With dues and fees waived, the lab and PAI remain: <strong>about $10-25 k (est.)</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>Following years</p></td>
+<td><p>$7,500 / year + recertification fees</p></td>
+<td><p>Dues and per-release DCL / recertification</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Time:</strong> 3-6 months from joining to a certified product (study §3.5): about 1 month of
+engineering and pre-testing, 1-2 months of lab scheduling and testing, then CSA review and the
+DCL. Google’s review comes after that.</p>
+</section>
+<section id="recommended-order">
+<h2>Recommended order<a class="headerlink" href="#recommended-order" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p><strong>Now, free:</strong> make the code changes 1-5. Keep shipping uncertified (Apple “Add Anyway”, HA,
+Alexa). Send the fee-waiver request.</p></li>
+<li><p><strong>When the CSA answers:</strong></p>
+<ul class="simple">
+<li><p>If dues are waived or reduced, join, get the VID, buy the PAI, write the PICS and book a
+lab.</p></li>
+<li><p>If not, stay uncertified until Google demand justifies the spend (D-188). Point Google users
+to Home Assistant’s Google Assistant link (docs/guides/matter.md).</p></li>
+</ul>
+</li>
+<li><p><strong>After CSA certification:</strong> register the Google Home integration, then update the store
+page (D-191 copy: claim Google Home only after this step).</p></li>
+</ol>
+</section>
+<section id="sources">
+<h2>Sources<a class="headerlink" href="#sources" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Study: <code class="docutils literal notranslate"><span class="pre">docs/design/smart-home-integrations.md</span></code> §3.5, §3.6, §4.3 (CSA fee schedule, Google’s
+test-VID rules, bridge certification), read 2026-11-20.</p></li>
+<li><p>[HA-cert] Home Assistant, <em>Home Assistant is now Matter certified</em> (2025-03-10):
+https://www.home-assistant.io/blog/2025/03/10/matter-certification/ (read 2026-11-20).</p></li>
+<li><p>CSA, <em>Matter Compliant Platform Certification</em>:
+https://csa-iot.org/newsroom/matter-compliant-platform-certification-building-on-proven-foundations-for-faster-trusted-smart-home-innovation/</p></li>
+<li><p>Matter Alpha, <em>Home Assistant announces official Matter support</em> (the CSA’s statement that it
+has no certification fee exemption for open-source projects):
+https://www.matteralpha.com/industry-news/home-assistant-announces-official-matter-support</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Matter certification of the Splanc Bridge</a><ul>
+<li><a class="reference internal" href="#why-certify-at-all">Why certify at all</a></li>
+<li><a class="reference internal" href="#what-gets-certified">What gets certified</a></li>
+<li><a class="reference internal" href="#requirements-and-the-gap-list">Requirements and the gap list</a></li>
+<li><a class="reference internal" href="#code-changes-still-needed-in-the-bridge">Code changes still needed in the bridge</a></li>
+<li><a class="reference internal" href="#cost-and-time">Cost and time</a></li>
+<li><a class="reference internal" href="#recommended-order">Recommended order</a></li>
+<li><a class="reference internal" href="#sources">Sources</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
