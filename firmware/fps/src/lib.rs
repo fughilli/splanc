@@ -222,6 +222,9 @@ pub struct FpsController {
     /// LEDs each frame shades (0 = unknown): sets the floor
     /// ([`floor_fps_for`]). Survives reset, like the wire floor.
     leds: u32,
+    /// The sleep after the last overrunning frame, in ms (0 = the last frame was
+    /// in period). Damps the sleep's ms rounding: see [`FpsController::on_frame_cpu`].
+    last_overrun_ms: u32,
 }
 
 impl Default for FpsController {
@@ -244,6 +247,7 @@ impl FpsController {
             lagging: false,
             wire_us: 0,
             leds: 0,
+            last_overrun_ms: 0,
         }
     }
 
@@ -251,6 +255,7 @@ impl FpsController {
     /// is preserved — the app's chosen rate should survive an effect reload —
     /// but the window and the lag state clear so the new program starts clean.
     pub fn reset(&mut self) {
+        self.last_overrun_ms = 0;
         self.idx = self.clamp_idx(if self.pinned_fps != 0 {
             idx_for_fps(self.pinned_fps)
         } else {
@@ -471,13 +476,29 @@ impl FpsController {
         // the rest of the device keeps being serviced.
         // And never less than the network's guaranteed share of this frame's
         // compute (net_share_ms; 0 when the caller reported no compute).
+        let share_ms = if cpu_us > 0 { net_share_ms(cpu_us) } else { 0 };
         let delay_ms = if cost_us > period {
-            overrun_yield_ms(cost_us)
+            // A lagging effect's period is cost + this sleep, and the sleep is ~25% of
+            // the cost rounded UP to a whole ms. A cost hovering at a rounding boundary
+            // (e.g. 148 ms -> 37 vs 38 ms) flipped the sleep frame to frame and added a
+            // 1 ms step to the frame period on top of the cost's own jitter: after
+            // #537 moved the heavy wifi_cadence effect onto such a boundary its
+            // frame-period spread doubled (dev p50 1.2 -> 2.6 ms, 98% of the gate).
+            // Raise the sleep at once (the duty guarantee holds), but lower it only
+            // when it is 2 ms too long, so noise at a boundary settles on the upper value.
+            let want = overrun_yield_ms(cost_us).max(share_ms);
+            let d = if self.last_overrun_ms > want && self.last_overrun_ms - want <= 1 {
+                self.last_overrun_ms
+            } else {
+                want
+            };
+            self.last_overrun_ms = d;
+            d
         } else {
+            self.last_overrun_ms = 0;
             let remaining_us = period - cost_us;
-            ((remaining_us + 500) / 1000).max(min_yield_ms(cost_us))
-        }
-        .max(if cpu_us > 0 { net_share_ms(cpu_us) } else { 0 });
+            ((remaining_us + 500) / 1000).max(min_yield_ms(cost_us)).max(share_ms)
+        };
         self.win_interval_us = self
             .win_interval_us
             .saturating_add(cost_us.saturating_add(delay_ms.saturating_mul(1000)));
@@ -689,6 +710,30 @@ mod tests {
             c.on_frame(cost);
         }
         assert_eq!(c.current_fps(), 30);
+    }
+
+    #[test]
+    fn a_lagging_frame_cost_at_a_rounding_boundary_keeps_one_sleep() {
+        // 147.9 ms needs a 37 ms sleep, 148.1 ms a 38 ms one (25 % rounded up). Noise
+        // across that boundary must not flip the sleep (a 1 ms period step per flip).
+        assert_eq!(overrun_yield_ms(147_900), 37);
+        assert_eq!(overrun_yield_ms(148_100), 38);
+        let mut c = FpsController::new();
+        let mut sleeps = [0u32; 40];
+        for (i, s) in sleeps.iter_mut().enumerate() {
+            let cost = if i % 3 == 0 { 148_100 } else { 147_900 };
+            *s = c.on_frame(cost).delay_ms;
+        }
+        let first38 = sleeps.iter().position(|&d| d == 38).expect("rises at once");
+        assert!(sleeps[first38..].iter().all(|&d| d == 38), "{sleeps:?}");
+        // Never below the duty slice the frame needs.
+        assert!(sleeps.iter().zip(0..).all(|(&d, i)| d >= overrun_yield_ms(if i % 3 == 0 { 148_100 } else { 147_900 })));
+        // A real drop of 2 ms or more still lowers it.
+        assert_eq!(c.on_frame(139_000).delay_ms, 35);
+        // A new effect (reset) starts without the memory.
+        c.on_frame(148_100);
+        c.reset();
+        assert_eq!(c.on_frame(147_900).delay_ms, 37);
     }
 
     #[test]
