@@ -67,6 +67,34 @@ export class QuietDetector {
   }
 }
 
+/** Pipelined-detection stand-in (replaces DetectPipeline): every submitted
+ * frame is delivered on the next collect, through the (fake) detector. */
+export class QuietPipeline<T> {
+  submitted = 0;
+  shed = 0;
+  private readonly queue: { tag: T; measure: boolean }[] = [];
+  constructor(
+    _gl: unknown,
+    private readonly det: QuietDetector,
+  ) {}
+  submit(_f: unknown, tag: T, opts: { measure?: boolean } = {}): boolean {
+    this.queue.push({ tag, measure: opts.measure === true });
+    this.submitted++;
+    return true;
+  }
+  collect(): { tag: T; blobs: []; scene: ReturnType<QuietDetector["measureFrame"]> | undefined; latencyMs: number }[] {
+    return this.queue.splice(0).map((q) => ({
+      tag: q.tag,
+      blobs: this.det.detectFrame(),
+      scene: q.measure ? this.det.measureFrame() : undefined,
+      latencyMs: 0,
+    }));
+  }
+  dispose(): void {
+    this.queue.length = 0;
+  }
+}
+
 /** Decoder stand-in (replaces CvPipeline): every frame decodes one LED, round
  * robin, and hands the record to the screen exactly like the real pipeline. */
 export class ScriptedDecoder {
@@ -155,6 +183,7 @@ export async function installCaptureSeams(): Promise<void> {
   };
   swap(await import("../src/xr/mediaStreamCapture"), "MediaStreamCaptureSource", ScriptedCamera);
   swap(await import("../src/cv/detect"), "DetectorGL", QuietDetector);
+  swap(await import("../src/cv/detect"), "DetectPipeline", QuietPipeline);
   swap(await import("../src/cv/pipeline"), "CvPipeline", ScriptedDecoder);
 }
 

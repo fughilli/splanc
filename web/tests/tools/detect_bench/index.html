@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Detector bench</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  pre { white-space: pre-wrap; font-size: 12px; }
+  button { font-size: 16px; padding: 12px 20px; margin: 0 0 12px; }
+</style>
+</head>
+<body>
+<h1>Diffuse detector bench</h1>
+<p>Runs the production WebGL detector on the diffuse_rope suite frames, paced at the camera rate.
+Add <code>?auto=1</code> to start on load.</p>
+<button id="go">Run bench</button>
+<pre id="out"></pre>
+<canvas id="c" width="16" height="16" style="display:none"></canvas>
+<script type="module" src="./page.ts"></script>
+</body>
+</html>

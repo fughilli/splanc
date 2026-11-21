@@ -24,12 +24,14 @@ import {
   BitRatePlanner,
   recommendConfig,
 } from "../../cv/exposure";
+import type { SceneStats } from "../../cv/exposure";
+import type { Blob } from "../../cv/types";
 import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
 import { LinkTelemetry, type LinkTelemetrySnapshot } from "../../cv/linkTelemetry";
 import { AlphabetPlanner, ChannelQuality, channelSnapshot, formatPrediction } from "../../cv/channelQuality";
 import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
-import { DetectorGL } from "../../cv/detect";
+import { DetectPipeline, DetectorGL, planDetectDownscale } from "../../cv/detect";
 import { blobCrowding, CrowdingWindow, formatLightServo, initialLightServo, planLightServo } from "../../cv/lightServo";
 import {
   type DriverCaptureController,
@@ -51,7 +53,7 @@ import {
   stageLabel,
   type ChannelCapturePlan,
 } from "../../capture/channelCapture";
-import { CaptureUnsupportedError } from "../../xr/capture";
+import { CaptureUnsupportedError, type CaptureFrame } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
 import { SyntheticCaptureSource } from "../../xr/syntheticCaptureSource";
@@ -792,6 +794,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let perf: CapturePerf | null = null;
   // The running capture's CV queue and overlay task (ui/taskPriority).
   let cvQueueRef: OrderedTaskQueue | null = null;
+  // The running capture's pipelined detector: flush() delivers the frames still
+  // on the GPU (stop), dispose() drops them (teardown).
+  let detectPipeRef: { flush(): void; dispose(): void } | null = null;
   let overlayTaskRef: CoalescedTask | null = null;
   let localDetections: DetectionRecord[] = [];
   let localImu: ImuSample[] = [];
@@ -828,6 +833,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     liveSolver = null;
     cvQueueRef?.clear();
     cvQueueRef = null;
+    detectPipeRef?.dispose();
+    detectPipeRef = null;
     overlayTaskRef?.cancel();
     overlayTaskRef = null;
     liveCanvas.style.display = "none";
@@ -1321,24 +1328,46 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const skipProbe = profileRun?.skipProbe === true;
       if (!skipProbe) guideEl.textContent = "Measuring light…";
       driverPhase = "probe";
-      if (!skipProbe) await new Promise<void>((resolve) => {
-        const deadline = setTimeout(resolve, 2500);
-        let t0 = -1;
-        capture!.onFrame((f) => {
-          if (t0 < 0) t0 = f.tCaptureMs;
-          const blobs = detector.detectFrame(f);
-          monitor.push({
-            tMs: f.tCaptureMs,
-            blobCount: blobs.length,
-            scene: detector.measureFrame(f),
-          });
-          lastAmbient = f.ambientIntensity ?? lastAmbient;
-          if (f.tCaptureMs - t0 >= 1200) {
+      // The probe runs the same pipelined detection as the capture (D-177), so
+      // the frame interval it negotiates the bit rate from is the DELIVERED rate.
+      // It also picks the detector tier: a GPU that sheds frames at full
+      // detection resolution re-probes at the next coarser one
+      // (planDetectDownscale) — decided here, before any decoding starts.
+      const probeOnce = (ms: number): Promise<{ submitted: number; shed: number }> =>
+        new Promise((resolve) => {
+          const pipe = new DetectPipeline<CaptureFrame>(detectGl, detector);
+          let t0 = -1;
+          let done = false;
+          const finish = (): void => {
+            if (done) return;
+            done = true;
             clearTimeout(deadline);
-            resolve();
-          }
+            const r = { submitted: pipe.submitted, shed: pipe.shed };
+            pipe.dispose();
+            resolve(r);
+          };
+          const deadline = setTimeout(finish, ms + 1300);
+          capture!.onFrame((cf) => {
+            if (done) return;
+            if (t0 < 0) t0 = cf.tCaptureMs;
+            pipe.submit(cf, cf, { measure: true });
+            for (const d of pipe.collect()) {
+              monitor.push({ tMs: d.tag.tCaptureMs, blobCount: d.blobs.length, scene: d.scene });
+              lastAmbient = d.tag.ambientIntensity ?? lastAmbient;
+            }
+            if (cf.tCaptureMs - t0 >= ms) finish();
+          });
         });
-      });
+      if (!skipProbe) {
+        let probe = await probeOnce(1200);
+        for (let next = detector.adaptiveActive ? planDetectDownscale(detector.downscale, probe) : null; next !== null; ) {
+          nativeLog(`[capture] detector shedding ${probe.shed}/${probe.submitted + probe.shed} frames at downscale ${detector.downscale}: trying ${next}`);
+          detector.setDownscale(next);
+          monitor.reset();
+          probe = await probeOnce(800);
+          next = planDetectDownscale(detector.downscale, probe);
+        }
+      }
       const probed = monitor.snapshot();
       const recommended = probed
         ? recommendConfig({
@@ -1583,15 +1612,37 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // Camera frames skipped because the CV queue was behind (MAX_CV_BACKLOG).
       let shedFrames = 0;
 
-      capture.onFrame((f) => {
+      // Pipelined detection (cv/detect.ts DetectPipeline, D-177): a frame's GPU
+      // work is read back on a LATER camera frame, so the main thread never
+      // waits for the GPU. onDetected runs once per detected frame, with the
+      // frame it belongs to (its own capture time, pose and K).
+      const detectPipe = new DetectPipeline<CaptureFrame>(detectGl, detector);
+      detectPipeRef = {
+        flush: () => {
+          for (const d of detectPipe.collect(true)) onDetected(d.tag, d.blobs, d.scene, 0);
+        },
+        dispose: () => detectPipe.dispose(),
+      };
+      let submittedFrames = 0;
+      capture.onFrame((cf) => {
         if (!capturing || !capture) return;
         if (cvQueue.backlog >= MAX_CV_BACKLOG && cvQueue.oldestWaitMs >= MAX_CV_LAG_MS) {
           shedFrames++;
           return;
         }
-        const tStart = performance.now();
-        const blobs = detector.detectFrame(f, {});
+        const tSubmit = performance.now();
+        // The scene-measure pass rides along every 6th submitted frame.
+        if (!detectPipe.submit(cf, cf, { measure: submittedFrames % 6 === 0 })) shedFrames++;
+        else submittedFrames++;
+        const submitMs = performance.now() - tSubmit;
+        for (const d of detectPipe.collect()) onDetected(d.tag, d.blobs, d.scene, submitMs);
+      });
+      const onDetected = (f: CaptureFrame, blobs: Blob[], measured: SceneStats | undefined, submitMs: number): void => {
+        // This frame's detect cost: the current submit plus its own readback copy
+        // and CCL (the GPU time itself no longer blocks the thread).
+        const prof = detector.lastProfile;
         const tDetected = performance.now();
+        const tStart = tDetected - submitMs - (prof ? prof.readMs + prof.cclMs : 0);
         // A truncated frame is one the capture source had to clip: too much of it
         // was above threshold to encode (a bright scene before exposure settles).
         // Its detections are incomplete AND spatially biased — the encoder fills
@@ -1600,7 +1651,6 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // The blob count still goes to the monitor: that's the signal the
         // threshold servo needs to climb out of the bright state.
         const clipped = f.reduced?.truncated === true;
-        const measured = frameCount % 6 === 0 ? detector.measureFrame(f) : undefined;
         monitor.push({
           tMs: f.tCaptureMs,
           blobCount: blobs.length,
@@ -1798,7 +1848,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             totalMs: tQueued - tStart + (tEnd - tCv),
           });
         });
-      });
+      };
 
       capture.onEnd(() => {
         if (capturing) void stopCapture(true);
@@ -2393,8 +2443,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // The device connection is NOT required: the detections are held here, so a
     // session lost mid-capture (taken over, dropped) must not block the solve.
     const c = client();
-    // Frames still queued for decode are part of the capture: finish them
-    // before the loop stops (each queued item checks `capturing`).
+    // Frames still on the GPU or queued for decode are part of the capture:
+    // finish them before the loop stops (each queued item checks `capturing`).
+    detectPipeRef?.flush();
     cvQueueRef?.drain();
     capturing = false;
     runLinkSnapshot = runLink?.snapshot(performance.now()) ?? null;

@@ -80,6 +80,9 @@ export interface CclOptions {
   splitOversized?: boolean;
 }
 
+/** Reused visited map (see connectedComponents). */
+let scratchVisited = new Uint8Array(0);
+
 /** Weight-channel value at/above which a pixel counts as saturated (~0.98). */
 const SAT_CUT = 250;
 
@@ -112,7 +115,13 @@ export function connectedComponents(
   const stats = opts.stats === true && colorBase !== undefined;
   const splitOversized = opts.splitOversized === true && colorBase !== undefined;
 
-  const visited = new Uint8Array(width * height);
+  // Scratch reused across calls (one frame at a time on the main thread): the
+  // visited map is cleared, not reallocated — 230 KB per frame at 360x640 was
+  // allocation churn the GC paid for in frame-time spikes.
+  const n = width * height;
+  if (scratchVisited.length < n) scratchVisited = new Uint8Array(n);
+  const visited = scratchVisited;
+  visited.fill(0, 0, n);
   const blobs: CclBlob[] = [];
   const stack: number[] = [];
   const members: number[] = [];
@@ -131,11 +140,22 @@ export function connectedComponents(
   let parentId = 0;
   let ladderGen = 0;
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = y * width + x;
-      if (visited[idx] || weightAt(idx) === 0) continue;
-
+  // The buffer is sparse (a few thousand foreground px of 230k): find seeds by
+  // scanning whole 32-bit pixels when the layout allows (RGBA, any producer
+  // writes background pixels all-zero), testing the weight byte only on
+  // non-zero words — the same seeds, in the same order, as the per-byte scan.
+  const words =
+    stride === 4 && offset < 4 && data.byteOffset % 4 === 0 && data.length >= n * 4
+      ? new Uint32Array(data.buffer, data.byteOffset, n)
+      : null;
+  for (let idx = 0; idx < n; idx++) {
+    if (words !== null) {
+      // Skip runs of empty pixels without touching the visited map.
+      while (idx < n && words[idx] === 0) idx++;
+      if (idx >= n) break;
+    }
+    if (visited[idx] || weightAt(idx) === 0) continue;
+    {
       // Flood fill one component, collecting member indices.
       members.length = 0;
       stack.length = 0;
