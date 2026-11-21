@@ -231,8 +231,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
@@ -254,6 +256,7 @@
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
@@ -265,6 +268,7 @@
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
@@ -1225,8 +1229,14 @@ the same laser crossing on the P4’s clock.</p>
 </section>
 <section id="c6-firmware-the-front-end-build">
 <h3>4.3 C6 firmware: the front-end build<a class="headerlink" href="#c6-firmware-the-front-end-build" title="Link to this heading">¶</a></h3>
-<p><strong>What changes.</strong> A new <code class="docutils literal notranslate"><span class="pre">esp32c6_frontend</span></code> target. It is <code class="docutils literal notranslate"><span class="pre">player_app_netstack</span></code> with the player core
-compiled out under <code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code>. In its place go the link driver and the router of §2.2.</p>
+<p><strong>What changes.</strong> A new <code class="docutils literal notranslate"><span class="pre">esp32c6_frontend</span></code> target: a pure relay (<code class="docutils literal notranslate"><span class="pre">relay_main.cpp</span></code> +
+<code class="docutils literal notranslate"><span class="pre">relay_ffi.rs</span></code>), its own small program on the player’s netstack transport, like the OTA loader.
+It links no player core and no effects engine; in their place go the link driver and the router
+of §2.2. It answers <code class="docutils literal notranslate"><span class="pre">get_tls_info</span></code> and <code class="docutils literal notranslate"><span class="pre">set/get_wifi_policy</span></code> itself, applies a rename (BLE and
+mDNS advertise the name) before forwarding it, forwards everything else, and answers
+<code class="docutils literal notranslate"><span class="pre">error{player_unavailable}</span></code> while the P4 is down. (The first cut was <code class="docutils literal notranslate"><span class="pre">player_app_netstack</span></code> with
+<code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code>: it still linked the player core and effects engine, about 62 KB of RAM, only to
+answer while the P4 was down. <strong>Measured</strong> below.)</p>
 <p><strong>What stays exactly as it is.</strong></p>
 <ul class="simple">
 <li><p><strong>Network:</strong> the netstack, wss, TLS (<code class="docutils literal notranslate"><span class="pre">tls_region</span></code>), BLE Improv and the GATT transport, mDNS,
@@ -1298,225 +1308,91 @@ it.</p>
 <h3>4.3.1 Several wss sessions on the front end<a class="headerlink" href="#several-wss-sessions-on-the-front-end" title="Link to this heading">¶</a></h3>
 <p><strong>Decision.</strong> The number of concurrent wss sessions is a build parameter, <code class="docutils literal notranslate"><span class="pre">LM_WSS_SESSIONS</span></code>.
 Plain C6 players keep <strong>1</strong>, because their RAM is tight. The C6 front end in the P4 + C6 build
-gets <strong>2</strong>: the most the reachability model proves fits the front end’s heap, which the bench
-confirms (<strong>Measured</strong> and <strong>Validation</strong> below). Four don’t fit: that image never brings Wi-Fi
-up. With 1, the logic is the single-session transport as it was.</p>
-<p><strong>Build.</strong> <code class="docutils literal notranslate"><span class="pre">//firmware/netstack:wifi_sta_ffi</span></code> has one TCP server slot.
-<code class="docutils literal notranslate"><span class="pre">:wifi_sta_ffi_sessions2</span></code> / <code class="docutils literal notranslate"><span class="pre">_sessions4</span></code> are the same source with the <code class="docutils literal notranslate"><span class="pre">sessions2</span></code> /
-<code class="docutils literal notranslate"><span class="pre">sessions4</span></code> crate feature. <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:netstack_transport_sessions&lt;N&gt;</span></code> defines
-<code class="docutils literal notranslate"><span class="pre">LM_WSS_SESSIONS=&lt;N&gt;</span></code> and links that FFI. <code class="docutils literal notranslate"><span class="pre">:player_app_frontend</span></code> uses
-<code class="docutils literal notranslate"><span class="pre">_FRONTEND_SESSIONS</span></code> (2). Nothing else changes: the players and the
-loader link the one-slot pair.</p>
-<p><strong>TCP slot table</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/tcp_slots.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">TcpSlots&lt;N&gt;</span></code>). There are N
-<code class="docutils literal notranslate"><span class="pre">TcpConn</span></code>s on the one listening port. At the bind, every slot listens (with distinct ISNs).
-<code class="docutils literal notranslate"><span class="pre">ns_tcp_select(i)</span></code> picks the slot that the existing <code class="docutils literal notranslate"><span class="pre">ns_tcp_*</span></code> calls act on. The one
-exception is <code class="docutils literal notranslate"><span class="pre">ns_tcp_on_ip</span></code>, which demuxes each inbound datagram itself. Our half of the
-4-tuple is the same for every slot, so demux is by the peer’s address and port:</p>
+gets <strong>2</strong> (D-119). With 1, the logic is the single-session transport as it was.</p>
+<p><strong>Build.</strong> <code class="docutils literal notranslate"><span class="pre">//firmware/netstack:wifi_sta_ffi</span></code> has one TCP server slot;
+<code class="docutils literal notranslate"><span class="pre">:wifi_sta_ffi_sessions2</span></code> is the same source with the <code class="docutils literal notranslate"><span class="pre">sessions2</span></code> crate feature.
+<code class="docutils literal notranslate"><span class="pre">//firmware/player_app:netstack_transport_sessions2</span></code> defines <code class="docutils literal notranslate"><span class="pre">LM_WSS_SESSIONS=2</span></code> and links it;
+<code class="docutils literal notranslate"><span class="pre">:player_app_frontend</span></code> uses that. The players and the loader link the one-slot pair.</p>
+<p><strong>TCP slot table</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/tcp_slots.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">TcpSlots&lt;N&gt;</span></code>). N <code class="docutils literal notranslate"><span class="pre">TcpConn</span></code>s on the
+one listening port; at the bind every slot listens (distinct ISNs). <code class="docutils literal notranslate"><span class="pre">ns_tcp_select(i)</span></code> picks
+the slot the other <code class="docutils literal notranslate"><span class="pre">ns_tcp_*</span></code> calls act on, except <code class="docutils literal notranslate"><span class="pre">ns_tcp_on_ip</span></code>, which demuxes each
+datagram itself by the peer’s address and port:</p>
 <ol class="arabic simple">
-<li><p>A slot already bound to that peer (any state but <code class="docutils literal notranslate"><span class="pre">Listen</span></code>) takes the datagram.</p></li>
-<li><p>Otherwise the first <code class="docutils literal notranslate"><span class="pre">Listen</span></code> slot takes it. A SYN latches that slot. Anything else gets the
-listener’s RST, as with one slot.</p></li>
-<li><p>Otherwise every slot is busy. If any slot is not a live, serving session (pre-WS,
-closing, SynRcvd), the datagram goes there, so a new SYN is <strong>dropped</strong>: the client
-retransmits it in about 1 s, and by then a closing slot has re-listened. Only when <strong>every</strong>
-slot is Established and <code class="docutils literal notranslate"><span class="pre">serving_live</span></code> does slot 0 take it. A new SYN then gets the existing
-<strong>RST|ACK refusal</strong>, so the client backs off instead of hanging. This is the load-shedding
-rule for “all N busy”. It keeps the #199/#204 guard: a closing session’s own reconnect is
-never refused.</p></li>
+<li><p>A slot already bound to that peer (any state but <code class="docutils literal notranslate"><span class="pre">Listen</span></code>) takes it.</p></li>
+<li><p>Otherwise the first <code class="docutils literal notranslate"><span class="pre">Listen</span></code> slot: a SYN latches it, anything else gets its RST.</p></li>
+<li><p>Otherwise every slot is busy. A slot that isn’t a live, serving session takes it, so a new
+SYN is dropped and retried in ~1 s, by when a closing slot has re-listened. Only when every
+slot is Established and serving does slot 0 take it, and slot 0’s own rules apply: the
+RST|ACK refusal, or the idle-session takeover (#444, <code class="docutils literal notranslate"><span class="pre">session_takeover.h</span></code>).</p></li>
 </ol>
-<p>With N = 1 every datagram goes to slot 0, and slot 0’s own rules are the old ones. A host
-test pins this down (<code class="docutils literal notranslate"><span class="pre">single_slot_keeps_the_busy_slot_rules</span></code>). <code class="docutils literal notranslate"><span class="pre">ns_tcp_stats</span></code> sums over the
-slots. <code class="docutils literal notranslate"><span class="pre">ns_tcp_tx_pending_any</span></code> and <code class="docutils literal notranslate"><span class="pre">ns_tcp_slot_state(i)</span></code> read slots without selecting them.</p>
-<p><strong>Per-session state</strong> (<code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">struct</span> <span class="pre">Session</span></code>, <code class="docutils literal notranslate"><span class="pre">g_sess[kSessions]</span></code>).
-Each session has its own:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_context</span></code>, with the Session as the BIO context; <code class="docutils literal notranslate"><span class="pre">bio_send</span></code>/<code class="docutils literal notranslate"><span class="pre">bio_recv</span></code> select
-its slot;</p></li>
-<li><p>the TLS/WS flags (<code class="docutils literal notranslate"><span class="pre">tls_hs</span></code>, <code class="docutils literal notranslate"><span class="pre">ws_up</span></code>, <code class="docutils literal notranslate"><span class="pre">ws_closing</span></code>, <code class="docutils literal notranslate"><span class="pre">responding</span></code>);</p></li>
-<li><p>the 6 KB WS reassembly buffer;</p></li>
-<li><p>the BIO progress counters;</p></li>
-<li><p>every reclaim gate’s clock and mark (pre-WS wedge 4 s, post-WS peer-gone 6 s, idle ping
-15 s, served-and-closing 8 s), and the BLE-teardown edge.</p></li>
-</ul>
-<p>The config, the device cert and the key stay shared. Each <code class="docutils literal notranslate"><span class="pre">netstack_loop</span></code> pass serves the
-sessions in turn, selecting each one’s slot, with the same per-session logic as before.
-Send windows and RTOs are pumped for every slot (<code class="docutils literal notranslate"><span class="pre">tcp_pump_all</span></code>, <code class="docutils literal notranslate"><span class="pre">tcp_tick_all</span></code>), including
-inside a TLS write spin.</p>
-<p>The “a client is connected” gates (DHCP T1 renewal, gratuitous ARP and mDNS announcements,
-group-addressed mDNS replies, the data-plane priority) now ask about <strong>any</strong> session. The
-link-wide resets (deauth, a new network, an IP change) clear every session. The whole
-transport runs on loopTask. The selection is shared state, so nothing else may call into it.</p>
-<p><strong>Sessions over the link.</strong> A session’s id is its slot + 1 (1..N). The BLE central is
-<code class="docutils literal notranslate"><span class="pre">0x100</span></code>. The front end sends each forwarded message with its session’s id
-(<code class="docutils literal notranslate"><span class="pre">netstack_ws_session()</span></code>), and the P4 replies to that id. A PUSH goes to the session it
-names (<code class="docutils literal notranslate"><span class="pre">netstack_ws_send_to</span></code>). It’s dropped when that session is gone or its window is full,
-under #353’s rule. When a session that had a client ends, the front end sends
-<code class="docutils literal notranslate"><span class="pre">LINK</span> <span class="pre">RESET(session)</span></code> so the P4 stops pushing there. When the P4 sends <code class="docutils literal notranslate"><span class="pre">RESET(session)</span></code>
-instead of a REPLY, the waiting forward returns −2, and the front end drops that session (the
-client retries). In this PR, forwarding is still synchronous, one message at a time: a slow
-P4 reply (at most 1 s) holds up every session behind it.</p>
-<p><strong>Decided for the pure-transport front end (2026-11-08)</strong> (still to implement):</p>
-<ul class="simple">
-<li><p><strong>Async throughout.</strong> No forward waits for its reply. The front end tags each player
-message with its session and request id, sends it, and keeps serving. Replies come back
-through a reply table keyed by (session, request id), and go out on that session when they
-arrive. A session that has closed by then drops its reply. Nothing on either side of the
-link blocks the loop on the other: not the front end’s forwards, and not the P4’s sends.</p></li>
-<li><p><strong>Generalized pub/sub for pushes.</strong> Pushes are PerfReport, fps lag, kiosk status and the
-like. Instead of going to “the session that spoke last”, they go to every session that
-subscribed to that topic. A subscription lasts until its session closes. A session that only
-listens gets its reports too. The P4 publishes once per topic, and the front end fans the
-message out to the subscribed sessions, under #353’s rule for a full window. BLE is one more
-subscriber.</p></li>
-<li><p><strong>Every client is one source.</strong> The player treats all wss clients as a single client, for
-the kiosk unlock as for everything else. This is the behaviour on the P4 today, and it’s
-now intended, not an open question.</p></li>
-</ul>
-<p><strong>The player core with concurrent clients.</strong> It was written for one client. What happens
-with several:</p>
+<p>With N = 1 every datagram goes to slot 0 (<code class="docutils literal notranslate"><span class="pre">single_slot_keeps_the_busy_slot_rules</span></code>).</p>
+<p><strong>Per-session state</strong> (<code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">struct</span> <span class="pre">Session</span></code>, <code class="docutils literal notranslate"><span class="pre">g_sess[kSessions]</span></code>). Each
+session has its own TLS context (<code class="docutils literal notranslate"><span class="pre">g_ssl[kSessions]</span></code>, one context at N = 1, so
+<code class="docutils literal notranslate"><span class="pre">tls_abi_test</span></code> reads the same symbol size), its flags (<code class="docutils literal notranslate"><span class="pre">tls_hs</span></code>, <code class="docutils literal notranslate"><span class="pre">ws_up</span></code>, <code class="docutils literal notranslate"><span class="pre">ws_closing</span></code>,
+<code class="docutils literal notranslate"><span class="pre">responding</span></code>), its takeover policy, the 6 KB WS reassembly buffer, the BIO progress counters,
+and every reclaim gate’s clock and mark (<code class="docutils literal notranslate"><span class="pre">serve_slot</span></code>). The config, the device cert and the key
+stay shared. Each <code class="docutils literal notranslate"><span class="pre">netstack_loop</span></code> pass serves the sessions in turn; send windows and RTOs are
+pumped for every slot (<code class="docutils literal notranslate"><span class="pre">tcp_pump_all</span></code>, <code class="docutils literal notranslate"><span class="pre">tcp_tick_all</span></code>), including inside a TLS write spin. The
+“a client is connected” gates (DHCP renewal, gratuitous ARP and mDNS group replies, the
+data-plane priority) ask about any session; link-wide resets clear every session.</p>
+<p><strong>Sessions over the link.</strong> A session’s id is its slot + 1 (1..N); the BLE central is <code class="docutils literal notranslate"><span class="pre">0x100</span></code>.
+The front end sends each forwarded message with its session’s id, the P4 replies to that id,
+and a PUSH goes to the session it names (<code class="docutils literal notranslate"><span class="pre">netstack_ws_send_to</span></code>; dropped when that session is
+gone or its window is full). When a session that had a client ends, the front end sends
+<code class="docutils literal notranslate"><span class="pre">LINK</span> <span class="pre">RESET(session)</span></code>, so the P4 stops pushing there and frees its upload. When the P4 sends
+<code class="docutils literal notranslate"><span class="pre">RESET(session)</span></code> in place of a REPLY (another session’s sharded upload is running:
+<code class="docutils literal notranslate"><span class="pre">link_transport.cpp</span></code> gives the upload to the session that sent window 0 until its last window,
+its session ends or 3 s of quiet), the front end drops that session and its client retries.
+Forwarding is still synchronous, one message at a time.</p>
+<p><strong>TLS region</strong> (<code class="docutils literal notranslate"><span class="pre">tls_region.cpp</span></code>): N + 1 record slots of 6,912 B and 4 KB more small region
+per extra session. A miss falls back to the heap (<code class="docutils literal notranslate"><span class="pre">fb=</span></code>).</p>
+<p><strong>The model</strong> (<code class="docutils literal notranslate"><span class="pre">//firmware/sysmode</span></code>, <code class="docutils literal notranslate"><span class="pre">Profile::FrontEnd</span></code>, <code class="docutils literal notranslate"><span class="pre">cost::frontend</span></code>). <code class="docutils literal notranslate"><span class="pre">SysMode.wss</span></code> is a
+session count, 0..=the profile’s cap (1 on the player, whose states and pinned figures are
+unchanged). The front-end profile runs no LED activity and boots idle. On top of the measured
+idle heap its components are the vendor scan transient, a BLE central’s link, TLS record
+buffers past the region’s N + 1 slots (every open session assumed mid-handshake) and
+small-region overflow. <code class="docutils literal notranslate"><span class="pre">reachability_test</span></code> proves every reachable front-end state keeps the
+24 KB floor at the shipped N, and reports the largest N that would.</p>
+<p><strong>Measured</strong> (the relay alone on a HITL C6, //pi/hitl/harness:frontend_relay; the <code class="docutils literal notranslate"><span class="pre">[relay]</span></code>
+status line, which also reaches the P4’s console), 2026-11-21, hitl-rig-2:</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
-<tr class="row-odd"><th class="head"><p>Concern</p></th>
-<th class="head"><p>Behaviour with N clients</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p>Sharded uploads (map, topology, effect)</p></td>
-<td><p>One upload at a time (<code class="docutils literal notranslate"><span class="pre">upload_active</span></code>, one temp file). The P4 (<code class="docutils literal notranslate"><span class="pre">link_transport.cpp</span></code>) gives the upload to the session that sent window 0, until its last window, until its session ends, or until it has been quiet for 3 s. Another session’s window meanwhile gets <code class="docutils literal notranslate"><span class="pre">RESET</span></code>: that session is dropped, and its client retries later. The owner’s upload is untouched.</p></td>
-</tr>
-<tr class="row-odd"><td><p>Pushes (PerfReport, fps lag, kiosk status)</p></td>
-<td><p>To the session that spoke last (<code class="docutils literal notranslate"><span class="pre">g_session</span></code> on the P4, <code class="docutils literal notranslate"><span class="pre">g_push</span></code> on the front end). This is one subscriber, as before. A second app that only listens gets no reports until it sends something. <strong>To change:</strong> generalized pub/sub (above).</p></td>
-</tr>
-<tr class="row-even"><td><p>Live mailbox (<code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code>, OSC)</p></td>
-<td><p>Latest wins across clients. Two knob streams interleave.</p></td>
-</tr>
-<tr class="row-odd"><td><p>FX debugger lease</p></td>
-<td><p>Lapses when the push target closes (<code class="docutils literal notranslate"><span class="pre">netstack_ws_open()</span></code>), the same as before.</p></td>
-</tr>
-<tr class="row-even"><td><p>Kiosk unlock</p></td>
-<td><p>Per connection on a player. On the P4 every link message counts as one “wss” source, so one client’s unlock covers every wss client. <strong>Decided:</strong> keep it so: all clients are one source.</p></td>
-</tr>
-</tbody>
-</table>
-</div>
-<p><strong>TLS region per build</strong> (<code class="docutils literal notranslate"><span class="pre">tls_region.cpp</span></code>). With the dynamic buffers, an idle session’s
-records are freed, and the loop serves one session at a time. So the record slots cover one
-partly received record per session plus one being written: <strong>N + 1</strong> slots of 6,912 B (2 at
-N = 1, as before). The small region grows by 4 KB per extra session. A miss still falls back
-to the heap (<code class="docutils literal notranslate"><span class="pre">fb=</span></code>) and never fails. On the bench, two sessions plus churn peaked at 2 of 3
-slots and 10,948 of 14,336 B of the small region, with no fallbacks.</p>
-<p><strong>The mbedTLS ABI bug this found</strong> (tracked in #468; <code class="docutils literal notranslate"><span class="pre">main</span></code> takes #460’s version of the fix,
-and this branch drops its copy when it’s next merged with <code class="docutils literal notranslate"><span class="pre">main</span></code>). <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code> compiles against the prebuilt
-SDK’s mbedtls headers, which come first on the include path. The image links the from-source
-mbedtls (&#64;embedded’s <code class="docutils literal notranslate"><span class="pre">mbedtls_src</span></code>, IDF v5.5.4). The two disagree on <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_context</span></code>:
-the ELF’s DWARF says 344 B in that file and 552 B in the library’s nine compile units. So
-every context the transport declared was overrun by 208 B. With the context first in a
-<code class="docutils literal notranslate"><span class="pre">Session</span></code>, the overrun landed on the session’s own state, and the first served GET panicked
-the C6 inside <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_session_reset</span></code>. That reboot also killed the SDIO link: the bench’s
-“one GET and <code class="docutils literal notranslate"><span class="pre">host=down</span></code>”.</p>
-<p>The single-session image overran into whatever globals followed <code class="docutils literal notranslate"><span class="pre">g_ssl</span></code>, silently. That
-includes the plain C6 players. Each context now lives in an <code class="docutils literal notranslate"><span class="pre">SslBox</span></code> sized for the library
-(576 B). <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:tls_abi_test</span></code> reads both ELFs’ DWARF and fails if the
-library’s context outgrows it. (<code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_config</span></code>: 224 B in the transport’s view, 196 B in
-the library’s, so the transport’s is the larger. <code class="docutils literal notranslate"><span class="pre">x509_crt</span></code> and <code class="docutils literal notranslate"><span class="pre">pk_context</span></code> agree.)</p>
-<p><strong>Measured</strong> (Waveshare ESP32-P4-WIFI6 + C6, 2026-11-04). These come from the front end’s
-<code class="docutils literal notranslate"><span class="pre">[heap]</span></code> status line (<code class="docutils literal notranslate"><span class="pre">frontend_link.cpp</span></code>): free internal heap, its minimum, the largest
-block, the TLS region’s high-water marks, the open sessions, the reset reason, and what the
-radio bring-up saw. The C6’s own console isn’t wired, so this line is how the numbers reach
-the P4’s console.</p>
-<div class="table-wrapper colwidths-auto docutils container">
-<table class="docutils align-default">
-<thead>
-<tr class="row-odd"><th class="head"><p>image</p></th>
+<tr class="row-odd"><th class="head"><p>front-end image</p></th>
+<th class="head text-right"><p>static internal RAM (to the heap start)</p></th>
 <th class="head text-right"><p>idle free (joined)</p></th>
 <th class="head text-right"><p>all-time min</p></th>
-<th class="head text-right"><p>largest block</p></th>
-<th class="head"><p>Wi-Fi</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>N = 1</p></td>
-<td class="text-right"><p>70,844</p></td>
-<td class="text-right"><p>61,052 (boot scan)</p></td>
-<td class="text-right"><p>50,164</p></td>
-<td><p>joins</p></td>
+<tr class="row-even"><td><p>old (player core, 1 session)</p></td>
+<td class="text-right"><p>329,024 B</p></td>
+<td class="text-right"><p>(bench run pending)</p></td>
+<td class="text-right"><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>N = 2</p></td>
-<td class="text-right"><p>46,608</p></td>
-<td class="text-right"><p>38,248 (boot scan)</p></td>
-<td class="text-right"><p>26,612</p></td>
-<td><p>joins; flat at 46,608 with 2 sessions open and through 16 churn rounds</p></td>
+<tr class="row-odd"><td><p>relay, 1 session (#607)</p></td>
+<td class="text-right"><p>243,792 B</p></td>
+<td class="text-right"><p>167,340 B</p></td>
+<td class="text-right"><p>153,576 B</p></td>
 </tr>
-<tr class="row-even"><td><p>N = 4</p></td>
-<td class="text-right"><p>26,224 (no Wi-Fi)</p></td>
-<td class="text-right"><p>5,984</p></td>
-<td class="text-right"><p>14,324</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">esp_wifi_init</span></code> = 0x101 (<code class="docutils literal notranslate"><span class="pre">ESP_ERR_NO_MEM</span></code>): never starts, 0 beacons</p></td>
+<tr class="row-even"><td><p>relay, 2 sessions</p></td>
+<td class="text-right"><p>267,936 B</p></td>
+<td class="text-right"><p>(bench run pending)</p></td>
+<td class="text-right"><p></p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Each session past the first costs 24,108 B of statics (nm):</p>
-<ul class="simple">
-<li><p>the TCP slot: 6,316 B;</p></li>
-<li><p>a <code class="docutils literal notranslate"><span class="pre">Session</span></code>: 6,784 B, including the 6 KB WS buffer and the <code class="docutils literal notranslate"><span class="pre">SslBox</span></code>;</p></li>
-<li><p>a record slot: 6,912 B;</p></li>
-<li><p>4 KB of the small region.</p></li>
-</ul>
-<p>Sessions draw no heap of their own. Everything per session is static, and the TLS region
-absorbed the handshakes.</p>
-<p><strong>The model</strong> (<code class="docutils literal notranslate"><span class="pre">//firmware/sysmode</span></code>, <code class="docutils literal notranslate"><span class="pre">Profile::FrontEnd</span></code>, <code class="docutils literal notranslate"><span class="pre">cost::frontend</span></code>). The state machine’s
-<code class="docutils literal notranslate"><span class="pre">wss</span></code> axis is now a session count, 0..=the profile’s cap (1 on the player, whose model and
-pinned figures are unchanged). The front-end profile has no LED activity, which is the P4’s job,
-and it boots idle. Its heap components on top of the measured idle state are:</p>
-<ul class="simple">
-<li><p>the vendor scan transient (9,792 B);</p></li>
-<li><p>a BLE central’s link (3,876 B);</p></li>
-<li><p>record buffers past the region’s N + 1 slots, assuming every open session is mid-handshake
-(2 buffers each);</p></li>
-<li><p>small-region overflow.</p></li>
-</ul>
-<p><code class="docutils literal notranslate"><span class="pre">reachability_test</span></code> walks every reachable front-end state and proves each stays above a 24 KB
-floor, the same floor the player keeps (<code class="docutils literal notranslate"><span class="pre">kRuntimeHeapReserve</span></code>). At N = 2 (10 states) the worst
-state is the provisioning scan with the Improv central connected: 13,668 B against 22,032 B
-available, leaving 8,364 B of headroom. With sessions, the worst is two handshakes beside a
-central: 10,788 B. The same test proves N = 3 and N = 4 don’t fit. At N = 4 the statics alone
-exceed the heap, which the bench’s <code class="docutils literal notranslate"><span class="pre">ESP_ERR_NO_MEM</span></code> confirms.</p>
-<p><strong>Getting to four: the front end becomes a pure transport</strong> (decision, 2026-11-08). Four
-sessions need about 50 KB more of C6 statics. The front end still links the full player core
-for its while-the-P4-is-down answers, including <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code> (24 KB), <code class="docutils literal notranslate"><span class="pre">ARENA_MEM</span></code> (12 KB),
-<code class="docutils literal notranslate"><span class="pre">DECK_A</span></code> and <code class="docutils literal notranslate"><span class="pre">FX_AUX</span></code> (11.6 KB each), though it has no LEDs to render on. The decision is to
-drop the effects engine and the player core from <code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code> entirely, not to shrink them.
-The front end keeps only the network, BLE provisioning, identity, OTA and the link. Every
-player message goes to the P4. While the P4 is down, the front end answers with a “player
-unavailable” error instead of serving from a local core. All the freed RAM goes to more wss
-sessions. The steps:</p>
-<ol class="arabic simple">
-<li><p>Compile the player core, the FX VM, the decks and their arenas out of <code class="docutils literal notranslate"><span class="pre">:esp32c6_frontend</span></code>.
-Keep the welcome/hello path the app needs to see the device and its state.</p></li>
-<li><p>Measure the new idle heap with the <code class="docutils literal notranslate"><span class="pre">[heap]</span></code> line and update <code class="docutils literal notranslate"><span class="pre">cost::frontend</span></code>.</p></li>
-<li><p>Let <code class="docutils literal notranslate"><span class="pre">reachability_test</span></code> pick the cap: the largest N whose every reachable state keeps
-the 24 KB floor. Aim for 4.</p></li>
-<li><p>Rerun the multi-session bench at that N.</p></li>
-</ol>
+<p>A session past the first costs 24,104 B of statics: its TCP slot (6,320 B), its <code class="docutils literal notranslate"><span class="pre">Session</span></code>
+(6,224 B), its TLS context (552 B), one more record slot (6,912 B) and 4 KB of small region.
+Sessions draw no heap of their own; the TLS region absorbs the handshakes.</p>
 <p><strong>Link failures are surfaced and recovered.</strong> The P4 counts failed ESSL calls (<code class="docutils literal notranslate"><span class="pre">sdio_err=</span></code> on
-its <code class="docutils literal notranslate"><span class="pre">[net]</span></code> line). When the front end’s 100 ms heartbeat has been silent for 2 s, the P4 says
-so, tears the SDIO link down and reopens it (<code class="docutils literal notranslate"><span class="pre">relinks=</span></code>). Every third failed attempt resets the
-C6 first. On the panicking build, this brought the link back within about 5 s of each C6
-reboot instead of leaving <code class="docutils literal notranslate"><span class="pre">host=down</span></code> for good. The C6 reports why it last reset (<code class="docutils literal notranslate"><span class="pre">rst=</span></code>), plus
-a breadcrumb of the stage the server was in, kept across a panic in RTC memory (<code class="docutils literal notranslate"><span class="pre">crumb=</span></code>).</p>
-<p><strong>Validation.</strong> Done on the bench at N = 2 (two runs of the multi-session bench, see the PR).
-Still to run before merging, on a P4 + C6 board:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">loaded_tls</span></code> and <code class="docutils literal notranslate"><span class="pre">tls_churn</span></code> against the front end with 4 concurrent clients and a 24-way
-burst: every client either gets a session or a fast refusal, and no slot wedges;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> on the front end for the minimum free heap and the <code class="docutils literal notranslate"><span class="pre">slots=</span></code>/<code class="docutils literal notranslate"><span class="pre">fb=</span></code> peaks;</p></li>
-<li><p>the cert-trust GET right after a wss close (the #199/#204 case), and an upload from one
-client while another streams knobs.</p></li>
-</ul>
-<p>The single-session images need the usual e2e gates. Their logic is unchanged, but the code
-moved.</p>
+its <code class="docutils literal notranslate"><span class="pre">[net]</span></code> line). When the front end’s 100 ms heartbeat has been silent for 2 s, the P4 tears
+the SDIO link down and reopens it (<code class="docutils literal notranslate"><span class="pre">relinks=</span></code>); every third failed attempt resets the C6 first.</p>
+<p><strong>Still to do:</strong> async forwarding (a reply table keyed by session and request id, so a slow
+P4 reply doesn’t hold up the other session), and pub/sub pushes (every subscribed session
+instead of the one that spoke last). Every client is one source to the player, for the kiosk
+unlock too (decided 2026-11-08).</p>
 </section>
 <section id="pin-map-and-conflicts">
 <h3>4.4 Pin map and conflicts<a class="headerlink" href="#pin-map-and-conflicts" title="Link to this heading">¶</a></h3>
@@ -1724,7 +1600,82 @@ OTA (C6 side).</p></li>
 <h2>5. Phase C: OTA, HITL, product<a class="headerlink" href="#phase-c-ota-hitl-product" title="Link to this heading">¶</a></h2>
 <section id="ota-for-both-chips">
 <h3>5.1 OTA for both chips<a class="headerlink" href="#ota-for-both-chips" title="Link to this heading">¶</a></h3>
-<p><strong>Recommendation: each chip updates itself, and the C6 relays the P4’s image.</strong> The C6 never
+<p><strong>As built (2026-11-10): one package updates both chips.</strong> The P4 image already carries the
+C6 front end’s images (<code class="docutils literal notranslate"><span class="pre">//firmware/p4/c6flash</span></code>) and reflashes the C6 over SDIO at boot
+whenever the C6’s ELF SHA-256 differs. So the update is a P4 update, and the C6 follows:</p>
+<ol class="arabic">
+<li><p><strong>Package.</strong> <code class="docutils literal notranslate"><span class="pre">esp32p4-player-&lt;ver&gt;.ota</span></code> = the 108-byte manifest + the P4 image. The board
+is signed into the manifest: flags bits 24..31 = <strong>16</strong> (<code class="docutils literal notranslate"><span class="pre">manifest::BOARD_P4</span></code>), clear of the
+MAX’s 1..4. The receive session picks the board from the chip id (<code class="docutils literal notranslate"><span class="pre">session::board_for_chip</span></code>):</p>
+<ul class="simple">
+<li><p>the P4 (<code class="docutils literal notranslate"><span class="pre">0x0012</span></code>) takes board 16 only;</p></li>
+<li><p>the C6 and C3 take board 0 only.</p></li>
+</ul>
+<p>The image header’s chip id is checked as well, so no chip can install another’s image even
+though they share the keyring. Test-signed build:
+<code class="docutils literal notranslate"><span class="pre">//firmware/player_app:esp32p4_player_c6_ota_test</span></code>; the signer takes <code class="docutils literal notranslate"><span class="pre">--board</span> <span class="pre">16</span></code>.</p>
+</li>
+<li><p><strong>Wire.</strong> The proto is unchanged. The C6 front end forwards <code class="docutils literal notranslate"><span class="pre">ota_*</span></code> 70–75 to the P4
+(<code class="docutils literal notranslate"><span class="pre">main.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code>) and never answers them itself while the P4 is up. While the P4
+is down, <code class="docutils literal notranslate"><span class="pre">get_ota_status</span></code> is answered by the C6, and the other arms get no reply, so the
+client’s resume retries them. The P4 advertises the welcome feature <strong><code class="docutils literal notranslate"><span class="pre">ota_inapp</span></code></strong>: the
+client (<code class="docutils literal notranslate"><span class="pre">web/src/net/otaUpdate.ts</span></code>, shared with the agent’s <code class="docutils literal notranslate"><span class="pre">update_firmware</span></code>) then skips
+the loader handoff. The transfer is unchanged: <code class="docutils literal notranslate"><span class="pre">ota_begin</span></code> → <code class="docutils literal notranslate"><span class="pre">RECEIVING</span></code> + offset, 4 KB
+stop-and-wait chunks, resume, <code class="docutils literal notranslate"><span class="pre">ota_finish</span></code> → <code class="docutils literal notranslate"><span class="pre">INSTALLED</span></code>.</p></li>
+<li><p><strong>The P4 receiver</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/player_app/ota_p4.cpp</span></code>). It is the C6 loader’s logic, run in
+the app while it keeps rendering:</p>
+<ul class="simple">
+<li><p>the signature is checked against the compiled-in ring, with the known-answer self-test,
+key epochs and the security floor;</p></li>
+<li><p>the session is the Rust core’s, and the image is written into the slot not running;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ota_finish</span></code> reads the slot back through SHA-256, runs <code class="docutils literal notranslate"><span class="pre">esp_image_verify</span></code>, then selects
+the slot and restarts.</p></li>
+</ul>
+<p>A pending image refuses a new <code class="docutils literal notranslate"><span class="pre">ota_begin</span></code> (<code class="docutils literal notranslate"><span class="pre">busy</span></code>), and <code class="docutils literal notranslate"><span class="pre">ota_reboot{LOADER}</span></code> answers
+<code class="docutils literal notranslate"><span class="pre">no_loader</span></code>.</p>
+</li>
+<li><p><strong>Health and rollback.</strong> The new P4 boots pending verify, with the RTC watchdog armed.
+Its link bring-up flashes its C6 images onto the C6. It counts as healthy once the
+<code class="docutils literal notranslate"><span class="pre">ota_health</span></code> deadlines (boot.rs) are met with all of these true:</p>
+<ul class="simple">
+<li><p>frames render;</p></li>
+<li><p>the link is up;</p></li>
+<li><p>the C6 runs the front end this P4 carries (<code class="docutils literal notranslate"><span class="pre">link_c6_current</span></code>).</p></li>
+</ul>
+<p>That last check proves the pair it ships with is in place and can take the next update.
+A crash, a hang or a missed deadline and the IDF bootloader
+(<code class="docutils literal notranslate"><span class="pre">CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE</span></code> is set in the P4 SDK) boots the other slot. The
+old P4 then finds a C6 it doesn’t carry and puts its own C6 image back. It reports
+<code class="docutils literal notranslate"><span class="pre">last_result</span> <span class="pre">=</span> <span class="pre">&quot;rolled_back&quot;</span></code> in <code class="docutils literal notranslate"><span class="pre">MODE_APP</span></code>, because there is no loader.</p>
+</li>
+<li><p><strong>Layout</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/p4/partitions_p4_ota.csv</span></code>, 16 MB). This is huge_app plus <code class="docutils literal notranslate"><span class="pre">ota_1</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">nvs</span></code>, <code class="docutils literal notranslate"><span class="pre">otadata</span></code>, <code class="docutils literal notranslate"><span class="pre">app0</span></code>/<code class="docutils literal notranslate"><span class="pre">ota_0</span></code> (3 MB at 0x10000), littlefs and <code class="docutils literal notranslate"><span class="pre">coredump</span></code> keep their
+offsets;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">app1</span></code>/<code class="docutils literal notranslate"><span class="pre">ota_1</span></code> (3 MB) is at 0x400000.</p></li>
+</ul>
+<p>One USB flash of <code class="docutils literal notranslate"><span class="pre">flash_esp32p4_player_c6</span></code> moves a huge_app P4 onto it and keeps its map,
+effects and name. After that, updates go over the air. The image is 2.5 MB of the 3 MB slot.</p>
+</li>
+<li><p><strong>Release.</strong> A <code class="docutils literal notranslate"><span class="pre">firmware-v*</span></code> tag publishes two P4 assets next to the C6’s
+(<code class="docutils literal notranslate"><span class="pre">.github/workflows/release.yaml</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/ota_release.py</span> <span class="pre">--target</span> <span class="pre">p4</span></code>), built with the
+tracker module and signed with the C6’s key:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">esp32p4-player-&lt;ver&gt;.ota</span></code>, the signed package the agent and the web Flash screen
+stream to a P4;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">esp32p4-player-&lt;ver&gt;.tar</span></code>, the USB flash bundle with that package inside.</p></li>
+</ul>
+</li>
+</ol>
+<p>What is still open: the HITL OTA gate for the <code class="docutils literal notranslate"><span class="pre">esp32p4-c6</span></code> SKU (§5.2), and the Python HITL client (<code class="docutils literal notranslate"><span class="pre">ota_core.py</span></code>),
+which doesn’t know <code class="docutils literal notranslate"><span class="pre">ota_inapp</span></code> yet.</p>
+<p>The original proposal follows. Two of its choices were dropped:</p>
+<ul class="simple">
+<li><p>a <code class="docutils literal notranslate"><span class="pre">target</span></code> field on the wire: routing by chip makes it unnecessary;</p></li>
+<li><p>updating the C6 by its own loader: the bundle makes the P4 image the C6’s source of truth,
+so a separate C6 update would be undone at the next P4 boot.</p></li>
+</ul>
+<p><strong>Recommendation (original): each chip updates itself, and the C6 relays the P4’s image.</strong> The C6 never
 writes the P4’s flash, and the P4 never writes the C6’s application flash.</p>
 <ul class="simple">
 <li><p><strong>C6: unchanged.</strong> The split loader and app, the manifest, the keyring (ids 0 <code class="docutils literal notranslate"><span class="pre">release</span></code>,
@@ -1780,8 +1731,11 @@ itself, so a RAM chain loader is required. The P4 SIP-uploads Espressif’s flas
 commands (FLASH_BEGIN / DATA / END, SPI_FLASH_MD5) over the SDIO packet registers. The host side
 is ours (<code class="docutils literal notranslate"><span class="pre">firmware/p4/c6flash</span></code>); <code class="docutils literal notranslate"><span class="pre">esp-serial-flasher</span></code> was read as the reference, not linked.
 The P4 image carries the C6 images, so one P4 release pins its C6 build. The board needs the
-C6’s IO9 (BOOT) on a P4 GPIO; the Waveshare ESP32-P4-WIFI6 needs a jumper from header H4 pin 1
-to GPIO4. EN is already GPIO54.</p>
+C6’s IO9 (BOOT) on a P4 GPIO; the Waveshare ESP32-P4-WIFI6 needs a jumper from the C6’s IO9 (BOOT)
+to P4 GPIO4. On the dev kit the C6’s IO9 is pad 4 of J2, the 4-pad array next to the C6 (found
+in bring-up, 2026-11-11): wire J2 pad 4 to GPIO4 on the 40-pin header. (An older note here said
+“header H4 pin 1”; on the dev kit H4 is the PoE header, which can carry PoE voltage: never jumper
+it to a GPIO.) EN is already GPIO54.</p>
 <p>TODO: replace the stub with our own chain loader (a bare-metal C6 RAM program that takes the
 image through the SDIO packet registers and writes it with the C6 ROM’s flash functions), so the
 recovery path has no third-party binary in it.</p>

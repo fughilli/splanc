@@ -665,8 +665,14 @@ the same laser crossing on the P4's clock.
 
 ### 4.3 C6 firmware: the front-end build
 
-**What changes.** A new `esp32c6_frontend` target. It is `player_app_netstack` with the player core
-compiled out under `LM_FRONTEND`. In its place go the link driver and the router of §2.2.
+**What changes.** A new `esp32c6_frontend` target: a pure relay (`relay_main.cpp` +
+`relay_ffi.rs`), its own small program on the player's netstack transport, like the OTA loader.
+It links no player core and no effects engine; in their place go the link driver and the router
+of §2.2. It answers `get_tls_info` and `set/get_wifi_policy` itself, applies a rename (BLE and
+mDNS advertise the name) before forwarding it, forwards everything else, and answers
+`error{player_unavailable}` while the P4 is down. (The first cut was `player_app_netstack` with
+`LM_FRONTEND`: it still linked the player core and effects engine, about 62 KB of RAM, only to
+answer while the P4 was down. **Measured** below.)
 
 **What stays exactly as it is.**
 
@@ -716,193 +722,79 @@ it.
 
 **Decision.** The number of concurrent wss sessions is a build parameter, `LM_WSS_SESSIONS`.
 Plain C6 players keep **1**, because their RAM is tight. The C6 front end in the P4 + C6 build
-gets **2**: the most the reachability model proves fits the front end's heap, which the bench
-confirms (**Measured** and **Validation** below). Four don't fit: that image never brings Wi-Fi
-up. With 1, the logic is the single-session transport as it was.
+gets **2** (D-119). With 1, the logic is the single-session transport as it was.
 
-**Build.** `//firmware/netstack:wifi_sta_ffi` has one TCP server slot.
-`:wifi_sta_ffi_sessions2` / `_sessions4` are the same source with the `sessions2` /
-`sessions4` crate feature. `//firmware/player_app:netstack_transport_sessions<N>` defines
-`LM_WSS_SESSIONS=<N>` and links that FFI. `:player_app_frontend` uses
-`_FRONTEND_SESSIONS` (2). Nothing else changes: the players and the
-loader link the one-slot pair.
+**Build.** `//firmware/netstack:wifi_sta_ffi` has one TCP server slot;
+`:wifi_sta_ffi_sessions2` is the same source with the `sessions2` crate feature.
+`//firmware/player_app:netstack_transport_sessions2` defines `LM_WSS_SESSIONS=2` and links it;
+`:player_app_frontend` uses that. The players and the loader link the one-slot pair.
 
-**TCP slot table** (`firmware/netstack/src/tcp_slots.rs`, `TcpSlots<N>`). There are N
-`TcpConn`s on the one listening port. At the bind, every slot listens (with distinct ISNs).
-`ns_tcp_select(i)` picks the slot that the existing `ns_tcp_*` calls act on. The one
-exception is `ns_tcp_on_ip`, which demuxes each inbound datagram itself. Our half of the
-4-tuple is the same for every slot, so demux is by the peer's address and port:
+**TCP slot table** (`firmware/netstack/src/tcp_slots.rs`, `TcpSlots<N>`). N `TcpConn`s on the
+one listening port; at the bind every slot listens (distinct ISNs). `ns_tcp_select(i)` picks
+the slot the other `ns_tcp_*` calls act on, except `ns_tcp_on_ip`, which demuxes each
+datagram itself by the peer's address and port:
 
-1. A slot already bound to that peer (any state but `Listen`) takes the datagram.
-2. Otherwise the first `Listen` slot takes it. A SYN latches that slot. Anything else gets the
-   listener's RST, as with one slot.
-3. Otherwise every slot is busy. If any slot is not a live, serving session (pre-WS,
-   closing, SynRcvd), the datagram goes there, so a new SYN is **dropped**: the client
-   retransmits it in about 1 s, and by then a closing slot has re-listened. Only when **every**
-   slot is Established and `serving_live` does slot 0 take it. A new SYN then gets the existing
-   **RST|ACK refusal**, so the client backs off instead of hanging. This is the load-shedding
-   rule for "all N busy". It keeps the #199/#204 guard: a closing session's own reconnect is
-   never refused.
+1. A slot already bound to that peer (any state but `Listen`) takes it.
+2. Otherwise the first `Listen` slot: a SYN latches it, anything else gets its RST.
+3. Otherwise every slot is busy. A slot that isn't a live, serving session takes it, so a new
+   SYN is dropped and retried in ~1 s, by when a closing slot has re-listened. Only when every
+   slot is Established and serving does slot 0 take it, and slot 0's own rules apply: the
+   RST|ACK refusal, or the idle-session takeover (#444, `session_takeover.h`).
 
-With N = 1 every datagram goes to slot 0, and slot 0's own rules are the old ones. A host
-test pins this down (`single_slot_keeps_the_busy_slot_rules`). `ns_tcp_stats` sums over the
-slots. `ns_tcp_tx_pending_any` and `ns_tcp_slot_state(i)` read slots without selecting them.
+With N = 1 every datagram goes to slot 0 (`single_slot_keeps_the_busy_slot_rules`).
 
-**Per-session state** (`netstack_transport.cpp`, `struct Session`, `g_sess[kSessions]`).
-Each session has its own:
+**Per-session state** (`netstack_transport.cpp`, `struct Session`, `g_sess[kSessions]`). Each
+session has its own TLS context (`g_ssl[kSessions]`, one context at N = 1, so
+`tls_abi_test` reads the same symbol size), its flags (`tls_hs`, `ws_up`, `ws_closing`,
+`responding`), its takeover policy, the 6 KB WS reassembly buffer, the BIO progress counters,
+and every reclaim gate's clock and mark (`serve_slot`). The config, the device cert and the key
+stay shared. Each `netstack_loop` pass serves the sessions in turn; send windows and RTOs are
+pumped for every slot (`tcp_pump_all`, `tcp_tick_all`), including inside a TLS write spin. The
+"a client is connected" gates (DHCP renewal, gratuitous ARP and mDNS group replies, the
+data-plane priority) ask about any session; link-wide resets clear every session.
 
-- `mbedtls_ssl_context`, with the Session as the BIO context; `bio_send`/`bio_recv` select
-  its slot;
-- the TLS/WS flags (`tls_hs`, `ws_up`, `ws_closing`, `responding`);
-- the 6 KB WS reassembly buffer;
-- the BIO progress counters;
-- every reclaim gate's clock and mark (pre-WS wedge 4 s, post-WS peer-gone 6 s, idle ping
-  15 s, served-and-closing 8 s), and the BLE-teardown edge.
+**Sessions over the link.** A session's id is its slot + 1 (1..N); the BLE central is `0x100`.
+The front end sends each forwarded message with its session's id, the P4 replies to that id,
+and a PUSH goes to the session it names (`netstack_ws_send_to`; dropped when that session is
+gone or its window is full). When a session that had a client ends, the front end sends
+`LINK RESET(session)`, so the P4 stops pushing there and frees its upload. When the P4 sends
+`RESET(session)` in place of a REPLY (another session's sharded upload is running:
+`link_transport.cpp` gives the upload to the session that sent window 0 until its last window,
+its session ends or 3 s of quiet), the front end drops that session and its client retries.
+Forwarding is still synchronous, one message at a time.
 
-The config, the device cert and the key stay shared. Each `netstack_loop` pass serves the
-sessions in turn, selecting each one's slot, with the same per-session logic as before.
-Send windows and RTOs are pumped for every slot (`tcp_pump_all`, `tcp_tick_all`), including
-inside a TLS write spin.
+**TLS region** (`tls_region.cpp`): N + 1 record slots of 6,912 B and 4 KB more small region
+per extra session. A miss falls back to the heap (`fb=`).
 
-The "a client is connected" gates (DHCP T1 renewal, gratuitous ARP and mDNS announcements,
-group-addressed mDNS replies, the data-plane priority) now ask about **any** session. The
-link-wide resets (deauth, a new network, an IP change) clear every session. The whole
-transport runs on loopTask. The selection is shared state, so nothing else may call into it.
+**The model** (`//firmware/sysmode`, `Profile::FrontEnd`, `cost::frontend`). `SysMode.wss` is a
+session count, 0..=the profile's cap (1 on the player, whose states and pinned figures are
+unchanged). The front-end profile runs no LED activity and boots idle. On top of the measured
+idle heap its components are the vendor scan transient, a BLE central's link, TLS record
+buffers past the region's N + 1 slots (every open session assumed mid-handshake) and
+small-region overflow. `reachability_test` proves every reachable front-end state keeps the
+24 KB floor at the shipped N, and reports the largest N that would.
 
-**Sessions over the link.** A session's id is its slot + 1 (1..N). The BLE central is
-`0x100`. The front end sends each forwarded message with its session's id
-(`netstack_ws_session()`), and the P4 replies to that id. A PUSH goes to the session it
-names (`netstack_ws_send_to`). It's dropped when that session is gone or its window is full,
-under #353's rule. When a session that had a client ends, the front end sends
-`LINK RESET(session)` so the P4 stops pushing there. When the P4 sends `RESET(session)`
-instead of a REPLY, the waiting forward returns −2, and the front end drops that session (the
-client retries). In this PR, forwarding is still synchronous, one message at a time: a slow
-P4 reply (at most 1 s) holds up every session behind it.
+**Measured** (the relay alone on a HITL C6, //pi/hitl/harness:frontend_relay; the `[relay]`
+status line, which also reaches the P4's console), 2026-11-21, hitl-rig-2:
 
-**Decided for the pure-transport front end (2026-11-08)** (still to implement):
+| front-end image | static internal RAM (to the heap start) | idle free (joined) | all-time min |
+| --- | ---: | ---: | ---: |
+| old (player core, 1 session) | 329,024 B | (bench run pending) | |
+| relay, 1 session (#607) | 243,792 B | 167,340 B | 153,576 B |
+| relay, 2 sessions | 267,936 B | (bench run pending) | |
 
-- **Async throughout.** No forward waits for its reply. The front end tags each player
-  message with its session and request id, sends it, and keeps serving. Replies come back
-  through a reply table keyed by (session, request id), and go out on that session when they
-  arrive. A session that has closed by then drops its reply. Nothing on either side of the
-  link blocks the loop on the other: not the front end's forwards, and not the P4's sends.
-- **Generalized pub/sub for pushes.** Pushes are PerfReport, fps lag, kiosk status and the
-  like. Instead of going to "the session that spoke last", they go to every session that
-  subscribed to that topic. A subscription lasts until its session closes. A session that only
-  listens gets its reports too. The P4 publishes once per topic, and the front end fans the
-  message out to the subscribed sessions, under #353's rule for a full window. BLE is one more
-  subscriber.
-- **Every client is one source.** The player treats all wss clients as a single client, for
-  the kiosk unlock as for everything else. This is the behaviour on the P4 today, and it's
-  now intended, not an open question.
-
-**The player core with concurrent clients.** It was written for one client. What happens
-with several:
-
-| Concern | Behaviour with N clients |
-| --- | --- |
-| Sharded uploads (map, topology, effect) | One upload at a time (`upload_active`, one temp file). The P4 (`link_transport.cpp`) gives the upload to the session that sent window 0, until its last window, until its session ends, or until it has been quiet for 3 s. Another session's window meanwhile gets `RESET`: that session is dropped, and its client retries later. The owner's upload is untouched. |
-| Pushes (PerfReport, fps lag, kiosk status) | To the session that spoke last (`g_session` on the P4, `g_push` on the front end). This is one subscriber, as before. A second app that only listens gets no reports until it sends something. **To change:** generalized pub/sub (above). |
-| Live mailbox (`set_uniforms`, OSC) | Latest wins across clients. Two knob streams interleave. |
-| FX debugger lease | Lapses when the push target closes (`netstack_ws_open()`), the same as before. |
-| Kiosk unlock | Per connection on a player. On the P4 every link message counts as one "wss" source, so one client's unlock covers every wss client. **Decided:** keep it so: all clients are one source. |
-
-**TLS region per build** (`tls_region.cpp`). With the dynamic buffers, an idle session's
-records are freed, and the loop serves one session at a time. So the record slots cover one
-partly received record per session plus one being written: **N + 1** slots of 6,912 B (2 at
-N = 1, as before). The small region grows by 4 KB per extra session. A miss still falls back
-to the heap (`fb=`) and never fails. On the bench, two sessions plus churn peaked at 2 of 3
-slots and 10,948 of 14,336 B of the small region, with no fallbacks.
-
-**The mbedTLS ABI bug this found** (tracked in #468; `main` takes #460's version of the fix,
-and this branch drops its copy when it's next merged with `main`). `netstack_transport.cpp` compiles against the prebuilt
-SDK's mbedtls headers, which come first on the include path. The image links the from-source
-mbedtls (@embedded's `mbedtls_src`, IDF v5.5.4). The two disagree on `mbedtls_ssl_context`:
-the ELF's DWARF says 344 B in that file and 552 B in the library's nine compile units. So
-every context the transport declared was overrun by 208 B. With the context first in a
-`Session`, the overrun landed on the session's own state, and the first served GET panicked
-the C6 inside `mbedtls_ssl_session_reset`. That reboot also killed the SDIO link: the bench's
-"one GET and `host=down`".
-
-The single-session image overran into whatever globals followed `g_ssl`, silently. That
-includes the plain C6 players. Each context now lives in an `SslBox` sized for the library
-(576 B). `//firmware/player_app:tls_abi_test` reads both ELFs' DWARF and fails if the
-library's context outgrows it. (`mbedtls_ssl_config`: 224 B in the transport's view, 196 B in
-the library's, so the transport's is the larger. `x509_crt` and `pk_context` agree.)
-
-**Measured** (Waveshare ESP32-P4-WIFI6 + C6, 2026-11-04). These come from the front end's
-`[heap]` status line (`frontend_link.cpp`): free internal heap, its minimum, the largest
-block, the TLS region's high-water marks, the open sessions, the reset reason, and what the
-radio bring-up saw. The C6's own console isn't wired, so this line is how the numbers reach
-the P4's console.
-
-| image | idle free (joined) | all-time min | largest block | Wi-Fi |
-| --- | ---: | ---: | ---: | --- |
-| N = 1 | 70,844 | 61,052 (boot scan) | 50,164 | joins |
-| N = 2 | 46,608 | 38,248 (boot scan) | 26,612 | joins; flat at 46,608 with 2 sessions open and through 16 churn rounds |
-| N = 4 | 26,224 (no Wi-Fi) | 5,984 | 14,324 | `esp_wifi_init` = 0x101 (`ESP_ERR_NO_MEM`): never starts, 0 beacons |
-
-Each session past the first costs 24,108 B of statics (nm):
-- the TCP slot: 6,316 B;
-- a `Session`: 6,784 B, including the 6 KB WS buffer and the `SslBox`;
-- a record slot: 6,912 B;
-- 4 KB of the small region.
-
-Sessions draw no heap of their own. Everything per session is static, and the TLS region
-absorbed the handshakes.
-
-**The model** (`//firmware/sysmode`, `Profile::FrontEnd`, `cost::frontend`). The state machine's
-`wss` axis is now a session count, 0..=the profile's cap (1 on the player, whose model and
-pinned figures are unchanged). The front-end profile has no LED activity, which is the P4's job,
-and it boots idle. Its heap components on top of the measured idle state are:
-- the vendor scan transient (9,792 B);
-- a BLE central's link (3,876 B);
-- record buffers past the region's N + 1 slots, assuming every open session is mid-handshake
-  (2 buffers each);
-- small-region overflow.
-
-`reachability_test` walks every reachable front-end state and proves each stays above a 24 KB
-floor, the same floor the player keeps (`kRuntimeHeapReserve`). At N = 2 (10 states) the worst
-state is the provisioning scan with the Improv central connected: 13,668 B against 22,032 B
-available, leaving 8,364 B of headroom. With sessions, the worst is two handshakes beside a
-central: 10,788 B. The same test proves N = 3 and N = 4 don't fit. At N = 4 the statics alone
-exceed the heap, which the bench's `ESP_ERR_NO_MEM` confirms.
-
-**Getting to four: the front end becomes a pure transport** (decision, 2026-11-08). Four
-sessions need about 50 KB more of C6 statics. The front end still links the full player core
-for its while-the-P4-is-down answers, including `FX_ARENA` (24 KB), `ARENA_MEM` (12 KB),
-`DECK_A` and `FX_AUX` (11.6 KB each), though it has no LEDs to render on. The decision is to
-drop the effects engine and the player core from `LM_FRONTEND` entirely, not to shrink them.
-The front end keeps only the network, BLE provisioning, identity, OTA and the link. Every
-player message goes to the P4. While the P4 is down, the front end answers with a "player
-unavailable" error instead of serving from a local core. All the freed RAM goes to more wss
-sessions. The steps:
-
-1. Compile the player core, the FX VM, the decks and their arenas out of `:esp32c6_frontend`.
-   Keep the welcome/hello path the app needs to see the device and its state.
-2. Measure the new idle heap with the `[heap]` line and update `cost::frontend`.
-3. Let `reachability_test` pick the cap: the largest N whose every reachable state keeps
-   the 24 KB floor. Aim for 4.
-4. Rerun the multi-session bench at that N.
+A session past the first costs 24,104 B of statics: its TCP slot (6,320 B), its `Session`
+(6,224 B), its TLS context (552 B), one more record slot (6,912 B) and 4 KB of small region.
+Sessions draw no heap of their own; the TLS region absorbs the handshakes.
 
 **Link failures are surfaced and recovered.** The P4 counts failed ESSL calls (`sdio_err=` on
-its `[net]` line). When the front end's 100 ms heartbeat has been silent for 2 s, the P4 says
-so, tears the SDIO link down and reopens it (`relinks=`). Every third failed attempt resets the
-C6 first. On the panicking build, this brought the link back within about 5 s of each C6
-reboot instead of leaving `host=down` for good. The C6 reports why it last reset (`rst=`), plus
-a breadcrumb of the stage the server was in, kept across a panic in RTC memory (`crumb=`).
+its `[net]` line). When the front end's 100 ms heartbeat has been silent for 2 s, the P4 tears
+the SDIO link down and reopens it (`relinks=`); every third failed attempt resets the C6 first.
 
-**Validation.** Done on the bench at N = 2 (two runs of the multi-session bench, see the PR).
-Still to run before merging, on a P4 + C6 board:
-
-- `loaded_tls` and `tls_churn` against the front end with 4 concurrent clients and a 24-way
-  burst: every client either gets a session or a fast refusal, and no slot wedges;
-- `ram_audit` on the front end for the minimum free heap and the `slots=`/`fb=` peaks;
-- the cert-trust GET right after a wss close (the #199/#204 case), and an upload from one
-  client while another streams knobs.
-
-The single-session images need the usual e2e gates. Their logic is unchanged, but the code
-moved.
+**Still to do:** async forwarding (a reply table keyed by session and request id, so a slow
+P4 reply doesn't hold up the other session), and pub/sub pushes (every subscribed session
+instead of the one that spoke last). Every client is one source to the player, for the kiosk
+unlock too (decided 2026-11-08).
 
 ### 4.4 Pin map and conflicts
 
@@ -1009,7 +901,72 @@ blanks the LEDs because the network had trouble (`bootloop.txt`).
 
 ### 5.1 OTA for both chips
 
-**Recommendation: each chip updates itself, and the C6 relays the P4's image.** The C6 never
+**As built (2026-11-10): one package updates both chips.** The P4 image already carries the
+C6 front end's images (`//firmware/p4/c6flash`) and reflashes the C6 over SDIO at boot
+whenever the C6's ELF SHA-256 differs. So the update is a P4 update, and the C6 follows:
+
+1. **Package.** `esp32p4-player-<ver>.ota` = the 108-byte manifest + the P4 image. The board
+   is signed into the manifest: flags bits 24..31 = **16** (`manifest::BOARD_P4`), clear of the
+   MAX's 1..4. The receive session picks the board from the chip id (`session::board_for_chip`):
+   - the P4 (`0x0012`) takes board 16 only;
+   - the C6 and C3 take board 0 only.
+
+   The image header's chip id is checked as well, so no chip can install another's image even
+   though they share the keyring. Test-signed build:
+   `//firmware/player_app:esp32p4_player_c6_ota_test`; the signer takes `--board 16`.
+2. **Wire.** The proto is unchanged. The C6 front end forwards `ota_*` 70–75 to the P4
+   (`main.cpp`, `LM_FRONTEND`) and never answers them itself while the P4 is up. While the P4
+   is down, `get_ota_status` is answered by the C6, and the other arms get no reply, so the
+   client's resume retries them. The P4 advertises the welcome feature **`ota_inapp`**: the
+   client (`web/src/net/otaUpdate.ts`, shared with the agent's `update_firmware`) then skips
+   the loader handoff. The transfer is unchanged: `ota_begin` → `RECEIVING` + offset, 4 KB
+   stop-and-wait chunks, resume, `ota_finish` → `INSTALLED`.
+3. **The P4 receiver** (`firmware/player_app/ota_p4.cpp`). It is the C6 loader's logic, run in
+   the app while it keeps rendering:
+   - the signature is checked against the compiled-in ring, with the known-answer self-test,
+     key epochs and the security floor;
+   - the session is the Rust core's, and the image is written into the slot not running;
+   - `ota_finish` reads the slot back through SHA-256, runs `esp_image_verify`, then selects
+     the slot and restarts.
+
+   A pending image refuses a new `ota_begin` (`busy`), and `ota_reboot{LOADER}` answers
+   `no_loader`.
+4. **Health and rollback.** The new P4 boots pending verify, with the RTC watchdog armed.
+   Its link bring-up flashes its C6 images onto the C6. It counts as healthy once the
+   `ota_health` deadlines (boot.rs) are met with all of these true:
+   - frames render;
+   - the link is up;
+   - the C6 runs the front end this P4 carries (`link_c6_current`).
+
+   That last check proves the pair it ships with is in place and can take the next update.
+   A crash, a hang or a missed deadline and the IDF bootloader
+   (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is set in the P4 SDK) boots the other slot. The
+   old P4 then finds a C6 it doesn't carry and puts its own C6 image back. It reports
+   `last_result = "rolled_back"` in `MODE_APP`, because there is no loader.
+5. **Layout** (`firmware/p4/partitions_p4_ota.csv`, 16 MB). This is huge_app plus `ota_1`:
+   - `nvs`, `otadata`, `app0`/`ota_0` (3 MB at 0x10000), littlefs and `coredump` keep their
+     offsets;
+   - `app1`/`ota_1` (3 MB) is at 0x400000.
+
+   One USB flash of `flash_esp32p4_player_c6` moves a huge_app P4 onto it and keeps its map,
+   effects and name. After that, updates go over the air. The image is 2.5 MB of the 3 MB slot.
+
+6. **Release.** A `firmware-v*` tag publishes two P4 assets next to the C6's
+   (`.github/workflows/release.yaml`, `tools/ota_release.py --target p4`), built with the
+   tracker module and signed with the C6's key:
+   - `esp32p4-player-<ver>.ota`, the signed package the agent and the web Flash screen
+     stream to a P4;
+   - `esp32p4-player-<ver>.tar`, the USB flash bundle with that package inside.
+
+What is still open: the HITL OTA gate for the `esp32p4-c6` SKU (§5.2), and the Python HITL client (`ota_core.py`),
+which doesn't know `ota_inapp` yet.
+
+The original proposal follows. Two of its choices were dropped:
+- a `target` field on the wire: routing by chip makes it unnecessary;
+- updating the C6 by its own loader: the bundle makes the P4 image the C6's source of truth,
+  so a separate C6 update would be undone at the next P4 boot.
+
+**Recommendation (original): each chip updates itself, and the C6 relays the P4's image.** The C6 never
 writes the P4's flash, and the P4 never writes the C6's application flash.
 
 - **C6: unchanged.** The split loader and app, the manifest, the keyring (ids 0 `release`,
@@ -1062,8 +1019,11 @@ itself, so a RAM chain loader is required. The P4 SIP-uploads Espressif's flashe
 commands (FLASH_BEGIN / DATA / END, SPI_FLASH_MD5) over the SDIO packet registers. The host side
 is ours (`firmware/p4/c6flash`); `esp-serial-flasher` was read as the reference, not linked.
 The P4 image carries the C6 images, so one P4 release pins its C6 build. The board needs the
-C6's IO9 (BOOT) on a P4 GPIO; the Waveshare ESP32-P4-WIFI6 needs a jumper from header H4 pin 1
-to GPIO4. EN is already GPIO54.
+C6's IO9 (BOOT) on a P4 GPIO; the Waveshare ESP32-P4-WIFI6 needs a jumper from the C6's IO9 (BOOT)
+to P4 GPIO4. On the dev kit the C6's IO9 is pad 4 of J2, the 4-pad array next to the C6 (found
+in bring-up, 2026-11-11): wire J2 pad 4 to GPIO4 on the 40-pin header. (An older note here said
+"header H4 pin 1"; on the dev kit H4 is the PoE header, which can carry PoE voltage: never jumper
+it to a GPIO.) EN is already GPIO54.
 
 TODO: replace the stub with our own chain loader (a bare-metal C6 RAM program that takes the
 image through the SDIO packet registers and writes it with the C6 ROM's flash functions), so the
