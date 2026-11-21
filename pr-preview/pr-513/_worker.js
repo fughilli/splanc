@@ -57,27 +57,19 @@ async function ghAsset(request) {
 }
 
 // Public effects-demo relay. Credentials never enter a browser or static asset.
-// Order = fallback order. Claude leads, Opus first (owner, 2026-10-30: the free models wrote
-// poor effects; the OpenRouter key is topped up to pay for a good demo). Each
-// paid model is capped at its own list price (USD per million tokens), so a
-// provider price change can't silently cost more. When the key's credit runs out
-// (402) the relay falls through to the zero-priced models instead of failing.
-// Nemotron leads the free tail: in the 2026-10-29 live check it answered every
-// Acid Mode request (1.7-2.5 s) while MiniMax (low reasoning) never did.
+// Owner, 2026-11-18 (#548, docs/design/ai-tiers.md): the shared demo (website
+// playground, Acid Mode / kiosk with no AI set up) behaves like the app's FREE
+// tier: the same OpenRouter free models in the same order as FREE_MODELS in
+// web/src/effects/ai/providers/openrouter.ts (minus the private pick), reasoning
+// off, and the app's own system prompt passed through unchanged (the client
+// builds it exactly as for the free tier). No paid models: every request is
+// zero-priced, so the key's credit can't be spent here. Order = fallback order.
+// A request carrying an image (capture_preview) goes only to the vision models.
 const FREE = Object.freeze({ prompt: 0, completion: 0, request: 0, image: 0 });
-// Claude on OpenRouter rejects {enabled: false} ("Reasoning is mandatory for this
-// endpoint", 400). Opus 4.8 at medium effort matches the editor's AI tab with an
-// Anthropic key (DEFAULT_ANTHROPIC_MODEL, effort "medium"): a play-mode wish took
-// 10.5 s and ~$0.02 on 2026-10-31. Sonnet/Haiku are the quicker paid fallbacks.
-const CLAUDE_REASONING = Object.freeze({ effort: "low" });
 const DEMO_MODEL_SPECS = Object.freeze([
-  { id: "anthropic/claude-opus-4.8", maxPrice: { prompt: 5, completion: 25, request: 0, image: 0 }, reasoning: { effort: "medium" } },
-  { id: "anthropic/claude-sonnet-5.5", maxPrice: { prompt: 2, completion: 10, request: 0, image: 0 }, reasoning: CLAUDE_REASONING },
-  { id: "anthropic/claude-haiku-5.5", maxPrice: { prompt: 0.1, completion: 0.5, request: 0, image: 0 }, reasoning: CLAUDE_REASONING },
-  { id: "nvidia/nemotron-3.5-super-vl:free", maxPrice: FREE },
-  // MiniMax defaults to max reasoning; this is an interactive editor.
-  { id: "minimax/minimax-m3.1-flash:free", maxPrice: FREE, reasoning: { effort: "low" } },
-  { id: "google/gemma-4-31b-it:free", maxPrice: FREE },
+  { id: "nvidia/nemotron-3.5-lightning:free", maxPrice: FREE, vision: false },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", maxPrice: FREE, vision: false },
+  { id: "nvidia/nemotron-3.5-super-vl:free", maxPrice: FREE, vision: true },
 ]);
 export const DEMO_MODELS = Object.freeze(DEMO_MODEL_SPECS.map(m => m.id));
 const DEMO_PATH = "/api/demo-ai/chat/completions";
@@ -230,17 +222,18 @@ function completion(json, tools) {
 
 // The isolate budget is a coarse burst guard, not globally coordinated abuse
 // prevention. Operators can bind AI_RATE_LIMITER for Cloudflare edge enforcement.
-// Every upstream request is additionally capped at its model's list price.
+// Every upstream request is additionally capped at zero price (free models only).
 //
 // Sizing (2026-10-29): the key has credit, so OpenRouter allows ~1000 free-model
 // requests/day and ~20/minute. A crowd at a Halloween stoop shares that, and an
 // Acid Mode prompt costs 1-3 requests. So: 20/minute per isolate (the upstream
 // per-minute cap; more only buys upstream 429s), and per client 6/minute (a prompt
 // plus repairs, twice) and 30/hour (~10-15 prompts), so one visitor can burn at
-// most a few percent of the day. 2026-10-31: Claude (paid, no free-tier daily
-// cap) leads and play mode is a conversation, so 60/hour per client.
+// most a few percent of the day. (2026-10-31 raised it to 60/hour while paid
+// Claude led; 2026-11-18 the demo is free-models-only again, so the shared
+// 1000/day free cap binds once more and the hourly share is back to 30.)
 export const DEMO_LIMITS = Object.freeze({
-  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 60, clientActive: 2, clients: 2000,
+  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 30, clientActive: 2, clients: 2000,
 });
 
 /** Rate-limit key for a visitor: the IPv4 address, or the /64 of an IPv6 one.
@@ -259,11 +252,62 @@ export function clientKey(ip) {
   return groups.slice(0, 4).map(g => (g || "0").toLowerCase().replace(/^0+(?=.)/, "")).join(":") + "::/64";
 }
 
+// -- Ops metrics (docs/design/ops-grafana.md) -------------------------------------
+// One content-free `demo_request` event per POST to Grafana Cloud Logs, when the
+// three GRAFANA_LOKI_* settings are present on the Pages project (off otherwise).
+// The JS twin of agent/relay/src/ops.ts for this one event: ONLY these fields,
+// each type-checked; never the IP / client key, origin, prompt, tools or reply.
+export const DEMO_OPS_FIELDS = Object.freeze({
+  outcome: /^[a-z_]{1,40}$/, status: "num", model: /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/,
+  attempts: "num", ms: "num", images: "bool",
+});
+export function demoOpsLine(ev) {
+  const out = { ev: "demo_request" };
+  for (const [k, t] of Object.entries(DEMO_OPS_FIELDS)) {
+    const v = ev[k];
+    if (t === "num" ? typeof v === "number" && Number.isFinite(v)
+      : t === "bool" ? typeof v === "boolean"
+      : typeof v === "string" && t.test(v)) out[k] = v;
+  }
+  return out;
+}
+export function demoOpsPush(env, ev, { fetchImpl = (...args) => fetch(...args), waitUntil, now = Date.now } = {}) {
+  if (!env.GRAFANA_LOKI_PUSH_URL || !env.GRAFANA_LOKI_USER || !env.GRAFANA_LOKI_TOKEN) return Promise.resolve();
+  const envName = /^[a-z][a-z0-9-]{0,19}$/.test(env.OPS_ENV ?? "") ? env.OPS_ENV : "production";
+  const stream = { service: "splanc-pages", component: "demo-relay", env: envName, event: "demo_request", alert: "false" };
+  let p;
+  try {
+    p = fetchImpl(env.GRAFANA_LOKI_PUSH_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Basic ${btoa(`${env.GRAFANA_LOKI_USER}:${env.GRAFANA_LOKI_TOKEN}`)}` },
+      body: JSON.stringify({ streams: [{ stream, values: [[`${BigInt(now()) * 1000000n}`, JSON.stringify(demoOpsLine(ev))]] }] }),
+    }).then(() => undefined, () => undefined);
+  } catch { p = Promise.resolve(); }
+  waitUntil?.(p);
+  return p;
+}
+
 export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now = Date.now,
-  attemptMs = 30000, totalMs = 70000, limits = DEMO_LIMITS } = {}) {
+  attemptMs = 30000, totalMs = 70000, limits = DEMO_LIMITS, opsFetch } = {}) {
+  const handle = createDemoHandler({ fetchImpl, now, attemptMs, totalMs, limits });
+  return async function demoAi(request, env, ctx) {
+    const meta = {};
+    const started = now();
+    const res = await handle(request, env, meta);
+    if (request.method === "POST") {
+      demoOpsPush(env, {
+        outcome: meta.outcome ?? "unknown", status: res.status, model: meta.model,
+        attempts: meta.attempts, ms: Math.max(0, now() - started), images: meta.images,
+      }, { fetchImpl: opsFetch, waitUntil: ctx?.waitUntil?.bind(ctx), now });
+    }
+    return res;
+  };
+}
+
+function createDemoHandler({ fetchImpl, now, attemptMs, totalMs, limits }) {
   const clients = new Map();
   let windowStart = 0, requests = 0, inFlight = 0;
-  return async function demoAi(request, env) {
+  return async function demoAi(request, env, meta) {
     const origin = request.headers.get("origin");
     const allowed = DEMO_ORIGINS.has(origin) || (env.DEMO_DEV_ORIGIN && origin === env.DEMO_DEV_ORIGIN);
     const headers = { "content-type": "application/json", "cache-control": "no-store", vary: "Origin" };
@@ -273,7 +317,8 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       "access-control-expose-headers": "Retry-After",
     });
     const reply = (status, body, extra = {}) => new Response(JSON.stringify(body), { status, headers: { ...headers, ...extra } });
-    const error = (status, code, extra) => reply(status, { error: { code } }, extra);
+    // meta: the ops event's outcome (our own error-code vocabulary only).
+    const error = (status, code, extra) => { meta.outcome = code; return reply(status, { error: { code } }, extra); };
     if (!allowed) return error(403, "origin_not_allowed");
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
     if (request.method === "GET") return reply(200, { configured: Boolean(env.OPENROUTER_API_KEY), models: DEMO_MODELS });
@@ -324,10 +369,13 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       if (!validPayload(body)) return error(400, "invalid_request");
       body = engagePlay(body);
       const attempts = [];
-      for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS) {
+      const images = body.messages.some(m => Array.isArray(m.content) && m.content.some(p => p?.type === "image_url"));
+      meta.images = images;
+      for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS.filter(m => !images || m.vision)) {
         if (total.signal.aborted) break;
         const diagnostic = { model, outcome: "pending" };
         attempts.push(diagnostic);
+        meta.attempts = attempts.length; meta.model = model;
         const attempt = new AbortController();
         const stop = () => attempt.abort();
         total.signal.addEventListener("abort", stop, { once: true });
@@ -379,16 +427,9 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               String(metadata?.limit_source ?? "").startsWith("openrouter_");
             if (!providerQuota || platformQuota) {
               const retry = result.headers.get("retry-after") || quotaHeaders.get("retry-after") || "60";
+              meta.outcome = platformQuota ? "upstream_rate_limited_platform" : "upstream_rate_limited";
               return reply(429, { error: { code: "rate_limited", scope: platformQuota ? "platform" : "unknown" } }, { "retry-after": retry });
             }
-            continue;
-          }
-          // Out of credit: the paid models can't run, the zero-priced ones still can.
-          // A paid model the key can't use (out of credit, or a key/account
-          // guardrail that rejects it) falls through to the zero-priced models.
-          if ((status === 402 || status === 400) && maxPrice !== FREE) {
-            console.warn("demo-ai: paid model rejected, falling back", model, status,
-              String(json?.error?.message ?? "").slice(0, 200));
             continue;
           }
           if ([401, 402, 403].includes(status)) return error(503, "provider_unavailable");
@@ -403,7 +444,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           else if (diagnostic.outcome !== "output_limit") diagnostic.outcome = "empty_or_invalid_finish";
           const parsed = completion(json, body.tools);
           if (parsed?.refusal) return error(422, "request_declined");
-          if (parsed) return reply(200, { ...parsed, model });
+          if (parsed) { meta.outcome = "ok"; return reply(200, { ...parsed, model }); }
         } catch {
           diagnostic.outcome = attempt.signal.aborted ? "timeout" : "transport_error";
           // Network failures/attempt deadlines may try the next model.
@@ -415,6 +456,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       }
       // Fixed model IDs, numeric status and our own outcome vocabulary only.
       // Never expose provider raw payloads, prompts, generated code or credentials.
+      meta.outcome = request.signal.aborted ? "cancelled" : total.signal.aborted ? "timeout" : "models_unavailable";
       return reply(request.signal.aborted ? 499 : total.signal.aborted ? 504 : 503, {
         error: { code: request.signal.aborted ? "cancelled" : "models_unavailable" }, attempts,
       });
@@ -434,9 +476,19 @@ const demoAi = createDemoRelay();
 // The relay's landing page (/) and the other .well-known paths stay with the site.
 export const RELAY_PATHS = new Set([
   "/mcp", "/healthz", "/register", "/authorize", "/token", "/revoke", "/pair",
-  "/bridge/register", "/bridge/connect", "/live", "/bugs",
+  "/bridge/register", "/bridge/connect", "/live", "/bugs", "/feedback", "/feedback/status",
   "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp",
   "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration",
+  // Splanc AI credits (agent/relay/src/billing, docs/design/ai-billing.md). The
+  // relay answers 503 on all of them until billing is enabled there. Stripe's
+  // webhook and the admin route use the workers.dev address directly.
+  "/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance",
+  "/billing/checkout", "/billing/consent", "/billing/pricing", "/billing/statement",
+  "/billing/purchase/apple",
+  // Sign in with Apple / Google (billing/signin.ts). Apple's server
+  // notifications use the workers.dev address directly.
+  "/billing/signin", "/billing/signin/config", "/billing/signin/nonce",
+  "/billing/signin/switch", "/billing/signin/unlink",
 ]);
 
 export function relayRoute(request, url, env) {
@@ -495,9 +547,9 @@ export function retiredOrigin(url) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname === DEMO_PATH) return demoAi(request, env);
+    if (url.pathname === DEMO_PATH) return demoAi(request, env, ctx);
     if (url.pathname === "/gh-asset") return ghAsset(request);
     const relayed = relayRoute(request, url, env);
     if (relayed) return relayed;

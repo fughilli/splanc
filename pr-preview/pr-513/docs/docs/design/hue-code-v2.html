@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
@@ -267,6 +268,7 @@
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
@@ -324,7 +326,7 @@
 <h1>Hue code v2: staggered cycles, stronger codewords, faster alphabets<a class="headerlink" href="#hue-code-v2-staggered-cycles-stronger-codewords-faster-alphabets" title="Link to this heading">¶</a></h1>
 <p>Status: decided. Phase 1 (measurement) is implemented. Phase 0 (one Rust
 kernel) is PR #488 (merged). Phase 2 is implemented wall-first (kernel,
-virtual wall, phone decoder; no firmware advertisement yet): see “Phase 2 as
+virtual wall, phone decoder; C6/P4 firmware advertises it too): see “Phase 2 as
 built” below. The owner has confirmed the pilot sequence and the other
 decisions below; phases 2 and 3 are ready for implementation.</p>
 <section id="why">
@@ -698,8 +700,8 @@ per LED, amortised, with no table and no allocation. The host player memoises
 the walk inside <code class="docutils literal notranslate"><span class="pre">pattern_color</span></code>. The phone builds an id ↔ index table once
 per code book (<code class="docutils literal notranslate"><span class="pre">pk_stagger_fill</span></code>, 4 bytes per id).</p></li>
 <li><p><strong>Decode.</strong> Maps the index back by rank, O(n) checks, in the app only.</p></li>
-<li><p><strong>Firmware.</strong> C6/P4 firmware never runs this path today. It would need the
-same in-order walk.</p></li>
+<li><p><strong>Firmware.</strong> C6/P4 firmware runs the same path: its render loop calls
+<code class="docutils literal notranslate"><span class="pre">pattern_color</span></code> in LED order, so the memoised walk is amortised there too.</p></li>
 </ul>
 <p>One part of the decided design is deferred: <strong>constant luminance</strong>. The pilot
 and data use the same full-drive palette colours. The app-computed drive
@@ -777,7 +779,7 @@ per id and per pilot frame.</p>
 </tr>
 <tr class="row-odd"><td><p>10</p></td>
 <td><p>Generators and renderers</p></td>
-<td><p>Done in the kernel (<code class="docutils literal notranslate"><span class="pre">color_index_for_frame</span></code>). The host player (<code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code>, the wall player), the wall page, the phone’s synthetic source and the Python binding (<code class="docutils literal notranslate"><span class="pre">sync_pattern=</span></code>) render it. C6/P4 firmware links the same core but does not advertise the feature, so it stays on v1.</p></td>
+<td><p>Done in the kernel (<code class="docutils literal notranslate"><span class="pre">color_index_for_frame</span></code>). The host player (<code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code>, the wall player), the wall page, the phone’s synthetic source and the Python binding (<code class="docutils literal notranslate"><span class="pre">sync_pattern=</span></code>) render it. C6/P4 firmware links the same core and advertises the feature too.</p></td>
 </tr>
 <tr class="row-even"><td><p>11</p></td>
 <td><p>Telemetry</p></td>
@@ -789,18 +791,18 @@ per id and per pilot frame.</p>
 <p><strong>Wire, for now.</strong></p>
 <ul class="simple">
 <li><p><strong>Request.</strong> <code class="docutils literal notranslate"><span class="pre">StartMappingOptions.sync_pattern</span></code> (field 12) asks for
-<code class="docutils literal notranslate"><span class="pre">&quot;stagger_pilot&quot;</span></code>. The phone sends it only when the capture page is opened
-with <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code>.</p></li>
+<code class="docutils literal notranslate"><span class="pre">&quot;stagger_pilot&quot;</span></code>. The phone sends it by default to every player whose welcome
+advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code> (<code class="docutils literal notranslate"><span class="pre">requestedSyncPattern</span></code>, web/src/code/gray.ts).
+<code class="docutils literal notranslate"><span class="pre">?sync=</span></code> on the capture page is a debug override (<code class="docutils literal notranslate"><span class="pre">?sync=v1</span></code> forces the old
+pattern). Group captures still request nothing, so mixed fleets share v1.</p></li>
 <li><p><strong>Who honours it.</strong> The shared player core (<code class="docutils literal notranslate"><span class="pre">firmware/player</span></code>) runs the
 staggered pilot only if the build advertises the <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code> feature.
-Only the host player (<code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code> <code class="docutils literal notranslate"><span class="pre">player_host</span></code>, and so the virtual wall
-player) advertises it. C6 and P4 firmware do not, so they reply with
-<code class="docutils literal notranslate"><span class="pre">&quot;on_off&quot;</span></code>. The dev backend honours it too, and its <code class="docutils literal notranslate"><span class="pre">--sync-pattern</span> <span class="pre">stagger_pilot</span></code> flag can hand the code out unrequested.</p></li>
+The host player (<code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code> <code class="docutils literal notranslate"><span class="pre">player_host</span></code>, and so the virtual wall
+player) and the C6/P4 firmware (<code class="docutils literal notranslate"><span class="pre">firmware/player_app</span></code> FEATURES) advertise
+it. A player without it replies with <code class="docutils literal notranslate"><span class="pre">&quot;on_off&quot;</span></code>. The dev backend honours it too, and its <code class="docutils literal notranslate"><span class="pre">--sync-pattern</span> <span class="pre">stagger_pilot</span></code> flag can hand the code out unrequested.</p></li>
 <li><p><strong>What the phone decodes.</strong> Whatever the reply’s <code class="docutils literal notranslate"><span class="pre">codeParams.syncPattern</span></code>
 says, so an unsupported request is v1 end to end. A configure keeps the
 capture’s pattern.</p></li>
-<li><p><strong>Next.</strong> Requesting the code automatically from players that advertise it,
-and firmware support.</p></li>
 </ul>
 <section id="simulation-results">
 <h3>Simulation results<a class="headerlink" href="#simulation-results" title="Link to this heading">¶</a></h3>

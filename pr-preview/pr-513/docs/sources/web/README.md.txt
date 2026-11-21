@@ -141,6 +141,82 @@ the in-app flasher. The splanc.io site (Studio-Fug/splanc.io,
 <https://splanc.io/app>. It re-checks on a schedule, so a new app release
 reaches splanc.io without a manual pin bump.
 
+## Release notes and "What's new"
+
+The app shows release notes in a **What's new** card. After an update, a
+sparkle bubble appears in the lower-left corner on the first launch of the new
+version, including a PWA pull-to-refresh that loaded a new deploy. The bubble
+sits where the tour hint sits; a fresh install gets the tour hint instead. The
+card is always available from **About → Version → What's new**.
+
+The card has a product dropdown (Splanc app, Firmware, Bridge) and a
+**Jump to…** version picker, pinned at the top. Below them is one long scroll
+with every release of that product, newest first, each under a version and
+date heading. Jump to… lists the same versions, latest on top, and scrolls to
+the one picked. The sparkle opens the card on the Splanc app at the top, with
+every version since the one last run marked **New**. About opens it on the
+product picked last time.
+
+The notes are the **GitHub releases**. A product is a tag prefix: `app-vX.Y.Z`
+is the Splanc app, `firmware-vX.Y.Z` the firmware, and `pi-bridge-vX.Y.Z` the
+bridge. Other tags (`pi-bridge-ota-*`, data, scaffold and stage tags) are not
+shown. To add a product, add one line to `PRODUCTS` in
+`tools/whatsnew/whatsnew_mirror.py`. The app never calls GitHub. The mirror
+writes, next to the app:
+
+- `whatsnew/index.json`: the product list, with each product's release count
+  and newest version, and the notes `digest`;
+- `whatsnew/<product>.json`: that product's full history (the app fetches a
+  product's file the first time it is picked);
+- `whatsnew/media/`: every image or video the notes show, named by content hash
+  so a file shared by several releases is stored once.
+
+`--limit N` caps each product at N releases (default: all). The mirror runs in
+three places:
+
+- the `app-v*` Release workflow, after it creates the release with generated
+  notes (for Pages and Cloudflare, and in the webapp tarball). Other products'
+  releases published after that app release are left out of that build;
+- the Test workflow's site build (main and PR previews);
+- every splanc.io deploy (Studio-Fug/splanc.io `scripts/stage-app.mjs`), which
+  re-mirrors at the staged tag. Its scheduled check also redeploys when the
+  notes changed, by comparing the live index's `digest`.
+
+To write notes:
+
+1. Edit the release on GitHub (Releases → `app-vX.Y.Z`, `firmware-vX.Y.Z` or
+   `pi-bridge-vX.Y.Z` → Edit). The generated PR list is a starting point;
+   rewrite it for users. Markdown is fine.
+2. For images or short videos, drag them into the editor. GitHub uploads them
+   as `github.com/user-attachments/...` links, and the mirror downloads them.
+   You can also attach PNG/JPEG/GIF/WebP/MP4/WebM files as release assets;
+   any that the text doesn't reference appear under the notes. Keep each file
+   under 25 MB.
+3. Save. splanc.io picks up the change on its next scheduled check (about every
+   30 minutes). To publish it right away, run splanc.io's **Deploy GitHub
+   Pages** workflow (Actions → Run workflow), or push an empty commit there.
+   Pages and Cloudflare get the edit with the next app release.
+
+To have the notes in place from the first deploy, write them before tagging:
+Releases → Draft a new release, type the new tag name (`app-vX.Y.Z`; a draft
+does not create the tag), write the notes and **Save draft**. Then push the tag. The
+Release workflow finds the draft, keeps its notes, mirrors them, attaches the
+webapp tarball and publishes it. Without a draft, the workflow creates the
+release with generated notes, and you edit them afterwards (step 3 above).
+
+What survives: headings, paragraphs, lists, links (http, https and mailto),
+bold, italic, code, quotes, tables, `<details>`, images and videos. Scripts,
+styles, iframes, forms and inline event handlers are removed. Media are always
+served from the local copy.
+
+To preview offline:
+
+```sh
+python3 tools/whatsnew/whatsnew_mirror.py --out /tmp/whatsnew           # live releases
+python3 tools/whatsnew/whatsnew_mirror.py --print-digest                # fingerprint only
+LEDMAPPER_WHATSNEW_DIR=/tmp/whatsnew bazel run //web:stage_site -- /tmp/site
+```
+
 ## Deploying to GitHub Pages (CI, FUG-26)
 
 CI publishes the same static site to GitHub Pages off the `gh-pages` branch
@@ -212,18 +288,19 @@ skipping auto-negotiation for that field), `?imumap=+a,+b,+g;+x,+y,+z`
 `bazelisk run //pi/reconstruction:vio_replay -- <trace> <decoded> --diagnose`),
 `?fx=` (focal seed; otherwise a cached calibration, otherwise a 70°-FOV
 guess — fx error shifts metric scale ~1:1, shape is unaffected),
-`?sync=stagger_pilot` (REQUEST the hue code v2 staggered pilot; see below). Wall
+`?sync=stagger_pilot|v1` (debug override of the sync pattern request; see below). Wall
 page: `?cols=N`, `?gap`, `?margin`, `?dot` (dot diameter as a fraction of
 pitch), `?sync=stagger_pilot|on_off` (FORCE the rendered sync pattern).
 
 ### Testing hue code v2 (staggered pilot) against the wall
 
 The staggered-pilot code (`syncPattern: "stagger_pilot"`,
-docs/design/hue-code-v2.md phase 2) is opt-in. The phone asks for it when the
-capture page is opened with `?sync=stagger_pilot`: start_mapping carries
+docs/design/hue-code-v2.md phase 2) is the default. The phone asks for it from every
+player that advertises `hue_stagger_pilot`: start_mapping carries
 `syncPattern`, and the phone decodes whatever `codeParams.syncPattern` the
-device answers with. A player that doesn't support it (every C6/P4 today) keeps
-v1 and says so. Supporting devices: the virtual wall player (`bazel run
+device answers with. A player on older firmware keeps v1 and says so;
+`?sync=v1` forces v1 for debugging. Supporting devices: C6/P4 firmware with
+splanc#517, the virtual wall player (`bazel run
 //pi/player_rs:wall`, docs/host-player.md; it advertises `hue_stagger_pilot`)
 and this dev server. The dev server can also hand the code out to every
 capture without the request: `bazelisk run //web:serve -- --sync-pattern

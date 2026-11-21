@@ -1,0 +1,41 @@
+{
+ "schema": 2,
+ "repo": "fughilli/splanc",
+ "generated_at": "2026-11-21T09:08:44Z",
+ "digest": "sha256:471d4a6400b69985611c9d81fb77eadbbb1a78802d7730ed1f6f785e66cf3fba",
+ "products": [
+  {
+   "id": "app",
+   "name": "Splanc app",
+   "label": "Splanc",
+   "file": "app.json",
+   "count": 27,
+   "latest": {
+    "version": "1.15.8",
+    "date": "2026-11-20T12:12:06Z"
+   }
+  },
+  {
+   "id": "firmware",
+   "name": "Firmware",
+   "label": "Firmware",
+   "file": "firmware.json",
+   "count": 29,
+   "latest": {
+    "version": "1.14.1",
+    "date": "2026-11-17T03:33:43Z"
+   }
+  },
+  {
+   "id": "bridge",
+   "name": "Bridge",
+   "label": "Bridge",
+   "file": "bridge.json",
+   "count": 4,
+   "latest": {
+    "version": "1.2.0",
+    "date": "2026-11-18T07:25:14Z"
+   }
+  }
+ ]
+}

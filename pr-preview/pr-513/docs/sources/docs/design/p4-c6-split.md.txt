@@ -867,8 +867,14 @@ whenever the C6's ELF SHA-256 differs. So the update is a P4 update, and the C6 
    One USB flash of `flash_esp32p4_player_c6` moves a huge_app P4 onto it and keeps its map,
    effects and name. After that, updates go over the air. The image is 2.5 MB of the 3 MB slot.
 
-What is still open: release packaging (`tools/ota_release.py` emits only the C6 assets), the
-HITL OTA gate for the `esp32p4-c6` SKU (§5.2), and the Python HITL client (`ota_core.py`),
+6. **Release.** A `firmware-v*` tag publishes two P4 assets next to the C6's
+   (`.github/workflows/release.yaml`, `tools/ota_release.py --target p4`), built with the
+   tracker module and signed with the C6's key:
+   - `esp32p4-player-<ver>.ota`, the signed package the agent and the web Flash screen
+     stream to a P4;
+   - `esp32p4-player-<ver>.tar`, the USB flash bundle with that package inside.
+
+What is still open: the HITL OTA gate for the `esp32p4-c6` SKU (§5.2), and the Python HITL client (`ota_core.py`),
 which doesn't know `ota_inapp` yet.
 
 The original proposal follows. Two of its choices were dropped:
