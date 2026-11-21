@@ -1,0 +1,36 @@
+wifi: brcmfmac: report the signal of received action frames
+
+The firmware reports the RSSI of every action frame it passes up in
+struct brcmf_rx_mgmt_data, but brcmf_p2p_notify_action_frame_rx() hands
+the frame to cfg80211 with a signal of 0, so NL80211_CMD_FRAME events
+for action frames never carry NL80211_ATTR_RX_SIGNAL_DBM.
+
+Pass the firmware's value instead. On a CYW43455 (firmware 7.45.265,
+Raspberry Pi 3B+) it is the received signal in dBm, big-endian like the
+other fields of the structure: a station registered for vendor-specific
+Public Action frames now gets NL80211_ATTR_RX_SIGNAL_DBM with every
+frame (92 of 100 frames from a peer about a metre away received, -24 to
+-14 dBm, median -18 dBm; an ESP32-C6 next to them reported the same
+transmitter at -22 dBm).
+
+Tool use: this change was prepared with the help of an AI coding
+assistant (Claude), which read the driver, wrote the change and the
+changelog, and ran the test described in the cover letter; the
+submitter reviewed and tested it.
+
+(Upstream series for wireless-next, carried in Splanc's Pi images: pi/provisioning/nix/brcmfmac-actframe.nix.)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+index 813cc15d8..f8e6cb4fa 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+@@ -1504,7 +1504,8 @@ int brcmf_p2p_notify_action_frame_rx(struct brcmf_if *ifp,
+ 					      NL80211_BAND_5GHZ);
+ 
+ 	wdev = &ifp->vif->wdev;
+-	cfg80211_rx_mgmt(wdev, freq, 0, (u8 *)mgmt_frame, mgmt_frame_len, 0);
++	cfg80211_rx_mgmt(wdev, freq, (s32)be32_to_cpu(rxframe->rssi),
++			 (u8 *)mgmt_frame, mgmt_frame_len, 0);
+ 
+ 	kfree(mgmt_frame);
+ 	return 0;

@@ -1,0 +1,58 @@
+wifi: brcmfmac: send action frames that are not P2P, GAS or DPP
+
+brcmf_p2p_send_action_frame() only transmits P2P public action, GAS,
+P2P action and DPP frames; for any other action frame it logs "Unknown
+Frame" and reports it as not acknowledged without sending it. That
+leaves NL80211_CMD_FRAME unusable for every other action frame that
+cfg80211 accepts from userspace, for example vendor-specific Public
+Action frames (category 4, action 9) that devices exchange without
+being in the same BSS, and also the WNM and radio measurement frames
+that wpa_supplicant sends to its AP (the "Unknown Frame: category 0xa,
+action 0x8" and "category 0x5" messages seen on associated stations).
+
+The firmware's "actframe" iovar sends any action frame, and cfg80211
+has already restricted what userspace may send on the interface
+(cfg80211_mlme_mgmt_tx()). Send other action frames instead of
+dropping them, with the dwell time the caller requested rather than
+the P2P default: no P2P exchange follows these frames, and the
+firmware answers BCME_BUSY to the next action frame while it is still
+dwelling.
+
+Tested on a CYW43455 (firmware 7.45.265, Raspberry Pi 3B+), associated
+on channel 1, sending vendor-specific Public Action frames with
+NL80211_CMD_FRAME: 100 of 100 unicast frames acknowledged by a peer,
+20 of 20 frames to an absent station reported as not acknowledged
+(after the driver's retries), and 94 of 100 distinct broadcast frames
+received by the peer.
+
+Tool use: this change was prepared with the help of an AI coding
+assistant (Claude), which read the driver, wrote the change and the
+changelog, and ran the test described in the cover letter; the
+submitter reviewed and tested it.
+
+(Upstream series for wireless-next, carried in Splanc's Pi images: pi/provisioning/nix/brcmfmac-actframe.nix.)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+index 37cf6549e..6dd215081 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+@@ -1829,9 +1829,16 @@ bool brcmf_p2p_send_action_frame(struct brcmf_if *ifp,
+ 		/* do not configure anything. it will be */
+ 		/* sent with a default configuration     */
+ 	} else {
+-		bphy_err(drvr, "Unknown Frame: category 0x%x, action 0x%x\n",
+-			 category, action);
+-		return false;
++		/* Any other action frame, e.g. a vendor-specific Public Action
++		 * frame: cfg80211 has already checked that it may be sent on
++		 * this interface. No P2P exchange follows it, so dwell only as
++		 * long as the caller asked for; the firmware rejects the next
++		 * action frame while it dwells.
++		 */
++		brcmf_dbg(INFO, "action frame: category 0x%x, action 0x%x\n",
++			  category, action);
++		af_params->dwell_time =
++			cpu_to_le32(requested_dwell & ~CUSTOM_RETRY_MASK);
+ 	}
+ 
+ 	/* if connecting on primary iface, sleep for a while before sending

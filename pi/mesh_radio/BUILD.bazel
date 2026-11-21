@@ -1,0 +1,72 @@
+"""Splanc mesh on a Linux radio (docs/design/mesh-pi-transport.md): a Raspberry Pi as a
+full mesh node. The Splanc 802.11 action frame (Public Action), raw radios: the Pi's own
+radio through brcmfmac's firmware `actframe` (vendor DCMD) with a tracefs kprobe tap for
+RSSI, receive time and ACK status (the primary Pi transport); nl80211 management frames and
+monitor-mode injection for mac80211 USB adapters; the IP backhaul (M10) and a USB-attached
+C6 coprocessor link; all behind the mesh's Backhaul trait (//firmware/mesh). std, Linux, no
+new crates.
+
+  bazel test //pi/mesh_radio:mesh_radio_test
+  bazel build //pi/mesh_radio:pimesh_musl     # static aarch64 probe tool for a Pi
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("//pi/player_rs/musl:transition.bzl", "static_musl_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+_MUSL_FLAGS = select({
+    "//pi/player_rs/musl:is_musl": [
+        "-Ctarget-feature=+crt-static",
+        "-Clink-self-contained=yes",
+    ],
+    "//conditions:default": [],
+})
+
+rust_library(
+    name = "mesh_radio",
+    srcs = glob(
+        ["src/*.rs"],
+        exclude = ["src/tests.rs"],
+    ),
+    crate_name = "splanc_mesh_linux",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["//firmware/mesh"],
+)
+
+rust_test(
+    name = "mesh_radio_test",
+    size = "small",
+    srcs = glob(["src/*.rs"]),
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//firmware/mesh",
+        "//firmware/mesh/swarm:swarm_net",
+    ],
+)
+
+# The hardware probe and mesh node for a Pi: `pimesh caps|listen|send|ping|pong|node`.
+# (Named pimesh_bin: the static build's output file is `pimesh`.)
+rust_binary(
+    name = "pimesh_bin",
+    srcs = ["src/bin/pimesh.rs"],
+    crate_name = "pimesh",
+    edition = "2021",
+    rustc_flags = _MUSL_FLAGS,
+    deps = [
+        ":mesh_radio",
+        "//firmware/mesh",
+        "//firmware/mesh/swarm:swarm_net",
+    ],
+)
+
+static_musl_binary(
+    name = "pimesh_musl",
+    src = ":pimesh_bin",
+    out = "pimesh",
+    target_platform = "//pi/player_rs/musl:aarch64_linux_musl",
+)
