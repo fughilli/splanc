@@ -154,6 +154,13 @@ jobs:
             //firmware/player_app:esp32c6_netstack_meshdev_flashbundle \
             //firmware/player_app:esp32c6_netstack_meshspike_flashbundle
 
+      # The P4 board's C6 front end (the pure relay, relay_main.cpp), build-only, and its
+      # bench bundle (//pi/hitl/harness:frontend_relay runs it alone on a HITL C6).
+      - name: Build the P4 board's C6 front end (esp32c6, build-only)
+        run: |
+          bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            //firmware/player_app:esp32c6_frontend_flashbundle
+
       # esp32c3 is a BUILD-ONLY target (see //MODULE.bazel + firmware/netstack
       # ccmp.rs): build-gate that the c3 flashbundle compiles + links on every PR
       # so future c3 firmware work stays green. The image is NOT runtime-correct
