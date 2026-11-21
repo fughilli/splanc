@@ -1,0 +1,65 @@
+"""Feature-preview clips for app releases (docs/release-clips.md).
+
+release_clips records the clip scripts (web/src/**/<id>.clip.json) of a
+release's user-visible PRs against the built app, puts them on the draft GitHub
+release, and writes a review page. `bazel run` only: a py_binary is built, never
+run, by `bazel test //...`, so CI needs no browser outside the Release workflow.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+LIB_SRCS = [
+    "clipspec.py",
+    "draft.py",
+    "features.py",
+    "github_release.py",
+    "record.py",
+]
+
+# bazel run //tools/release_clips -- plan|record|draft|page|publish ...
+py_binary(
+    name = "release_clips",
+    srcs = ["release_clips.py"] + LIB_SRCS,
+    data = ["//web:dist"],
+    main = "release_clips.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("anthropic"),
+        requirement("imageio-ffmpeg"),
+        requirement("playwright"),
+    ],
+)
+
+# Chromium for Playwright (+ its system libraries with --with-deps, as on CI).
+py_binary(
+    name = "install_browser",
+    srcs = ["install_browser.py"],
+    main = "install_browser.py",
+    deps = [requirement("playwright")],
+)
+
+# The review relay: posts a release's previews to the Review Desk and turns the
+# owner's answer into the `release-review` environment approval. Run in the
+# agent container, not CI.
+py_binary(
+    name = "desk_review",
+    srcs = [
+        "desk_review.py",
+        "release_clips.py",
+    ] + LIB_SRCS,
+    main = "desk_review.py",
+)
+
+# Offline: the clip format, every checked-in clip script, release planning on a
+# scratch git repo, the release-body section and the review page.
+py_test(
+    name = "release_clips_test",
+    size = "small",
+    srcs = [
+        "release_clips.py",
+        "release_clips_test.py",
+    ] + LIB_SRCS,
+    data = ["//web:clip_scripts"],
+    imports = ["."],
+)

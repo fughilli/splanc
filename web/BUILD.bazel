@@ -694,3 +694,15 @@ sh_binary(
     srcs = ["stage_site.sh"],
     data = SITE_DATA,
 )
+
+# Feature-preview clip scripts (docs/release-clips.md) and the demo data they
+# serve: checked by //tools/release_clips:release_clips_test, recorded at
+# release time by //tools/release_clips.
+filegroup(
+    name = "clip_scripts",
+    srcs = glob([
+        "src/**/*.clip.json",
+        "src/**/clipdata/*.json",
+    ]),
+    visibility = ["//tools/release_clips:__pkg__"],
+)

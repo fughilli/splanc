@@ -8,8 +8,11 @@
 #                       (docs/design/max-ota.md), one per board, on the same release.
 #   pi-vX.Y.Z        -> build the Pi 3 player SD image (.img.zst) + wiring README,
 #                       attach as Release assets.
-#   app-vX.Y.Z       -> deploy the webapp to GitHub Pages + Cloudflare (iOS/TestFlight
-#                       is gated on the same tag in macos.yaml).
+#   app-vX.Y.Z       -> record the release's feature-preview clips onto a draft
+#                       release, wait for the owner's approval (environment
+#                       release-review; docs/release-clips.md), then deploy the
+#                       webapp to GitHub Pages + Cloudflare and publish the release
+#                       (iOS/TestFlight is gated on the same tag in macos.yaml).
 #
 # The webapp's flash tool enumerates the firmware Releases live from the GitHub API
 # (web/src/flash/githubReleaseRepo.ts), so a firmware release becomes selectable in
@@ -374,12 +377,172 @@ jobs:
             _assets/README.md
           generate_release_notes: true
 
+  # --- app-v* : feature-preview clips, then the owner's review -----------------
+  # docs/release-clips.md. Before anything ships, record the release's feature
+  # previews (the clip scripts of the user-visible PRs since the last app-v tag)
+  # against this exact build, put them on the DRAFT release (MP4/WebM/poster +
+  # preview-clips.json for the app's What's new card, a GIF section in the notes
+  # for GitHub), and upload them as the `preview-clips` artifact with a review
+  # page. Best effort: a clip that fails to record is listed in the review, it
+  # never blocks the release by itself.
+  app_previews:
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the previous app-v tag + the PRs since it
+
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-test-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-test-
+          gc-max-store-size-linux: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-test-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-deploy-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-disk-deploy-${{ runner.os }}-
+            bazel-disk-site-${{ runner.os }}-
+            bazel-disk-test-${{ runner.os }}-
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # The Release is created (as a draft) BEFORE anything else so the clips and
+      # the notes can be put on it and reviewed; "Publish app Release" (webapp
+      # job, after the review) attaches the tarball and publishes it. An existing
+      # release keeps its notes (and its draft/published state), so notes written
+      # beforehand on a draft release for this tag ship as written.
+      # make_latest=false keeps releases/latest pointing at firmware.
+      - name: Create app Release (draft)
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+
+      - name: Build the app
+        run: bazel build //web:dist --disk_cache="$HOME/.cache/bazel-disk"
+
+      # Headless Chromium needs its system libraries on the runner.
+      - name: Install the browser
+        run: bazel run //tools/release_clips:install_browser --disk_cache="$HOME/.cache/bazel-disk"
+
+      # --draft-uncovered: user-visible PRs that shipped without a clip script get
+      # one drafted by Claude (needs the ANTHROPIC_API_KEY secret; skipped
+      # without it). Drafts are marked as such in the review.
+      - name: Record feature previews
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          DRAFT=""
+          if [ -n "${ANTHROPIC_API_KEY}" ]; then DRAFT="--draft-uncovered"; fi
+          bazel run //tools/release_clips --disk_cache="$HOME/.cache/bazel-disk" -- \
+            record --tag "$GITHUB_REF_NAME" --out "$GITHUB_WORKSPACE/_clips" ${DRAFT}
+          bazel run //tools/release_clips --disk_cache="$HOME/.cache/bazel-disk" -- \
+            page --clips "$GITHUB_WORKSPACE/_clips" --out "$GITHUB_WORKSPACE/_clips"
+
+      - name: Put the previews on the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bazel run //tools/release_clips --disk_cache="$HOME/.cache/bazel-disk" -- \
+            publish --tag "$GITHUB_REF_NAME" --clips "$GITHUB_WORKSPACE/_clips"
+
+      - name: Upload the previews for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-clips
+          path: _clips
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Summary
+        run: |
+          python3 - "$GITHUB_WORKSPACE/_clips/clips.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          print("## Feature previews\n")
+          for c in d["clips"]:
+              state = "FAILED: " + c["error"] if c.get("error") else ", ".join(v["framing"] for v in c["variants"])
+              print(f"- **{c['title']}** ({c['id']}): {state}")
+          for u in (d.get("plan") or {}).get("uncovered", []):
+              print(f"- no preview: #{u['number']} {u['title']}")
+          print("\nReview: the `preview-clips` artifact (index.html), then approve the `release-review` deployment.")
+          PY
+
+  # The publish gate. This job targets the `release-review` environment, which
+  # must have the owner as a required reviewer: GitHub holds the job (and so
+  # the webapp job that needs it: nothing is deployed or published) until the
+  # deployment is approved, either in the run's "Review deployments" dialog or
+  # by the release agent relaying the owner's Review Desk answer
+  # (tools/release_clips/desk_review.py). "Reject" fails the run; after fixing
+  # the clips or notes, re-run the failed jobs and the review is asked again.
+  # It fails closed: if the environment has no reviewer configured, nobody
+  # approved, and the check below stops the release.
+  app_review:
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    needs: app_previews
+    runs-on: ubuntu-latest
+    environment: release-review
+    permissions:
+      actions: read
+    steps:
+      - name: Require a reviewer's approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          approvals="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/approvals")"
+          echo "${approvals}" | python3 -c '
+          import json, sys
+          rows = json.load(sys.stdin)
+          ok = [r for r in rows if r.get("state") == "approved"
+                and any(e.get("name") == "release-review" for e in r.get("environments", []))]
+          if not ok:
+              print("::error::release-review was not approved by a reviewer (does the environment have required reviewers? docs/release-clips.md)")
+              sys.exit(1)
+          for r in ok:
+              print("approved by " + r["user"]["login"] + ": " + (r.get("comment") or ""))
+          '
+
   # --- app-v* : webapp to GitHub Pages + Cloudflare ---------------------------
   # (iOS/TestFlight is gated on app-v* in macos.yaml.) Firmware is NOT bundled here:
   # production selects firmware from Releases; the same-commit "This build (dev)"
   # bundle is a PR-preview affordance (test.yaml), so stage_site skips /firmware/.
   webapp:
     if: startsWith(github.ref, 'refs/tags/app-v')
+    needs: app_review # nothing ships before the owner approved the notes + previews
     runs-on: ubuntu-latest
     environment: Deploy environment
     concurrency:
@@ -439,19 +602,9 @@ jobs:
       - name: Build developer docs
         run: bazel run //docs:build --disk_cache="$HOME/.cache/bazel-disk"
 
-      # The Release is created (as a draft) BEFORE the site is staged so its notes
-      # can be mirrored into the app's "What's new?" card; "Publish app Release"
-      # below attaches the tarball and publishes it. An existing release keeps its
-      # notes (and its draft/published state) — so notes written beforehand on a
-      # draft release for this tag ship in the first mirror. make_latest=false
-      # keeps releases/latest pointing at firmware.
-      - name: Create app Release (draft)
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          generate_release_notes: true
-          make_latest: false
-          target_commitish: ${{ github.sha }}
+      # The draft Release (with its feature previews) was created by app_previews
+      # and approved in app_review; its notes are mirrored into the app's
+      # "What's new?" card below, then "Publish app Release" publishes it.
 
       # Mirror every product's release notes (app, firmware, bridge; + their
       # images/videos) into whatsnew/ for the in-app card

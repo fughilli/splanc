@@ -75,3 +75,7 @@ matplotlib
 # agent reviews of `bazel run //requirements:editor` (rules_requirements'
 # rr_editor imports it lazily; wired in via deps in requirements/BUILD.bazel).
 anthropic>=1
+
+# Feature-preview clips (tools/release_clips): a static ffmpeg (H.264, VP9, GIF)
+# so recording works the same on CI runners and in the container.
+imageio-ffmpeg

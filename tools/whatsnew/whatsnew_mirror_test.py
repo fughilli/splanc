@@ -388,5 +388,122 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual([p["count"] for p in idx["products"]], [1, 1, 1])
 
 
+class ClipsTest(unittest.TestCase):
+    """preview-clips.json (tools/release_clips) becomes the release's `clips`;
+    the GIF section and the clip assets don't show twice."""
+
+    API = "https://api.github.com/repos/fughilli/splanc/releases/assets/"
+    DL = "https://github.com/fughilli/splanc/releases/download/app-v1.11.0/"
+
+    def release(self, draft):
+        names = ["preview-clips.json", "ai-tab-phone.mp4", "ai-tab-phone.webm", "ai-tab-phone.jpg",
+                 "ai-tab-phone.gif", "screenshot.png"]  # fmt: skip
+        assets = [
+            {"id": i, "name": n, "url": self.API + str(i), "browser_download_url": self.DL + n,
+             "content_type": {"json": "application/json", "mp4": "video/mp4", "webm": "video/webm",
+                              "jpg": "image/jpeg", "gif": "image/gif", "png": "image/png"}[n.rsplit(".", 1)[1]],
+             "updated_at": "2026-11-20T00:00:00Z"}
+            for i, n in enumerate(names, start=1)
+        ]  # fmt: skip
+        gif = self.DL + "ai-tab-phone.gif"
+        return {
+            "tag_name": "app-v1.11.0", "name": "app-v1.11.0", "draft": draft, "prerelease": False,
+            "published_at": None if draft else "2026-11-20T00:00:00Z", "created_at": "2026-11-20T00:00:00Z",
+            "body_html": '<h2>Feature previews</h2><h3>AI tab</h3><p><a href="' + gif + '"><img src="' + gif
+            + '" alt="AI tab"></a></p><p>Pick where AI runs.</p>'
+            + "<h2>What's Changed</h2><ul><li>AI tab by x in #558</li></ul>",
+            "assets": assets,
+        }  # fmt: skip
+
+    def net(self, draft):
+        manifest = {
+            "schema": 1, "tag": "app-v1.11.0",
+            "clips": [{"id": "ai-tab", "title": "AI tab", "summary": "Pick where AI runs.", "prs": [558],
+                       "variants": [{"framing": "phone", "mp4": "ai-tab-phone.mp4", "webm": "ai-tab-phone.webm",
+                                     "poster": "ai-tab-phone.jpg", "gif": "ai-tab-phone.gif",
+                                     "width": 600, "height": 1298, "duration": 9.5}]},
+                      {"id": "broken", "title": "No video", "summary": "x",
+                       "variants": [{"framing": "phone", "mp4": "missing.mp4"}]}],
+        }  # fmt: skip
+        base = self.API if draft else self.DL
+        key = (lambda i, n: self.API + str(i)) if draft else (lambda i, n: self.DL + n)
+        files = {
+            key(1, "preview-clips.json"): (json.dumps(manifest).encode(), "application/json"),
+            key(2, "ai-tab-phone.mp4"): (MP4, "video/mp4"),
+            key(3, "ai-tab-phone.webm"): (MP4 + b"w", "video/webm"),
+            key(4, "ai-tab-phone.jpg"): (PNG + b"j", "image/jpeg"),
+            key(5, "ai-tab-phone.gif"): (PNG + b"g", "image/gif"),
+            key(6, "screenshot.png"): (PNG + b"s", "image/png"),
+        }
+        net = FakeNet()
+        net.files = files
+        self.assertTrue(base)
+        return net
+
+    def mirror(self, draft):
+        net = self.net(draft)
+        media = wm.MediaStore(tempfile.mkdtemp(), net, lambda m: None)
+        return wm.mirror_release(self.release(draft), wm.APP.pattern, media, "fughilli/splanc"), net
+
+    def check(self, r):
+        self.assertEqual([c["id"] for c in r["clips"]], ["ai-tab"])  # no-MP4 clip dropped
+        v = r["clips"][0]["variants"][0]
+        self.assertEqual(v["framing"], "phone")
+        self.assertEqual((v["width"], v["height"]), (600, 1298))
+        for k in ("mp4", "webm", "poster"):
+            self.assertRegex(v[k], r"^media/[0-9a-f]{20}\.(mp4|webm|jpg)$")
+            self.assertIn(v[k], r["media"])
+        self.assertEqual(r["clips"][0]["prs"], [558])
+        # The GIF section is gone, the rest of the notes stay.
+        self.assertNotIn("Feature previews", text_of(r["body"]))
+        self.assertNotIn("Pick where AI runs.", text_of(r["body"]))
+        self.assertIn("What's Changed", text_of(r["body"]))
+        # The gallery keeps unrelated media only (no GIF, MP4, manifest).
+        srcs = [
+            n["a"]["src"]
+            for n in walk(r["body"])
+            if isinstance(n, dict) and n["t"] in ("img", "video")
+        ]
+        self.assertEqual(len(srcs), 1)
+        self.assertNotIn(srcs[0], (v["mp4"], v["webm"], v["poster"]))
+
+    def test_published_release(self):
+        r, net = self.mirror(draft=False)
+        self.check(r)
+        self.assertFalse(any(u.startswith(self.API) for u in net.calls))
+
+    def test_draft_release_reads_assets_through_the_api(self):
+        r, net = self.mirror(draft=True)
+        self.check(r)
+        self.assertFalse(any(u.startswith(self.DL) for u in net.calls))
+
+    def test_no_manifest_keeps_the_body(self):
+        rel = self.release(False)
+        rel["assets"] = [a for a in rel["assets"] if a["name"] != "preview-clips.json"]
+        media = wm.MediaStore(tempfile.mkdtemp(), self.net(False), lambda m: None)
+        r = wm.mirror_release(rel, wm.APP.pattern, media, "fughilli/splanc")
+        self.assertNotIn("clips", r)
+        self.assertIn("Feature previews", text_of(r["body"]))
+
+    def test_bad_manifest_is_ignored(self):
+        net = self.net(False)
+        net.files[self.DL + "preview-clips.json"] = (b"{nope", "application/json")
+        media = wm.MediaStore(tempfile.mkdtemp(), net, lambda m: None)
+        logs = []
+        r = wm.mirror_release(
+            self.release(False), wm.APP.pattern, media, "fughilli/splanc", log=logs.append
+        )
+        self.assertNotIn("clips", r)
+        self.assertTrue(any("unreadable preview-clips.json" in m for m in logs))
+
+    def test_manifest_changes_the_digest(self):
+        rel = self.release(False)
+        before = wm.digest([(wm.APP, [rel])])
+        next(a for a in rel["assets"] if a["name"] == "preview-clips.json")[
+            "updated_at"
+        ] = "2026-11-21T00:00:00Z"
+        self.assertNotEqual(before, wm.digest([(wm.APP, [rel])]))
+
+
 if __name__ == "__main__":
     unittest.main()
