@@ -111,9 +111,24 @@ class Conn:
         self.sock = sock
         self.pushes: list[dict] = []
 
+    async def drain(self, quiet: float = 0.3) -> None:
+        """Stash frames already on their way (a power_state push looks exactly like
+        a power_state reply, so one sent before our request must not be taken
+        for its answer)."""
+        while True:
+            try:
+                raw = await asyncio.wait_for(self.sock.recv(), quiet)
+            except asyncio.TimeoutError:
+                return
+            msg = self.pw.decode_server(raw)
+            if msg.get("type") == "power_state":
+                self.pushes.append(msg)
+
     async def call(
         self, flat: dict, expect: str | None, timeout: float = hitl_ws.RPC_TIMEOUT
     ) -> dict:
+        if expect == "power_state":
+            await self.drain()
         await self.sock.send(self.pw.encode_client(flat))
         t_end = time.monotonic() + timeout
         while True:
@@ -164,14 +179,27 @@ async def connect(url: str, settle: float) -> Conn:
 
 
 async def fps(c: Conn) -> tuple[float | None, int]:
-    """(the effect's live fps, ticks in a 2 s window) from the perf ring."""
+    """(the effect's live fps, effect frames rendered in a 2 s window) from the perf
+    ring: the newest tick's frame seq, before and after (the report's tail is a
+    fixed-size window, so its length says nothing about whether frames ran)."""
+
+    def newest(r: dict) -> int:
+        return max((int(t.get("seq", 0) or 0) for t in (r.get("ticks") or [])), default=-1)
+
+    # Perf pushes (unsolicited perf_report frames while a mode is on) look like the
+    # get_perf_report reply: drain them before each request so the reply is fresh.
     await c.call({"type": "set_perf", "mode": "BASIC", "interval_ms": 0}, "perf_report")
-    await c.call({"type": "get_perf_report"}, "perf_report")  # drain
+    await c.drain()
+    s0 = newest(await c.call({"type": "get_perf_report"}, "perf_report"))
     await asyncio.sleep(2.0)
+    await c.drain()
     r = await c.call({"type": "get_perf_report"}, "perf_report")
     cur = r.get("currentFps") or r.get("current_fps")
-    ticks = len(r.get("ticks") or [])
-    return (float(cur) if cur else None), ticks
+    s1 = newest(r)
+    await c.call({"type": "set_perf", "mode": "OFF"}, "perf_report")
+    await c.drain()
+    frames = 0 if s1 < 0 or s1 == s0 else (s1 - s0 if s0 >= 0 else 1)
+    return (float(cur) if cur else None), frames
 
 
 async def phase_main(
@@ -200,7 +228,7 @@ async def phase_main(
         run.check(P, "show_loaded", r.get("type") == "result_ready", str(r))
         await asyncio.sleep(2.0)
         fps_before, ticks = await fps(c)
-        _log(f"[power] fps before: {fps_before} ({ticks} ticks/2 s)")
+        _log(f"[power] fps before: {fps_before} ({ticks} frames/2 s)")
         run.check(P, "show_renders", bool(fps_before) and ticks > 0, f"{fps_before} {ticks}")
 
         P = "power"
@@ -217,7 +245,9 @@ async def phase_main(
         run.check(P, "push_off", p is not None, str(c.pushes))
         await asyncio.sleep(0.5)
         _, ticks_off = await fps(c)
-        run.check(P, "off_renders_nothing", ticks_off == 0, f"{ticks_off} perf ticks while off")
+        run.check(
+            P, "off_renders_nothing", ticks_off == 0, f"{ticks_off} frames rendered while off"
+        )
         st = await c.call({"type": "set_power", "on": True}, "power_state")
         run.check(P, "turning_on", core.phase(st) == core.TURNING_ON, str(st))
         p = await c.wait_power(lambda m: core.phase(m) == core.ON, 5)
@@ -329,7 +359,7 @@ async def phase_main(
         await c.wait_power(lambda m: core.phase(m) == core.ON, 5)
         await asyncio.sleep(3.0)  # the autoscaler finds its rung again
         fps_after, ticks = await fps(c)
-        _log(f"[power] fps after: {fps_after} ({ticks} ticks/2 s)")
+        _log(f"[power] fps after: {fps_after} ({ticks} frames/2 s)")
         run.check(
             P,
             "full_rate_when_on",
