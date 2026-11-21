@@ -176,7 +176,11 @@ test("a mistyped password returns to the password field, and the corrected one j
     assert.equal(pass.disabled, false);
     assert.equal(ssid.value, "HomeNet", "what was typed is still there");
     assert.equal(pass.value, "hunter2");
-    assert.deepEqual(visibleButtons(), ["Try again", "Choose a different device"], "one primary, one secondary");
+    assert.deepEqual(
+      visibleButtons(),
+      ["Try again", "Blink the fixture", "Choose a different device"],
+      "one primary; Blink and re-pick are secondary",
+    );
     assert.equal(savedNetworks.get("HomeNet")?.state, "rejected", "saved on Connect, flagged as rejected");
     assert.equal(savedNetworks.get("HomeNet")?.password, "hunter2");
     assert.equal(board.disconnects, 0, "the link stays up for the retry");
@@ -192,6 +196,25 @@ test("a mistyped password returns to the password field, and the corrected one j
     assert.deepEqual(prefs.getWifiList(), [{ ssid: "HomeNet", password: "hunter22" }], "one entry, corrected");
     assert.equal(savedNetworks.get("HomeNet")?.state, "joined");
     assert.equal(all(".k-sheet").length, 0, "the sheet closed on success");
+  } finally {
+    bt.restore();
+  }
+});
+
+test("Blink sends Improv Identify to the picked fixture (D-259)", async () => {
+  const board = new FakeImprovDevice({ errorCode: 0x03, errorReason: 0x01 });
+  const bt = installBluetooth(() => board);
+  try {
+    openAddDevice("ble");
+    enterWifi("HomeNet", "hunter22");
+    button("Connect").click();
+    await advance(1500);
+    const before = board.delivered.length;
+    button("Blink the fixture").click();
+    await advance(500);
+    assert.equal(board.delivered.length, before + 1, "one more RPC written");
+    assert.deepEqual([...board.delivered[before]!], [0x02, 0x00, 0x02], "the Identify RPC");
+    assert.ok(button("Blink the fixture").classList.contains("k-btn--quiet"), "secondary, not a second primary");
   } finally {
     bt.restore();
   }
@@ -238,7 +261,7 @@ test("while waiting for the join, 'Edit Wi-Fi details' stops waiting and unlocks
     await advance(1500);
 
     assert.equal(all(".wifi-status")[0]?.textContent, "Waiting for the device to join the network…");
-    assert.deepEqual(visibleButtons(), ["Edit Wi-Fi details"], "the only action while waiting");
+    assert.deepEqual(visibleButtons(), ["Edit Wi-Fi details", "Blink the fixture"], "the actions while waiting");
     assert.equal(wifiFields().pass.disabled, true, "fields locked while the device joins");
 
     button("Edit Wi-Fi details").click();
@@ -248,7 +271,7 @@ test("while waiting for the join, 'Edit Wi-Fi details' stops waiting and unlocks
     assert.ok(!all(".wifi-status")[0]!.classList.contains("wifi-status--error"), "not an error");
     assert.equal(wifiFields().pass.disabled, false);
     assert.equal(document.activeElement, wifiFields().pass as unknown as Element);
-    assert.deepEqual(visibleButtons(), ["Try again", "Choose a different device"]);
+    assert.deepEqual(visibleButtons(), ["Try again", "Blink the fixture", "Choose a different device"]);
     assert.equal(board.disconnects, 1, "the BLE link was dropped");
 
     // The 45 s join timeout of the abandoned wait never fires into the edited form.
