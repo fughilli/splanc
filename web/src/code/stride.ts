@@ -174,3 +174,24 @@ export function strideLitRolling(led: number, seq: number, params: CodeParams, g
     ) !== 0
   );
 }
+
+/**
+ * The rolling schedule as the capture pipeline's `litAt` oracle (cv/pipeline.ts):
+ * is CODED id `ledId` lit at pattern frame `frame`? Null when the device is not
+ * running a rolling stride. Ids outside this fixture (a group capture's other
+ * fixtures) are never judged.
+ */
+export function rollingLitOracle(
+  params: CodeParams,
+  ledCount: number,
+): ((ledId: number, frame: number) => boolean) | null {
+  const g = rollingGeometry(params, ledCount);
+  if (g === null) return null;
+  const off = g.codeOffset ?? 0;
+  return (ledId, frame) => {
+    const led = ledId - off;
+    if (led < 0 || led >= ledCount) return true;
+    // Before the epoch the player shows frame 0 (its clock clamps).
+    return strideLitRolling(led, Math.max(0, frame), params, g);
+  };
+}
