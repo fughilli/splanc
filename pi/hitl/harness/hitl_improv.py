@@ -302,8 +302,13 @@ async def find(address: str | None, name_filter: str, scan_seconds: float, name_
     return nameless if nameless else (None, None)
 
 
-async def _connect(dev, tries: int, connect_timeout: float, rescan_timeout: float = 8.0):
+async def _connect(
+    dev, tries: int, connect_timeout: float, rescan_timeout: float = 8.0, **client_kwargs
+):
     """Open a BLE link to the DUT, retrying transient connect failures.
+
+    `client_kwargs` go to every BleakClient built (e.g. `disconnected_callback=`, so a
+    caller holding the link open can tell a dropped link from a slow reply).
 
     The FIRST connect to a freshly-(re)booted C6 fails ~half the time with a
     message-less connect timeout (bleak gives up after `connect_timeout` and the
@@ -341,7 +346,7 @@ async def _connect(dev, tries: int, connect_timeout: float, rescan_timeout: floa
                 if i < tries:
                     await asyncio.sleep(1.0)
                 continue
-        client = BleakClient(dev, timeout=connect_timeout, **_adapter_kwargs())
+        client = BleakClient(dev, timeout=connect_timeout, **_adapter_kwargs(), **client_kwargs)
         try:
             await client.connect()
             if client.is_connected:
