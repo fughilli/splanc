@@ -45,15 +45,23 @@ On the Pi image, set it in the flasher's **Advanced ▸ Relay URL**, or as `SPLA
 `splanc-bridge.conf` on the card's boot partition; on a Raspberry Pi OS install it goes in
 `/etc/splanc-bridge/bridge.env`.) It finds your players (mDNS,
 then a scan of the local network), connects to the relay, and asks
-for a pairing code. Without a screen, read the code with:
+for a pairing code. Without a screen, read the code over SSH. On the **Splanc Pi image**, which
+has no Node, so no `npx`, use the bridge's own command:
+
+```sh
+ssh root@splanc-bridge.local splanc-bridge status
+```
+
+On any other machine running the bridge (Raspberry Pi OS install, a computer):
 
 ```sh
 npx -y https://splanc.io/agent/splanc-agent.tgz bridge-ctl status
 ```
 
 The code is under `status.pairing.code` (`ABCD-EFGH`). It lasts 10 minutes and works once. For
-a new one: the Pi's button, or `npx -y https://splanc.io/agent/splanc-agent.tgz bridge-ctl new-code`
-(it prints the code). An unpaired bridge makes new codes by itself during its first hour, until
+a new one: the Pi's button, `ssh root@splanc-bridge.local splanc-bridge new-code` on the Pi image,
+or `npx -y https://splanc.io/agent/splanc-agent.tgz bridge-ctl new-code` elsewhere
+(each prints the code). An unpaired bridge makes new codes by itself during its first hour, until
 one is used; after that, ask for one. Off the Pi image, `bridge-ctl` finds the bridge's control
 socket by itself (it falls back to `$XDG_RUNTIME_DIR/splanc-bridge/`, else `/tmp/splanc-bridge/`, when
 `/run/splanc-bridge/` isn't writable); run it as the same user as the bridge.
@@ -82,10 +90,13 @@ is no account and no password.
 - **Anything that takes a bearer token instead of a sign-in button**: open `<relay>/pair`, enter
   the code, and copy the token it shows (once). Give the client the URL `<relay>/mcp` and the
   header `Authorization: Bearer <token>`. That page also shows the exact `claude mcp add …
---header` command.
+--header` command. A script calling `<relay>/mcp` directly must send its own `User-Agent`
+  header: the relay's Cloudflare front end rejects some default library user agents (for
+  example Python's `urllib`) with error 1010.
 
 Each agent (or each person) pairs once with its own code: after the first one, get the next code
-with the button or `bridge-ctl new-code`. The bridge's screen shows **Paired** and how many cloud
+with the button or `new-code` (`splanc-bridge new-code` on the Pi image, `bridge-ctl new-code`
+elsewhere). The bridge's screen shows **Paired** and how many cloud
 sessions are connected.
 
 ### ChatGPT

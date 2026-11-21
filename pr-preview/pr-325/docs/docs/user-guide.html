@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
@@ -224,14 +225,16 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -251,8 +254,10 @@
 <li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ramps.html">Canned interpolation profiles (ramps)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ram-budget.html">RAM budget</a></li>
@@ -260,9 +265,11 @@
 <li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
@@ -356,6 +363,8 @@ push maps to a device.</p></li>
 that drive your LEDs.</p></li>
 <li><p><a class="reference internal" href="#the-effect-editor">The effect editor</a> — Write, preview, and push shader effects with the exact
 on-device VM.</p></li>
+<li><p><a class="reference internal" href="#show-mode-the-mixing-deck">Show Mode &amp; the mixing deck</a> — Cue effects onto two decks,
+crossfade live, and browse with a MIDI encoder.</p></li>
 </ul>
 </li>
 <li><p><strong>Devices</strong></p>
@@ -454,9 +463,13 @@ directly to copy it.</p></li>
 <p><em>Tell a fixture with an IMU which way its LED map is up, so tilt effects follow it.</em></p>
 <p><img alt="Calibrating a fixture's motion sensor — Splanc app screen" src="docs/user-guide/img/calibrate-imu.png" /></p>
 <p>A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt automatically when you
-map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code,
-the camera locks onto the known map, and you capture two or three still poses, tipping the fixture
-at least 45° between them. Save when the fit says good.</p>
+map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code
+and the camera locks onto the known map. There are no buttons to press. Each time the map registers
+and the fixture and phone hold still, a pose is taken, and the screen asks for the next one: first
+the normal position, then tilted about 45° to one side, then about 45° toward or away from you. A
+pose too close to an earlier one is refused, and the screen says how far to tilt. After the third
+pose the fit is solved and written to the fixture, then read back to confirm it. If the fixture
+disconnects first, the phone keeps the calibration and sends it on the next connection.</p>
 <p>The panel also holds the capture settings — diffuse on/off, the LED stride, manual camera exposure
 and LED brightness — so you can make the LEDs readable in your lighting. If the map has no saved
 capture settings (it was mapped before they were recorded, or pulled from a device) the panel says
@@ -503,7 +516,10 @@ refine and use the map.</p>
 <li><p><strong>Inspect the solve</strong> in 3D: orbit, zoom, and auto-scale/recenter the view.</p></li>
 <li><p><strong>Edit topology</strong> — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob
 handles most fixtures; a Fine-tune disclosure exposes the full extraction options.</p></li>
-<li><p><strong>Send to / pull from a device</strong> so the fixture and the app agree on the map.</p></li>
+<li><p><strong>Push to a device</strong> so the fixture gets this map and its topology. To copy a device’s map into
+your library, use <strong>Save to this phone</strong> on the device card at the top of the Maps tab.</p></li>
+<li><p><strong>Digital twin</strong> imports an OBJ or STL mesh of the fixture so you can align it with the LEDs as a
+gray overlay. It never moves the LEDs.</p></li>
 <li><p><strong>Supplement</strong> re-scans part of the fixture and merges the new scan into the map, to fill gaps or
 improve weak LEDs. If the map kept its raw capture data, weak LEDs are re-solved from both
 captures. A map without that data (copied from a device, imported, or captured before it was kept)
@@ -523,10 +539,10 @@ is the LED at output index N. The file is named after the map plus today’s dat
 it opens the share sheet; choose <strong>Save to Files</strong>.</p>
 <ul class="simple">
 <li><p><strong>CSV (TouchDesigner, spreadsheets)</strong> — columns
-<code class="docutils literal notranslate"><span class="pre">index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength</span></code>. Positions are in
-<strong>metres</strong>. In TouchDesigner, point a Table DAT’s File at the CSV and wire it into a DAT to SOP’s
-Points DAT. You get one point per LED, numbered by <code class="docutils literal notranslate"><span class="pre">index</span></code>, and the other columns become point
-attributes.</p></li>
+<code class="docutils literal notranslate"><span class="pre">index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength,segment_arclength</span></code>.
+Positions are in <strong>metres</strong>. In TouchDesigner, point a Table DAT’s File at the CSV and wire it
+into a DAT to SOP’s Points DAT. You get one point per LED, numbered by <code class="docutils literal notranslate"><span class="pre">index</span></code>, and the other
+columns become point attributes.</p></li>
 <li><p><strong>Chromatik fixture (.lxf)</strong> — copy it into the Fixtures folder under your Chromatik home
 directory and add it from the Fixture Chooser. Its points follow output order (one component per
 channel). A <strong>Scale</strong> parameter sets units per metre: the default 100 means centimetres; set 1 for
@@ -535,9 +551,11 @@ metres or 39.37 for inches.</p></li>
 position is interpolated between their mapped neighbours (clamped at the ends), the same place the
 device renders them.</p></li>
 <li><p><strong>Channels</strong> — maps don’t store a channel layout. If a connected device’s per-channel LED counts
-add up to this map’s LED count, the export uses them. Otherwise every LED is on channel 0.
-<code class="docutils literal notranslate"><span class="pre">segment</span></code> is the topology segment (-1 if none) and <code class="docutils literal notranslate"><span class="pre">arclength</span></code> is the LED’s distance along it in
-metres.</p></li>
+add up to this map’s LED count, the export uses them. Otherwise every LED is on channel 0.</p></li>
+<li><p><strong>Arclength</strong> — <code class="docutils literal notranslate"><span class="pre">arclength</span></code> is the LED’s distance along the strip in metres, counted from the
+first LED of its channel, so it ends near the strip’s length. <code class="docutils literal notranslate"><span class="pre">segment</span></code> is the topology segment
+(-1 if none) and <code class="docutils literal notranslate"><span class="pre">segment_arclength</span></code> is the LED’s distance along that segment. On a coil or tube
+the topology is the centreline, so <code class="docutils literal notranslate"><span class="pre">segment_arclength</span></code> can be much shorter than the strip.</p></li>
 <li><p><strong>Axes</strong> — Splanc maps are +Y up, right-handed, which matches TouchDesigner and Chromatik, so
 nothing needs converting. For Z-up tools such as Blender, pick <strong>Z up</strong> before exporting the CSV.</p></li>
 </ul>
@@ -598,6 +616,58 @@ fixture, not just estimate it.</p></li>
 </ul>
 </section>
 </section>
+<section id="show-mode-the-mixing-deck">
+<h3>Show Mode &amp; the mixing deck<a class="headerlink" href="#show-mode-the-mixing-deck" title="Link to this heading">¶</a></h3>
+<p><em>Cue effects onto two decks, crossfade live, and browse with a MIDI encoder.</em></p>
+<p><img alt="Show Mode &amp; the mixing deck — Splanc app screen" src="docs/user-guide/img/show-mode.png" /></p>
+<p>Show Mode (<strong>Effects ▸ ⋯ ▸ Show mode</strong>) is the live mixing deck: cue an effect onto Deck A or Deck B
+and crossfade between them on the device, which runs both at once and blends their output per LED.
+Each deck carries its effect’s keypoint pads and morph fader.</p>
+<p>The effects list is its own scroll area: it scrolls inside the panel (touch, wheel or keys) without
+moving the rest of the page. Tap it, then use ↑/↓, Page Up/Down and Home/End to move the highlight;
+<strong>Enter</strong> loads the highlighted effect onto the deck that was browsing, <strong>A</strong>/<strong>B</strong> load it onto
+that deck.</p>
+<section id="midi-browse-with-a-knob">
+<h4>MIDI: browse with a knob<a class="headerlink" href="#midi-browse-with-a-knob" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>MIDI map</strong> binds every Show Mode control: crossfader, play/pause, blend mode, keypoints, and per
+deck a <strong>browse</strong> encoder and a <strong>load</strong> button (an encoder’s push switch).</p></li>
+<li><p>Turning a deck’s browse encoder moves the highlight (tinted in that deck’s colour); a faster turn
+jumps further. Pushing its load button loads the highlighted effect onto that deck.</p></li>
+<li><p><strong>Encoder push</strong> picks what load does: <strong>Cue</strong> loads the effect onto the deck; <strong>Take</strong> loads it
+and crossfades to that deck over <strong>Take fade</strong> seconds.</p></li>
+</ul>
+</section>
+<section id="relative-endless-encoders">
+<h4>Relative (endless) encoders<a class="headerlink" href="#relative-endless-encoders" title="Link to this heading">¶</a></h4>
+<p>A knob in absolute mode sends its position (0–127), so it stops at the ends of its travel. An
+endless encoder in a relative mode sends how far it turned, so the list scrolls as far as you like.
+Each mapping stores its mode; when you learn an encoder, turn it slowly a few clicks both ways and
+Splanc detects the mode from the values it sends. You can change it in the mapping row.</p>
+<ul class="simple">
+<li><p><strong>Relative — binary offset (3F/41)</strong>: 65 = one step right, 63 = one step left, 64±n for bigger
+steps. The Midi Fighter Twister’s “ENC 3FH/41H”.</p></li>
+<li><p><strong>Relative — two’s complement (7F/01)</strong>: 1 = right, 127 = left (1..63 / 127..65).</p></li>
+<li><p><strong>Relative — signed bit (41/01)</strong>: 1..63 = right, 65..127 = left.</p></li>
+<li><p><strong>Absolute</strong> (the default): the change between positions moves the list, up to the knob’s end
+stop.</p></li>
+</ul>
+</section>
+<section id="set-up-a-midi-fighter-twister-from-splanc">
+<h4>Set up a Midi Fighter Twister from Splanc<a class="headerlink" href="#set-up-a-midi-fighter-twister-from-splanc" title="Link to this heading">¶</a></h4>
+<p><strong>MIDI map ▸ Set up Midi Fighter Twister</strong> (also in Settings ▸ MIDI) configures the Twister over
+SysEx: pick the encoders for Deck A and Deck B, choose whether a fast turn accelerates, and whether
+pushing loads. Splanc reads the Twister’s current settings, shows exactly what will change, and
+after you confirm writes only those fields (MIDI type → ENC 3FH/41H, sensitivity, push action, and
+CC/channel when an existing mapping needs them). Everything else on the Twister is kept. It then
+reads the encoders back and maps them in Show Mode.</p>
+<p>This needs Web MIDI with SysEx: Chrome or Edge on a computer or Android, which ask you to let the
+site control MIDI devices. iOS/iPadOS Safari has no Web MIDI; use DJ TechTools’ Midi Fighter Utility
+there (set the encoder’s MIDI type to ENC 3FH/41H), then learn it in Show Mode. If an older Twister
+firmware doesn’t answer the settings read, Splanc can still write the chosen encoders after an
+explicit overwrite confirmation; replug the Twister afterwards.</p>
+</section>
+</section>
 </section>
 <section id="devices">
 <h2>Devices<a class="headerlink" href="#devices" title="Link to this heading">¶</a></h2>
@@ -650,6 +720,11 @@ app uses.</p>
 <li><p><strong>Rename</strong> — the display name is reflected to the device itself.</p></li>
 <li><p>A row’s ⋮ menu shows the recorded LAN address, MAC, and Bluetooth name, and can <strong>forget</strong> the
 device.</p></li>
+<li><p><strong>Wi-Fi rejoin</strong> (device settings) picks how a board finds its network again: <strong>Auto</strong> (the
+default) retries quickly, then once a minute for as long as it takes; <strong>Fixed</strong>, <strong>Manual</strong>, or
+<strong>Offline</strong> for a unit that will never see its network again. To save airtime when an Auto board’s
+network may be gone for a long time, set <strong>Slow down after unseen for</strong> (hours) to opt in to one
+scan per <strong>Slowed scan interval</strong> (15 min by default). It is off (0) unless you set it.</p></li>
 </ul>
 </section>
 </section>
@@ -699,6 +774,28 @@ least-squares-fits its per-opcode cost model, so the app’s predictions match y
 <li><p><strong>Performance profiles</strong> manages saved per-device cost tables.</p></li>
 </ul>
 </section>
+<section id="hardware-limits">
+<h4>Hardware limits<a class="headerlink" href="#hardware-limits" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>The ESP32-C6 player drives two LED channels (GPIO 20 and GPIO 14 by default), up to <strong>1024 LEDs on
+each</strong>, 2048 in all. Set each channel’s count on the Hardware screen; the device refuses a channel
+past 1024.</p></li>
+<li><p><strong>The device sizes its LED memory for the counts you set</strong>, once at boot, so a small fixture keeps
+its memory for everything else. Raising the total past what it booted with saves the counts and
+restarts the device (a few seconds; the app reconnects). A total the board’s memory can’t hold is
+refused.</p></li>
+<li><p><strong>The wire caps the frame rate.</strong> A WS2812 LED takes 28.8 µs to clock out and the two channels go
+out in parallel, so the longest channel sets a ceiling: 80 fps up to about 400 LEDs, 60 at 512, 40
+at 768, 30 at 1024. The Hardware screen shows the ceiling for your layout; splitting a long strip
+across both channels halves its wire time.</p></li>
+<li><p><strong>The effect sets the rest.</strong> Per-LED work grows with the LED count, so a heavy effect on 2048
+LEDs runs slower than on 300. The player picks the fastest steady rate (in 5 fps steps) the effect
+can hold, and stops it only below a floor: 25 fps up to 512 LEDs, lower on longer strips (10 fps
+at 1024, 5 fps at 2048).</p></li>
+<li><p>Effects with per-LED <code class="docutils literal notranslate"><span class="pre">buffer</span></code> state share a 24 KB arena, so on very long strips a wide buffer may
+not fit; packed types (<code class="docutils literal notranslate"><span class="pre">:</span> <span class="pre">fixed8</span></code>) store it in a quarter of the space.</p></li>
+</ul>
+</section>
 </section>
 </section>
 <section id="settings-help">
@@ -712,6 +809,12 @@ Web MIDI, see connected devices, and give physical controls semantic names: wigg
 “speed”, assign.</p>
 <p>Those names are global, so any effect with a matching uniform can bind to them. The per-effect
 binding itself lives in the effect editor’s Uniforms pane.</p>
+<section id="endless-encoders">
+<h4>Endless encoders<a class="headerlink" href="#endless-encoders" title="Link to this heading">¶</a></h4>
+<p>Show Mode’s MIDI map binds encoders to browse the effects list, in absolute or relative mode (see
+Show Mode &amp; the mixing deck). <strong>Set up Midi Fighter Twister</strong> switches a Twister’s encoders to
+relative mode from here.</p>
+</section>
 </section>
 <section id="appearance-behavior">
 <h3>Appearance &amp; behavior<a class="headerlink" href="#appearance-behavior" title="Link to this heading">¶</a></h3>
@@ -858,6 +961,12 @@ source, and lists the open-source components the app ships.</p>
 <li><a class="reference internal" href="#editor-features">Editor features</a></li>
 </ul>
 </li>
+<li><a class="reference internal" href="#show-mode-the-mixing-deck">Show Mode &amp; the mixing deck</a><ul>
+<li><a class="reference internal" href="#midi-browse-with-a-knob">MIDI: browse with a knob</a></li>
+<li><a class="reference internal" href="#relative-endless-encoders">Relative (endless) encoders</a></li>
+<li><a class="reference internal" href="#set-up-a-midi-fighter-twister-from-splanc">Set up a Midi Fighter Twister from Splanc</a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li><a class="reference internal" href="#devices">Devices</a><ul>
@@ -877,12 +986,16 @@ source, and lists the open-source components the app ships.</p>
 <li><a class="reference internal" href="#color-correction">Color correction</a></li>
 <li><a class="reference internal" href="#performance-calibration">Performance &amp; calibration</a><ul>
 <li><a class="reference internal" href="#calibration">Calibration</a></li>
+<li><a class="reference internal" href="#hardware-limits">Hardware limits</a></li>
 </ul>
 </li>
 </ul>
 </li>
 <li><a class="reference internal" href="#settings-help">Settings &amp; help</a><ul>
-<li><a class="reference internal" href="#midi-controllers">MIDI controllers</a></li>
+<li><a class="reference internal" href="#midi-controllers">MIDI controllers</a><ul>
+<li><a class="reference internal" href="#endless-encoders">Endless encoders</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#appearance-behavior">Appearance &amp; behavior</a><ul>
 <li><a class="reference internal" href="#appearance">Appearance</a></li>
 <li><a class="reference internal" href="#behavior">Behavior</a></li>

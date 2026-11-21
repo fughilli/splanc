@@ -7,7 +7,7 @@
         <link rel="prefetch" href="static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
-        <title>Getting started - splanc developer docs</title>
+        <title>Quickstart - splanc developer docs</title>
       <link rel="stylesheet" type="text/css" href="static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="static/copybutton.css?v=76b2166b" />
@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="docs/quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
@@ -224,14 +225,16 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Getting started</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="next_steps.html#firmware">FIRMWARE</a></li>
@@ -251,8 +254,10 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/ramps.html">Canned interpolation profiles (ramps)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/ram-budget.html">RAM budget</a></li>
@@ -260,9 +265,11 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-demo.html">Effects demo</a></li>
@@ -332,6 +339,9 @@
   <a href="https://splanc.io/app"><img
     src="https://img.shields.io/badge/live%20app-splanc.io%2Fapp-084de7"
     alt="Live app" /></a>
+  <a href="https://fughilli.github.io/splanc/docs/"><img
+    src="https://img.shields.io/badge/docs-developer%20docs-6741d9"
+    alt="Developer docs" /></a>
   <a href="https://bazel.build"><img
     src="https://img.shields.io/badge/built%20with-Bazel-43a047"
     alt="Built with Bazel" /></a>
@@ -355,22 +365,25 @@ camera path and the LED positions together.</p>
   <br />
   <em>▶ Watch the intro video</em>
 </p>
-<section id="getting-started">
-<h1>Getting started<a class="headerlink" href="#getting-started" title="Link to this heading">¶</a></h1>
-<p>The app is a PWA — nothing to install:</p>
-<p><strong>→ <a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a></strong></p>
+<section id="quickstart">
+<h1>Quickstart<a class="headerlink" href="#quickstart" title="Link to this heading">¶</a></h1>
+<p><strong>→ <a class="reference internal" href="docs/quickstart.html"><span class="std std-doc">The Splanc quickstart</span></a></strong>: from a bare ESP32-C6
+board to mapped, animated lights in a browser. The app is a PWA, nothing to
+install: <strong><a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a></strong>.</p>
 <ol class="arabic simple">
-<li><p><strong>Onboard your controller.</strong> Starting from a brand-new ESP32-C6 dev board?
-Flash the firmware onto it straight from the PWA over USB (desktop
-Chrome/Edge via Web Serial, or Android Chrome via WebUSB) — no toolchain
-needed. Then put it on your WiFi over Bluetooth and connect to it on your LAN
-(you accept its self-signed certificate once).</p></li>
-<li><p><strong>Capture a map.</strong> Start a mapping session and walk a slow arc around the lit
-fixture until the live preview converges, then save the map.</p></li>
-<li><p><strong>Clean it up.</strong> In the mapping workspace, tidy the recovered topology
-(skeleton extraction, junction cleanup) and send the map to the device.</p></li>
-<li><p><strong>Design effects.</strong> Open the effects editor, pick or write an effect, preview
-it against your map, and send it to the controller to play for real.</p></li>
+<li><p><strong>Wire it.</strong> Any ESP32-C6 board (the C6 SuperMini is the reference), a
+WS2812/NeoPixel strip with its data on <strong>GPIO20</strong> (a second strip on
+GPIO14), and a 5 V supply for the strip with a common ground.</p></li>
+<li><p><strong>Flash it.</strong> Open the app in Chrome or Edge on a computer (or Chrome on
+Android; the iPhone app can’t set up new hardware), tap <strong>Flash new device
+(USB)</strong>, then <strong>Connect a board &amp; flash</strong>. No toolchain needed.</p></li>
+<li><p><strong>Put it on Wi-Fi.</strong> <strong>Add device (Bluetooth)</strong>: enter your Wi-Fi, pick the
+board, and accept its certificate once. From firmware 1.10.0 it remembers
+the network across reboots and updates.</p></li>
+<li><p><strong>Map it.</strong> <strong>Maps ▸ + New</strong>, then walk slowly around the lit fixture with
+your phone until the live preview converges. You get a 3D map of every LED.</p></li>
+<li><p><strong>Play.</strong> Pick or write an effect, perform in Show mode, bind MIDI knobs, or
+hand the lights to your AI agent (below).</p></li>
 </ol>
 </section>
 <section id="ask-an-ai-agent">
@@ -421,6 +434,8 @@ secure WebSocket — so what you see in the editor is what lights up.</p></li>
 <section id="learn-more">
 <h1>Learn more<a class="headerlink" href="#learn-more" title="Link to this heading">¶</a></h1>
 <ul class="simple">
+<li><p><strong>Quickstart:</strong> <a class="reference internal" href="docs/quickstart.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/quickstart.md</span></code></span></a> — wiring,
+flashing, Wi-Fi, mapping, effects and agents, one short section each</p></li>
 <li><p><strong>Using the app:</strong> <a class="reference internal" href="docs/user-guide.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/user-guide.md</span></code></span></a> — a walkthrough of
 every feature (also an interactive tutorial in the app, from Settings ▸ Help)</p></li>
 <li><p><strong>Why it’s built this way:</strong> <a class="reference internal" href="docs/manifesto.html"><span class="std std-doc">the Splanc manifesto</span></a>:
@@ -428,6 +443,9 @@ a microcontroller instead of Art-Net boxes, our own wireless stack, no heap,
 and model checking for an LED controller.</p></li>
 <li><p><strong>What’s new:</strong> <a class="reference internal" href="docs/whats-new.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/whats-new.md</span></code></span></a></p></li>
 <li><p><strong>Contributing &amp; building from source:</strong> <a class="reference internal" href="DEVELOPERS.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">DEVELOPERS.md</span></code></span></a></p></li>
+<li><p><strong>Developer docs:</strong> <a class="reference external" href="https://fughilli.github.io/splanc/docs/">fughilli.github.io/splanc/docs</a>
+— architecture, subsystems and design notes as one site (built by
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//docs:build</span></code>)</p></li>
 <li><p><strong>Design &amp; architecture:</strong> <a class="reference internal" href="led-mapper-design.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">led-mapper-design.md</span></code></span></a> —
 the durable spec — plus <a class="reference internal" href="#./docs"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/</span></code></span></a></p></li>
 <li><p><strong>Project history / build log:</strong> <a class="reference internal" href="#./WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a></p></li>

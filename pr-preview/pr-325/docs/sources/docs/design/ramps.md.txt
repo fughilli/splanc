@@ -96,6 +96,14 @@ is refused, nothing starts.
   framerate autoscaler can change the frame rate during a ramp and the ramp
   still ends on time. Several fixtures given one start in their own clocks move
   in step.
+- **Rate and speed uniforms.** A ramp moves a uniform's *value* smoothly; what
+  the effect does with it is the effect's business. A rate control (`speed`,
+  `spin`, a scroll rate) only glides smoothly if the effect integrates it in
+  `update()`, e.g. `phase = fract(phase + dt * speed)`. An effect that computes
+  `time * speed` jumps by Δspeed × elapsed time on every frame of the ramp, which
+  is the same bug a slider move shows, just spread over the ramp. Effect authors
+  (and the agent prompts, EFFECTS.md) must use the integrator; `time` alone is
+  fine only for a fixed rate with no uniform.
 - **Cap.** There can be 16 ramped uniforms at once across both decks, plus one
   crossfade ramp and one morph per deck. Past that a request is refused with
   `too_many_ramps`; running ramps are never dropped. The event queue holds 24

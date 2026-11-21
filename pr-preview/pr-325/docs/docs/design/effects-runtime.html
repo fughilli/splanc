@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
@@ -224,14 +225,16 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
@@ -251,8 +254,10 @@
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ramps.html">Canned interpolation profiles (ramps)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
@@ -260,9 +265,11 @@
 <li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
@@ -704,10 +711,13 @@ always-on fallback (JIT disabled, or the region full).</p>
 <p>The executable memory is a <strong>bounded W^X carve-out</strong>. The arduino-esp32 C6 build
 ships esp-idf as precompiled libs (no RWX heap: IRAM is RX, DRAM is NX), so rather
 than weaken memory protection globally, the firmware makes one small static buffer
-read+write+execute via a spare RISC-V <strong>PMP</strong> entry: entries 3/4 are free and
+read+write+execute via two spare RISC-V <strong>PMP</strong> entries: entries 3/4 are free and
 unlocked and, being lower-index than the SRAM data-region entries (PMP is
-lowest-index-wins), an RWX NAPOT entry there overrides the default NX for just that
-range — W^X stays enforced everywhere else.</p>
+lowest-index-wins), an RWX TOR range there (entry 3 = base, entry 4 = top) overrides
+the default NX for just that range — W^X stays enforced everywhere else. TOR rather
+than NAPOT so the buffer needs only 4-byte alignment: a NAPOT region must be aligned
+to its own size, which made all of <code class="docutils literal notranslate"><span class="pre">.dram0.bss</span></code> 2048-aligned and cost ~1.8 KB of
+boot heap in padding.</p>
 <p>Validated on a real ESP32-C6 over HITL with a fixed-point-heavy <code class="docutils literal notranslate"><span class="pre">shade()</span></code>: the
 native JIT renders <strong>bit-identically</strong> to the interpreter and cuts per-LED
 <code class="docutils literal notranslate"><span class="pre">shade()</span></code> cost by ~<strong>2.1×</strong> (≈10077 → 4723 cycles). The boot self-bench

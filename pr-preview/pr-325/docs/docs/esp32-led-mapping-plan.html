@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
@@ -224,14 +225,16 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -251,8 +254,10 @@
 <li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ramps.html">Canned interpolation profiles (ramps)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2 current current-page"><a class="current reference internal" href="#">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ram-budget.html">RAM budget</a></li>
@@ -260,9 +265,11 @@
 <li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
@@ -485,9 +492,11 @@ before any hardware exists:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">//firmware/pattern</span></code> (<code class="docutils literal notranslate"><span class="pre">ledmapper_pattern</span></code>): no_std, zero-dep port of the
 hue-code generator, SEC-DED FEC, and the code-book derivation
-(graycode.py, fec.py and codebook.py in one crate). Golden test pins it to
-<code class="docutils literal notranslate"><span class="pre">web/tests/golden_secded16{,_sym4}.json</span></code> — the same fixtures the phone
-decoder is verified against — plus exhaustive single-flip-corrects /
+(graycode.py, fec.py and codebook.py in one crate). Since phase 0 of
+hue-code v2 it is the ONE implementation: the phone runs it as wasm and the
+Python copies are gone. Golden test pins it to
+<code class="docutils literal notranslate"><span class="pre">firmware/pattern/testdata/golden_secded16{,_sym4}.json</span></code> (emitted by the
+kernel’s <code class="docutils literal notranslate"><span class="pre">gen_golden</span></code>) — plus exhaustive single-flip-corrects /
 double-flip-rejects FEC property checks. <strong>Phase 4a’s remaining scope is
 the RMT/driver integration, not the pattern math.</strong></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">//firmware/player</span></code> (<code class="docutils literal notranslate"><span class="pre">ledmapper_player</span></code>): no_std, transport-free session
@@ -573,8 +582,9 @@ tail).</p>
 <li><p>FEC, <code class="docutils literal notranslate"><span class="pre">symbols</span></code> = 2 and 4) → no_std Rust. Every frame is per-LED RGB
 (white/green sync + the Gray-ordered symbol palette); there are no on/off
 sets anymore, which is exactly the shape the RMT path wants. <strong>Accept:</strong>
-frame-for-frame match vs the Python goldens
-(<code class="docutils literal notranslate"><span class="pre">web/tests/golden_secded16.json</span></code> AND <code class="docutils literal notranslate"><span class="pre">golden_secded16_sym4.json</span></code>).</p></li>
+frame-for-frame match vs the Python goldens (now
+<code class="docutils literal notranslate"><span class="pre">firmware/pattern/testdata/golden_secded16{,_sym4}.json</span></code>, emitted by the
+kernel itself since the Python generator was retired).</p></li>
 </ul>
 </li>
 <li><p>4b <strong>SNTP clock</strong> on <code class="docutils literal notranslate"><span class="pre">esp_timer</span></code> (SDK bundles lwip SNTP); <strong>accept:</strong> offset
@@ -760,8 +770,10 @@ bindings), boundary converters <code class="docutils literal notranslate"><span 
 <code class="docutils literal notranslate"><span class="pre">shared/protocol/fec.py</span></code></p></li>
 <li><p>Solver (landed): <code class="docutils literal notranslate"><span class="pre">solver/src/{vio.rs,pipeline.rs,lm.rs,sparse.rs,imu.rs,</span> <span class="pre">synth.rs}</span></code>, <code class="docutils literal notranslate"><span class="pre">solver/worker.js</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/solver/{agent.ts,placement.ts}</span></code>,
 parity <code class="docutils literal notranslate"><span class="pre">pi/reconstruction/tests/test_rust_parity.py</span></code></p></li>
-<li><p>Pattern gen (hue): <code class="docutils literal notranslate"><span class="pre">pi/led_driver/led_driver/{graycode.py,driver.py,spi.py,</span> <span class="pre">clock.py}</span></code>, <code class="docutils literal notranslate"><span class="pre">gen_golden.py</span></code>, TS mirror <code class="docutils literal notranslate"><span class="pre">web/src/code/gray.ts</span></code>, goldens
-<code class="docutils literal notranslate"><span class="pre">web/tests/golden_secded16{,_sym4}.json</span></code></p></li>
+<li><p>Pattern gen (hue): the one kernel <code class="docutils literal notranslate"><span class="pre">firmware/pattern</span></code> (render path for
+firmware; decode/timing behind its <code class="docutils literal notranslate"><span class="pre">app</span></code> feature), phone wrappers
+<code class="docutils literal notranslate"><span class="pre">web/src/code/{gray,fec,stride,timing}.ts</span></code> over its wasm build, goldens
+<code class="docutils literal notranslate"><span class="pre">firmware/pattern/testdata/golden_secded16{,_sym4}.json</span></code></p></li>
 <li><p>Wire seams: <code class="docutils literal notranslate"><span class="pre">web/src/net/client.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">pi/server/server/{app.py,handler.py}</span></code></p></li>
 <li><p>Firmware (vendored): <code class="docutils literal notranslate"><span class="pre">third_party/embedded/{MODULE.bazel,rules/firmware.bzl,</span> <span class="pre">apps/rainbow/rainbow.cpp,rust/blink_timing/,libs/{board,pins}/,nix/arduino_esp32.BUILD}</span></code></p></li>
 <li><p>Pulse ref: graph-extractor <code class="docutils literal notranslate"><span class="pre">viz/static/index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">skelgraph/</span></code>,

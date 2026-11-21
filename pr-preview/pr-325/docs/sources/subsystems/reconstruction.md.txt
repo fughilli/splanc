@@ -43,4 +43,7 @@ helix fixture.
 ```
 
 The reconstruction quality metrics and the outlier-rejection rationale are in the
-{doc}`design spec <../led-mapper-design>` (§7.5, §8.3, §12).
+{doc}`design spec <../led-mapper-design>` (§7.5, §8.3, §12). For fixtures behind a
+diffuser, where only a sparse subset of LEDs is lit at a time, see
+{doc}`../docs/design/strided-capture`: what ties the phases into one rigid map,
+and why the solve never drops observations across the decode gaps.

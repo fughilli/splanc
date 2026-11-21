@@ -377,10 +377,13 @@ always-on fallback (JIT disabled, or the region full).
 The executable memory is a **bounded W^X carve-out**. The arduino-esp32 C6 build
 ships esp-idf as precompiled libs (no RWX heap: IRAM is RX, DRAM is NX), so rather
 than weaken memory protection globally, the firmware makes one small static buffer
-read+write+execute via a spare RISC-V **PMP** entry: entries 3/4 are free and
+read+write+execute via two spare RISC-V **PMP** entries: entries 3/4 are free and
 unlocked and, being lower-index than the SRAM data-region entries (PMP is
-lowest-index-wins), an RWX NAPOT entry there overrides the default NX for just that
-range — W^X stays enforced everywhere else.
+lowest-index-wins), an RWX TOR range there (entry 3 = base, entry 4 = top) overrides
+the default NX for just that range — W^X stays enforced everywhere else. TOR rather
+than NAPOT so the buffer needs only 4-byte alignment: a NAPOT region must be aligned
+to its own size, which made all of `.dram0.bss` 2048-aligned and cost ~1.8 KB of
+boot heap in padding.
 
 Validated on a real ESP32-C6 over HITL with a fixed-point-heavy `shade()`: the
 native JIT renders **bit-identically** to the interpreter and cuts per-LED

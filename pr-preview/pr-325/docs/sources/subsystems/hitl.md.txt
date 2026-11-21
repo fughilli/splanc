@@ -28,7 +28,7 @@ to stand up your own rig are documented in {doc}`../DEVELOPERS`
 ### Memory auditing over JTAG (`ram_audit`)
 
 `//pi/hitl/harness:ram_audit` drives the field worst case: BLE provisioning,
-then the first wss handshake with BLE still up, then a 512-LED map, a texture
+then the first wss handshake with BLE still up, then a 2048-LED map, a texture
 effect and loaded handshakes. Meanwhile `ram_watch.tcl` polls every heap's
 free bytes over the C6's system bus, **without halting** the core. At each new
 low it halts just long enough to dump HP + LP SRAM and the registers, so the

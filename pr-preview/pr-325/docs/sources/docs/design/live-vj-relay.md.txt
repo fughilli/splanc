@@ -193,10 +193,11 @@ stored as SHA-256 in `<state dir>/live-clients.json` (mode 0600), one per `clien
 
 - **Framerate autoscaler (FUG-82).** The bridge never flushes controls to a player faster
   than it renders (gap = max(16 ms, 1000 / its current fps)), each player in the list carries
-  `fps {current, target, auto, aborted}` (changes ride the 2 s `players` push), and an
-  `fps_state{aborted}` — the player parked the effect because it can't hold the floor or a
-  pinned rate — is pushed to every app at once as `{"t":"fps",…}`; the screen says so and
-  marks the fixture.
+  `fps {current, target, auto, lagging, achieved}` (changes ride the 2 s `players` push), and
+  a change of `fps_state{lagging}` — the effect can't hold the floor or a pinned rate and runs
+  at the rate it achieves; the player never parks it — is pushed to every app at once as
+  `{"t":"fps", lagging, achieved_fps, …}`; the screen mentions it (advisory, not an error) and
+  marks the fixture as lagging.
 - **One deck model.** The live mux and the agent tools share `DeviceSession`'s deck state
   (which deck is live, the crossfade position, the effect on each deck and the parked rollback
   target). A performer's **Cue A/B** is `cueDeck` (upload + activate on that deck without

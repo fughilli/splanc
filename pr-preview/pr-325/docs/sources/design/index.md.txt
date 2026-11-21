@@ -12,6 +12,7 @@ The effects runtime <../docs/design/effects-runtime>
 The effects compiler <../docs/design/effects-compiler>
 Performance monitoring <../docs/design/perf-monitoring>
 FX decks, crossfade & uniform keypoints <../docs/design/uniform-keypoints>
+FX debugger: pause, inspect, replay <../docs/design/fx-debugger>
 Canned interpolation profiles (ramps) <../docs/design/ramps>
 ```
 
@@ -21,6 +22,7 @@ Canned interpolation profiles (ramps) <../docs/design/ramps>
 :maxdepth: 1
 
 VIO solver exploration <../docs/vio-exploration>
+Strided (diffuse) capture <../docs/design/strided-capture>
 Blob-detection playbook <../docs/blob-detection-playbook>
 ESP32 LED-mapping plan <../docs/esp32-led-mapping-plan>
 ```
@@ -40,6 +42,14 @@ Kani under Bazel <../docs/design/kani-bazel>
 mbedtls dynamic buffers <../docs/design/mbedtls-dynamic-buffers>
 ```
 
+## Hardware platforms
+
+```{toctree}
+:maxdepth: 1
+
+ESP32-P4 + ESP32-C6 split player <../docs/design/p4-c6-split>
+```
+
 ## Agents & multi-fixture
 
 ```{toctree}
@@ -55,6 +65,7 @@ Cloud relay + LAN bridge <../docs/design/cloud-relay>
 :maxdepth: 1
 
 App UX overhaul <../docs/design/app-ux-overhaul>
+AI tiers (free / paid / self-serve) <../docs/design/ai-tiers>
 iOS support <../docs/design/ios-support>
 On-device models <../docs/design/on-device-models>
 Effects demo <../docs/design/effects-demo>

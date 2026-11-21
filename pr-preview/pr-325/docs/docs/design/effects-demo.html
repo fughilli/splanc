@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
@@ -224,14 +225,16 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
@@ -251,8 +254,10 @@
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ramps.html">Canned interpolation profiles (ramps)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
@@ -260,9 +265,11 @@
 <li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
 <li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Effects demo</a></li>
@@ -398,7 +405,8 @@ compile/tool results and preview images only when capture_preview is requested.<
 fallbacks and arbitrary upstream URLs, bound request/output sizes and execution
 time, allow only the effect tool names, restrict browser origins, and apply rate
 limits. Bounds: 2 MiB request/response, 128 messages, five known tool names,
-4,000 output tokens, 45 seconds per provider and 100 seconds overall. The
+4,000 output tokens, 30 seconds per provider and 70 seconds overall (45/100
+before the Acid Mode change below). The
 <a class="reference external" href="https://openrouter.ai/api/v1/models">model catalog</a> reports MiniMax’s default
 reasoning effort as <code class="docutils literal notranslate"><span class="pre">max</span></code>; the interactive relay explicitly uses its supported
 <code class="docutils literal notranslate"><span class="pre">low</span></code> setting. Nemotron and Gemma disable optional reasoning. This retains the
@@ -407,8 +415,10 @@ A response whose headers arrive but whose body stalls is classified as a timeout
 not malformed JSON. Price caps
 cover input, output, requests and images at zero. Inline preview images only;
 remote image URLs and visitor-supplied routing overrides are rejected.</p>
-<p>The local burst guard allows 24 requests/minute/IP, two concurrent requests/IP,
-eight concurrent and 120 requests/minute/isolate. It is not a distributed quota;
+<p>The local burst guard (<code class="docutils literal notranslate"><span class="pre">DEMO_LIMITS</span></code>) allows 6 requests/minute and 30/hour per
+client, two concurrent requests per client, eight concurrent and 20
+requests/minute/isolate. A client is its IPv4 address or the /64 of its IPv6
+address. It is not a distributed quota;
 bind <code class="docutils literal notranslate"><span class="pre">AI_RATE_LIMITER</span></code> for Cloudflare edge rate enforcement. The OpenRouter account
 still enforces its shared free allowance. Client IPs are kept only in the short
 in-memory limiter window; no prompts, keys or responses are logged by this worker.
@@ -504,6 +514,82 @@ real desktop browser at device pixel ratio 3 completed a mocked seven-request
 edit/five-preview/conclusion flow: requests remained below 223 KB and the current
 JPEG under 196 KB. This verifies transport and local compilation, not model output.</p>
 </section>
+<section id="acid-mode-on-the-free-relay-halloween-2026">
+<h2>Acid Mode on the free relay (Halloween 2026)<a class="headerlink" href="#acid-mode-on-the-free-relay-halloween-2026" title="Link to this heading">¶</a></h2>
+<p>Acid Mode (<code class="docutils literal notranslate"><span class="pre">#/acid</span></code>) uses this relay whenever no AI provider is configured, so a
+stranger at a kiosk install can tap the mic and speak with zero setup.
+<code class="docutils literal notranslate"><span class="pre">#/acid?play=1</span></code> (from the kiosk play mode) adds a short Halloween persona
+(<code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/acidPersona.ts</span></code>) for a fixture with an LED curtain on CH0
+and a rope on CH1, with unknown counts and possibly no map.</p>
+<p><strong>Paid models first (2026-10-30).</strong> The owner found the free models’ effects poor
+and topped up the key to pay for a good demo. The relay now tries
+<code class="docutils literal notranslate"><span class="pre">anthropic/claude-sonnet-5.5</span></code>, then <code class="docutils literal notranslate"><span class="pre">anthropic/claude-haiku-5.5</span></code>, then the free
+models. Each request carries its model’s list price as <code class="docutils literal notranslate"><span class="pre">max_price</span></code>. When the key
+runs out of credit (402), the relay skips to the free models instead of failing.
+The OpenRouter key’s own credit limit is the hard spending cap; the per-client
+limits below bound what one phone can spend.</p>
+<p><strong>Quota sizing.</strong> The key has OpenRouter credit, so free models allow about 1000
+requests/day and about 20/minute, shared by every visitor at both stoops.</p>
+<ul class="simple">
+<li><p>Per isolate: 20 requests/minute, the upstream per-minute cap.</p></li>
+<li><p>Per client: 6/minute and 30/hour, so one phone uses at most a few percent of a
+day. A 429 carries <code class="docutils literal notranslate"><span class="pre">retry-after</span></code> and a code: <code class="docutils literal notranslate"><span class="pre">demo_busy</span></code> (everyone),
+<code class="docutils literal notranslate"><span class="pre">client_rate_limited</span></code> or <code class="docutils literal notranslate"><span class="pre">client_hourly_limit</span></code> (this visitor).</p></li>
+<li><p>The client shows “The AI is busy right now — try one of the spooky presets!”
+for a 429, a 503, a 504 or its own 60-second deadline.</p></li>
+</ul>
+<p><strong>Fewer requests per prompt.</strong> In play mode:</p>
+<ul class="simple">
+<li><p>Each ask sends one user turn with the last good effect, and no history.</p></li>
+<li><p>The prompt is the compact DSL spec plus the persona, about 9 KB.</p></li>
+<li><p>Output is capped at 2,500 tokens.</p></li>
+<li><p>Only <code class="docutils literal notranslate"><span class="pre">set_script</span></code> is advertised.</p></li>
+<li><p>An accepted <code class="docutils literal notranslate"><span class="pre">set_script</span></code> ends the turn: its summary is the reply, so there is
+no closing request. A refused script gets at most two repairs (three requests).</p></li>
+</ul>
+<p><strong>Tools.</strong> The relay allowlist stays at five tools. The client filters instead:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">measure_on_device</span></code> and <code class="docutils literal notranslate"><span class="pre">file_bug</span></code> are offered only with a configured
+provider. An anonymous visitor must not file GitHub issues on the owner’s
+repo, and on-device measuring adds rounds.</p></li>
+<li><p>Play mode also drops <code class="docutils literal notranslate"><span class="pre">capture_preview</span></code>, the MIDI tools and
+<code class="docutils literal notranslate"><span class="pre">estimate_performance</span></code>. The local upload guard runs the estimate itself, so
+the model does not spend a round on it.</p></li>
+</ul>
+<p><strong>Never dark.</strong> In play mode an effect reaches the fixture only if all of these hold:</p>
+<ul class="simple">
+<li><p>it compiles;</p></li>
+<li><p>a throwaway preview over about 2 s is not all black;</p></li>
+<li><p>its estimated C6 cost for 600 LEDs or more is below 2× the frame budget. Below
+that it only lags, and lag beats a cut-out.</p></li>
+</ul>
+<p>If any check fails, the tool result says why and the fixture keeps the last good
+effect.</p>
+<p><strong>Origins and order.</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">capacitor://localhost</span></code> (the iOS app’s page origin) is allowed. Origin is a
+hotlink guard, not authentication.</p></li>
+<li><p>Nemotron now leads the fallback order. In the 2026-10-29 live check it answered
+every play-mode request in 1.7–2.5 s, after one 19 s cold start, and three of
+the four outputs compiled.</p></li>
+</ul>
+</section>
+<section id="free-tier-models-again-2026-11-18-548">
+<h2>Free-tier models again (2026-11-18, #548)<a class="headerlink" href="#free-tier-models-again-2026-11-18-548" title="Link to this heading">¶</a></h2>
+<p>The owner moved the shared relay onto the app’s free tier
+(docs/design/ai-tiers.md, “Shared demo relay”).</p>
+<ul class="simple">
+<li><p><strong>Models:</strong> Nemotron 3.5 Lightning, then Nemotron 3 Ultra, then Nemotron 3.5
+Super, in the same order as the app’s <code class="docutils literal notranslate"><span class="pre">FREE_MODELS</span></code>. Preview images go only
+to the vision model.</p></li>
+<li><p><strong>Settings:</strong> reasoning off and every attempt zero-priced. The paid Claude
+lead from 2026-10-30 is removed.</p></li>
+<li><p><strong>Prompt:</strong> the client’s system prompt passes through unchanged, so the demo
+answers like a user’s own free tier.</p></li>
+<li><p><strong>Limits:</strong> the per-client hourly limit is back to 30.</p></li>
+<li><p><strong>Secret:</strong> <code class="docutils literal notranslate"><span class="pre">OPENROUTER_API_KEY</span></code>, unchanged.</p></li>
+</ul>
+</section>
 </section>
 
         </article>
@@ -569,6 +655,8 @@ JPEG under 196 KB. This verifies transport and local compilation, not model outp
 <li><a class="reference internal" href="#validation-completed-locally">Validation completed locally</a></li>
 <li><a class="reference internal" href="#relay-only-operational-updates">Relay-only operational updates</a></li>
 <li><a class="reference internal" href="#tour-visibility-and-bounded-previews">Tour visibility and bounded previews</a></li>
+<li><a class="reference internal" href="#acid-mode-on-the-free-relay-halloween-2026">Acid Mode on the free relay (Halloween 2026)</a></li>
+<li><a class="reference internal" href="#free-tier-models-again-2026-11-18-548">Free-tier models again (2026-11-18, #548)</a></li>
 </ul>
 </li>
 </ul>

@@ -94,7 +94,8 @@ These are the regression tests in `solver/src/regression_tests.rs`.
 - **Diffuse stride captures** (only one stride class lit per phase, 1–2 s of
   decode dead time per switch) solve fine as long as the bridge phases
   co-light anchors (`web/src/code/stride.ts`). Without bridges the classes
-  are only IMU-linked and shapes go wrong in *both* paths.
+  are only IMU-linked and shapes go wrong in *both* paths. See
+  [strided-capture.md](strided-capture.md).
 
 ## The fix
 
