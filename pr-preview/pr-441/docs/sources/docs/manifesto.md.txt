@@ -186,12 +186,12 @@ task handles the frame. One rarely used arm, the 4 KiB board-capabilities
 catalog, made _every_ `ServerMessage` 4,104 bytes. That inflated every handler
 frame on the hottest task.
 
-`oss/pbview` generates borrowed _views_ instead. A view is two words that read
-fields straight out of the received bytes, validated once, with no allocation,
+[pbview](https://github.com/fughilli/pbview) generates borrowed _views_ instead. A view is two
+words that read fields straight out of the received bytes, validated once, with no allocation,
 no `unsafe` and no panics on any input. The firmware now dispatches every
 request in place from the RX buffer (#265), and the firmware's own
-`ServerMessage` is 656 bytes. pbview is self-contained under `oss/` because it
-is useful to anyone doing protobuf on `no_std`.
+`ServerMessage` is 656 bytes. pbview lives in its own repository because it is useful to
+anyone doing protobuf on `no_std`.
 
 ## Why BLE and Wi-Fi at the same time?
 

@@ -33,9 +33,21 @@ const BASE = new URL(self.registration.scope).pathname;
 // manifest + icons so updated clients re-fetch the new brand.
 // v6: /firmware/ moved to network-first; evicts the stale-while-revalidate copies
 // that kept serving an old "This build (dev)" image.
-const VERSION = "v6";
+// v7: the SVG app icons were invalid XML (unbound inkscape: prefix), so Android
+// Chrome refused to install the app; evicts the cached broken app-icon.svg.
+const VERSION = "v7";
 const CACHE = `ledmapper-${VERSION}`;
 const SHELL = [BASE, BASE + "index.html", BASE + "manifest.webmanifest", BASE + "icons/app-icon.svg"];
+// Precached on install (best effort, apart from the shell so a miss never blocks
+// installing): the effect compiler + VM, so an installed app can author and
+// preview effects offline, and a flaky first download in a session has a copy to
+// fall back on. Still network-first at runtime (NETWORK_FIRST below).
+const WARM = [
+  BASE + "fx-compiler/fx_compiler_wasm_pkg.js",
+  BASE + "fx-compiler/fx_compiler_wasm_pkg_bg.wasm",
+  BASE + "fx-vm/fx_vm_wasm_pkg.js",
+  BASE + "fx-vm/fx_vm_wasm_pkg_bg.wasm",
+];
 
 // Deploy-root-relative request path (BASE stripped, no leading slash), e.g.
 // "maps/xyz" or "solver/worker.js" — what the regexes below match against.
@@ -47,13 +59,17 @@ function relPath(pathname) {
 const NO_CACHE = [/^maps(\/|$)/, /^healthz$/, /^ws(\/|$)/, /^api(\/|$)/];
 // Fixed-name, version-coupled bundles: serve network-first (fresh online, cache
 // only as the offline fallback) so a deploy's new wasm is never shadowed.
-const NETWORK_FIRST = [/^(fx-vm|fx-compiler|solver|pulse|firmware)\//];
+// whatsnew/index.json + whatsnew/<product>.json (the mirrored release notes)
+// are fixed-name too and are re-mirrored on every deploy; their media/ files are
+// content-hashed, so they take the stale-while-revalidate path below and stay
+// readable offline.
+const NETWORK_FIRST = [/^(fx-vm|fx-compiler|solver|pulse|firmware)\//, /^whatsnew\/[a-z0-9-]+\.json$/];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((c) => c.addAll(SHELL))
+      .then((c) => c.addAll(SHELL).then(() => Promise.all(WARM.map((u) => c.add(u).catch(() => {})))))
       .then(() => self.skipWaiting())
       .catch(() => {}),
   );
@@ -97,14 +113,19 @@ self.addEventListener("fetch", (event) => {
   // Fixed-name wasm/js bundles: network-first (see NETWORK_FIRST) so a fresh
   // deploy's bytes win over the last session's cached copy; fall back to cache
   // offline.
+  // The app's loaders retry a failed download with a cache-busting `?retry=N`
+  // (src/fx/wasmLoad.ts — a failed dynamic import() is cached as failed for the
+  // page's lifetime); the cache keys on the clean URL so those retries refresh /
+  // fall back to the same entry instead of piling up copies.
   if (NETWORK_FIRST.some((re) => re.test(rel))) {
+    const key = withoutRetry(url);
     event.respondWith(
       fetch(req)
         .then((res) => {
-          if (res && res.status === 200 && res.type === "basic") cachePut(req, res.clone());
+          if (res && res.status === 200 && res.type === "basic") cachePut(key, res.clone());
           return res;
         })
-        .catch(() => caches.match(req)),
+        .catch(() => caches.match(key)),
     );
     return;
   }
@@ -122,6 +143,14 @@ self.addEventListener("fetch", (event) => {
     }),
   );
 });
+
+// `url` without the loaders' `retry` cache-buster (see the fetch handler).
+function withoutRetry(url) {
+  if (!url.searchParams.has("retry")) return url.href;
+  const u = new URL(url.href);
+  u.searchParams.delete("retry");
+  return u.href;
+}
 
 function cachePut(req, res) {
   caches

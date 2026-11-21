@@ -84,7 +84,7 @@ on the laptop screen, not the TV (behind other windows is fine).
 | **V**                                          | turn Claude's voice on or off                             |
 | **F**                                          | show the phone large (again, or **Esc**, to shrink it)    |
 | **G**                                          | show or hide the preview's ground grid and axes           |
-| **Esc**                                        | stop Claude mid-answer (and its voice)                    |
+| **Esc**                                        | stop Claude's request (and its voice)                     |
 | **New**                                        | start a fresh conversation                                |
 | **Maps**                                       | re-read the fixtures' maps (after mapping one in the app) |
 
@@ -100,6 +100,18 @@ Things that demo well:
 - "Show me the wreath." Claude brings that fixture into the live preview (below).
 
 The conversation carries on between requests, so follow-ups like "same, but purple" work.
+
+Each request gets a number, and the badge on the Conversation panel says where the latest one
+is: queued, thinking, writing code, running a tool, deploying, done, failed, stopped or
+superseded. One request runs at a time and the newest wins: asking again while Claude is still
+busy replaces the request in flight (like talking over the voice), and Esc stops it. A
+replaced or stopped request makes no further tool calls, its call in flight is cancelled, and
+whatever it would still have sent to a fixture is dropped, so an old effect can't turn up on the
+lights later. Claude is told the earlier request was cut off. The stage asks for no approvals:
+it can only use the tools listed below.
+
+The page can be reloaded, or opened on a second screen, at any time: it redraws the current
+conversation, its tool calls and the code from the stage's history.
 
 On stage Claude can only use the effect and look tools. It can't rename fixtures, update
 firmware, change Wi-Fi, delete saved looks or re-trust certificates, whatever it hears.
