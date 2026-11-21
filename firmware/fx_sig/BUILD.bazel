@@ -1,0 +1,47 @@
+"""Signatures for prebuilt native (AOT) effect images (docs/design/fx-native-aot.md,
+"Trust"): the `.fxn` container, a 4-byte truncated HMAC-SHA256 tag under a
+device-held key (the public dev key for now), the key ring + revocation policy,
+and the failed-verification backoff. no_std, no alloc; SHA-256 from
+//firmware/ota. The signer (:fx_sign) is host-only.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+SRCS = [
+    "src/keyring.rs",
+    "src/lib.rs",
+    "src/limiter.rs",
+]
+
+rust_library(
+    name = "fx_sig",
+    srcs = SRCS,
+    crate_name = "splanc_fx_sig",
+    edition = "2021",
+    deps = ["//firmware/ota"],
+)
+
+# RFC 4231 known answers, the format's own known answer, tamper/relabel/wrong
+# key/revocation/scope/ABI/min_fw rejections and the backoff.
+rust_test(
+    name = "fx_sig_test",
+    srcs = SRCS + ["src/tests.rs"],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    deps = ["//firmware/ota"],
+)
+
+# fx_sign sign|verify: lower a .fxb with //firmware/fx_aot and sign the .fxn
+# (dev key by default; --key-file for a user key).
+rust_binary(
+    name = "fx_sign",
+    srcs = ["sign/main.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_sig",
+        "//firmware/fx_aot",
+        "//firmware/fx_vm",
+    ],
+)
