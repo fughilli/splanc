@@ -1187,6 +1187,9 @@ export const GetSolveStatusSchema: GenMessage<GetSolveStatus> = /*@__PURE__*/
  * Blocks paint [start, start+count); uncovered LEDs are off; painting past
  * the physical strip end IS the probe (the phone binary-searches the strip
  * length by observing which blocks light). Empty blocks = all off.
+ * At most 32 blocks: a player refuses more (error bad_message, the current
+ * pattern left as it was) rather than drawing a subset; firmware before that
+ * latched the first 32 and still replied counting_state.
  * Reply: counting_state.
  *
  * @generated from message ledmapper.v1.SetCountingPattern

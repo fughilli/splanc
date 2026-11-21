@@ -12,7 +12,10 @@ import {
   ConnectFailedError,
   GAVE_UP_RETRY_MS,
   LedMapperClient,
+  MAX_COUNTING_BLOCKS,
   RequestTimeoutError,
+  ServerErrorReply,
+  TooManyCountingBlocksError,
   WS_CLOSE_TAKEN_OVER,
   type SocketLike,
 } from "../src/net/client";
@@ -121,6 +124,38 @@ test("connect sends hello and resolves on welcome", async () => {
   const welcome = await p;
   assert.equal(welcome.sessionId, "s-1");
   assert.ok(client.isConnected);
+});
+
+test("setCountingPattern refuses more than 32 blocks before sending; a device refusal rejects", async () => {
+  const { client, sockets } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  const blocks = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ start: i, count: 1, rgb: [0, 1, 0] as [number, number, number] }));
+  const sent = s.sent.length;
+
+  // Over the cap: nothing reaches the wire (older firmware would draw 32 of them).
+  await assert.rejects(client.setCountingPattern(blocks(MAX_COUNTING_BLOCKS + 1), 0, "GRB"), (e: unknown) => {
+    assert.ok(e instanceof TooManyCountingBlocksError);
+    assert.equal(e.count, 33);
+    return true;
+  });
+  assert.equal(s.sent.length, sent);
+
+  // At the cap it is sent whole and resolves on counting_state.
+  const ok = client.setCountingPattern(blocks(MAX_COUNTING_BLOCKS), 0, "GRB");
+  const m = s.lastSent();
+  assert.equal(m.type, "set_counting_pattern");
+  assert.equal((m.blocks as unknown[]).length, 32);
+  s.receive({ type: "counting_state", active: true, epochMs: 5 });
+  assert.equal((await ok).type, "counting_state");
+
+  // A device refusal (this firmware's reply to an oversized pattern) surfaces as an error.
+  const refused = client.setCountingPattern(blocks(3), 0);
+  s.receive({ type: "error", code: "bad_message", message: "too many counting blocks (max 32)" });
+  await assert.rejects(refused, (e: unknown) => e instanceof ServerErrorReply && e.code === "bad_message");
 });
 
 test("rapid setUniforms are all sent (fire-and-forget, not dropped by single-flight)", () => {

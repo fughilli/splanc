@@ -136,6 +136,21 @@ export const OTA_TRANSFER_TIMEOUT_MS = 30_000;
  * time. Distinct from a generic failure so callers (e.g. Hardware Setup) can
  * tell "the firmware never answered this request" (likely too old to implement
  * it) apart from "the firmware answered, with nothing to report". */
+/** Most blocks one set_counting_pattern may carry (proto SetCountingPattern):
+ * players refuse more with error bad_message; firmware before that silently
+ * drew only the first 32. A pattern REPLACES the previous one, so a bigger set
+ * can't be split across calls — callers send several frames instead. */
+export const MAX_COUNTING_BLOCKS = 32;
+
+/** set_counting_pattern was handed more than MAX_COUNTING_BLOCKS blocks. Thrown
+ * before anything is sent, so older firmware can't truncate it silently. */
+export class TooManyCountingBlocksError extends Error {
+  constructor(readonly count: number) {
+    super(`set_counting_pattern takes at most ${MAX_COUNTING_BLOCKS} blocks (got ${count})`);
+    this.name = "TooManyCountingBlocksError";
+  }
+}
+
 export class RequestTimeoutError extends Error {
   constructor(
     readonly replyType: string,
@@ -1512,12 +1527,17 @@ export class LedMapperClient {
    * `colorOrder` (a permutation of "RGB") drives the probe through its OWN wire
    * order, independent of the channel's committed color order — so the color-
    * order test previews a candidate (or drives raw with "RGB") without mutating
-   * the persisted config. Omit -> identity "RGB" (raw wire bytes). */
+   * the persisted config. Omit -> identity "RGB" (raw wire bytes).
+   *
+   * At most MAX_COUNTING_BLOCKS blocks: more rejects with
+   * TooManyCountingBlocksError before sending (and the player refuses them with
+   * a bad_message error, the current pattern untouched). */
   async setCountingPattern(
     blocks: ColorBlock[],
     channel?: number,
     colorOrder?: ColorOrder,
   ): Promise<ServerMessage> {
+    if (blocks.length > MAX_COUNTING_BLOCKS) throw new TooManyCountingBlocksError(blocks.length);
     const msg: Record<string, unknown> = { type: "set_counting_pattern", blocks };
     if (channel !== undefined) msg.channel = channel;
     if (colorOrder !== undefined) msg.colorOrder = colorOrder;
