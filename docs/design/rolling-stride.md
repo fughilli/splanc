@@ -123,7 +123,9 @@ Cost: only the first LED of a block ever yields, by at most one own cycle,
 and only when its own-cycle phase overlaps (on the 90-LED strip, 4% of
 dwells). Every LED gets at least `D−1` whole own cycles per dwell except
 those, which get at least `D−2`. The kernel's property tests pin both bounds,
-exhaustively over `S ∈ {2,3,4,6}`, `A ∈ {0,3,4}`, `D ∈ {2,3,4}`, v1 and v2.
+exhaustively over `S ∈ {2,3,4,6}`, `A ∈ {0,3,4}`, `D ∈ {3,4,5}`, v1 and v2.
+The kernel clamps `D` to at least 3: at `D = 2` a staggered LED gets one
+whole cycle (no decode) and a yielding block-start LED none.
 
 ![Two periods of the rolling stride](img/rolling-stride/spacetime.svg)
 
@@ -171,8 +173,11 @@ The solver confirms it: `solver/src/regression_tests.rs`
 `a_rolling_stride_registers_without_bridges` solves the same synthetic
 capture (60-LED coil, S = 3, 30 s) phased with bridges and rolling without,
 and requires the rolling map to be non-degenerate, to measure at least 57 of
-60 LEDs, and to be within 1.5× of the phased map's aligned RMS error (see the
-PR for the numbers). **Rolling mode has no bridge phases.**
+60 LEDs, and to be within 1.5× of the phased map's aligned RMS error. It
+comes out better: both measure 60/60 LEDs from about the same number of
+observations (2538 rolling, 2587 phased), with an aligned RMS error of
+**0.7 mm rolling against 2.2 mm phased with bridges**. **Rolling mode has no
+bridge phases.**
 
 ## Wire and code changes
 
@@ -181,7 +186,7 @@ PR for the numbers). **Rolling mode has no bridge phases.**
 | Kernel (`firmware/pattern/src/lib.rs`) | `RollingStride`, `rolling_block_shift`, `rolling_interval`, `stride_lit_rolling(led, seq, spec, &rs)`: allocation-free, integer-only, `seq` = absolute pattern-clock frame. `stride_lit` stays for phased mode. Golden `testdata/golden_stride_rolling.json` (lit mask per frame over two periods, four geometries incl. v1 and a group offset); wasm/C ABI `pk_stride_lit_rolling`, `pk_stride_rolling_dwell`. |
 | Protocol | `StartMappingOptions` and `ConfigureOptions` gain `stride_mode` (`"phased"` / `"rolling"`) and `dwell_cycles`; `CodeParams` echoes both (only for a rolling stride, so phased replies are byte-identical to before). Players advertise the `stride_rolling` welcome feature; one without it runs phased and its reply says so, like `hue_stagger_pilot`. JSON schemas, the generated TS/Pydantic types and `web/src/gen/ledmapper_pb.ts` follow. |
 | Player (`firmware/player`) | `pattern_color(led, seq)` now takes the ABSOLUTE frame (it reduces it modulo the cycle for the code), masks with `stride_lit_rolling` in rolling mode and ignores `stride_phase`. A caller passing a reduced cycle frame still gets the same colours for every non-rolling capture. The C6/P4 frame loop (`main.cpp`) passes `seq` and redraws on every new `seq`; `pi/player_rs` passes `seq`. Both advertise `stride_rolling`. |
-| Phone (`capture.ts`) | `start_mapping` asks for `strideMode: "rolling"`, `dwellCycles: 4` whenever the player advertises the feature (even for a run that starts dense: the mode sticks across the configures that turn striding on). While `codeParams.strideMode` is rolling there is no phase rotation and no stride configure; the HUD shows decoded-id coverage. `?stride=phased` forces the old schedule. Per-channel capture's stage switch goes through the same path; `stageLitRolling` mirrors the mask, and a stage's progress is already its decoded-id coverage (`stageCoverage`). |
+| Phone (`capture.ts`) | `start_mapping` asks for `strideMode: "rolling"`, `dwellCycles: 4` whenever the player advertises the feature (even for a run that starts dense: the mode sticks across the configures that turn striding on). While `codeParams.strideMode` is rolling there is no phase rotation and no stride configure; the HUD shows decoded-id coverage. `?stride=phased` forces the old schedule. The pipeline gets the schedule as a `litAt` oracle that drops ids a track carried onto a neighbour (below). Per-channel capture's stage switch goes through the same path; `stageLitRolling` mirrors the mask, and a stage's progress is already its decoded-id coverage (`stageCoverage`). |
 | Rate negotiation | `D` is in code cycles, so it follows the negotiated bit period. A real rate or alphabet change still restamps the epoch, which restarts the schedule. |
 
 ## Test results
@@ -196,7 +201,39 @@ PR for the numbers). **Rolling mode has no bridge phases.**
   frame; request/echo helpers; per-channel mask; the link simulation below).
 - Solver: `a_rolling_stride_registers_without_bridges`.
 
-LINK_SIM_TABLE
+### Link simulation: phased vs rolling through the production decoder
+
+`web/tests/rollingStride.test.ts` runs the moving-camera link simulator
+(`web/tests/linkSim.ts`: 120-LED helix, 45 s, hue code v2, S = 3, the
+production tracker, decoder, alphabet and rate negotiation, every record
+checked against the truth). Phased rotates through the five phases with a
+configure each (as `capture.ts` does); rolling never configures.
+
+| scene | schedule | records | wrong ids | dead seconds | stride configures | coverage |
+| --- | --- | --- | --- | --- | --- | --- |
+| hold-lit | phased | 2346 | 0 | 16 | 9 | 89.4% |
+| hold-lit | rolling D=3 | 479 | 0 | 10 | 0 | 29.8% |
+| hold-lit | rolling D=4 | 3031 | 0 | 0 | 0 | 93.6% |
+| orbit-lit | phased | 2002 | 0 | 17 | 9 | 72.7% |
+| orbit-lit | rolling D=3 | 527 | 0 | 14 | 0 | 25.0% |
+| orbit-lit | rolling D=4 | 2605 | 1 | 0 | 0 | 81.7% |
+| orbit-dark | phased | 1779 | 0 | 18 | 8 | 57.7% |
+| orbit-dark | rolling D=3 | 405 | 0 | 23 | 0 | 21.7% |
+| orbit-dark | rolling D=4 | 1954 | 0 | 5 | 0 | 68.3% |
+
+"Dead seconds" are seconds after a 5 s warm-up in which nothing decoded. In
+the simulation D = 3 collapses: with exactly two own cycles per dwell, any
+missed window loses the dwell (the 2-cycle margin argument above, measured).
+
+**A phone-side fix the simulation found.** When a block steps its class, an
+LED goes dark and its strip neighbour lights a few pixels away. The tracker
+coasts a track for 1.25 cycles, so it carried the dark LED's track, with its
+confirmed id, onto the neighbour. The first rolling run emitted 911 wrong-id
+records out of 2055. In phased mode this never shows, because every phase
+step rebuilds the pipeline. The schedule is known exactly, so
+`CvPipeline` takes the kernel as a `litAt` oracle (`rollingLitOracle`):
+a track whose id is not lit (±2 frames) at the frame it is sighted has
+hopped, so its id and pending decode are dropped. Wrong ids went to zero.
 
 ## Follow-ups
 
