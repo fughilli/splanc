@@ -949,6 +949,7 @@ rust_test(
     deps = [
         ":board_caps_res",
         ":color_correction",
+        ":identify_blink",
         ":device_cert",  # per-device TLS key + cert (first-boot keygen, littlefs-persisted)
         ":improv_ble_netstack",
         ":improv_codec",
@@ -1062,6 +1063,7 @@ cc_binary(
         ":board_caps_res",
         ":color_correction",
         ":device_cert",
+        ":identify_blink",
         ":improv_ble_netstack",
         ":improv_codec",
         ":netstack_transport",
@@ -1485,6 +1487,7 @@ cc_binary(
         ":board_caps_res",
         ":color_correction",
         ":device_cert_core",
+        ":identify_blink",
         ":improv_codec",
         ":player_ffi",
         ":ws_codec",
@@ -1549,6 +1552,7 @@ cc_binary(
         ":board_caps_res",
         ":color_correction",
         ":device_cert_core",
+        ":identify_blink",
         ":improv_codec",
         ":player_ffi",
         ":ws_codec",
@@ -1684,6 +1688,7 @@ cc_binary(
     }),
     deps = [
         ":color_correction",
+        ":identify_blink",
         ":improv_codec",
         ":osc_bench_fxb_res",
         ":ota_app",
@@ -1761,6 +1766,7 @@ cc_binary(
     }),
     deps = [
         ":color_correction",
+        ":identify_blink",
         ":improv_codec",
         ":jit_bench_fxb_res",
         ":ota_app",
@@ -1976,6 +1982,20 @@ cc_test(
 cc_library(
     name = "join_guard",
     hdrs = ["join_guard.h"],
+)
+
+cc_library(
+    name = "identify_blink",
+    hdrs = ["identify_blink.h"],
+)
+
+cc_test(
+    name = "identify_blink_test",
+    srcs = ["identify_blink_test.cc"],
+    deps = [
+        ":identify_blink",
+        "@rules_requirements//cc:case",
+    ],
 )
 
 cc_test(

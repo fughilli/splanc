@@ -43,6 +43,7 @@ export const ERROR_NONE = 0x00;
 export const ERROR_UNABLE_TO_CONNECT = 0x03;
 
 const CMD_WIFI_SETTINGS = 0x01;
+const CMD_IDENTIFY = 0x02;
 
 /** Splanc's reason byte after UNABLE_TO_CONNECT: a failed join's error-state value
  * is `[0x03, reason]` (firmware/player_app/improv_codec.h IMPROV_JOIN_FAILURE_*).
@@ -152,6 +153,42 @@ export function buildWifiSettings(ssid: string, password: string): Uint8Array {
   o += p.length;
   data[o] = checksum(data.subarray(0, o));
   return data;
+}
+
+/** RPC packet for CMD_IDENTIFY: [cmd, 0, checksum]. The player answers with a
+ * brief blink on every LED output (firmware identify_blink.h, D-259). */
+export function buildIdentify(): Uint8Array {
+  const data = new Uint8Array([CMD_IDENTIFY, 0, 0]);
+  data[2] = checksum(data.subarray(0, 2));
+  return data;
+}
+
+/** Ask a picked fixture to blink (Improv Identify) so the user can see which one
+ * it is. Connects if needed and writes the RPC; `keepConnected` leaves the GATT
+ * link up (a provision in flight on the same device is using it). Older firmware
+ * acknowledges Identify without blinking. */
+export async function identifyViaBle(
+  device: ImprovDevice,
+  opts: { keepConnected?: boolean } = {},
+): Promise<void> {
+  const gatt = device.gatt;
+  if (!gatt) throw new Error("device has no GATT server");
+  await retryGatt(
+    async () => {
+      const server = await gatt.connect();
+      const service = await server.getPrimaryService(IMPROV_SERVICE);
+      const rpc = await service.getCharacteristic(CHAR_RPC_COMMAND);
+      await rpc.writeValue(buildIdentify());
+    },
+    { attempts: 2 },
+  );
+  if (!opts.keepConnected) {
+    try {
+      gatt.disconnect();
+    } catch {
+      // already disconnected — fine
+    }
+  }
 }
 
 /** Parse an RPC result: [cmd, total_len, (len, str)…, checksum] → the

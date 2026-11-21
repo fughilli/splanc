@@ -24,6 +24,7 @@ static BLECharacteristic *g_result = nullptr;
 
 // Credentials latched by the BT-task write callback, consumed by loop().
 static volatile bool g_have_creds = false;
+static volatile bool g_identify = false;  // Identify RPC latched (BT task -> app loop)
 static char g_ssid[33];
 static char g_pass[65];
 
@@ -90,9 +91,9 @@ class RpcHandler : public BLECharacteristicCallbacks {
         break;
       }
       case IMPROV_CMD_IDENTIFY:
-        // No identify output on this hardware (the strip may be mid-pattern);
-        // acknowledged by clearing the error state.
+        // Latch only: the app loop starts the blink (player_identify_start).
         improv_ble_set_error(IMPROV_ERROR_NONE);
+        g_identify = true;
         break;
       default:
         improv_ble_set_error(IMPROV_ERROR_UNKNOWN_COMMAND);
@@ -192,7 +193,7 @@ void improv_ble_begin(const char *device_name, uint8_t initial_state) {
 
   BLECharacteristic *caps = service->createCharacteristic(
       kCharCapabilities, BLECharacteristic::PROPERTY_READ);
-  uint8_t cap = 0;  // no identify output
+  uint8_t cap = 1;  // bit0: identify supported (the player blinks its outputs)
   caps->setValue(&cap, 1);
 
   service->start();
@@ -252,6 +253,12 @@ bool improv_ble_central_connected() { return g_central_connected; }
 void improv_ble_poll() {}
 
 extern "C" bool lm_kiosk_enabled(void);  // kiosk_ffi.rs
+
+bool improv_ble_take_identify() {
+  if (!g_identify) return false;
+  g_identify = false;
+  return true;
+}
 
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {
   if (!g_have_creds) return false;

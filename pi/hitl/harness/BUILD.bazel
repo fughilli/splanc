@@ -147,6 +147,7 @@ py_library(
         "hitl_client.py",
         "hitl_improv.py",
         "hitl_ws.py",
+        "identify_blink_core.py",
         "improv.py",
         "improv_fresh_join_core.py",
         "improv_wrong_password_core.py",
@@ -871,6 +872,43 @@ py_test(
 # transport with one connected (applies when advertising resumes, link kept), a 32-byte
 # name (Shortened, Improv advert intact), then Improv still provisions; no reset and
 # the effect keeps rendering throughout. Pure logic: ble_rename_core.
+# The connect picker's Blink (D-259): Improv Identify blinks every output across
+# min(per-channel, 539) LEDs in ~1 s while an effect keeps rendering.
+py_test(
+    name = "identify_blink",
+    timeout = "eternal",
+    srcs = [
+        "hitl_identify_blink.py",
+        "hitl_map_upload.py",
+    ],
+    data = [
+        # Shipped into the rig container (scp) and run there.
+        "ble_identify.py",
+        ":plasma_hue_fixed_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "IDENTIFY_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+    },
+    imports = ["."],
+    main = "hitl_identify_blink.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 py_test(
     name = "ble_rename",
     timeout = "eternal",

@@ -19,3 +19,7 @@ void improv_ble_set_error(uint8_t) {}
 void improv_ble_set_join_error(uint8_t) {}
 void improv_ble_send_redirect(const char *) {}
 void player_ble_poll() {}
+// Improv Identify (the picker's Blink): never requested without BLE, and the loader
+// draws no LEDs, so there's nothing to blink.
+bool improv_ble_take_identify() { return false; }
+void player_identify_start() {}

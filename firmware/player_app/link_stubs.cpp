@@ -13,6 +13,7 @@ void improv_ble_begin(const char *, uint8_t) {}
 void improv_ble_poll() {}
 void improv_ble_set_name(const char *) {}
 bool improv_ble_take_credentials(char *, size_t, char *, size_t) { return false; }
+bool improv_ble_take_identify() { return false; }
 bool improv_ble_central_connected() { return false; }
 void improv_ble_request_disconnect() {}
 extern "C" uint32_t ns_ble_state() { return 0; }

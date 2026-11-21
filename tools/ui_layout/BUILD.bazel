@@ -19,6 +19,7 @@ py_binary(
     srcs = [
         "connect_scenarios.py",
         "credits_scenarios.py",
+        "newfixture_scenarios.py",
         "ui_layout_check.py",
     ],
     data = ["//web:dist"],

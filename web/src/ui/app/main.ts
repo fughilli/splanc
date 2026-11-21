@@ -42,6 +42,8 @@ import { WifiNetworksScreen } from "../screens/wifiNetworks";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { HardwareSetupScreen } from "../screens/hardwareSetup";
+import { NewFixtureScreen } from "../screens/newFixture";
+import { installNewFixtureWatch } from "./newFixtureWatch";
 import { AboutScreen } from "../screens/about";
 import { CreditsFlowScreen } from "../screens/creditsFlow";
 import { warmActiveProvider } from "../../effects/ai/generate";
@@ -201,6 +203,12 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Wi-Fi networks", back: true, tabs: true });
       return WifiNetworksScreen(router);
     })
+    .add("/new-fixture", () => {
+      // A new fixture's setup (D-259): name, LED count, colour order — one step
+      // per screen, opened by installNewFixtureWatch on a fixture with no map.
+      shell.setChrome({ title: "New fixture", back: true, tabs: false });
+      return NewFixtureScreen(router);
+    })
     .add("/settings/hardware", () => {
       shell.setChrome({ title: "Hardware Setup", back: true, tabs: true });
       return HardwareSetupScreen(router);
@@ -283,6 +291,9 @@ async function main(): Promise<void> {
     history.replaceState(history.state, "", `${location.pathname}${location.search}#/credits/return`);
   }
   router.start();
+  // A brand-new fixture (no stored map) opens its setup flow once; a name typed
+  // while flashing / setting it up is applied when it connects (D-259).
+  if (!demoParam && !driverParam && !startedInPlay) installNewFixtureWatch(router);
 
   // iOS: App Store purchases still waiting for their credit (a crash or no
   // network between paying and crediting) and Ask to Buy approvals, from
