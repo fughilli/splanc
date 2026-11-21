@@ -115,14 +115,12 @@ pub fn render_fpga(player: &Player, now_us: i64, codec: &FpgaCodec, dark_n: usiz
             bit_period_us,
             cycle_frames,
         } => {
+            // The ABSOLUTE frame: the rolling stride is a function of it (the
+            // core reduces it modulo the cycle for the code).
             let seq = mapping_seq(now_us, epoch_us, bit_period_us);
-            let frame = if cycle_frames > 0 {
-                seq % cycle_frames
-            } else {
-                0
-            };
+            let _ = cycle_frames;
             let colors: Vec<Rgb> = (0..n)
-                .map(|i| arr(player.pattern_color(i, frame).unwrap_or((0, 0, 0))))
+                .map(|i| arr(player.pattern_color(i, seq).unwrap_or((0, 0, 0))))
                 .collect();
             FpgaFrame {
                 config: codec.configure(),
@@ -159,11 +157,11 @@ pub fn render_colors(player: &Player, now_us: i64) -> Option<(Vec<Rgb>, Option<u
             cycle_frames,
         } => {
             let seq = mapping_seq(now_us, epoch_us, bit_period_us);
-            let frame = if cycle_frames > 0 { seq % cycle_frames } else { 0 };
+            let _ = cycle_frames;
             let order = player.hw_color_order_perm(0);
             Some((
                 (0..n)
-                    .map(|i| to_wire(arr(player.pattern_color(i, frame).unwrap_or((0, 0, 0))), order))
+                    .map(|i| to_wire(arr(player.pattern_color(i, seq).unwrap_or((0, 0, 0))), order))
                     .collect(),
                 Some(seq),
             ))
