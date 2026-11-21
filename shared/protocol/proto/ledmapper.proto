@@ -483,6 +483,57 @@ message SubmitEffect {
   bool activate = 3;
   // FX deck to load onto: 0 = A (default), 1 = B. See SetCrossfade.
   uint32 deck = 4;
+  // Keep it in the device's effect store (docs/design/effect-store.md) INSTEAD of
+  // loading it: no deck changes, `activate` and `deck` are ignored. An effect with
+  // the same effect_id is replaced. Load it later with load_stored_effect.
+  // Firmware advertising the "effect_store" feature. Reply: result_ready
+  // (id=effect_id), or error (`store_full`, `store_no_space`, `effect_too_large`, `bad_fxb`,
+  // `no_store`).
+  bool store = 5;
+  // The stored effect's display name (store only; at most 32 bytes).
+  string name = 6;
+}
+
+// The device's effect store (docs/design/effect-store.md): compiled effects kept
+// on its flash, at most `StoredEffectList.capacity` of them, put there with
+// submit_effect{store: true}. Reply: stored_effect_list.
+message ListStoredEffects {}
+
+// Load a stored effect onto a deck, as if it had been submitted there. The effect
+// keeps its effect_id, so its keypoints come with it. Persisted like a deck-A
+// submit_effect when it lands on deck A and is activated. Reply: result_ready
+// (id=effect_id), or error (`not_found`, `effect_too_large`, `bad_fxb`).
+message LoadStoredEffect {
+  string effect_id = 1;
+  // FX deck to load onto: 0 = A (default), 1 = B.
+  uint32 deck = 2;
+  // Make it the deck's active effect (as SubmitEffect.activate).
+  bool activate = 3;
+}
+
+// Remove an effect from the store (what is loaded on a deck keeps running, and
+// its keypoints stay). Reply: stored_effect_list, or error (`not_found`).
+message DeleteStoredEffect {
+  string effect_id = 1;
+}
+
+message StoredEffectInfo {
+  string effect_id = 1;
+  string name = 2;
+  // Bytecode (.fxb) size in bytes.
+  uint32 fxb_bytes = 3;
+  // Its uniforms' names, in manifest order (the start of the list when they don't
+  // all fit the store's summary). The full manifest: load it, then
+  // get_effect_uniforms.
+  repeated string uniforms = 4;
+  // The decks it is loaded on right now (matched by effect_id).
+  repeated uint32 decks = 5;
+}
+
+message StoredEffectList {
+  repeated StoredEffectInfo effects = 1;
+  // How many effects the store holds at most.
+  uint32 capacity = 2;
 }
 
 // Select the active effect by id. "" or "off" clears it (back to the built-in
@@ -1196,6 +1247,10 @@ message ClientMessage {
     // fixtures meshed with this one, and read the mesh.
     MeshSend mesh_send = 99;
     GetMesh get_mesh = 100;
+    // The on-device effect store (docs/design/effect-store.md).
+    ListStoredEffects list_stored_effects = 140;
+    LoadStoredEffect load_stored_effect = 141;
+    DeleteStoredEffect delete_stored_effect = 142;
   }
 }
 
@@ -2431,5 +2486,7 @@ message ServerMessage {
     // One envelope arm: each extra arm grows every by-value ServerMessage frame in the debug
     // host builds (the fx_debug lesson).
     MeshInfo mesh = 55;
+    // Reply to list_stored_effects / delete_stored_effect.
+    StoredEffectList stored_effect_list = 72;
   }
 }

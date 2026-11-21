@@ -30,6 +30,8 @@ import { WifiPolicySection } from "./wifiPolicySection";
 import { KioskSection } from "./kioskSection";
 import { MeshGatewaySection } from "./meshGatewaySection";
 import { deviceHasMesh, meshPeers } from "../../net/mesh";
+import { StoredEffectsSection } from "./storedEffectsSection";
+import { deviceHasEffectStore } from "../../net/effectStore";
 import { deviceHasKiosk } from "../../net/kiosk";
 import { isBleUrl } from "../../net/bleTransport";
 
@@ -666,6 +668,14 @@ function openDeviceDetail(dev: KnownDevice): void {
       onChange: () => rerenderList?.(),
     });
     sheet.body.append(meshDivider, section);
+  }
+
+  // -- The effect store (firmware advertising "effect_store"): effects kept on the
+  // device, opened onto deck A with their uniforms as live controls.
+  if (isActive && client && deviceHasEffectStore(client.welcome)) {
+    const storeDivider = document.createElement("hr");
+    storeDivider.className = "device-detail-divider";
+    sheet.body.append(storeDivider, StoredEffectsSection(client));
   }
 
   // -- Kiosk mode (firmware advertising "kiosk"): the owner's public-install controls.
