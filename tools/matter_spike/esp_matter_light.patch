@@ -1,0 +1,68 @@
+--- a/examples/light/main/app_main.cpp
++++ b/examples/light/main/app_main.cpp
+@@ -16,6 +16,11 @@
+ 
+ #include <common_macros.h>
+ #include <log_heap_numbers.h>
++#include <esp_netif.h>
++#include <esp_heap_caps.h>
++#include <esp_timer.h>
++#include <esp_mac.h>
++#include <esp_random.h>
+ 
+ #include <app_priv.h>
+ #include <app_reset.h>
+@@ -173,6 +178,17 @@
+     /* Initialize the ESP NVS layer */
+     nvs_flash_init();
+ 
++    // mattersp PoC: the rig AP does not answer auth for a DUT's factory MAC right after
++    // a reflash (the netstack falls back to a random MAC for the same reason, ota.md),
++    // so join with a random locally-administered base MAC.
++    {
++        uint8_t mac[6];
++        esp_fill_random(mac, sizeof(mac));
++        mac[0] = (mac[0] & 0xFC) | 0x02;
++        esp_base_mac_addr_set(mac);
++        printf("[mattersp] base mac %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
++    }
++
+     MEMORY_PROFILER_DUMP_HEAP_STAT("Bootup");
+ 
+     /* Initialize driver */
+@@ -269,8 +285,19 @@
+     esp_matter::console::init();
+ #endif
+ 
++    esp_log_level_set("*", ESP_LOG_INFO);  // mattersp: WARN at build time (size), INFO at runtime (PoC visibility)
++    // mattersp spike: one parseable line every 5 s (heap + the STA IPv4), independent of log level.
+     while (true) {
+         MEMORY_PROFILER_DUMP_HEAP_STAT("Idle");
+-        vTaskDelay(10000 / portTICK_PERIOD_MS);
++        esp_netif_ip_info_t ip = {};
++        esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
++        if (sta) esp_netif_get_ip_info(sta, &ip);
++        printf("[mattersp] t=%u free=%u min=%u largest=%u ip=" IPSTR "\n",
++               (unsigned)(esp_timer_get_time() / 1000000),
++               (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
++               (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL),
++               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL),
++               IP2STR(&ip.ip));
++        vTaskDelay(5000 / portTICK_PERIOD_MS);
+     }
+ }
+--- a/examples/light/main/app_driver.cpp
++++ b/examples/light/main/app_driver.cpp
+@@ -86,10 +86,12 @@
+         led_driver_handle_t handle = (led_driver_handle_t)driver_handle;
+         if (cluster_id == OnOff::Id) {
+             if (attribute_id == OnOff::Attributes::OnOff::Id) {
++                printf("[mattersp] OnOff=%d\n", (int)val->val.b);  // the SetPower seam
+                 err = app_driver_light_set_power(handle, val);
+             }
+         } else if (cluster_id == LevelControl::Id) {
+             if (attribute_id == LevelControl::Attributes::CurrentLevel::Id) {
++                printf("[mattersp] CurrentLevel=%d\n", (int)val->val.u8);  // the set_brightness seam
+                 err = app_driver_light_set_brightness(handle, val);
+             }
+         } else if (cluster_id == ColorControl::Id) {

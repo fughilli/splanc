@@ -6,23 +6,25 @@ able to fit this."* The smart-home study (`docs/design/smart-home-integrations.m
 §3, PR #582) said Matter does not fit today's C6 image. This doc tests that claim by
 measuring instead of estimating.
 
-**The answer in one paragraph.** It fits, but not by adding Espressif's SDK. The C++
-CHIP SDK (esp-matter) needs ⟦ESPM_FLASH_KB⟧ KB of flash for a size-optimised light
-(§3). Today's image has 68 KB left under the `layout_test` gate, with the mesh in. A
-Rust Matter stack (`rs-matter`, no_std, no heap to speak of) needs about 400 KB for the
-same light, BLE commissioning included (§4). Today's image also still links about
-290 KB of code it never runs (§2.2). The largest piece is the whole lwIP stack,
-130 KB, which the netstack replaced. Cutting that dead code, using our mbedTLS in
-place of RustCrypto, and adding IPv6 (link-local + SLAAC, ND, MLD, UDP) to the
-netstack makes room for Matter in the existing 2.25 MB app slot, with a margin of
-⟦B_MARGIN⟧ KB. Option (a), CHIP next to the netstack, overshoots the slot by
-⟦A_OVER⟧ KB after the same cuts. It also needs a second IP stack demuxing our MAC.
-Option (c), a separate Matter image, cannot fit a third app slot in 4 MB. It would
-also stop the effects. **Recommendation: (b), rs-matter on the netstack, in five
-milestones, about 6–8 weeks of focused work (§6).** The first milestone is the size
-diet: about two weeks, and the image is better for it whatever happens to Matter. A
-PoC (§7) commissioned a stock esp-matter light on a rig-2 C6 from this container and
-toggled it. That gave the real heap profile of a Matter session on this chip.
+**The answer in one paragraph.** It can fit, but not by adding Espressif's SDK.
+Today's image (main with the mesh in) has **68 KB** left under the `layout_test`
+gate. The C++ CHIP SDK (esp-matter) adds about **500 KB** of flash for a
+size-optimised light (§3). A Rust Matter stack (`rs-matter`, no_std, a 4 KB heap)
+needs about **400 KB** for the same light, BLE commissioning included (§4). That is
+about 360 KB once our mbedTLS replaces its RustCrypto. Today's image also still links
+about **185–235 KB of code it never runs** (§2.2). The largest piece is the whole
+lwIP stack, 130 KB, which the netstack replaced. Cutting that dead code (two weeks,
+and worth doing anyway), adding IPv6 to the netstack (about 15 KB), and trimming
+rs-matter to what one lamp needs brings Matter into the existing 2.25 MB app slot.
+If the trim falls short, there is a second lever: a one-time partition move that
+gives the app slot 192 KB of the loader's space. **Recommendation: (b), rs-matter on
+the netstack, in five milestones, about 6–8 weeks (§6).** Option (a), CHIP next to
+the netstack, is 375–455 KB over even after the cuts. It also needs a second IP
+stack demuxing our MAC. Option (c), a separate Matter image, cannot fit a third app
+slot in 4 MB, and a lamp in Matter mode would not run effects. A PoC (§7) flashed a
+stock esp-matter light to a rig-2 C6, commissioned it from this container and drove
+On/Off and Level. That run measured the heap profile of a Matter session on this
+chip.
 
 ## 1. What was measured, and how
 
@@ -33,11 +35,13 @@ toggled it. That gave the real heap profile of a Matter session on this chip.
 | Its heap at runtime | the same image on a rig-2 C6. Free, minimum and largest block are printed every 5 s through boot, Wi-Fi join, commissioning and on/off traffic (§7). |
 | A Matter stack in Rust | `rs-matter` (`project-chip/rs-matter` `4e4105a`, v0.4.1). Its `bloat-check` binary is an On/Off light with Wi-Fi network commissioning, BTP (BLE commissioning), the built-in mDNS responder, PASE and the CASE responder, crypto by RustCrypto. Built for `riscv32imac-unknown-none-elf` with `opt-level = "z"` and fat LTO, on esp-hal + esp-rtos. |
 
-The tools and raw logs are in `/workspace/.claude/mattersp/` on the dev container:
-`build_light.sh`, `configs/*.defaults`, `classify.py`, `poc/`, and the per-symbol
-dumps. They are not committed.
+The scripts are committed in `tools/matter_spike/`. `build_light.sh` and the
+`*.defaults` overlays build the esp-matter light, and `esp_matter_light.patch` adds
+its heap/IP line and the On/Off/Level hooks. `attribute_flash.py` does the DWARF
+attribution. `run_poc.py`, `ctrl.py`, `rig_relay.py` and `local_relay.py` are the
+HITL PoC. The raw logs stay on the dev container (`/workspace/.claude/mattersp/`).
 
-The size-optimised esp-matter config (`configs/opt.defaults`) applies every option in
+The size-optimised esp-matter config (`tools/matter_spike/opt.defaults`) applies every option in
 esp-matter's `docs/en/optimizations.rst` that does not change behaviour, plus `-Os`:
 
 ```
@@ -68,7 +72,7 @@ The example's `sdkconfig.defaults` already compiles out about 110 unused cluster
 
 The 4 MB flash is fixed: every C6 we ship and every rig DUT is an ESP32-C6FH4.
 
-### 2.2 What is in the 2.17 MB (and what never runs)
+### 2.2 What is in the 2.2 MB (and what never runs)
 
 Flash (`.flash.text` + `.flash.rodata` + IRAM text) by source, from DWARF:
 
@@ -82,7 +86,7 @@ Flash (`.flash.text` + `.flash.rodata` + IRAM text) by source, from DWARF:
 | IDF drivers, FreeRTOS, NVS, littlefs, HAL | ~210 | yes |
 | `.eh_frame` (unwind tables) | 40 | only for C++ exceptions and IDF panic backtraces |
 | `espcoredump` | 9 | no: the coredump partition was dropped (ota.md) |
-| Arduino `Network` + `WiFi` libraries | 12 | only the vendor build and the boot scan |
+| Arduino `Network` + `WiFi` libraries | 12 | no: leftover `WiFi.*` calls (below); the boot scan uses `esp_wifi_scan_*` directly |
 | `network_provisioning` | 3 | no |
 
 Why lwIP is still linked: the linker map of the main build (`--linkopt=-Wl,-Map`)
@@ -115,7 +119,50 @@ room. With them, the image has about **255–300 KB** under the gate.
 
 ## 3. A Matter light built with the CHIP SDK (esp-matter), measured
 
-⟦ESPM_SECTION⟧
+Image: **1,614,656 B** (`light.bin`, the size-optimised config of §1, with Wi-Fi
+station credentials compiled in for the PoC). For comparison, Espressif's own table
+for the default light example is 1.48 MB on an ESP32-C3 (esp-matter `6a77422`).
+
+| | Bytes |
+| --- | ---: |
+| flash code + data (`.text` + `.rodata`) | 1,487,670 |
+| static D/IRAM (`.text` 112,350 + `.data` 14,568 + `.bss` 64,216) | 191,134 |
+
+The largest archives (`idf.py size-components`; "flash" = code + constants):
+
+| Archive | Flash | Static RAM | On our image? |
+| --- | ---: | ---: | --- |
+| `libCHIP.a` (connectedhomeip: messaging, PASE/CASE, IM, credentials, platform) | 278,644 | 20,302 | new |
+| `libesp_matter.a` (esp-matter's data model, clusters, glue) | 166,298 | 21,291 | new |
+| `libble_app.a` + `libbt.a` (BLE controller + NimBLE host) | 214,818 + 56,075 | 27,387 | controller yes; NimBLE host new (we have our own host) |
+| `libnet80211.a`, `libpp.a`, `libphy.a`, `libwpa_supplicant.a` (Wi-Fi) | 282,681 | 72,998 | yes |
+| `liblwip.a` + `libesp_netif.a` | 96,327 | 2,651 | linked but dead today; Matter would make it live |
+| `libmbedcrypto.a` + `libmbedx509.a` | 84,892 | 422 | yes (our from-source mbedTLS) |
+
+The size tool puts another 120,703 B of merged `.rodata` under `libesp_app_format.a`.
+That is string and constant data from all archives, mostly CHIP's (log formats, cluster
+metadata). **What Matter itself adds through the CHIP SDK is about 445 KB of code
+(CHIP + esp-matter) plus 40–60 KB of that merged constant data, so about 500 KB**,
+before a platform layer for our netstack. It also needs about 41 KB of static RAM for
+CHIP and esp-matter.
+
+Runtime heap on a rig-2 C6 (the PoC, §7): free / minimum free / largest block, from
+the image's own 5 s heap line (`heap_caps_*`, 8-bit capable internal RAM):
+
+| Moment | Free | Minimum so far | Largest block |
+| --- | ---: | ---: | ---: |
+| boot, commissioning window open, BLE advertising | 230,112 | 229,852 | 212,992 |
+| joined the AP (DHCP lease) | 228,400 | 221,712 | 212,992 |
+| commissioning complete (PASE + CASE done) | 224,664 | 218,504 | 204,800 |
+| BLE released after commissioning | 253,844 | 218,504 | 204,800 |
+| steady, commissioned, after On/Off/Level traffic | 253,844 | 218,504 | 204,800 |
+
+So on this chip a Matter light's **runtime heap is small**. Commissioning (SPAKE2+,
+then the CASE sigma exchange with P-256 ECDH/ECDSA, the NOC chain and the fabric
+write) dips about **10 KB** below idle. A commissioned, idle node holds about 7 KB of
+heap beyond its static RAM once BLE is released. The real RAM cost of CHIP is
+static: about 41 KB of `.bss`/`.data` (CHIP + esp-matter), plus lwIP's, plus the CHIP
+task's 6 KB stack.
 
 ## 4. A Matter light in Rust (rs-matter), measured
 
@@ -153,9 +200,12 @@ RAM: `.bss` is 71 KB, but the Matter state is the 51 KB `MatterStack` cell: 5 fa
 (the spec minimum), sessions, exchanges, the 1,583-byte RX/TX buffers, subscriptions,
 3 Wi-Fi networks, BTP. The async tasks' futures add about 12 KB, and a 4 KB heap
 covers rs-matter's small `alloc` use. The defaults are sized for a hub-class node.
-For one lamp with one or two controllers, the features `max-fabrics-*`,
-`max-exchanges-per-session-*`, fewer subscriptions and one network bring it to an
-estimated **30–40 KB**. CASE needs about 2 KB of stack for P-256 on top. The spec
+Measured: building with `max-fabrics-2` plus 2 ACL entries/subjects/targets
+instead of 5/4/4/3 shrinks `.bss` from 71,004 B to **61,524 B** (`MatterStack`
+51,088 → 41,864 B), with the same flash. Fewer exchanges per session, fewer
+subscriptions and IM buffers, one Wi-Fi network and no BTP (on-network
+commissioning) should bring the Matter state to an estimated **30–40 KB** (not
+measured). CASE needs about 2 KB of stack for P-256 on top. The spec
 requires 5 fabrics for certification, so a certified lamp keeps 5 (§8).
 
 ## 5. The three ways to put Matter on the lamp
@@ -176,8 +226,12 @@ What it takes:
 - esp-matter v1.5 builds against IDF v5.5.5 with its own sdkconfig. Our IDF is the
   prebuilt Arduino SDK v5.5.4 with a frozen sdkconfig. CHIP would have to be built
   against that frozen config, by hand, outside esp-matter's CMake.
-- Size: ⟦A_SIZE⟧.
-- RAM: ⟦A_RAM⟧.
+- Size: CHIP + esp-matter ≈ 500 KB (§3), plus a platform layer (≈ 20 KB, est.), plus
+  NimBLE's host (56 KB) if BLE commissioning uses it, or a BTP port to our host. lwIP
+  stays live, so cut C1 is not available. With C2–C4 (52–77 KB) there are 120–145 KB
+  under the gate: **short by about 375–455 KB**.
+- RAM: 41 KB static for CHIP and esp-matter, plus lwIP's pools and the tcpip task
+  (the ~20–25 KB of vendor heap that #266 removed), plus the runtime heap in §7.
 
 **Verdict: does not fit, and it is the most fragile of the three.** It brings back
 the vendor heap the RAM audits removed. It also adds a second, unaudited stack in
@@ -227,10 +281,11 @@ gap closes in one of these ways (owner decision §10):
    never uses (events, timed requests on non-lock clusters, the Groups key cluster
    beyond the mandatory stubs). Estimated 40–70 KB. Some of this needs upstream
    feature flags; rs-matter is small enough to carry patches.
-2. **Grow the app slot.** The loader holds 1,300,704 B in a 1,376,256 B slot. It also
-   links the dead lwIP (it is the same netstack build without the player). With C1–C4
-   it drops to about 1.08 MB. Moving the loader/littlefs/app boundaries by 192 KB
-   needs a one-time partition-table migration. The loader can do it the way it already
+2. **Grow the app slot.** The loader was 1,300,704 B in its 1,376,256 B slot at
+   v1.14.1. It is the same netstack build without the player, so it also links the
+   dead lwIP. With #569 and C1–C4 it should drop to about 1.0–1.1 MB (est.). Moving
+   the loader/littlefs/app boundaries by 192 KB needs a one-time partition-table
+   migration. The loader can do it the way it already
    migrated littlefs (`docs/design/ota.md` "Migration"), but it is the riskiest step
    in this plan.
 3. **Build Matter as an opt-in feature** at first: "Matter" images for lamps that
@@ -241,10 +296,14 @@ the mesh off and 49 KB with the mesh on. **Matter and the mesh do not both fit a
 2048-LED max config** (29.7 KB minimum today). Matter's state can share the mesh's
 arena: both are heap blocks that are allocated when the feature is switched on (the
 mode-union design in the RAM audit). Or the two features can be exclusive at max
-LEDs (owner decision §10). CASE runs inside the TLS region's budget: P-256 is
-already there for TLS. Releasing BLE after commissioning returns 33–43 KB
-(`fug71-device-heap-ble`). The heapless host makes that smaller on the netstack, but
-it is still there.
+LEDs (owner decision §10).
+
+The PoC (§3, §7) shows that commissioning itself is cheap on this chip: PASE + CASE
+dipped the heap about 10 KB below idle, which fits inside the TLS region's budget
+(P-256 is already there for TLS). Even so, Matter commissioning should not overlap a
+fresh TLS handshake at the 2048-LED config. In the PoC, releasing NimBLE after
+commissioning returned 29 KB (224,664 → 253,844 B free). Our heapless BLE host holds
+much less, so that lever is smaller on the netstack.
 
 **Verdict: fits, with the §2.2 cuts plus one of the three gap closers.** It is a
 sizeable port, but every piece sits on code we already own and test.
@@ -252,7 +311,7 @@ sizeable port, but every piece sits on code we already own and test.
 ### 5.3 (c) A separate Matter-mode image (OTA slot / partition)
 
 - **No room for a third slot.** 4 MB = 64 KB (boot/table/nvs/otadata) + 1,344 KB
-  loader + 384 KB littlefs + 2,304 KB app. A Matter image of ⟦ESPM_FLASH_KB⟧ KB
+  loader + 384 KB littlefs + 2,304 KB app. A Matter image of 1.6 MB
   (§3) needs its own slot. The only way to get one is to drop littlefs (the map and
   effects) or the loader (OTA recovery).
 - **A Matter image in the app slot instead** (the user picks "Splanc" or "Matter"
@@ -272,7 +331,7 @@ sizeable port, but every piece sits on code we already own and test.
 | M0 size diet | §2.2 C1–C4 | `layout_test`, full HITL lane, Wi-Fi join/rekey on a commercial AP | 2 weeks |
 | M1 IPv6 | link-local + SLAAC, ND, MLD, ICMPv6 echo, UDP/IPv6, `ping6` from the rig; fix or gate group-addressed TX during wss | new HITL gate `ipv6_basics` (DUT answers NS/ping6, keeps wss through MLD and mDNS) | 1–1.5 weeks |
 | M2 rs-matter in the image | Rust 1.92+ toolchain bump (own PR); rs-matter via crate_universe with the mbedTLS backend; executor task; NVS store; root endpoint + On/Off light; on-network commissioning | chip-tool / the CHIP python controller commissions a rig DUT and toggles it (§7's harness, as a HITL test) | 2 weeks |
-| M3 the lamp's clusters | On/Off + Level + Identify mapped onto lamp power (§9); attribute reports on `power_state` changes; BLE commissioning (CHIPoBLE on the heapless host) if D-189b says so | HITL: Matter toggles and dims while the app's wss session stays up, effects keep running; touch-tap reports arrive as subscription reports | 1–1.5 weeks |
+| M3 the lamp's clusters | On/Off + Level + Identify mapped onto lamp power (§9); attribute reports on `power_state` changes; BLE commissioning (CHIPoBLE on the heapless host) if decision 3 (§10) asks for it | HITL: Matter toggles and dims while the app's wss session stays up, effects keep running; touch-tap reports arrive as subscription reports | 1–1.5 weeks |
 | M4 ecosystems + certification prep | Apple Home, Home Assistant, Alexa on a real home network (IPv6 multicast through a real AP); DAC/PAI provisioning per lamp (per-device certs already exist, `docs/design/per-device-cert.md`); Test Harness pre-runs | manual + one HITL smoke | 1–2 weeks |
 
 **Total: about 6–8 weeks**, with M0 useful on its own.
@@ -285,7 +344,66 @@ Google Home") needs the device itself to be Matter.
 
 ## 7. PoC: a Matter light on a rig-2 C6, commissioned from the container
 
-⟦POC_SECTION⟧
+**Result: PASS.** A size-optimised esp-matter light (§3, 1,614,656 B) was flashed to
+a rig-2 C6 (`c6-10ffcc`, reservation `4df2f2c50f5f3c0c`, 2026-11-21). It was
+commissioned **on-network** from this dev container and then driven:
+
+```
+[poc] DUT ip 10.42.0.87
+ctrl: PASE ok 0.3s
+ctrl: COMMISSIONED node 0x1234 in 3.0s
+ctrl: On -> OnOff = True
+ctrl: Off -> OnOff = False
+ctrl: Toggle -> OnOff = True
+ctrl: MoveToLevel(64) -> CurrentLevel = 64
+ctrl: BasicInformation: VendorName 'TEST_VENDOR', ProductName 'TEST_PRODUCT', SoftwareVersionString '1.0'
+```
+
+and on the DUT's serial console (the hooks sit where `set_power` / `set_brightness`
+would be called, §9):
+
+```
+10:51:28.439Z I (30605) app_main: Commissioning complete
+10:51:29.640Z [mattersp] CurrentLevel=1        <- Off: the Lighting feature moves the level to its minimum
+10:51:29.640Z [mattersp] OnOff=0
+10:51:30.642Z I (32665) app_main: BLE deinitialized and memory reclaimed
+10:51:30.842Z [mattersp] OnOff=1
+10:51:31.042Z [mattersp] CurrentLevel=64
+```
+
+(The first `On` changed nothing: the light boots on.)
+
+How it was wired, because the rig network makes Matter hard:
+
+- **Controller:** connectedhomeip's Python controller (`home-assistant-chip-core`
+  2025.7, the same C++ commissioner as chip-tool, prebuilt for linux-aarch64). It
+  uses the test PAA roots from connectedhomeip. A chip-tool build would have been an
+  hour of CPU on a loaded box for the same code path.
+- **No multicast to the DUT:** the reservation container reaches the rig AP's LAN
+  routed, not bridged (`hitl-rig2-multicast` notes), and this container is one more
+  hop away. Matter UDP was relayed: controller → local UDP relay → `ssh -L` TCP → a
+  UDP relay in the reservation container (stdlib Python) → DUT:5540. PASE went to
+  the relay's address (`EstablishPASESessionIP`). For CASE, the commissioner's
+  operational discovery (`<compressed-fabric-id>-<node-id>._matter._tcp`) was
+  answered by a local python-zeroconf record that points at the relay. In a home,
+  both happen by mDNS on the LAN.
+- **Wi-Fi credentials:** compiled in (`CONFIG_DEFAULT_WIFI_SSID/PASSWORD`, the
+  rig's provisioning AP), so the DUT was on the network before commissioning. That
+  is the lamp's situation after Improv (§8).
+- **Rig quirk found on the way:** the rig AP did not answer 802.11 auth for a freshly
+  reflashed DUT's factory MAC (three runs on two DUTs: `auth -> init` after 1 s,
+  forever). The netstack already works around this with a random MAC fallback
+  (`docs/design/ota.md`, the reset-mid-transfer row). The PoC image uses a random
+  locally administered MAC and joined at once.
+
+Tools: `tools/matter_spike/` (`run_poc.py`, `ctrl.py`, `rig_relay.py`,
+`local_relay.py`, and `esp_matter_light.patch` with the random-MAC workaround). The
+full logs (DUT serial, controller, both relays) are in
+`/workspace/.claude/mattersp/poc/run7/` on the dev container.
+
+The PoC is option (c)'s image. It proves the protocol path, the chip's crypto timing
+(PASE 0.3 s, the whole commissioning 3.0 s through the relay) and the heap profile.
+It is not the shipping integration.
 
 ## 8. Commissioning without BLE
 
@@ -294,8 +412,8 @@ the device advertises `_matterc._udp` with the commissioning window open, and th
 QR / manual code says `DiscoveryCapabilities = OnNetwork`. That saves CHIPoBLE
 (≈ 14 KB with BTP) and keeps one owner for the Wi-Fi credentials (Improv; the
 "fresh join" rule). The catch: Apple Home and Google Home support on-network
-commissioning, but their certification programmes expect BLE for Wi-Fi devices that
-are not yet on a network. A lamp that is always onboarded through the Splanc app is
+commissioning, but their programmes may expect BLE for Wi-Fi devices that are not yet
+on a network (not verified). A lamp that is always onboarded through the Splanc app is
 always on the network first. Needs checking against each ecosystem's current rules
 (M4).
 
@@ -329,8 +447,8 @@ touch taps and app changes within one report interval.
 
 ## 10. Owner decisions
 
-1. **Go ahead with M0 (the size diet) now?** It frees about 185–235 KB with no Matter code.
-   Options: *yes (recommended)* / after the mesh settles / no.
+1. **Go ahead with M0 (the size diet) now?** It frees about 185–235 KB with no Matter
+   code. Options: *yes (recommended)* / after the mesh settles / no.
 2. **How to close the last 75–120 KB for Matter** (§5.2). Options: *trim rs-matter to a
    lamp's needs (recommended first)* / grow the app slot with a one-time partition
    migration / ship Matter as an opt-in image.
@@ -342,13 +460,13 @@ touch taps and app changes within one report interval.
 5. **Fabric count.** Options: *5 (the spec minimum, needed for certification;
    recommended)* / 2–3 for an uncertified first release (saves RAM).
 6. **Rust toolchain bump to ≥ 1.92** for the whole firmware (needed by rs-matter).
-   Options: *yes, as its own PR before M2 (recommended)* / vendor an older rs-matter
-   (0.1.x, much larger, unmaintained).
+   Options: *yes, as its own PR before M2 (recommended)* / pin an older rs-matter
+   release that builds with 1.85, if one exists (not checked).
 
 ## 11. Risks and open questions
 
-- rs-matter is young (v0.4.1). Its CASE/PASE and IM have passed parts of the Matter
-  test harness upstream, but not certification. Budget time for conformance fixes.
+- rs-matter is young (v0.4.1) and not certified. How much of the Matter test harness
+  it passes needs checking before M2. Budget time for conformance fixes.
 - IPv6 multicast through home APs (snooping, multicast-to-unicast) is where Matter
   devices fail in the field. M4 has to test on real APs, not only the rig's
   hostapd.

@@ -1,0 +1,4 @@
+# on-network commissioning only: no BLE at all (the lamp is already on Wi-Fi via Improv)
+CONFIG_BT_ENABLED=n
+CONFIG_ENABLE_CHIPOBLE=n
+CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n
