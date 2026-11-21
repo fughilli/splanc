@@ -35,6 +35,7 @@ littlefs hooks, the staged load, persistence). Protocol: `shared/protocol/proto/
   effect's saved looks come back with it.
 - **Errors:**
   - `store_full`: all slots are in use;
+  - `store_no_space`: storing it would eat the flash kept for a map upload (see Flash budget);
   - `not_found`: no stored effect with that id;
   - `bad_fxb`: an fxb that doesn't parse, a sensor driver, a missing id, or a damaged record;
   - `effect_too_large`: over the player's 4 KiB fxb cap;
@@ -43,8 +44,18 @@ littlefs hooks, the staged load, persistence). Protocol: `shared/protocol/proto/
 ## Storage
 
 - **Bounds.** At most 8 records (`MAX_STORED`), each one file `/lfs/fxs.<n>` of at most ~4.4 KB
-  (the 4 KiB fxb cap plus a ~200 B header), so at most ~35 KB of the 384 KB littlefs. Ids are up to
+  (the 4 KiB fxb cap plus a ~200 B header). littlefs allocates whole 4 KiB blocks, so a full-size
+record takes 2 blocks: at most 64 KiB of the 384 KiB littlefs, plus 8 KiB while one is rewritten. Ids are up to
   64 bytes, names up to 32, and the uniform-name summary up to 96.
+- **Flash budget.** The littlefs partition (`partitions_ota.csv`: 384 KiB at 0x160000) also
+  holds the map and topology (a 2048-LED map is ~122 KB, and replacing it stages the new one in
+  `upload.tmp` next to the old), the deck-A effect, keypoints (16 per effect id, one small file
+  each, so stored effects multiply them), the kiosk snapshot, the colour LUT and the mesh state.
+  The store must never make a map upload fail, so `main.cpp`'s write hook refuses a store
+  (`store_no_space`) unless afterwards at least 128 KiB stays free, plus, while the stored map is
+  under 128 KiB, the difference (room for the largest map the player takes). On a fresh device
+  (~10 KiB used) or one with a 2048-LED map (~140 KiB with its topology), all 8 full-size records
+  fit with room to spare; the guard only trips when keypoints and other files have grown.
 - **Power-loss safety.** Writes go through `fs_write_parts`: `fs_write_file`'s temp file, fsync and
   atomic rename, with the header and the fxb written from their own buffers. A reset mid-store
   leaves the old record or the new one. A damaged record (from a foreign write, say) is refused on

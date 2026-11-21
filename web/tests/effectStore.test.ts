@@ -139,7 +139,7 @@ function fakeClient() {
   return { client, calls, committed, live };
 }
 
-test("Stored effects section: list, open with live uniforms, delete", async () => {
+test("Stored effects section: list, open an effect's sheet, play with live uniforms, delete", async () => {
   const f = fakeClient();
   const el = asFake(StoredEffectsSection(f.client));
   await flushAsync();
@@ -149,15 +149,25 @@ test("Stored effects section: list, open with live uniforms, delete", async () =
     ["Hot spots", "Plasma"],
   );
   assert.match(textOf(el), /2 of 8 stored/);
-
-  // Open: loads onto deck A, activated, and shows its uniforms as controls.
+  // Each row is one control (no button row to cram): it opens the effect's sheet.
   const plasmaRow = () => el.querySelectorAll(".stored-effects-row").find((r) => r.dataset["effectId"] === "plasma")!;
-  const openBtn = plasmaRow().querySelectorAll("button").find((b) => textOf(b) === "Open")!;
-  fire(openBtn, "click");
+  assert.equal(plasmaRow().querySelectorAll("button").length, 1);
+  fire(plasmaRow().querySelector(".stored-effects-open")!, "click");
+  await flushAsync();
+  const body = asFake(document.body);
+  const sheet = () => body.querySelectorAll(".stored-effect-sheet").at(-1)!;
+  assert.ok(sheet(), "the effect's own sheet");
+  assert.equal(f.calls.filter((c) => c.startsWith("load")).length, 0, "opening the sheet plays nothing");
+  assert.equal(sheet().querySelector(".stored-effects-uniforms"), null, "no controls before it plays");
+
+  // Play: loads onto deck A, activated, and shows its uniforms as controls.
+  const btn = (label: string) => sheet().querySelectorAll("button").find((b) => textOf(b) === label);
+  fire(btn("Play on this device")!, "click");
   await flushAsync();
   assert.ok(f.calls.includes("load plasma 0 true"));
-  assert.match(textOf(plasmaRow()), /on deck A/);
-  const slider = el.querySelector(".stored-effects-uniforms input");
+  assert.ok(btn("Playing on this device"), "the primary shows it is playing");
+  assert.match(textOf(plasmaRow()), /Playing/);
+  const slider = sheet().querySelector(".stored-effects-uniforms input");
   assert.ok(slider, "the opened effect's uniform panel is shown");
   // A move goes out live at once, then commits once the controls are quiet.
   (slider as unknown as { value: string }).value = "3";
@@ -167,11 +177,11 @@ test("Stored effects section: list, open with live uniforms, delete", async () =
   assert.equal(f.committed.length, 1);
   assert.equal(f.committed[0]![0]!.slot, 3);
 
-  // Delete asks first; confirmed, the row goes.
-  const delBtn = plasmaRow().querySelectorAll("button").find((b) => textOf(b) === "Delete")!;
+  // Delete (its own row, below the controls) asks first; confirmed, the row goes.
+  const delBtn = btn("Delete from device")!;
   fire(delBtn, "click");
   await flushAsync();
-  const confirm = asFake(document.body).querySelectorAll("button").find((b) => textOf(b) === "Delete" && b !== delBtn);
+  const confirm = body.querySelectorAll("button").find((b) => textOf(b) === "Delete");
   assert.ok(confirm, "a confirmation dialog");
   fire(confirm!, "click");
   await flushAsync();
@@ -180,5 +190,4 @@ test("Stored effects section: list, open with live uniforms, delete", async () =
     el.querySelectorAll(".stored-effects-row").map((r) => r.dataset["effectId"]),
     ["hot-spots"],
   );
-  assert.equal(el.querySelector(".stored-effects-uniforms"), null, "the deleted effect's controls go too");
 });

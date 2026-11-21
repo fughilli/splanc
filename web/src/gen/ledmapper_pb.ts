@@ -1519,7 +1519,7 @@ export type SubmitEffect = Message<"ledmapper.v1.SubmitEffect"> & {
    * loading it: no deck changes, `activate` and `deck` are ignored. An effect with
    * the same effect_id is replaced. Load it later with load_stored_effect.
    * Firmware advertising the "effect_store" feature. Reply: result_ready
-   * (id=effect_id), or error (`store_full`, `effect_too_large`, `bad_fxb`,
+   * (id=effect_id), or error (`store_full`, `store_no_space`, `effect_too_large`, `bad_fxb`,
    * `no_store`).
    *
    * @generated from field: bool store = 5;

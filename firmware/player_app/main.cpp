@@ -1340,8 +1340,8 @@ static void fs_replay(const char *path) {
 static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap);
 static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n);
 static void kp_fs_remove(const uint8_t *name, size_t len);
-static bool fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
-                         size_t b_len);
+static int32_t fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
+                            size_t b_len);
 
 // Kiosk config from littlefs: true when the device should boot into the attract
 // snapshot (enabled, a snapshot recorded, and its effect frame present).
@@ -4546,8 +4546,39 @@ static void kp_fs_remove(const uint8_t *name, size_t len) {
 // Effect store hooks (ffi.rs lm_fxs_set_store): read / remove are the keypoint ones
 // (a record is a small file under the same base, "fxs.<n>"); a write is the record
 // header plus the .fxb, as one power-loss-safe file.
-static bool fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
-                         size_t b_len) {
+//
+// The store must never take the room a map upload needs (docs/design/effect-store.md
+// "Flash budget"): a 2048-LED map is ~122 KB, and replacing it stages the new one in
+// upload.tmp next to the old. So a store is refused (-2, store_no_space) unless, after
+// it, the filesystem keeps kFsUploadReserve free plus, while the map is smaller than the
+// largest one, the difference.
+static const size_t kFsUploadReserve = 128 * 1024;
+static const size_t kFsMapMax = 128 * 1024;
+static const size_t kFsBlock = 4096;
+static int32_t fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
+                            size_t b_len) {
   char path[48];
-  return kp_path(path, sizeof path, name, len) && fs_write_parts(path, a, a_len, b, b_len);
+  if (!kp_path(path, sizeof path, name, len)) return -1;
+  size_t total = 0, used = 0;
+  if (esp_littlefs_info(kFsPartition, &total, &used) == ESP_OK && total > 0) {
+    // The temp copy is written before the rename frees an old record of the same slot,
+    // plus one block of metadata slack.
+    size_t need = ((a_len + b_len + kFsBlock - 1) / kFsBlock + 1) * kFsBlock;
+    FILE *mf = fs_open(kMapPath, "rb");
+    size_t map = 0;
+    if (mf != nullptr) {
+      fseek(mf, 0, SEEK_END);
+      long sz = ftell(mf);
+      fclose(mf);
+      map = sz > 0 ? (size_t)sz : 0;
+    }
+    size_t reserve = kFsUploadReserve + (map < kFsMapMax ? kFsMapMax - map : 0);
+    size_t free_b = total > used ? total - used : 0;
+    if (free_b < need + reserve) {
+      Log().printf("[fxs] store refused: %u B free of %u, need %u + %u reserved for a map upload\n",
+                   (unsigned)free_b, (unsigned)total, (unsigned)need, (unsigned)reserve);
+      return -2;
+    }
+  }
+  return fs_write_parts(path, a, a_len, b, b_len) ? 0 : -1;
 }

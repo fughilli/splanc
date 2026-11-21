@@ -82,6 +82,7 @@ export function uniformsFromManifest(manifest: Uint8Array | string | undefined):
 export function storeErrorText(e: unknown): string {
   const code = (e as { code?: string } | null)?.code;
   if (code === "store_full") return "the device's effect store is full — delete one first";
+  if (code === "store_no_space") return "the device is low on flash (room is kept for a map) — delete a stored effect first";
   if (code === "not_found") return "that effect isn't stored on the device any more";
   if (code === "no_store") return "the device's effect store is unavailable";
   if (code === "effect_too_large") return "the effect is too large for this device";

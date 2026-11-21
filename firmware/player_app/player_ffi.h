@@ -122,9 +122,10 @@ bool lm_kp_commit(void);
 int32_t lm_kp_commit_frame(uint8_t *out, size_t cap);
 // The effect store (effect_store.rs, docs/design/effect-store.md): one record per
 // stored effect, file "fxs.<n>" under the FS base. read / remove as the keypoint
-// hooks; write stores a ++ b as one atomic (power-loss-safe) file.
-typedef bool (*lm_fxs_write_fn)(const uint8_t *name, size_t name_len, const uint8_t *a, size_t a_len,
-                                const uint8_t *b, size_t b_len);
+// hooks; write stores a ++ b as one atomic (power-loss-safe) file and returns 0, -2 when
+// it is refused for space (the room kept for a map upload), or -1 when it failed.
+typedef int32_t (*lm_fxs_write_fn)(const uint8_t *name, size_t name_len, const uint8_t *a, size_t a_len,
+                                   const uint8_t *b, size_t b_len);
 void lm_fxs_set_store(lm_kp_read_fn read, lm_fxs_write_fn write, lm_kp_remove_fn remove);
 // Whether the submit_effect just handled went to the store (not persisted as deck A's).
 bool lm_fxs_last_was_store(void);

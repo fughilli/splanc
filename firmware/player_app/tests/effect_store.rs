@@ -39,11 +39,17 @@ unsafe extern "C" fn fs_read(name: *const u8, nl: usize, buf: *mut u8, cap: usiz
     }
 }
 
-unsafe extern "C" fn fs_write(name: *const u8, nl: usize, a: *const u8, al: usize, b: *const u8, bl: usize) -> bool {
+/// When set, the next write is refused for space (main.cpp's map-upload reserve).
+static FS_FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+unsafe extern "C" fn fs_write(name: *const u8, nl: usize, a: *const u8, al: usize, b: *const u8, bl: usize) -> i32 {
+    if FS_FULL.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return -2;
+    }
     let mut v = std::slice::from_raw_parts(a, al).to_vec();
     v.extend_from_slice(std::slice::from_raw_parts(b, bl));
     FS.lock().unwrap().as_mut().unwrap().insert(file_name(name, nl), v);
-    true
+    0
 }
 
 unsafe extern "C" fn fs_remove(name: *const u8, nl: usize) {
@@ -248,6 +254,12 @@ fn store_list_load_delete() {
     assert_eq!(err_code(handle_frame(&store_frame("junk", "", b"not an fxb"))), "bad_fxb");
     assert_eq!(err_code(handle_frame(&store_frame("", "", &compile(GREEN)))), "bad_fxb");
     assert_eq!(err_code(handle_frame(&store_frame("big", "", &vec![0u8; 5000]))), "effect_too_large");
+
+    // The filesystem keeps room for a map upload: a store the C++ hook refuses for space
+    // says so, and leaves nothing behind.
+    FS_FULL.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(err_code(store("crowded", "", GREEN)), "store_no_space");
+    assert_eq!(ids(&list()), ["plasma"]);
 
     // -- capacity ------------------------------------------------------------------
     for i in 1..MAX_STORED {

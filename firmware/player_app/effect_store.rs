@@ -171,8 +171,14 @@ pub fn encode_prefix(id: &[u8], name: &[u8], summary: &[u8], fxb_len: usize) -> 
 // -- the store (C++ hooks) ------------------------------------------------------
 
 type FxsRead = unsafe extern "C" fn(name: *const u8, name_len: usize, buf: *mut u8, cap: usize) -> i32;
+/// Returns [`WRITE_OK`], [`WRITE_NO_SPACE`] (refused: it would eat the filesystem room kept
+/// for a map upload) or anything else for a failed write.
 type FxsWrite =
-    unsafe extern "C" fn(name: *const u8, name_len: usize, a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> bool;
+    unsafe extern "C" fn(name: *const u8, name_len: usize, a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> i32;
+
+/// [`FxsWrite`] results.
+pub const WRITE_OK: i32 = 0;
+pub const WRITE_NO_SPACE: i32 = -2;
 type FxsRemove = unsafe extern "C" fn(name: *const u8, name_len: usize);
 
 static mut FXS_READ: Option<FxsRead> = None;
@@ -185,7 +191,7 @@ static mut FXS_HDR: [u8; HEADER_CAP] = [0; HEADER_CAP];
 pub(crate) static mut LAST_WAS_STORE: bool = false;
 
 /// Install the effect store hooks (C++: littlefs). `write` stores `a ++ b`
-/// atomically. Without them every store arm answers `no_store`.
+/// atomically, or refuses with [`WRITE_NO_SPACE`] when the filesystem is too full. Without them every store arm answers `no_store`.
 ///
 /// # Safety
 /// The hooks must be valid for the process lifetime; single firmware thread.
@@ -264,8 +270,12 @@ pub(crate) unsafe fn handle_store(m: &pv::SubmitEffectView<'_>) -> pb::ServerMes
     let (prefix, pl) = encode_prefix(id, name, &summary[..sl], fxb.len());
     let (f, fl) = file(slot);
     let write = (*addr_of!(FXS_WRITE)).unwrap();
-    if !write(f.as_ptr(), fl, prefix.as_ptr(), pl, fxb.as_ptr(), fxb.len()) {
-        return fx_error("no_store", "writing the effect store failed");
+    match write(f.as_ptr(), fl, prefix.as_ptr(), pl, fxb.as_ptr(), fxb.len()) {
+        WRITE_OK => {}
+        WRITE_NO_SPACE => {
+            return fx_error("store_no_space", "not enough flash left on the device: delete a stored effect");
+        }
+        _ => return fx_error("no_store", "writing the effect store failed"),
     }
     let mut r = pb::ResultReady::default();
     let _ = r.r#map_id.push_str(m.effect_id());
