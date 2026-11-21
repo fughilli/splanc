@@ -388,14 +388,14 @@ hidden slack.</p>
 <tbody>
 <tr class="row-even"><td><p>ble_rename · rename → new name seen (<code class="docutils literal notranslate"><span class="pre">hitl_ble_rename.py</span> <span class="pre">--budget</span></code>)</p></td>
 <td><p>5 s</p></td>
-<td><p>3 / phase</p></td>
-<td><p>adv 0.57</p></td>
-<td><p>conn 4.38</p></td>
-<td><p>conn 4.84</p></td>
-<td><p>adv 8.8×</p></td>
-<td><p>conn 1.1×</p></td>
-<td><p>⚑ adv / ⚠ conn</p></td>
-<td><p><strong>Keep 5 s</strong> (owner decision). Now on the dashboard (<code class="docutils literal notranslate"><span class="pre">ble_rename.name_seen_latency.{adv,conn,final}</span></code>). Connected-phase samples reach 4.84 s, so tightening is unsafe until CI has ~50 runs.</p></td>
+<td><p>1 / phase (fw clock)</p></td>
+<td><p>adv 0.96, conn −0.17</p></td>
+<td><p>—</p></td>
+<td><p>final 3.01</p></td>
+<td><p>adv 5.2×</p></td>
+<td><p>—</p></td>
+<td><p>n too small</p></td>
+<td><p><strong>Keep 5 s</strong> (owner decision). Now on the dashboard (<code class="docutils literal notranslate"><span class="pre">ble_rename.name_seen_latency.{adv,conn,final}</span></code>), firmware clock only. Only r4 printed the firmware-clock <code class="docutils literal notranslate"><span class="pre">*_fw_s</span></code>; r1–r3 printed the harness clock, and r3’s 4.84 s conn was teardown (a missed LL_TERMINATE riding out the 6 s supervision timeout), not the gate’s measurement. Re-assess once CI has ~50 runs.</p></td>
 </tr>
 <tr class="row-odd"><td><p>live_latency · live p50 ≤ 1 frame + 50 ms (<code class="docutils literal notranslate"><span class="pre">live_latency_core.verdict_lan</span></code>)</p></td>
 <td><p>95 ms &#64;45 ms frame</p></td>
@@ -892,7 +892,6 @@ create neither, so this needs an owner decision.</p>
 <li><p>live_latency live: its p95 sits over the limit in the October regression window.</p></li>
 <li><p>improv_fresh_join absent: about 1.4×.</p></li>
 <li><p>fx_bench sweep16: p95 at the margin, so re-golden it.</p></li>
-<li><p>ble_rename connected rename: 4.84 s of 5 s in 1 of 3 local runs.</p></li>
 </ul>
 </section>
 <section id="ble-notify-latency-desk-d-75">

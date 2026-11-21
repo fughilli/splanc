@@ -388,32 +388,227 @@ credits exactly one account, ever.
   token, so a receipt can't be credited to another account. The code has this
   check in `applyPurchase` (`wrong_account`).
 
-### Purchases (`purchases.ts`)
+### Sign in with Apple and Google (`signin.ts`, `jwt.ts`)
 
-These are interfaces and fakes only in this PR (`PurchaseVerifier`,
-`NotificationVerifier`, `PurchaseClaims`, `FakeStoreVerifier`).
+Built (sandbox, off until configured). Owner decision: Apple + Google +
+anonymous; credits follow the person, never merged between accounts.
 
-- **Apple.**
-  - The app buys with StoreKit 2 through a small Capacitor plugin
-    (`web/native-plugins/storekit-bridge`, alongside camera-, speech- and
-    wss-bridge).
-  - It sends `Transaction.jwsRepresentation` to `POST /billing/purchase/apple`.
-  - The server verifies:
-    - the JWS x5c chain up to Apple Root CA G3;
-    - `bundleId = dev.splanc.app`;
-    - the product id, which must be an enabled pack;
-    - the environment (Sandbox / Production);
-    - `appAccountToken`.
-  - It then credits the account, claims the transaction, and the app
-    **finishes** the transaction.
-  - Unfinished transactions are re-sent at app start (`Transaction.unfinished`),
-    so a crash between paying and crediting heals itself.
-  - App Store Server Notifications v2 arrive at `POST /billing/notify/apple`:
-    REFUND and REVOKE claw back. CONSUMPTION_REQUEST is answered with the
-    customer's consent ([below](#apple-refund-requests-consumption_request)).
-  - Testing: the Xcode StoreKit configuration file and the Sandbox
-    environment.
+**Routes.**
+
+| Route | Auth | What it does |
+| --- | --- | --- |
+| `GET /billing/signin/config` | none | Which providers are on, plus the PUBLIC client ids the app needs |
+| `POST /billing/signin/nonce` | none | `{nonce, provider_nonce, expires_at}`: a relay-signed nonce (10 min); the app hands `provider_nonce` (its SHA-256) to Apple / Google |
+| `POST /billing/signin` | session optional (IP-limited) | `{provider, client: ios\|web, nonce, id_token?, code?, code_verifier?, create?}` → `linked` / `already_linked` (with a session), `signed_in` / `created` (without: a new session), `409 identity_in_use` (a conflict), `404 no_account` (`create: false`, restore) |
+| `POST /billing/signin/switch` | switch ticket | After a conflict, the user chose the other account → its session |
+| `POST /billing/signin/unlink` | session | `{provider, confirm_unrecoverable?}`; Apple: revokes the token. `409 unrecoverable` when it's the last way back to a balance |
+| `POST /billing/signin/apple/notify` | Apple's signature | Apple's server-to-server events: `consent-revoked` / `account-delete` unlink Apple (the credits stay) |
+
+**Checks.** Apple and Google ID tokens: RS256 against the provider's JWKS
+(cached per isolate, refetched hourly or on an unknown `kid` at most once a
+minute), the issuer, OUR client id as audience (per client: the bundle id for
+the iOS app, the Services ID for the web; Google's web or iOS client id),
+`exp`, and the nonce (our MAC + expiry, the token carries its hash, accepted
+once: `once:` keys in the Directory). Apple sign-ins also exchange the
+authorization code (client secret = an ES256 JWT signed with the .p8 key) and
+the exchange's ID token must name the same user; the refresh token is kept
+AES-GCM encrypted, only to revoke it. Google on iOS: the app opens Google's
+page in `ASWebAuthenticationSession` (code + PKCE, `openid` only), the relay
+exchanges the code with the iOS client id (no secret).
+
+**Account model.**
+- With a session and an identity nobody has: **link** (the balance stays).
+- Without a session: an identity already linked **signs in** to its account
+  (recovery on a new device); an unknown one **opens** a new linked account
+  (or answers `no_account` for restore).
+- With a session and an identity linked to ANOTHER account: **conflict**. The
+  answer shows both balances and linked providers and carries a 10-minute
+  switch ticket. The app asks: "Switch to that account" or "Keep this
+  device's account". Balances are never merged. When this device's account
+  is empty and has no sign-in or email, the app switches without asking
+  (nothing can be lost); when it has credits and nothing leads back to it,
+  switching needs an explicit "I understand … stay behind" tick.
+- One identity per provider per account (`provider_linked`), one account per
+  identity (`link:<provider>:<sub>`, first claim wins).
+- **Sign out** is local (the device forgets its session); offered only when a
+  sign-in or email leads back to the account.
+- **Deletion** revokes the Apple token first (Apple's rule; one retry; if Apple
+  can't be reached the deletion answers 503 and nothing changed), then
+  unlinks everything and closes the account (credit forfeited, as decided).
+- Stored: `sub`, `aud`, `linked_at` and (Apple) the encrypted refresh token.
+  No name, no email, no hashed email: Apple is asked for no scopes, Google for
+  `openid`; the email claim in Google's token is never read.
+- **With #557 (email recovery):** email is one more way back. Unlink and sign
+  out count a verified email as a way back; the conflict auto-switch doesn't
+  fire when this device's account has one. When #557's session generations
+  land, `SigninHost.session` in `endpoint.ts` is the one place to add the
+  generation check.
+
+**App.** `web/src/effects/ai/providers/creditsSignin.ts` (provider legs and
+relay calls), the credits flow's `signInChoice` / `signInConflict` /
+`signInDone` / `signInNoAccount` / `signOutConfirm` / `unlinkConfirm` steps,
+and Settings ▸ AI ▸ Sign-in. The buy flow's "Keep credits safe" phase offers
+Apple and Google first, a recovery email second, "Continue without signing
+in" last. Restore offers the same. iOS: native Sign in with Apple via the
+WebAuth plugin's `appleSignIn` (AuthenticationServices, no scopes); the
+entitlement is added by `web/ios-config/apply.sh` with
+`SPLANC_IOS_SIGN_IN_WITH_APPLE=1` once the provisioning profile has the
+capability. Browser / Android: Sign in with Apple JS (popup) and Google
+Identity Services' own button; the scripts load only on the sign-in screen.
+
+**Owner console checklist.**
+
+Apple Developer (the owner's LLC team), Certificates, Identifiers & Profiles:
+1. Identifiers ▸ App IDs ▸ `dev.splanc.app` ▸ enable **Sign In with Apple**
+   ("Enable as a primary App ID"). Under its Configure, set the **Server-to-
+   Server Notification Endpoint** to
+   `https://splanc-relay.<subdomain>.workers.dev/billing/signin/apple/notify`.
+2. Identifiers ▸ **+** ▸ **Services IDs**: description "Splanc web sign-in",
+   identifier `dev.splanc.app.signin` (any id, but NOT the bundle id). Enable
+   Sign In with Apple ▸ Configure: Primary App ID `dev.splanc.app` (grouping
+   it there gives web and app the same user id), **Domains** `splanc.io`,
+   **Return URLs** `https://splanc.io/app/` (exactly; Apple refuses
+   `localhost`, so web Apple sign-in is tested on splanc.io).
+3. Keys ▸ **+**: name "Splanc Sign in with Apple", enable **Sign in with
+   Apple** ▸ Configure ▸ primary App ID `dev.splanc.app`. Register, **download
+   the .p8 once**, note the Key ID.
+4. Profiles: regenerate the App Store distribution profile for
+   `dev.splanc.app` (it must include the new capability) and update the iOS
+   signing secrets; then build with `SPLANC_IOS_SIGN_IN_WITH_APPLE=1`.
+
+Google Cloud console (a project for Splanc), Google Auth Platform:
+1. **Branding**: app name "Splanc", support email, home page
+   `https://splanc.io`, privacy policy and terms URLs, authorized domain
+   `splanc.io`. **Audience**: External, then **Publish app** (In production).
+   **Data access**: no scopes beyond `openid` (no verification needed).
+2. **Clients ▸ Create ▸ Web application** "Splanc web": Authorized JavaScript
+   origins `https://splanc.io` (add `http://localhost` and
+   `http://localhost:5173` for local testing). No redirect URIs.
+3. **Clients ▸ Create ▸ iOS** "Splanc iOS": bundle id `dev.splanc.app`, team
+   id; under Advanced settings **enable custom URI scheme** (the app returns
+   through `com.googleusercontent.apps.<id>:/oauth2redirect`). No secret.
+
+Credential files (`/workspace/credentials/`, never in the repo):
+- `apple_signin_key.p8` — the downloaded key (secret);
+- `apple_signin.env` — `APPLE_SIGNIN_TEAM_ID=…`, `APPLE_SIGNIN_KEY_ID=…`,
+  `APPLE_SIGNIN_BUNDLE_ID=dev.splanc.app`,
+  `APPLE_SIGNIN_SERVICES_ID=dev.splanc.app.signin`,
+  `APPLE_SIGNIN_REDIRECT_URI=https://splanc.io/app/`;
+- `apple_signin_token_key.txt` — 32 random bytes, base64url (generated by the
+  runbook below; encrypts the stored Apple refresh tokens; rotating it makes
+  stored tokens unrevocable, so set it once);
+- `google_signin.env` — `GOOGLE_SIGNIN_WEB_CLIENT_ID=…apps.googleusercontent.com`,
+  `GOOGLE_SIGNIN_IOS_CLIENT_ID=…apps.googleusercontent.com`.
+
+**Runbook (owner approval; after the PR merges and the relay is deployed).**
+
+```bash
+cd agent/relay
+W="pnpm dlx wrangler@4"
+C=../../credentials
+put() { printf %s "$2" | $W secret put "$1" --config wrangler.toml; }
+# Apple: the key + the token key (generated once), then the ids.
+[ -f $C/apple_signin_token_key.txt ] || node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64url"))' > $C/apple_signin_token_key.txt
+$W secret put APPLE_SIGNIN_PRIVATE_KEY --config wrangler.toml < $C/apple_signin_key.p8
+tr -d '\n' < $C/apple_signin_token_key.txt | $W secret put APPLE_SIGNIN_TOKEN_KEY --config wrangler.toml
+set -a; . $C/apple_signin.env; . $C/google_signin.env; set +a
+for v in APPLE_SIGNIN_TEAM_ID APPLE_SIGNIN_KEY_ID APPLE_SIGNIN_BUNDLE_ID APPLE_SIGNIN_SERVICES_ID APPLE_SIGNIN_REDIRECT_URI \
+         GOOGLE_SIGNIN_WEB_CLIENT_ID GOOGLE_SIGNIN_IOS_CLIENT_ID; do put "$v" "${!v}"; done
+# Check: both providers on, client ids only.
+curl -fsS https://splanc-relay.<subdomain>.workers.dev/billing/signin/config
+```
+
+The app reaches the routes through `splanc.pages.dev` (`web/_worker.js`
+RELAY_PATHS), which ships with the web app deploy; Apple's notifications call
+the workers.dev address directly.
+
+### Purchases (`purchases.ts`, `apple.ts`, `stripe.ts`)
+
+`purchases.ts` holds the interfaces (`PurchaseVerifier`, `NotificationVerifier`,
+`PurchaseClaims`, `ConsumptionSender`), the shared credit / refund logic
+(`applyPurchase`, `applyRefund`) and the sandbox fakes (`FakeStoreVerifier`,
+`FakeConsumptionSender`).
+
+- **Apple (built: `apple.ts`, `web/native-plugins/storekit-bridge`,
+  `web/src/effects/ai/iap.ts`).** See
+  [Apple In-App Purchase](#apple-in-app-purchase).
 - **Web (Stripe):** built, see [Web checkout](#web-checkout-stripe).
+
+### Apple In-App Purchase
+
+- **App (StoreKit 2).** The first-party Capacitor plugin
+  `@splanc/storekit-bridge` (JS `StoreKitBridge`, Swift package
+  `SplancStorekitBridge`, iOS 15+) wraps `Product.products`,
+  `Product.purchase(options: [.appAccountToken(…)])`, `Transaction.finish`,
+  `Transaction.unfinished`, `Transaction.updates` (listened to from launch,
+  events retained until the web side subscribes), `AppStore.sync` and
+  `AppStore.canMakePayments`. It passes on only transactions StoreKit itself
+  verified, as `{transactionId, originalTransactionId, productId, jws}`.
+  `web/src/net/storeKit.ts` binds it; `web/src/effects/ai/iap.ts` is the
+  logic:
+  - **Packs** are the relay's `apple` packs (credits) that the App Store also
+    returns (Apple's localized `displayPrice`), in the relay's order. A
+    product not yet approved in App Store Connect is simply not shown.
+  - **Purchase.** `appAccountToken` = the account's `account_ref` (from
+    `GET /billing/balance`). The signed transaction goes to
+    `POST /billing/purchase/apple {jws}`; the transaction is **finished only
+    once the relay credited it**.
+  - **Finishing rules.** Finish on 201 (credited), 200 (`replay`), 409
+    `already_claimed` and 400 `revoked` (nothing is owed on this device).
+    Keep it unfinished on 401 (signed out), 403 `wrong_account` (bought for
+    another account, e.g. before a restore), a network error or a relay
+    failure: StoreKit hands it back at every launch, and "Check for App Store
+    purchases" re-sends it on demand. The relay credits once whatever is
+    re-sent.
+  - **Background delivery** (`startIapDelivery`, at app start on iOS with the
+    flag on): unfinished transactions are re-sent, and `Transaction.updates`
+    (Ask to Buy approved, a pending payment cleared) is credited and
+    announced with a toast. Deliveries are de-duplicated per transaction.
+  - **Outcomes in the flow:** purchased → success with the new balance;
+    `pending` (Ask to Buy, or a payment that needs another step) → "Waiting
+    for approval", credited automatically later; cancelled → back to the
+    packs ("Nothing was charged"); a StoreKit error → the packs with a plain
+    message; paid but not credited yet → "Payment received, adding credits"
+    with Check again.
+  - **Restore.** Consumables don't restore. The balance lives on the account
+    (restore it with the recovery email); "Check for App Store purchases"
+    (`AppStore.sync` + re-send) covers a purchase whose credit never landed.
+  - **No web checkout** inside the iOS app: `startWebCheckout` refuses, and
+    no Stripe copy or link is shown. An older iOS build without the plugin
+    keeps credits hidden ("Update Splanc to buy credits").
+- **Relay (`apple.ts`).**
+  - **JWS verification, local.** The x5c chain must be exactly leaf →
+    intermediate → root, the root **byte-equal** to the pinned Apple Root
+    CA G3 (SHA-256 `63:34:3A:…:91:79`), the intermediate a CA with Apple's
+    WWDR marker (`1.2.840.113635.100.6.2.1`), the leaf with the App Store
+    signing marker (`1.2.840.113635.100.6.11.1`), every signature valid
+    (ECDSA P-384 / P-256, a small DER reader since Workers have no X.509
+    parser), every certificate valid at the payload's `signedDate`, nothing
+    signed in the future, and the JWS itself ES256 by the leaf. That is what
+    Apple's `app-store-server-library` `SignedDataVerifier` does with online
+    (OCSP) checks off. No network call and no secret are needed to verify.
+  - **A purchase** must be for `dev.splanc.app`, Sandbox or Production
+    (Xcode / LocalTesting transactions are signed locally and refused), type
+    `Consumable`, not revoked, quantity 1, an enabled `apple` pack, and carry
+    the account's `appAccountToken` (compared case-insensitively). The credit
+    key is `apple:<originalTransactionId>` (= `transactionId` for a
+    consumable), plus the Directory's first-claim `pur:apple:<id>`.
+  - **App Store Server Notifications v2** (`POST /billing/notify/apple`,
+    `{signedPayload}`): verified the same way, bundle id checked, the
+    signed transaction inside verified too. REFUND and REVOKE claw back once
+    (a retried notification is a replay: nothing more is clawed back or
+    counted). CONSUMPTION_REQUEST is answered with consent
+    ([below](#apple-refund-requests-consumption_request)). TEST,
+    ONE_TIME_CHARGE (the app credits from the transaction itself),
+    REFUND_DECLINED and REFUND_REVERSED (rare; adjust by hand) are
+    acknowledged and logged (`ai_apple_notification`). Answers: 400 for a bad
+    signature or another app; 200 for another environment (a Production
+    notification on the sandbox relay), so Apple stops retrying; 500 when
+    processing failed, so Apple retries.
+  - **Environments.** `AI_BILLING=sandbox` credits only **Sandbox**
+    transactions (TestFlight and development builds); a Production one is
+    `wrong_environment`. Production stays refused until the production
+    switch (staged plan step 8).
 
 ### Web checkout (Stripe)
 
@@ -551,16 +746,27 @@ and the field set in Apple's `app-store-server-library` 3.1.0).
   500 so that Apple retries, and logs `ai_consumption_failed` (an alert). An
   unknown transaction, or one without consent, is logged
   `ai_consumption_skipped` and nothing is sent.
-- **Scaffold.** The fake store emits signed CONSUMPTION_REQUESTs and
-  `FakeConsumptionSender` records the answers. The tests check:
-  - nothing is sent without consent;
-  - the answer is sent with consent;
-  - a withdrawn consent stops answers;
-  - a failure returns 500;
-  - FIFO attribution.
-
-  The real sender signs an App Store Server API JWT with the In-App Purchase
-  key (staged plan step 5).
+- **The sender** (`AppStoreConsumptionSender`, `apple.ts`):
+  `PUT /inApps/v2/transactions/consumption/{transactionId}` on
+  `api.storekit-sandbox.apple.com` or `api.storekit.apple.com` (by the
+  notification's environment), 202 expected, authenticated with an ES256 JWT
+  (`kid` = key id, `iss` = issuer id, `aud: appstoreconnect-v1`,
+  `bid: dev.splanc.app`, 5 minutes) signed with the In-App Purchase key
+  (Worker secrets `APPLE_IAP_KEY`, `APPLE_IAP_KEY_ID`,
+  `APPLE_IAP_ISSUER_ID`). Errors carry only the status and Apple's numeric
+  `errorCode`. Without the key, a consented request is a 500 plus
+  `ai_consumption_failed {reason: not_configured}` (an alert).
+- **In the app.** The iOS buy flow asks once, before the first purchase, on
+  its own step: two equal options ("Yes, share my usage" / "No, don't
+  share"), nothing preselected, Continue disabled until one is chosen
+  (`apple_consumption_asked` on `GET /billing/balance` records that it was
+  answered). Settings ▸ AI ▸ Splanc AI credits ▸ Apple refund requests turns
+  it on or off.
+- **Tests.** The fake store's CONSUMPTION_REQUESTs (`billing.test.ts`) and
+  real-format signed notifications (`billing_apple.test.ts`) check: nothing
+  is sent without consent (never asked, or no), the answer with consent (the
+  sandbox host, the JWT, the body), a withdrawn consent stops answers, a
+  failure or a missing key returns 500, and FIFO attribution.
 
 ### Pricing config (`pricing.ts`)
 
@@ -628,13 +834,14 @@ only, so it never learns that web packs exist.
 | `POST /billing/account` | none (IP-limited) | New anonymous account → `{account_id, token, account_ref, balance_credits}` (0: no trial) |
 | `POST /billing/age` | session | `{confirm: true}`: the user confirmed 18+ (buying is 18+) |
 | `DELETE /billing/account` | session | Close the account (deletion) |
-| `GET /billing/balance` | session | `{balance_credits, held_credits, available_credits, low, status, adult, pricing_version}` |
+| `GET /billing/balance` | session | `{balance_credits, held_credits, available_credits, low, status, adult, apple_consumption_consent, apple_consumption_asked, account_ref, pricing_version}` |
 | `GET /billing/pricing?channel=` | none | The public pricing view |
 | `GET /billing/statement` | session | The newest 50 entries (numbers only) |
-| `POST /billing/purchase/<apple\|web>` | session | Proof of purchase → credit (201; a replay is 200 with the same entry) |
+| `POST /billing/purchase/<apple\|web>` | session | Proof of purchase → credit (201; a replay is 200 with the same entry). Apple: `{jws}` = StoreKit 2's `jwsRepresentation` |
 | `POST /billing/consent` | session | `{apple_consumption: bool}`: the opt-in to answer Apple's refund consumption requests |
-| `POST /billing/notify/<apple\|web>` | store signature | Refunds / revocations → claw back; Apple CONSUMPTION_REQUEST → consumption answer (with consent) |
+| `POST /billing/notify/<apple\|web>` | store signature | Refunds / revocations → claw back; Apple CONSUMPTION_REQUEST → consumption answer (with consent). Apple: App Store Server Notifications v2 `{signedPayload}` |
 | `POST /billing/admin/status` | admin token (`BILLING_ADMIN_TOKEN`) | `{account, status: active\|suspended, reason?}`: abuse suspension / reinstatement |
+| `GET /billing/signin/config`, `POST /billing/signin[/nonce\|/switch\|/unlink\|/apple/notify]` | see §Sign in with Apple and Google | Link, sign in, conflicts, unlink, Apple notifications |
 | `POST /ai/v1/messages` | session | The metered proxy (SSE) |
 
 Error shape: `{error, message}`. The errors are:
@@ -650,11 +857,12 @@ Error shape: `{error, message}`. The errors are:
 
 ### Flows
 
-- **Buy (iOS).** Panel ▸ Buy ▸ StoreKit sheet with Apple's price → the
-  plugin returns the signed transaction → `POST /billing/purchase/apple` →
-  credited → `finish()` → the balance updates. On a crash in between, the
-  unfinished transaction is re-sent at the next start. The credit is
-  idempotent.
+- **Buy (iOS).** The credits flow (intro → account + 18+ → recovery email →
+  the Apple refund-request consent, once → packs with Apple's prices) ▸
+  "Buy for $4.99" ▸ the App Store sheet → the plugin returns the signed
+  transaction → `POST /billing/purchase/apple` → credited → `finish()` → the
+  balance. On a crash in between, the unfinished transaction is re-sent at
+  the next start. The credit is idempotent.
 - **Buy (web / Android).** Panel ▸ Buy ▸ Stripe Checkout (card, Apple Pay,
   Google Pay) → return to the app → poll the balance until the webhook has
   credited it (it usually arrives within seconds).
@@ -666,7 +874,8 @@ Error shape: `{error, message}`. The errors are:
   and a Buy button, never an error dump.
 - **Refund.** Apple or Stripe notifies → claw back (once) → a negative balance
   blocks spending until it is topped up.
-- **Restore.** Sign in on the new device. The balance is on the account.
+- **Restore.** Sign in on the new device (Apple / Google, or the recovery
+  email). The balance is on the account.
 - **BYO key.** Untouched. "Cloud ▸ Anthropic" + key calls Anthropic directly
   with the user's key. Splanc's server is never involved, and the "Splanc AI
   credits" option doesn't change that path.
@@ -917,18 +1126,16 @@ accounts or secrets; everything else is code.
    US$10 / US$25 prices (their ids go in the sandbox pricing config), then the
    [sandbox deploy](#sandbox-deploy-runbook). Live keys and live price ids
    come in step 8.
-5. **iOS In-App Purchase:** the `storekit-bridge` plugin (StoreKit 2,
-   `appAccountToken`), JWS verification (Apple Root CA G3), App Store Server
-   Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST, with the real
-   `ConsumptionSender`: an App Store Server API JWT), unfinished
-   transaction replay, a StoreKit configuration file for Simulator tests.
-   **[owner]**: sign the Paid Apps agreement and the banking / tax forms as
-   the owner's LLC, enrol in the Small Business Program, create the three
-   consumables (`dev.splanc.app.credits.small` / `.medium` / `.large` at
-   US$4.99 / 9.99 / 19.99) with review screenshots, set the Server
-   Notifications v2 URL (sandbox and production), create an In-App Purchase
-   key for the App Store Server API, and store its key id, issuer id and
-   private key as Worker secrets.
+5. **Built (PR: iOS In-App Purchase): iOS In-App Purchase.** The
+   `storekit-bridge` plugin (StoreKit 2, `appAccountToken`), local JWS
+   verification (Apple Root CA G3), App Store Server Notifications v2
+   (REFUND, REVOKE, CONSUMPTION_REQUEST with the real `ConsumptionSender`,
+   TEST), unfinished-transaction replay and `Transaction.updates`, the iOS
+   buy flow with the consent step. No StoreKit configuration file: Xcode's
+   local transactions aren't signed by Apple, so the relay can't credit them;
+   tests use TestFlight (the Sandbox environment).
+   **[owner]**: everything in the
+   [App Store Connect checklist](#ios-in-app-purchase-runbook).
 6. **UX:** live balance under replies, low-balance and 402 handling in the
    chat, the "busy, try later" state, the statement view, the model picker
    from `/billing/pricing`.
@@ -1026,6 +1233,126 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://splanc-relay.<subdomain
   so Workers Logs won't show every billing event. The Grafana Cloud Logs push
   (when configured) gets all of them.
 
+## iOS In-App Purchase runbook
+
+The owner does the App Store Connect part; the relay part needs the owner's
+approval (secrets and a deploy). Nothing here is in the repo but names.
+
+### App Store Connect checklist
+
+1. **Agreements, Tax, and Banking:** the **Paid Apps** agreement active,
+   with the bank account and tax forms, as the owner's company (the account
+   holder). Without it, products can't be bought, not even in the sandbox.
+2. **App Store Small Business Program:** enrol (the 15 % rate is what the
+   `apple` channel's `fee_percent: 0.15` and `markup: 0.4` assume). It
+   applies from the first full month after approval.
+3. **Products** (Splanc ▸ Monetization ▸ In-App Purchases ▸ +), each
+   **Consumable**, exactly these product ids (the relay's `apple` packs;
+   the credits are the relay's, not Apple's):
+
+   | Reference name | Product ID | Price (USA, base) | Credits | Display name (suggested) |
+   | --- | --- | --- | --- | --- |
+   | Splanc AI credits S | `dev.splanc.app.credits.small` | US$4.99 | 356 | 356 Splanc AI credits |
+   | Splanc AI credits M | `dev.splanc.app.credits.medium` | US$9.99 | 713 | 713 Splanc AI credits |
+   | Splanc AI credits L | `dev.splanc.app.credits.large` | US$19.99 | 1,427 | 1,427 Splanc AI credits |
+
+   For each: availability in all countries (Apple sets the local prices from
+   the US base price), a description ("Prepaid credits for Claude in
+   Splanc's effect editor. 1 credit = US$0.01 of AI usage."), the review
+   screenshot (the packs screen of the iOS flow), review notes (how to reach
+   it: Settings ▸ AI ▸ Splanc AI credits; the flag is on for the review
+   build). Submit them with the next app version (the first In-App Purchases must ride along with
+   an app submission).
+4. **App Store Server Notifications** (Splanc ▸ App Information ▸ App Store
+   Server Notifications): **Sandbox Server URL** =
+   `https://splanc-relay.<subdomain>.workers.dev/billing/notify/apple`,
+   **Version 2**. Leave the **Production Server URL** empty until the
+   production switch (the sandbox relay would acknowledge and ignore them).
+5. **In-App Purchase key** (Users and Access ▸ Integrations ▸ In-App
+   Purchase ▸ Generate): name "Splanc relay". Download the `.p8` once
+   (`SubscriptionKey_<KEYID>.p8`) and store, on the host only:
+   - `credentials/apple_iap_key.p8`: the downloaded file, unchanged;
+   - `credentials/apple_iap_key_id.txt`: the key id (10 characters);
+   - `credentials/apple_iap_issuer_id.txt`: the issuer id shown on the same
+     page (a UUID).
+
+   It is only used to answer CONSUMPTION_REQUEST (and by
+   `apple_iap_check.mjs`). It is **not** the App Store Connect API key the
+   TestFlight upload uses.
+6. **Sandbox tester** (Users and Access ▸ Sandbox ▸ Test Accounts ▸ +): an
+   address that is not an Apple Account yet, storefront United States. On the
+   test iPhone: Settings ▸ Developer ▸ Sandbox Apple Account (developer mode
+   on), or sign in when the purchase sheet asks. Needed for development
+   builds installed from Xcode (`tools/ios_deploy`); **TestFlight builds buy
+   with the tester's own Apple Account in the sandbox, free of charge**, so a
+   TestFlight run needs none.
+7. **App privacy** (Splanc ▸ App Privacy): add **Purchases ▸ Purchase
+   history** (App Functionality, linked to the user's account, not tracking)
+   and, for the consumption answers, **Usage Data ▸ Product Interaction**
+   shared with Apple for App Functionality.
+
+### Relay: secrets and deploy (owner approval)
+
+Run on the host from the repo root with `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` set, after this PR merges. Verification needs no
+secret; only the consumption answers need the key.
+
+```bash
+cd agent/relay
+W="pnpm dlx wrangler@4"
+./deploy.sh                                   # the code (no new bindings or migrations)
+$W secret put APPLE_IAP_KEY        --config wrangler.toml < ../../credentials/apple_iap_key.p8
+tr -d '\n' < ../../credentials/apple_iap_key_id.txt    | $W secret put APPLE_IAP_KEY_ID    --config wrangler.toml
+tr -d '\n' < ../../credentials/apple_iap_issuer_id.txt | $W secret put APPLE_IAP_ISSUER_ID --config wrangler.toml
+cd ../..
+# Check: the apple packs, a forged notification refused, and Apple's own TEST
+# notification delivered to the Sandbox Server URL and verified by the relay.
+RELAY=https://splanc-relay.<subdomain>.workers.dev \
+APPLE_IAP_KEY_FILE=credentials/apple_iap_key.p8 \
+APPLE_IAP_KEY_ID_FILE=credentials/apple_iap_key_id.txt \
+APPLE_IAP_ISSUER_ID_FILE=credentials/apple_iap_issuer_id.txt \
+  node agent/relay/apple_iap_check.mjs
+```
+
+The pricing config needs no change: `billing.sandbox.pricing.json` already
+has the three `apple` packs. The Pages forwarding already passes
+`/billing/purchase/apple`; Apple calls the workers.dev address directly.
+
+### Sandbox test on a TestFlight build
+
+1. Ship a TestFlight build from this branch (Actions ▸ macOS ▸ Run workflow;
+   the plugin is compiled by `cap sync`, no Info.plist or entitlement
+   change: In-App Purchase needs none).
+2. On the iPhone, in Splanc: Settings ▸ Behavior ▸ Developer ▸ Enable Debug
+   Settings **On**, then Settings ▸ Debugging ▸ Feature previews ▸ Splanc AI
+   credits **On** (a TestFlight build's web view can't be inspected, so the
+   flag has this switch), then relaunch the app.
+3. Settings ▸ AI ▸ Splanc AI credits ▸ **Get Splanc AI credits**: Get
+   started → Create account (18+) → Continue without email → Continue
+   anonymously → the refund-request question (choose **Yes**) → the packs
+   show Apple's prices → **Buy for $4.99** → the sheet says
+   "[Environment: Sandbox]" → confirm. Expected: "You're all set", 356
+   credits; Recent activity shows the purchase; the relay log has
+   `ai_purchase {channel: apple}`.
+4. **Cancel:** buy again, cancel the sheet → "Purchase cancelled. Nothing
+   was charged.", back on the packs.
+5. **Crash between paying and crediting:** turn on Airplane Mode after the
+   sheet confirms (or kill the app right after) → "Payment received, adding
+   credits". Reconnect and relaunch → a toast "356 credits added"; the
+   balance is credited once.
+6. **Check for purchases:** Settings ▸ AI ▸ Splanc AI credits ▸ App Store
+   purchases ▸ Check for purchases → "Nothing waiting…".
+7. **Refunds and consumption answers** in the sandbox need an in-app refund
+   request (StoreKit `beginRefundRequest`), which the app doesn't offer yet
+   (see the decisions); reportaproblem.apple.com doesn't handle sandbox
+   purchases. The relay side (REFUND clawback, CONSUMPTION_REQUEST answered
+   with consent through the sandbox API) is covered by
+   `agent/tests/billing_apple.test.ts`, and the TEST notification above
+   proves the URL, the signature check and the key against Apple itself.
+8. **Ask to Buy** can't be simulated against Apple's sandbox servers; the
+   path is covered by the unit tests (`web/tests/iap.test.ts`).
+9. Delete the account (danger zone) when done.
+
 ## Risks
 
 - **Store review.** Apple may question an AI-credits consumable. The
@@ -1079,6 +1406,10 @@ consent. Revisit later:
   - `platform.ts`: env.
 - `web/src/effects/ai/providers/credits.ts`: the flag-gated provider, session,
   stub balance.
+- Apple In-App Purchase (later PR): `agent/relay/src/billing/apple.ts`,
+  `web/native-plugins/storekit-bridge`, `web/src/net/storeKit.ts`,
+  `web/src/effects/ai/iap.ts`, tests `agent/tests/billing_apple.test.ts` and
+  `web/tests/iap.test.ts`.
 - `provider.ts`: the `credits` kind, gated by the flag.
 - `generate.ts`: `activeProvider`.
 - `anthropic.ts`: `messagesRequestBody` shared; the BYO request is unchanged.
