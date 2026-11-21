@@ -135,6 +135,7 @@ copy_to_bin(
         "src/net/textureCodec.ts",
         "src/net/uniformWire.ts",  # wide (mat3/mat4) uniforms: wire chunking + reassembly
         "src/net/wifiPolicy.ts",  # Wi-Fi rejoin policy (get/set_wifi_policy)
+        "src/power/touchDriver.ts",  # the touch-sensor driver template (setup_touch_sensor)
         "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)
         # The 3D map view (and what it imports), for the demo stage's fixture
         # previews (agent/src/stage/view.ts, bundled for the browser).
@@ -242,6 +243,12 @@ ts_project(
             "src/ui/screens/showMode.ts",
             # Halloween play mode compiles its preset tiles with the worker too.
             "src/ui/screens/playMode.ts",
+            # The lamp-power Transitions flow compiles transition effects with it too.
+            "src/ui/screens/powerTransitions.ts",
+            # The Sensors page + kit onboarding compile the touch driver with it.
+            "src/ui/screens/driverCompile.ts",
+            "src/ui/screens/sensors.ts",
+            "src/ui/screens/kitOnboarding.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
             # The JIT fx-bench golden lives here only for the shared
@@ -283,6 +290,8 @@ _TEST_SOURCE_DATA = {
     "tests/rollingStride.test.ts": [
         ":kernel_golden_stride_rolling",
     ],
+    # The canonical TTP223 touch driver touchDriverSource() must reproduce.
+    "tests/touchDriver.test.ts": [":drivers_ttp223_touch"],
     # Real diffused-rope frames + exact LED centres (tests/tools/build_diffuse_dataset.py).
     "tests/diffuseRope.test.ts": glob(["tests/testdata/diffuse_rope/**"]),
 }
@@ -302,6 +311,13 @@ _TEST_SOURCE_DATA = {
         "golden_stride_rolling",
     ]
 ]
+
+# The canonical touch driver (lamp power), copied in like the goldens above.
+copy_file(
+    name = "drivers_ttp223_touch",
+    src = "//firmware/sensor:drivers/ttp223_touch.fx",
+    out = "firmware_drivers/ttp223_touch.fx",
+)
 
 # One js_test per tests/*.test.ts file, running the emitted CJS under
 # node:test (registering tests at require-time sets the exit code), wrapped by

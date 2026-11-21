@@ -43,6 +43,9 @@ import { SettingsScreen } from "../screens/settings";
 import { WifiNetworksScreen } from "../screens/wifiNetworks";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
+import { PowerTransitionsScreen } from "../screens/powerTransitions";
+import { SensorsScreen } from "../screens/sensors";
+import { KitOnboardingScreen } from "../screens/kitOnboarding";
 import { HardwareSetupScreen } from "../screens/hardwareSetup";
 import { NewFixtureScreen } from "../screens/newFixture";
 import { installNewFixtureWatch } from "./newFixtureWatch";
@@ -219,6 +222,21 @@ async function main(): Promise<void> {
     .add("/settings/hardware", () => {
       shell.setChrome({ title: "Hardware Setup", back: true, tabs: true });
       return HardwareSetupScreen(router);
+    })
+    .add("/device/transitions", () => {
+      // Lamp power: the dedicated ON / OFF transitions flow (docs/design/lamp-power.md).
+      shell.setChrome({ title: "Transitions", back: true, tabs: true });
+      return PowerTransitionsScreen(router);
+    })
+    .add("/sensors", () => {
+      // Sensor modules (a touch lid toggling power): agent chat + form + live test.
+      shell.setChrome({ title: "Sensors", back: true, tabs: true });
+      return SensorsScreen(router);
+    })
+    .add("/kit/:id", (m) => {
+      // Kit onboarding from the booklet QR (kits/kits.ts kitUrl).
+      shell.setChrome({ title: "Set up your lamp", back: false, tabs: false });
+      return KitOnboardingScreen(router, m.params["id"]);
     })
     .add("/settings/ai", () => {
       // Settings ▸ AI: the AI provider settings + Splanc AI credits account.
