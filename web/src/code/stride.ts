@@ -14,6 +14,8 @@
  * transmits its own full hue code, so ids stay absolute.
  */
 
+import type { CodeParams } from "@ledmapper/protocol";
+import { secded, syncCode } from "./gray";
 import { kernel } from "./kernel";
 
 export interface StrideParams {
@@ -69,4 +71,106 @@ export function litLeds(ledCount: number, phase: number, p: StrideParams): numbe
   const out: number[] = [];
   for (let led = 0; led < ledCount; led++) if (strideLit(led, phase, p)) out.push(led);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Rolling stride (docs/design/rolling-stride.md): the lit subset is a pure
+// function of (LED, pattern-clock frame), so the phone never reconfigures to
+// stride. Blocks of A·S LEDs each step their offset on their own clock (block
+// b+1 one code cycle ahead of block b), every D code cycles; each LED lights
+// for whole own cycles only; at a block boundary the later-started LED yields.
+// ---------------------------------------------------------------------------
+
+/** The welcome feature of a player that runs the rolling stride
+ * (firmware/player FEATURE_STRIDE_ROLLING). */
+export const FEATURE_STRIDE_ROLLING = "stride_rolling";
+
+/** The dwell the phone asks for, in code cycles (the design doc's D = 4: three
+ * whole own cycles per dwell under hue code v2, one more than the two
+ * confirmations a decode needs). */
+export const ROLLING_DWELL_CYCLES = 4;
+
+export type StrideMode = "phased" | "rolling";
+
+/** A `?stride=` debug override: "phased" or "rolling", else null. */
+export function forcedStrideMode(v: string | null): StrideMode | null {
+  return v === "phased" || v === "rolling" ? v : null;
+}
+
+/**
+ * The stride schedule a capture asks a player for: rolling when the player
+ * advertises it, otherwise nothing (older firmware runs phased). A `?stride=`
+ * override wins. The phone follows whatever codeParams.strideMode the reply
+ * carries, so the request is never a promise.
+ */
+export function requestedStrideMode(
+  forced: StrideMode | null,
+  features: readonly string[] | undefined,
+): { strideMode: StrideMode; dwellCycles?: number } | null {
+  const mode = forced ?? (features?.includes(FEATURE_STRIDE_ROLLING) ? "rolling" : null);
+  if (mode === null) return null;
+  return mode === "rolling" ? { strideMode: mode, dwellCycles: ROLLING_DWELL_CYCLES } : { strideMode: mode };
+}
+
+/** True when the device is driving a rolling stride (striding on, mode rolling):
+ * the phone then never sends a stride phase. */
+export function isRollingStride(params: Pick<CodeParams, "strideMode" | "strideSpacing">): boolean {
+  return params.strideMode === "rolling" && (params.strideSpacing ?? 0) > 1;
+}
+
+export interface RollingGeometry {
+  spacing: number;
+  anchorDensity: number;
+  dwellCycles: number;
+  /** Physical LEDs on the strip (0 = unbounded). */
+  ledCount: number;
+  /** Group capture: LED i transmits id i + codeOffset. */
+  codeOffset?: number;
+}
+
+/** The rolling geometry the device runs, from its CodeParams (null when it is
+ * not running a rolling stride). `ledCount` is the physical strip length. */
+export function rollingGeometry(params: CodeParams, ledCount: number): RollingGeometry | null {
+  if (!isRollingStride(params)) return null;
+  return {
+    spacing: params.strideSpacing ?? 0,
+    anchorDensity: params.anchorDensity ?? 3,
+    dwellCycles: params.dwellCycles ?? ROLLING_DWELL_CYCLES,
+    ledCount,
+    codeOffset: params.codeOffset ?? 0,
+  };
+}
+
+/** The dwell the kernel actually runs for a requested one (clamped). */
+export function rollingDwell(dwellCycles: number): number {
+  return kernel().pk_stride_rolling_dwell(Math.max(0, Math.floor(dwellCycles)));
+}
+
+/** Frames per rolling period (every LED lights once per period): S·D·C. */
+export function rollingPeriodFrames(params: Pick<CodeParams, "cycleFrames">, g: RollingGeometry): number {
+  return Math.max(1, Math.floor(g.spacing)) * rollingDwell(g.dwellCycles) * Math.max(1, params.cycleFrames);
+}
+
+/**
+ * Is physical LED `led` lit at pattern-clock frame `seq` (ABSOLUTE frames since
+ * the epoch, not reduced modulo the cycle) under the rolling stride? The same
+ * kernel function the player masks with (`stride_lit_rolling`).
+ */
+export function strideLitRolling(led: number, seq: number, params: CodeParams, g: RollingGeometry): boolean {
+  return (
+    kernel().pk_stride_lit_rolling(
+      led,
+      Math.max(0, Math.floor(seq)),
+      params.ledCount,
+      params.bits,
+      params.symbols,
+      secded(params),
+      syncCode(params),
+      Math.max(0, Math.floor(g.spacing)),
+      Math.max(0, Math.floor(g.anchorDensity)),
+      Math.max(0, Math.floor(g.dwellCycles)),
+      Math.max(0, Math.floor(g.ledCount)),
+      Math.max(0, Math.floor(g.codeOffset ?? 0)),
+    ) !== 0
+  );
 }

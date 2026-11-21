@@ -42,7 +42,12 @@ import {
   setDriverCaptureError,
 } from "../../driver/guard";
 import { forcedSyncPattern, isStaggered, requestedSyncPattern } from "../../code/gray";
-import { phaseCount as stridePhaseCount } from "../../code/stride";
+import {
+  forcedStrideMode,
+  isRollingStride,
+  phaseCount as stridePhaseCount,
+  requestedStrideMode,
+} from "../../code/stride";
 import {
   fillChannelGaps,
   planChannelCapture,
@@ -229,6 +234,10 @@ const forcedSymbols = ((): 2 | 4 | null => {
 // The phone always decodes the CodeParams.syncPattern the device answers with.
 // `?sync=` is a debug override only (e.g. `?sync=v1` forces the old pattern).
 const forcedSync = forcedSyncPattern(qs.get("sync"));
+// Diffuse striding runs ROLLING (docs/design/rolling-stride.md) on players that
+// advertise `stride_rolling`: the lit subset follows the pattern clock, so the
+// phone never reconfigures to stride. `?stride=phased` forces the old schedule.
+const forcedStride = forcedStrideMode(qs.get("stride"));
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
@@ -1370,6 +1379,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Diffuse mode: start on phase 0 of the stride schedule; the tick below
         // rotates the phase. Firmware masks all but the phase's sparse subset.
         ...(diffuse ? { strideSpacing, anchorDensity, stridePhase: 0 } : {}),
+        // Rolling stride where the player runs it: asked for even when the run
+        // starts dense, since the mode sticks across the configures that turn
+        // striding on (live diffuse toggle, per-channel stage switch).
+        ...(requestedStrideMode(forcedStride, c.welcome?.features) ?? {}),
         // Per-channel capture: the code book covers the WHOLE fixture from the
         // start, so ids + code timing never change between stages.
         ...(channelPlan !== null ? { codeSpace: channelPlan.total } : {}),
@@ -1486,11 +1499,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // hue-code + frame timing the decoder expects (matches the device side).
       syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
       // Diffuse phase rotation state (a no-op when !diffuse: phaseTotal === 1).
+      // Under a ROLLING stride (the device says so in codeParams.strideMode) the
+      // phase is never rotated: the lit subset follows the pattern clock, and
+      // the decoded-id coverage is the progress measure.
       let phaseTotal = diffuse ? stridePhaseCount({ spacing: strideSpacing, anchorDensity }) : 1;
       let phaseIdx = 0;
       let lastPhaseAt = performance.now();
+      const strideLine = (): string =>
+        isRollingStride(params)
+          ? `diffuse: rolling stride ${strideSpacing} · ${Math.round((100 * decodedIds.size) / Math.max(1, ledCount))}% decoded`
+          : `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing})`;
       guideEl.textContent = diffuse
-        ? `diffuse: phase 1/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
+        ? `${strideLine()} · ${params.symbols} symbols`
         : `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
       // Per-channel stage state (capture/channelCapture.ts).
       let stageIdx = 0;
@@ -1999,6 +2019,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           strideSpacing?: number;
           anchorDensity?: number;
           stridePhase?: number;
+          strideMode?: "phased" | "rolling";
+          dwellCycles?: number;
         },
         onApplied?: () => void,
       ): void => {
@@ -2025,7 +2047,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             runLink?.attachDecoder(() => pl.stats);
             runLink?.config(performance.now(), params, "reconfigure", monitor.frameIntervalMs());
             guideEl.textContent = diffuse
-              ? `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
+              ? `${strideLine()} · ${params.symbols} symbols`
               : `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
                 ` · LED ${Math.round((params.brightness ?? 1) * 100)}%`;
           })
@@ -2290,17 +2312,19 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // in a lit (sparse, non-overlapping) subset. Fixed dwell of a few code
         // cycles per phase; skip if a servo reconfig just fired (they share the
         // configure/epoch-rebuild path via applyReconfigure + `renegotiating`).
+        // A ROLLING stride needs none of this (no configure, no decoder
+        // rebuild): the HUD just shows the decoded-id coverage.
         applyDiffuseSwitch();
         maybeAdvanceStage();
-        if (diffuse && wantDiffuse && !renegotiating) {
+        if (diffuse && isRollingStride(params)) {
+          guideEl.textContent = (channelPlan !== null ? `${stageLabel(channelPlan, stageIdx)} · ` : "") + strideLine();
+        } else if (diffuse && wantDiffuse && !renegotiating) {
           const dwellMs = Math.max(3000, 4 * params.cycleFrames * params.bitPeriodMs);
           if (performance.now() - lastPhaseAt > dwellMs) {
             phaseIdx = (phaseIdx + 1) % phaseTotal;
             lastPhaseAt = performance.now();
             applyReconfigure({ stridePhase: phaseIdx });
-            guideEl.textContent =
-              (channelPlan !== null ? `${stageLabel(channelPlan, stageIdx)} · ` : "") +
-              `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing})`;
+            guideEl.textContent = (channelPlan !== null ? `${stageLabel(channelPlan, stageIdx)} · ` : "") + strideLine();
           }
         }
       }, 2000);

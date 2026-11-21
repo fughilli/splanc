@@ -28,6 +28,7 @@
 
 import type { CodeParams, DetectionRecord, Pose, Vec3 } from "@ledmapper/protocol";
 import { codeBookFor, colorForFrame } from "../src/code/gray";
+import { strideLit, strideLitRolling, type RollingGeometry } from "../src/code/stride";
 import { frameIndexAt } from "../src/code/timing";
 import {
   BIT_PERIOD_MAX_MS,
@@ -93,6 +94,18 @@ export interface LinkPolicy {
   /** Sync pattern the LEDs run (default v1 "on_off"; "stagger_pilot", or the
    * sim-only "stagger_white" comparator — hue code v2 phase 2). */
   sync?: string;
+  /** Diffuse striding (docs/design/rolling-stride.md). "phased": the capture
+   * page's schedule — the phase advances every `phaseDwellMs` by a configure
+   * (new epoch, pipeline rebuilt), through the 2S-1 phases incl. bridges.
+   * "rolling": the kernel's stride_lit_rolling at the pattern-clock frame, no
+   * configure. Omit = every LED lit. */
+  stride?: {
+    mode: "phased" | "rolling";
+    spacing: number;
+    anchorDensity: number;
+    dwellCycles?: number;
+    phaseDwellMs?: number;
+  };
 }
 
 export const BASELINE_POLICY: LinkPolicy = {
@@ -196,10 +209,18 @@ interface CodeEpoch {
   fromLocalMs: number;
   params: CodeParams;
   epochServer: number;
+  /** Phased stride: the phase this epoch lights. */
+  phase?: number;
 }
 
 export interface LinkSimResult {
   telemetry: LinkTelemetrySnapshot;
+  /** Records emitted per 1 s bin (bin i = [i, i+1) s of local time). */
+  recordsPerS: number[];
+  /** Distinct ids decoded per 1 s bin. */
+  idsPerS: number[];
+  /** Phased stride: configures sent to advance the phase. */
+  strideConfigures: number;
   /** LED ids that were visible (unoccluded, in frame, bright enough) at least once. */
   visibleIds: number;
   records: number;
@@ -237,8 +258,29 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
   };
 
   const epochs: CodeEpoch[] = [
-    { fromLocalMs: -Infinity, params: codeParams(sc.ledCount, symbols, bitMs, brightness, policy.sync), epochServer: EPOCH0 },
+    {
+      fromLocalMs: -Infinity,
+      params: codeParams(sc.ledCount, symbols, bitMs, brightness, policy.sync),
+      epochServer: EPOCH0,
+      phase: 0,
+    },
   ];
+  const stride = policy.stride;
+  const rollingGeom: RollingGeometry | null =
+    stride?.mode === "rolling"
+      ? { spacing: stride.spacing, anchorDensity: stride.anchorDensity, dwellCycles: stride.dwellCycles ?? 4, ledCount: sc.ledCount }
+      : null;
+  const phaseCountOf = (s: number): number => (s <= 1 ? 1 : 2 * s - 1);
+  /** Is LED `id` lit at local time `tk` under the code epoch `e`? */
+  const litAt = (id: number, tk: number, e: CodeEpoch): boolean => {
+    if (stride === undefined || stride.spacing <= 1) return true;
+    if (rollingGeom !== null) {
+      const seq = Math.floor((tk + CLOCK_OFFSET - e.epochServer) / e.params.bitPeriodMs);
+      return seq >= 0 && strideLitRolling(id, seq, e.params, rollingGeom);
+    }
+    return strideLit(id, e.phase ?? 0, { spacing: stride.spacing, anchorDensity: stride.anchorDensity });
+  };
+  let lastPhaseAt = 0;
   const ledCodeAt = (tLocal: number): CodeEpoch => {
     for (let i = epochs.length - 1; i >= 0; i--) if (tLocal >= epochs[i]!.fromLocalMs) return epochs[i]!;
     return epochs[0]!;
@@ -253,6 +295,10 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
     truth: (r: DetectionRecord) => frameTruth.get(key(r.tCaptureMs, r.u, r.v)) ?? null,
   });
   let records = 0;
+  const recordsPerS: number[] = [];
+  const idsPerSSets: Set<number>[] = [];
+  let strideConfigures = 0;
+  let nowLocal = 0;
   const quality = new ChannelQuality();
   const planner = new AlphabetPlanner([2, 4]);
   const makePipeline = (e: CodeEpoch): CvPipeline => {
@@ -260,6 +306,11 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
     pl.onDetections((rs) => {
       records += rs.length;
       tel.recordsEmitted(rs);
+      const bin = Math.max(0, Math.floor(nowLocal / 1000));
+      while (recordsPerS.length <= bin) recordsPerS.push(0);
+      while (idsPerSSets.length <= bin) idsPerSSets.push(new Set());
+      recordsPerS[bin]! += rs.length;
+      for (const r of rs) idsPerSSets[bin]!.add(r.ledId);
     });
     return pl;
   };
@@ -285,6 +336,7 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
   while (tTrue < sc.durationMs) {
     const interval = 1000 / fpsAt(tTrue);
     const tFrame = tTrue;
+    nowLocal = tFrame;
     tTrue += interval * (1 + 0.04 * gauss() * 0.25);
     const dropped = rand() < (sc.dropP ?? 0);
 
@@ -328,6 +380,7 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
       let v1 = 0;
       const col: [number, number, number] = [0, 0, 0];
       let ok = true;
+      let litSubs = 0;
       for (let k = 0; k < SUBSAMPLES; k++) {
         // Exposure window [tFrame - expMs, tFrame]: the frame's light.
         const tk = tFrame - expMs * ((k + 0.5) / SUBSAMPLES);
@@ -347,13 +400,15 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
           v1 = pr.v;
         }
         const e = ledCodeAt(tk);
+        if (!litAt(id, tk, e)) continue;
+        litSubs++;
         const fi = frameIndexAt(tk + CLOCK_OFFSET, e.epochServer, e.params);
         const c = colorForFrame(id, fi, e.params);
         col[0] += c[0] / SUBSAMPLES;
         col[1] += c[1] / SUBSAMPLES;
         col[2] += c[2] / SUBSAMPLES;
       }
-      if (!ok) continue;
+      if (!ok || litSubs === 0) continue;
       const u = su / SUBSAMPLES;
       const v = sv / SUBSAMPLES;
       if (u < 0 || u >= IMG_W || v < 0 || v >= IMG_H) continue;
@@ -423,6 +478,23 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
       popSat = popGray = popI = popN = 0;
       blobCountSum = 0;
       frames = 0;
+      // Phased stride: the capture page's rotation (a configure per phase).
+      const curE = ledCodeAt(tFrame);
+      const dwellMs = stride?.phaseDwellMs ?? Math.max(3000, 4 * curE.params.cycleFrames * curE.params.bitPeriodMs);
+      if (pendingSwitch === null && stride?.mode === "phased" && stride.spacing > 1 && tFrame - lastPhaseAt > dwellMs) {
+        lastPhaseAt = tFrame;
+        strideConfigures++;
+        const at = tFrame + CONFIGURE_LATENCY_MS;
+        pendingSwitch = {
+          atLocal: at,
+          e: {
+            fromLocalMs: at,
+            params: curE.params,
+            epochServer: at + CLOCK_OFFSET,
+            phase: ((curE.phase ?? 0) + 1) % phaseCountOf(stride.spacing),
+          },
+        };
+      }
       if (pendingSwitch === null) {
         const curP = pipeline.params;
         const wantBit = policy.bitPeriodMs === "auto" ? planReconfigure(curP.bitPeriodMs, fi) : null;
@@ -449,6 +521,7 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
                 policy.sync,
               ),
               epochServer: at + CLOCK_OFFSET,
+              phase: ledCodeAt(tFrame).phase ?? 0,
             },
           };
           pendingBit = pendingSym = null;
@@ -459,7 +532,17 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
       }
     }
   }
-  return { telemetry: tel.snapshot(sc.durationMs + latency), visibleIds: seen.size, records };
+  const bins = Math.ceil(sc.durationMs / 1000);
+  while (recordsPerS.length < bins) recordsPerS.push(0);
+  while (idsPerSSets.length < bins) idsPerSSets.push(new Set());
+  return {
+    telemetry: tel.snapshot(sc.durationMs + latency),
+    visibleIds: seen.size,
+    records,
+    recordsPerS,
+    idsPerS: idsPerSSets.map((x) => x.size),
+    strideConfigures,
+  };
 }
 
 function diffs(xs: readonly number[]): number[] {
