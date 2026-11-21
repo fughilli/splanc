@@ -20,20 +20,29 @@ rust_library(
     srcs = [
         "src/clock.rs",
         "src/fx.rs",
+        "src/gpio_cdev.rs",
         "src/health.rs",
         "src/http.rs",
         "src/lib.rs",
         "src/ota.rs",
         "src/output.rs",
+        "src/pacing.rs",
+        "src/pipeline.rs",
         "src/render.rs",
+        "src/rt.rs",
         "src/schedule.rs",
         "src/server.rs",
         "src/session.rs",
         "src/spi_retry.rs",
+        "src/triple.rs",
         "src/wire.rs",
     ],
     crate_name = "ledmapper_player_rs",
     edition = "2021",
+    # The MAX output-thread modules (gpio_cdev.rs, pacing.rs, pipeline.rs, rt.rs:
+    # the GPIO v2 uAPI, SCHED_FIFO / affinity, clock_nanosleep) are Linux-only and
+    # compiled out elsewhere (#[cfg(target_os = "linux")] in lib.rs), so the
+    # library and player_host still build on macOS.
     deps = [
         # The reused firmware session/pattern/effects core — host protobuf
         # profile (the Pi has RAM to spare), depended on directly (no FFI).
@@ -51,6 +60,9 @@ rust_library(
         "//shared/protocol/rust:ledmapper_pb",
         "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
+        # Output pacing: GPIO v2 uAPI ioctls, SCHED_FIFO, affinity, mlockall
+        # (gpio_cdev.rs, pacing.rs, rt.rs). Already in the graph via tokio/spidev.
+        "@player_crates//:libc",
         # Phase 3 WS+TLS transport (server.rs) — PURE RUST crypto (no ring/C).
         "@player_crates//:futures-util",
         "@player_crates//:p256",
@@ -82,6 +94,10 @@ rust_binary(
         ],
         "//conditions:default": [],
     }),
+    # spidev + the Linux-only output-thread modules. The deploy builds it for the
+    # aarch64-linux-musl platform (//pi/player_rs/musl), from macOS too; a native
+    # macOS `bazel test //...` skips it.
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         ":player_rs",
         "//firmware/player",

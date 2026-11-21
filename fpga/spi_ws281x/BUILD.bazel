@@ -89,6 +89,8 @@ verilog_sim(
 verilog_sim(
     name = "spi_ws281x_120fps_sim",
     size = "medium",
+    # ~10 M core cycles: a VCD of even the tb scope is hundreds of MB.
+    format = "fst",
     tb = "spi_ws281x_120fps_tb.v",
     top = "spi_ws281x_120fps_tb",
     deps = [":spi_ws281x_lib"],

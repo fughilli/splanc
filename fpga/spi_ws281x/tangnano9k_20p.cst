@@ -22,9 +22,9 @@ IO_PORT "sck" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 IO_LOC "mosi" 27;
 IO_PORT "mosi" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 
-// Frame-done pacing output -> a Pi GPIO input (README, "Frame-done pacing").
-// PROVISIONAL pin choice (owner to confirm): 28 = IOB11B, bank 2, next to MOSI
-// on the header, no dual-purpose function.
+// Frame-done pacing output -> Pi GPIO 22 (header pin 15), 3.3 V on both sides
+// (README, "Frame-done pacing"). CONFIRMED by the owner 2026-10-26: 28 = IOB11B,
+// bank 2, next to MOSI (27) on the header, no dual-purpose function.
 IO_LOC "frame_done" 28;
 IO_PORT "frame_done" IO_TYPE=LVCMOS33 DRIVE=8;
 

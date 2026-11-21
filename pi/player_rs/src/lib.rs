@@ -12,15 +12,26 @@
 
 pub mod clock;
 pub mod fx;
+// Linux-only: the GPIO v2 uAPI, SCHED_FIFO / affinity, clock_nanosleep (the MAX
+// output thread, used by the `player` binary). player_host builds on macOS too.
+#[cfg(target_os = "linux")]
+pub mod gpio_cdev;
 pub mod health;
 pub mod http;
 pub mod ota;
 pub mod output;
-pub mod spi_retry;
+#[cfg(target_os = "linux")]
+pub mod pacing;
+#[cfg(target_os = "linux")]
+pub mod pipeline;
 pub mod render;
+#[cfg(target_os = "linux")]
+pub mod rt;
 pub mod schedule;
+pub mod spi_retry;
 pub mod server;
 pub mod session;
+pub mod triple;
 pub mod wire;
 
 pub use render::{render_colors, render_fpga, tick_fpga, RecordingSink, Sink};

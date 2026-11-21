@@ -4,7 +4,8 @@
 //
 // Pin map (tangnano9k_20p.cst): ports 0-7 on the 8-port top's pins 70-77 (so an
 // 8-port harness keeps working), ports 8-19 on 40 35 41 42 51 53 54 55 56 57 68
-// 69 (owner's choice, in that order), frame_done on pin 28. All in the 3.3 V
+// 69 (owner's choice, in that order), frame_done on pin 28 -> Pi GPIO 22 (header
+// pin 15; confirmed by the owner 2026-10-26). All in the 3.3 V
 // banks 1/2, which already carry the 8-port top's WS outputs and SPI inputs.
 //
 // frame_done (level, active HIGH) = every port has shifted out its frame AND the
