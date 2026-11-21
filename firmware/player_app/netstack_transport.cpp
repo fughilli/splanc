@@ -330,6 +330,10 @@ lm_join::PskRejectWatch g_psk_watch;  // Improv: report a password the AP reject
 lm_join::LastGoodNetwork g_last_good;  // where a rejected password falls back to (D-74)
 bool g_fallback_pending = false;       // set by the report; netstack_loop does the switch
 lm_wifi_scan::ChannelHop g_hop;
+// BLE supervision timeouts asked of the central: the connect-time one (ble_ffi.rs) and
+// the longer one for an Improv fresh join waiting on an SSID no sweep has seen.
+constexpr uint32_t kBleSupervisionMs = 6000;
+constexpr uint32_t kImprovWaitSupervisionMs = 20000;
 bool g_force_sweep = false;   // console WIFI SCAN: one sweep now
 bool g_sweep_forced = false;  // the running sweep was forced (not scheduled)
 bool g_force_giveup = false;  // console WIFI GIVEUP: take the random-MAC fallback now
@@ -2063,6 +2067,22 @@ extern "C" void pm_go_to_sleep();
 // anchor, wide enough (+-7ms) to absorb the controller's delivery offset and clock drift so the
 // event is always covered. During PMK derivation WiFi is idle, so just hand BLE ~80% (no alignment
 // needed). Falls back to a fine fixed duty-cycle only until a phase lock exists.
+//
+// And when WiFi has NOTHING on the air — the join is in AUTH with no AP to authenticate to
+// (the SSID wasn't in the last sweep: an absent network, a 5 GHz-only hotspot) and no sweep
+// is running — BLE gets the whole radio (MAC released), not just the event windows: Wi-Fi
+// has nothing to send or hear, so there is nothing to trade. Measured on rig-2 with the
+// central idle (the Improv absent wait), 1-byte probe notifications timed by their LL acks:
+// the windows stay phase-locked (acks +0.3-1 ms from the predicted anchor), yet connection
+// events still went unserviced in 0.5-6 s stretches (~5-14% of seconds, p90 ack wait ~450 ms);
+// with the radio handed over between sweeps, p90 55 ms and 1-2% of seconds. It is not the
+// whole story: the stretches start around a sweep's channel switches and can outlast the
+// 6 s supervision timeout even with BLE owning the radio (hence the longer timeout and the
+// spread-out sweeps of the Improv absent wait, netstack_loop).
+// The loop recomputes the flag every pass (g_coex_wifi_idle, below), so a sweep or an
+// auth reclaims the radio at the next tick.
+volatile bool g_coex_wifi_idle = false;
+static const uint32_t kImprovNotifyHoldMs = 1500;  // cap on BLE's radio priority per report
 static const uint32_t COEX_TICK_US = 4000;  // 4ms
 static void coex_timer_cb(void *) {
   static int mode = 0;  // 0 = MAC force-awake (WiFi), 1 = MAC asleep (BLE owns the slice)
@@ -2082,7 +2102,15 @@ static void coex_timer_cb(void *) {
   }
   uint32_t now = millis();
   int want;
-  if (g_creds_ready && !ns_pmk_ready()) {
+  if (g_coex_wifi_idle) {
+    want = 1;  // nothing on the WiFi side: the radio is BLE's
+  } else if (improv_ble_notify_hold(now, kImprovNotifyHoldMs)) {
+    // An Improv state/error/result notification is waiting for its LL ack: BLE gets the
+    // radio until the central has it (capped). Under the event windows alone, a report
+    // queued mid-join (the wrong-password report during 4-way retries, the redirect right
+    // after the lease) sat 0.5-3 s waiting for a serviced connection event (desk #75).
+    want = 1;
+  } else if (g_creds_ready && !ns_pmk_ready()) {
     want = ((now % 20) < 16) ? 1 : 0;  // PMK derive (WiFi idle): ~80% to BLE, no alignment needed
   } else {
     uint32_t iv_u = improv_ble_conn_interval();  // 1.25ms units
@@ -2463,6 +2491,15 @@ void netstack_loop() {
       uint16_t status = rx[28] | (rx[29] << 8);
       g_authw.on_auth_response();
       g_improv_scan.on_ap_answered();  // it's on the air: no Improv not-found report
+      // An answer from the BSSID latched for THIS SSID proves the AP on the air as well as
+      // a sweep match does. Without this, a fresh join whose sweeps all missed the AP (coex,
+      // or the gate's WIFI SCANMISS) authed between sweeps on g_latch_known alone, the answer
+      // disarmed the Improv report, and when that assoc stalled the join had no auth target
+      // left: it sat in AUTH until a sweep heard the AP (improv_fresh_join stored_blind).
+      if (g_latch_known && !g_scan_matched) {
+        g_scan_matched = true;
+        mark_seen();
+      }
       if (status == 0) {
         int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; t = millis();
         Serial.printf("[t=%lu] auth ok -> assoc\n", (unsigned long)millis());
@@ -2737,6 +2774,12 @@ void netstack_loop() {
       diag_last_state = st_now;
     }
   }
+  {
+    uint32_t ack_ms;
+    if (improv_ble_take_notify_ack_ms(&ack_ms))  // HITL metric: send -> central has it
+      Serial.printf("[t=%lu] [ble] improv notify acked in %lu ms\n", (unsigned long)millis(),
+                    (unsigned long)ack_ms);
+  }
   if (!PLAYER_MODE) g_creds_ready = true;  // non-player transport demo associates immediately
   // As soon as the SSID is committed, latch the AP's real BSSID + channel from the scan
   // cache (once) BEFORE the first auth — so auth/assoc go out on the right channel to the
@@ -2778,8 +2821,15 @@ void netstack_loop() {
                                             g_scan_matched, g_authw.waited_ms(now_ms));
     // Improv fresh join: retry the sweep a few seconds apart before reporting the SSID
     // not found (a hotspot that beacons slowly), while the join is still waiting on it.
+    // Nothing to auth to while a central waits: spread the sweeps (wifi_scan.h); past
+    // kImprovSweeps misses short of the floor, back to the short gap so the report is
+    // never pushed a whole slow gap later.
+    uint32_t retry_gap = (!g_latch_known && improv_ble_central_connected() &&
+                          g_improv_scan.misses() < lm_wifi_scan::kImprovSweeps)
+                             ? lm_wifi_scan::kImprovRescanSlowGapMs
+                             : lm_wifi_scan::kImprovRescanGapMs;
     if (!g_hop.active() && g_radio_up && !g_silent && st == AUTH && !g_scan_matched &&
-        g_improv_scan.take_retry(now_ms)) {
+        g_improv_scan.take_retry(now_ms, retry_gap)) {
       g_force_sweep = true;
       Serial.printf("[t=%lu] [ble] \"%s\" not seen yet — Improv retry sweep %lu (%lu s into "
                     "the join; reported unreachable after %lu s)%s\n", (unsigned long)now_ms,
@@ -2793,6 +2843,7 @@ void netstack_loop() {
     uint32_t first_gap = lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s());
     if (forced || (!g_hop.active() && g_scan_sched.due(wanted, now_ms, first_gap))) {
       g_hop.start();
+      g_coex_wifi_idle = false;  // the sweep needs the radio from its first hop
       g_sweep_forced = forced;
       // (A forced sweep is the Improv fresh join's live scan, its retries, or the console's
       // WIFI SCAN — not a verdict on the AP: the old label called the fresh join's first
@@ -2846,13 +2897,27 @@ void netstack_loop() {
                           : (unsigned long)(lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s()) / 1000),
                       g_scan_decayed ? " (decayed: network unseen for a long time)" : "");
       }
-      if (g_improv_scan.on_sweep_done(g_hop.found(), now_ms) ==
-          lm_wifi_scan::ImprovScanReport::Action::kReportNotFound) {
+      bool improv_was_armed = g_improv_scan.armed();
+      lm_wifi_scan::ImprovScanReport::Action ia = g_improv_scan.on_sweep_done(g_hop.found(), now_ms);
+      // The Improv fresh join's first sweep missed an SSID we know nothing about (no BSSID
+      // to auth to): the central now waits ~30 s through more sweeps with nothing else on
+      // the link. Measured on rig-2, BLE connection events go unserviced in stretches that
+      // start around a sweep's channel switches and can outlast the 6 s supervision timeout
+      // even with the radio handed to BLE between sweeps (coex_timer_cb) — the link then
+      // dies and the not-found report below goes nowhere. Ask the central for a longer
+      // timeout for this wait, while the link is fresh and Wi-Fi idle (the LL update's
+      // instant lands in the gap before the next sweep); the report puts 6 s back. A central
+      // that declines (iOS caps it at 6 s) keeps its parameters.
+      if (improv_was_armed && g_improv_scan.armed() && g_improv_scan.misses() == 1 &&
+          !g_latch_known && improv_ble_central_connected())
+        improv_ble_request_supervision_timeout(kImprovWaitSupervisionMs);
+      if (ia == lm_wifi_scan::ImprovScanReport::Action::kReportNotFound) {
         // Tell the provisioning app instead of letting it time out on "waiting for the
         // device to join": Improv error UNABLE_TO_CONNECT (state back to AUTHORIZED, so
         // it can re-send). The creds stay committed and the background rescan goes on —
         // the board still joins if the AP appears, and that lease clears the error.
         improv_ble_set_join_error(IMPROV_JOIN_FAILURE_NOT_FOUND);
+        improv_ble_request_supervision_timeout(kBleSupervisionMs);  // queued behind the error
         g_improv_join.forget();  // the app's retry SendWifi is a fresh join, never a ride
         Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps over %lu s (directed probe "
                       "incl.) — Improv error UNABLE_TO_CONNECT; creds kept, background rescan "
@@ -2879,6 +2944,9 @@ void netstack_loop() {
   // AP the board had been leased on a second earlier, the join never sent an auth, and the
   // app got UNABLE_TO_CONNECT. An auth answer proves the AP and disarms the report.
   bool auth_target = g_scan_matched || (g_improv_scan.armed() && g_latch_known);
+  // Nothing for WiFi to send or hear until the next sweep: hand the radio to BLE (coex_timer_cb).
+  g_coex_wifi_idle = st == AUTH && !g_hop.active() &&
+                     !(g_creds_ready && auth_target && autonomous((uint32_t)millis()));
   if (st == AUTH && g_creds_ready && ns_pmk_ready() && auth_target && !g_hop.active() &&
       autonomous((uint32_t)millis()) && millis() - t > 200) {
     static bool deauthed = false;  // once per boot, to this AP (see build_deauth)
@@ -3065,6 +3133,13 @@ void netstack_loop() {
         improv_ble_set_state(IMPROV_STATE_PROVISIONED);
       }
     }
+    // The central the redirect went to has left: the next central is a new session (it may
+    // be about to send OTHER credentials) and must not read this join's PROVISIONED + result
+    // before it writes (the gate's absent phase, connecting inside the 12 s window, read a
+    // stale success). A central that re-sends these creds rides the join and is answered
+    // again; one that dropped before any redirect went out (redirect_last_ms 0) still is.
+    if (ble_creds_pending && redirect_last_ms != 0 && !improv_ble_central_connected())
+      ble_creds_pending = false;
     if (ble_creds_pending && g_leased && improv_ble_central_connected()) {
       uint32_t now = millis();
       if (redirect_first_ms == 0) redirect_first_ms = now;

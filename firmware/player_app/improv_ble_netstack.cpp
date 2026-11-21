@@ -29,6 +29,7 @@ void ns_ble_setup();
 uint32_t ns_ble_poll_cmd(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_on_hci(const uint8_t *pkt, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_ble_disconnect(uint8_t *out, uint32_t cap);
+uint32_t ns_ble_supervision_timeout_req(uint32_t timeout_10ms, uint8_t *out, uint32_t cap);
 uint32_t ns_ble_state();
 uint32_t ns_ble_conn_interval();
 uint32_t ns_ble_poll_notify(uint8_t *out, uint32_t cap);
@@ -122,7 +123,19 @@ bool g_up = false;
 
 // Controller -> host EVENT: raw [code][len][params...]; prepend the H4 EVT type and
 // queue a copy, then hand the controller's buffer back.
+// Outbound ACL accounting: packets handed to the controller vs packets it reports
+// completed (Number Of Completed Packets = the central LL-acked them, i.e. received them).
+// An Improv notification burst is "delivered" once the completed count passes the count
+// at its send (the controller completes a link's packets in order).
+volatile uint32_t g_acl_sent = 0, g_acl_done = 0;
+uint32_t g_acl_flushed = 0;  // sent on links that dropped before acking them (no NOCP)
+
 int on_evt(uint8_t *evt, void *) {
+  if (evt[0] == 0x13 && evt[1] >= 1) {  // Number Of Completed Packets
+    uint8_t nh = evt[2];
+    for (uint8_t i = 0; i < nh && 3 + 4 * i + 3 < (uint32_t)evt[1] + 2; i++)
+      g_acl_done += (uint32_t)(evt[3 + 4 * i + 2] | (evt[3 + 4 * i + 3] << 8));
+  }
   uint16_t n = (uint16_t)evt[1] + 2;
   uint8_t next = (s_head + 1) & 7;
   if (next != s_tail && (uint32_t)n + 1 <= sizeof(s_ring[0].data)) {
@@ -178,7 +191,7 @@ void hci_send(const uint8_t *pkt, uint32_t n) {
       r_os_mbuf_free_chain(om);
       return;
     }
-    r_ble_hci_trans_hs_acl_tx(om);
+    if (r_ble_hci_trans_hs_acl_tx(om) == 0) g_acl_sent++;
   }
 }
 
@@ -226,6 +239,12 @@ void improv_ble_begin(const char *device_name, uint8_t /*initial_state*/) {
       device_name ? device_name : "", mac[5], mac[4], mac[3], mac[2], mac[1], mac[0], (int)e);
 }
 
+// The Improv notifications in flight (improv_ble.h improv_ble_notify_hold).
+volatile bool g_ntf_pending = false;
+volatile uint32_t g_ntf_t0 = 0;
+uint32_t g_ntf_mark = 0, g_ntf_ack_ms = 0;
+bool g_ntf_ack_ready = false;
+
 void improv_ble_poll() {
   if (!g_up) return;
   uint8_t out[268];
@@ -247,7 +266,38 @@ void improv_ble_poll() {
   // Draining inside the RX loop stranded those notifications in NOTIFY_Q, so the provisioner
   // saw the join complete on-device yet timed out waiting for the redirect ("state 3, no URL").
   uint32_t m;
-  while ((m = ns_ble_poll_notify(out, sizeof out)) > 0) hci_send(out, m);
+  bool sent = false;
+  while ((m = ns_ble_poll_notify(out, sizeof out)) > 0) {
+    hci_send(out, m);
+    sent = true;
+  }
+  if (sent) {
+    if (!g_ntf_pending) g_ntf_t0 = millis();
+    g_ntf_mark = g_acl_sent;
+    g_ntf_pending = true;
+  }
+  if (!improv_ble_central_connected()) {
+    // The link is gone: nothing more will be acked, and the controller flushes the link's
+    // unacked packets WITHOUT a completed-packets event. Count them as done, or every later
+    // mark would sit behind them forever (no ack, no metric, the hold stuck to its cap).
+    g_ntf_pending = false;
+    g_acl_flushed = g_acl_sent - g_acl_done;
+  } else if (g_ntf_pending && (int32_t)(g_acl_done + g_acl_flushed - g_ntf_mark) >= 0) {
+    g_ntf_pending = false;
+    g_ntf_ack_ms = millis() - g_ntf_t0;
+    g_ntf_ack_ready = true;
+  }
+}
+
+bool improv_ble_notify_hold(uint32_t now_ms, uint32_t cap_ms) {
+  return g_ntf_pending && now_ms - g_ntf_t0 < cap_ms;
+}
+
+bool improv_ble_take_notify_ack_ms(uint32_t *ms) {
+  if (!g_ntf_ack_ready) return false;
+  g_ntf_ack_ready = false;
+  *ms = g_ntf_ack_ms;
+  return true;
 }
 
 // Player-protocol transport (the second GATT service): drain each inbound frame
@@ -321,6 +371,12 @@ bool improv_ble_central_connected() { return ns_ble_state() == 7; }
 void improv_ble_request_disconnect() {
   uint8_t buf[16];
   uint32_t n = ns_ble_disconnect(buf, sizeof buf);
+  if (n) hci_send(buf, n);
+}
+
+void improv_ble_request_supervision_timeout(uint32_t ms) {
+  uint8_t buf[32];
+  uint32_t n = ns_ble_supervision_timeout_req(ms / 10, buf, sizeof buf);
   if (n) hci_send(buf, n);
 }
 
