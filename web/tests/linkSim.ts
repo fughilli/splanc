@@ -28,7 +28,7 @@
 
 import type { CodeParams, DetectionRecord, Pose, Vec3 } from "@ledmapper/protocol";
 import { codeBookFor, colorForFrame } from "../src/code/gray";
-import { strideLit, strideLitRolling, type RollingGeometry } from "../src/code/stride";
+import { rollingPeriodFrames, strideLit, strideLitRolling, type RollingGeometry } from "../src/code/stride";
 import { frameIndexAt } from "../src/code/timing";
 import {
   BIT_PERIOD_MAX_MS,
@@ -275,8 +275,14 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
   const litAt = (id: number, tk: number, e: CodeEpoch): boolean => {
     if (stride === undefined || stride.spacing <= 1) return true;
     if (rollingGeom !== null) {
-      const seq = Math.floor((tk + CLOCK_OFFSET - e.epochServer) / e.params.bitPeriodMs);
-      return seq >= 0 && strideLitRolling(id, seq, e.params, rollingGeom);
+      // Before the sim's (future) first epoch the LEDs already run; show the
+      // schedule's steady state there (it is periodic in S·D·C frames).
+      let seq = Math.floor((tk + CLOCK_OFFSET - e.epochServer) / e.params.bitPeriodMs);
+      if (seq < 0) {
+        const p = rollingPeriodFrames(e.params, rollingGeom);
+        seq = (((seq % p) + p) % p) + p;
+      }
+      return strideLitRolling(id, seq, e.params, rollingGeom);
     }
     return strideLit(id, e.phase ?? 0, { spacing: stride.spacing, anchorDensity: stride.anchorDensity });
   };
@@ -302,7 +308,19 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
   const quality = new ChannelQuality();
   const planner = new AlphabetPlanner([2, 4]);
   const makePipeline = (e: CodeEpoch): CvPipeline => {
-    const pl = new CvPipeline(e.params, e.epochServer, (t) => t + CLOCK_OFFSET, { denseRecords: true, decoder: { quality } });
+    const pl = new CvPipeline(e.params, e.epochServer, (t) => t + CLOCK_OFFSET, {
+      denseRecords: true,
+      decoder: { quality },
+      // The capture page's rolling-stride oracle (code/stride.ts rollingLitOracle).
+      litAt:
+        rollingGeom !== null
+          ? (id: number, f: number) => {
+              const p = rollingPeriodFrames(e.params, rollingGeom);
+              const seq = f < 0 ? (((f % p) + p) % p) + p : f;
+              return id < 0 || id >= sc.ledCount || strideLitRolling(id, seq, e.params, rollingGeom);
+            }
+          : undefined,
+    });
     pl.onDetections((rs) => {
       records += rs.length;
       tel.recordsEmitted(rs);

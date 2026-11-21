@@ -47,6 +47,7 @@ import {
   isRollingStride,
   phaseCount as stridePhaseCount,
   requestedStrideMode,
+  rollingLitOracle,
 } from "../../code/stride";
 import {
   fillChannelGaps,
@@ -1476,6 +1477,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), {
           denseRecords: true,
           decoder: { quality: channelQuality },
+          // Rolling stride: drop ids a track carried onto a neighbour.
+          litAt: rollingLitOracle(p, ledCount) ?? undefined,
         });
         pl.onDetections((records: DetectionRecord[]) => {
           for (const r of records) decodedIds.add(r.ledId);
