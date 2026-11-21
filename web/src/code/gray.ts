@@ -41,7 +41,8 @@ import {
   VALUE_MASK,
 } from "./kernel";
 
-const secded = (params: CodeParams): number => ((params.fec ?? "none") === "secded" ? 1 : 0);
+/** 1 when the code book carries SEC-DED (the kernel ABI's flag). */
+export const secded = (params: CodeParams): number => ((params.fec ?? "none") === "secded" ? 1 : 0);
 
 /** SEC-DED encodes gray(id+1) as a dataBits(ledCount)-bit word: an id whose
  * word does not fit is a caller bug (fec.ts secdedEncode's RangeError). */
