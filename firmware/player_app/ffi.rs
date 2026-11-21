@@ -2847,6 +2847,10 @@ macro_rules! features {
         // staggered pilot (docs/design/hue-code-v2.md). The render loop walks LEDs
         // in order, so pattern_color's memoised stagger_next walk is amortised.
         "hue_stagger_pilot",
+        // Rolling stride (docs/design/rolling-stride.md): start_mapping
+        // strideMode "rolling" masks with stride_lit_rolling at the ABSOLUTE
+        // pattern frame, which main.cpp passes to lm_pattern_color.
+        "stride_rolling",
         $($extra),*
     ] };
 }
@@ -4288,16 +4292,17 @@ pub unsafe extern "C" fn lm_pattern_frame_shown(seq: u32, t_mono_us: u32) {
     player().record_frame_shown(seq, t_mono_us);
 }
 
-/// The color LED `led` shows in mapping cycle frame `frame_index`
-/// (caller reduces modulo cycle_frames). False when no capture is active.
+/// The color LED `led` shows at mapping-pattern frame `seq` — the ABSOLUTE
+/// frame since the pattern epoch (the rolling stride needs it; the code is
+/// reduced modulo cycle_frames inside). False when no capture is active.
 ///
 /// # Safety
 /// The pointer arguments must be null or point to writable/readable memory
 /// of the documented size, and the global player must have been initialized
 /// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
-pub unsafe extern "C" fn lm_pattern_color(led: u32, frame_index: u32, rgb: *mut u8) -> bool {
-    match player().pattern_color(led, frame_index) {
+pub unsafe extern "C" fn lm_pattern_color(led: u32, seq: u32, rgb: *mut u8) -> bool {
+    match player().pattern_color(led, seq) {
         Some((r, g, b)) => {
             *rgb = r;
             *rgb.add(1) = g;

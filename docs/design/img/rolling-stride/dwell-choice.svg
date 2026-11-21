@@ -1,0 +1,35 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 620 340' width='620' height='340' role='img' aria-label='Dwell length: whole own cycles per dwell'>
+<title>Dwell length: whole own cycles per dwell</title>
+<rect width='620' height='340' fill='white'/>
+<text x='24.0' y='26.0' font-size='15' fill='#1f2430' text-anchor='start' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>D = 3 vs D = 4: whole own code cycles per dwell</text>
+<text x='24.0' y='46.0' font-size='12' fill='#6b7180' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>Share of (LED, dwell) pairs, hue code v2 (S=3, A=3, C=10). A decode needs 2.</text>
+<text x='157.0' y='296.0' font-size='13' fill='#1f2430' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>D = 3</text>
+<rect x='70.00' y='241.72' width='46.00' height='8.28' fill='#d64545' />
+<text x='93.0' y='235.7' font-size='11' fill='#1f2430' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>5%</text>
+<text x='93.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>1</text>
+<rect x='134.00' y='94.14' width='46.00' height='155.86' fill='#e0892b' />
+<text x='157.0' y='88.1' font-size='11' fill='#1f2430' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>87%</text>
+<text x='157.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>2</text>
+<rect x='198.00' y='234.14' width='46.00' height='15.86' fill='#3aa17e' />
+<text x='221.0' y='228.1' font-size='11' fill='#1f2430' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>9%</text>
+<text x='221.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>3</text>
+<rect x='262.00' y='250.00' width='46.00' height='0.00' fill='#3aa17e' />
+<text x='285.0' y='244.0' font-size='11' fill='#1f2430' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>0%</text>
+<text x='285.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>4</text>
+<text x='453.0' y='296.0' font-size='13' fill='#1f2430' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>D = 4</text>
+<rect x='366.00' y='250.00' width='46.00' height='0.00' fill='#d64545' />
+<text x='389.0' y='244.0' font-size='11' fill='#1f2430' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>0%</text>
+<text x='389.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>1</text>
+<rect x='430.00' y='242.02' width='46.00' height='7.98' fill='#e0892b' />
+<text x='453.0' y='236.0' font-size='11' fill='#1f2430' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>4%</text>
+<text x='453.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>2</text>
+<rect x='494.00' y='93.93' width='46.00' height='156.07' fill='#3aa17e' />
+<text x='517.0' y='87.9' font-size='11' fill='#1f2430' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>87%</text>
+<text x='517.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>3</text>
+<rect x='558.00' y='234.05' width='46.00' height='15.95' fill='#3aa17e' />
+<text x='581.0' y='228.0' font-size='11' fill='#1f2430' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>9%</text>
+<text x='581.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>4</text>
+<line x1='60.00' y1='250.00' x2='622.00' y2='250.00' stroke='#1f2430' stroke-width='1.0'/>
+<text x='60.0' y='268.0' font-size='11' fill='#6b7180' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>cycles:</text>
+<text x='24.0' y='326.0' font-size='11' fill='#6b7180' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>D=3: most dwells give exactly the two cycles a decode needs (no margin, no confirmed track left lit).</text>
+</svg>

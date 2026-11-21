@@ -82,6 +82,16 @@
       "type": ["integer", "null"],
       "minimum": 0,
       "description": "Group capture: this fixture's LED i transmits id (i + codeOffset) of a code book of ledCount ids shared by the group. null/absent = 0."
+    },
+    "strideMode": {
+      "type": ["string", "null"],
+      "enum": ["phased", "rolling", null],
+      "description": "Stride schedule being driven (docs/design/rolling-stride.md). 'rolling': the lit subset is a pure function of (LED, pattern-clock frame) — blocks of anchorDensity*strideSpacing LEDs, each stepping its offset on its own clock every dwellCycles code cycles (stride_lit_rolling) — so the phone never reconfigures to stride and stridePhase is unused. null/'phased' = the stridePhase schedule. Only set while striding is on."
+    },
+    "dwellCycles": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Rolling dwell D in code cycles (the clamped value the device runs). null unless strideMode is 'rolling'."
     }
   }
 }
