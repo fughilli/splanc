@@ -15,6 +15,9 @@
   <a href="https://splanc.io/app"><img
     src="https://img.shields.io/badge/live%20app-splanc.io%2Fapp-084de7"
     alt="Live app" /></a>
+  <a href="https://fughilli.github.io/splanc/docs/"><img
+    src="https://img.shields.io/badge/docs-developer%20docs-6741d9"
+    alt="Developer docs" /></a>
   <a href="https://bazel.build"><img
     src="https://img.shields.io/badge/built%20with-Bazel-43a047"
     alt="Built with Bazel" /></a>
@@ -118,6 +121,9 @@ See [`agent/README.md`](./agent/README.md).
   and model checking for an LED controller.
 - **What's new:** [`docs/whats-new.md`](./docs/whats-new.md)
 - **Contributing & building from source:** [`DEVELOPERS.md`](./DEVELOPERS.md)
+- **Developer docs:** [fughilli.github.io/splanc/docs](https://fughilli.github.io/splanc/docs/)
+  — architecture, subsystems and design notes as one site (built by
+  `bazel run //docs:build`)
 - **Design & architecture:** [`led-mapper-design.md`](./led-mapper-design.md) —
   the durable spec — plus [`docs/`](./docs)
 - **Project history / build log:** [`WORKLOG.md`](./WORKLOG.md)

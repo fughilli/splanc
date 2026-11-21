@@ -281,6 +281,15 @@ arrangement (scroll/z-order/safe-area interactions).
 
 ---
 
+### 4.8 One-tap OAuth sign-in (OpenRouter free tier, #548)
+
+`@splanc/web-auth` (`web/native-plugins/web-auth`, JS name `WebAuth`) wraps
+`ASWebAuthenticationSession` so "Connect OpenRouter" works in one tap. It
+returns the `splanc://oauth/openrouter?...` URL that the https bounce page
+`web/public/oauth-callback.html` forwards to. No Info.plist or entitlement
+changes. Flow, security notes and App Store build steps:
+docs/design/ai-tiers.md.
+
 ## 5. Tier 0 — ship the PWA now (recommended immediate step)
 
 Independent of any wrapper, and worth doing regardless:
