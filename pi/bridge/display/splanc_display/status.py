@@ -8,7 +8,11 @@ Contract (written atomically by ``splanc-agent bridge``)::
      "clients": <int>, "players": [{"name": "...", "host": "...", "ok": true, ...details}],
      "paired_clients": [{"id", "label", "kind", "created_at", "last_used_at", "live"}],
      "paired_clients_state": "ok|offline|relay_outdated|unknown",
-     "lan_ip": "...", "error": "..." | null, "updated_at": <unix s>}
+     "lan_ip": "...", "error": "..." | null, "updated_at": <unix s>,
+     "matter": {"state": "starting|ready|error|stopped", "commissioned": bool,
+                "commissionable": bool, "qr": "MT:...", "manual": "<11 digits>",
+                "fabrics": [{"label", "vendor"}], "lamps": <int>, "port": <int>,
+                "error": "..." | null}}   (optional: absent = the Matter bridge is off)
 
 ``clients`` counts the cloud sessions active in the last 10 minutes; the paired
 clients (a relay grant each: an AI connector, the app, a personal token) are in
@@ -147,6 +151,31 @@ class Pairing:
 
 
 @dataclass(frozen=True)
+class Matter:
+    """The Matter bridge (docs/guides/matter.md): its pairing code and controllers."""
+
+    state: str = ""  # starting | ready | error | stopped
+    commissioned: bool = False
+    commissionable: bool = False
+    qr: str = ""  # "MT:..." QR payload
+    manual: str = ""  # 11-digit manual pairing code
+    fabrics: tuple = field(default_factory=tuple)  # controller labels
+    lamps: int = 0
+    error: Optional[str] = None
+
+    @property
+    def manual_grouped(self) -> str:
+        """The manual code as printed on Matter devices: 1234-567-8901."""
+        m = self.manual
+        return f"{m[:4]}-{m[4:7]}-{m[7:]}" if len(m) == 11 and m.isdigit() else m
+
+    @property
+    def show_code(self) -> bool:
+        """A pairing code is worth showing (the bridge is accepting a new controller)."""
+        return self.state == "ready" and self.commissionable and bool(self.qr)
+
+
+@dataclass(frozen=True)
 class Status:
     state: str
     relay: str = ""
@@ -163,6 +192,8 @@ class Status:
     # Software updates (updates.py; not from the bridge's file: StatusWatcher merges
     # them in). None: not watched (tests, the Pi OS install).
     updates: Optional[object] = None
+    # The Matter bridge (None: off, or an older bridge).
+    matter: Optional[Matter] = None
 
     @property
     def label(self) -> str:
@@ -207,6 +238,7 @@ class Status:
             self.clients_state,
             tuple((c.id, c.label, c.live) for c in self.paired),
             self.updates.salient() if self.updates is not None else None,
+            self.matter,
         )
 
 
@@ -272,6 +304,26 @@ def _client(item: dict) -> Optional[Client]:
     )
 
 
+def _matter(v) -> Optional[Matter]:
+    if not isinstance(v, dict):
+        return None
+    fabrics = []
+    for f in v.get("fabrics") if isinstance(v.get("fabrics"), list) else []:
+        if isinstance(f, dict):
+            fabrics.append(_str(f.get("label")) or "controller")
+    err = v.get("error")
+    return Matter(
+        state=_str(v.get("state")),
+        commissioned=v.get("commissioned") is True,
+        commissionable=v.get("commissionable") is True,
+        qr=_str(v.get("qr")) if _str(v.get("qr")).startswith("MT:") else "",
+        manual=_str(v.get("manual")),
+        fabrics=tuple(fabrics),
+        lamps=max(0, _int(v.get("lamps")) or 0),
+        error=err if isinstance(err, str) and err else None,
+    )
+
+
 def parse(doc) -> Status:
     """A status document (already JSON-decoded) -> Status. Never raises."""
     if not isinstance(doc, dict):
@@ -311,6 +363,7 @@ def parse(doc) -> Status:
         updated_at=_num(doc.get("updated_at")),
         paired=tuple(paired),
         clients_state=_str(doc.get("paired_clients_state")),
+        matter=_matter(doc.get("matter")),
     )
 
 
