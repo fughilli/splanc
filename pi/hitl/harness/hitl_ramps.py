@@ -58,7 +58,9 @@ QUEUE_S = 7200.0
 class PatientReservation(Reservation):
     """Waits --queue-s for its turn (the shared rig runs long CI queues)."""
 
-    def _await_active(self, timeout: float | None = None, legacy_timeout: float | None = None) -> None:
+    def _await_active(
+        self, timeout: float | None = None, legacy_timeout: float | None = None
+    ) -> None:
         # acquire() passes None unless $HITL_ACTIVATE_TIMEOUT is set.
         super()._await_active(timeout=max(timeout or 0.0, QUEUE_S), legacy_timeout=legacy_timeout)
 
