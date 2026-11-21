@@ -1,6 +1,6 @@
 //! End-to-end: compile GLSL-ish source → `.fxb` → run on the real fx_vm.
 
-use ledmapper_fx_compiler::{compile, manifest_json, UiKind};
+use ledmapper_fx_compiler::{compile, compile_opts, manifest_json, UiKind};
 use ledmapper_fx_vm::{Frame, Led, Program, Vm};
 
 fn run_shade(src: &str, uniforms: &[(u8, &[f32])], led: Led, frame: Frame) -> (u8, u8, u8) {
@@ -1395,6 +1395,65 @@ fn fixed_literal_suffixes_compile_exactly_like_the_casts() {
                 "{lit}{sfx} vs {ty}({lit})"
             );
         }
+    }
+}
+
+#[test]
+fn fixed_literal_suffixes_are_byte_identical_in_whole_programs() {
+    // Every place a literal can sit: state updates, uniform maths, builtin args,
+    // comparisons, unary minus, helper calls, buffer stores and the fixed hsv
+    // output path. `{F}`/`{H}`/`{E}` expand to a fixed/fixed16/fixed8 literal,
+    // once as the suffix and once as the cast; with the optimizer on and off the
+    // two programs must be the same bytes.
+    let tmpl = r#"
+        uniform float speed : 0.0 .. 4.0 = 1.0;
+        state fixed ph;
+        buffer float acc;
+        fixed tri(fixed x) { return abs(fract(x) - {F:0.5}) * {F:2}; }
+        void update() {
+            ph = fract(ph + fixed(dt * speed) * {F:0.25});
+        }
+        vec3 shade(Led led) {
+            fixed s = fixed(led.s);
+            fixed w = sin(s * {F:3.5} + ph) * {F:0.5} + {F:0.5};
+            if (w < {F:0.1}) { w = -{F:0.75}; }
+            w = clamp(tri(w), {F:0}, {F:1.0});
+            acc[led.idx] = float({E:0.5} * {E:1.25}) + acc[led.idx] * 0.5;
+            fixed16 h = fixed16(w) * {H:0.9} + {H:.05};
+            return hsv2rgb(h, {H:1}, {H:0.75});
+        }
+    "#;
+    let expand = |cast: bool| {
+        let mut out = String::new();
+        let mut rest = tmpl;
+        while let Some(i) = rest.find('{') {
+            out.push_str(&rest[..i]);
+            let tag = &rest[i + 1..i + 2];
+            let close = rest[i..].find('}').unwrap() + i;
+            if !matches!(tag, "F" | "H" | "E") || rest.as_bytes()[i + 2] != b':' {
+                out.push('{');
+                rest = &rest[i + 1..];
+                continue;
+            }
+            let lit = &rest[i + 3..close];
+            let (ty, sfx) = match tag {
+                "F" => ("fixed", "fx"),
+                "H" => ("fixed16", "fx16"),
+                _ => ("fixed8", "fx8"),
+            };
+            out.push_str(&if cast { format!("{ty}({lit})") } else { format!("{lit}{sfx}") });
+            rest = &rest[close + 1..];
+        }
+        out.push_str(rest);
+        out
+    };
+    let (sugar, cast) = (expand(false), expand(true));
+    assert!(sugar.contains("0.9fx16") && cast.contains("fixed16(0.9)"), "{sugar}");
+    for optimize in [true, false] {
+        let a = compile_opts(&sugar, optimize).unwrap_or_else(|d| panic!("{d:?}\n{sugar}"));
+        let b = compile_opts(&cast, optimize).unwrap_or_else(|d| panic!("{d:?}\n{cast}"));
+        assert_eq!(a.fxb, b.fxb, "optimize={optimize}: suffix and cast programs differ");
+        assert_eq!(a.warnings.len(), b.warnings.len(), "optimize={optimize}: {:?} vs {:?}", a.warnings, b.warnings);
     }
 }
 
