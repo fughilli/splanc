@@ -55,6 +55,7 @@ export interface DetectionRecord {
 export type Encoding = "hue";
 export type SyncPattern = "on_off" | "stagger_pilot";
 export type Fec = "none" | "secded";
+export type StrideMode = "phased" | "rolling";
 
 export interface CodeParams {
   ledCount: number;
@@ -86,6 +87,12 @@ export interface CodeParams {
   /** Group capture: this fixture's LED i transmits id (i + codeOffset) of a
    * code book of ledCount ids shared by the group. Absent = 0. */
   codeOffset?: number | undefined;
+  /** Stride schedule being driven (docs/design/rolling-stride.md): 'rolling' =
+   * stride_lit_rolling(LED, pattern-clock frame), no stride reconfigures;
+   * absent/'phased' = the stridePhase schedule. Only set while striding. */
+  strideMode?: StrideMode | undefined;
+  /** Rolling dwell D in code cycles (as the device runs it). */
+  dwellCycles?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +241,10 @@ export interface StartMappingOptions {
   /** Requested sync pattern (hue code v2 phase 2). A player that does not
    * support it runs v1 and says so in the reply's codeParams.syncPattern. */
   syncPattern?: SyncPattern;
+  /** Requested stride schedule (feature stride_rolling); the reply's
+   * codeParams.strideMode says what runs. dwellCycles: rolling dwell D. */
+  strideMode?: StrideMode;
+  dwellCycles?: number;
 }
 
 export interface StartMappingMessage {
@@ -254,6 +265,8 @@ export interface ConfigureOptions {
   strideSpacing?: number;
   anchorDensity?: number;
   stridePhase?: number;
+  strideMode?: StrideMode;
+  dwellCycles?: number;
 }
 
 export interface ConfigureMessage {

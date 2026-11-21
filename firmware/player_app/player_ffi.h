@@ -247,7 +247,9 @@ int32_t lm_decode_upload_stream(int32_t arm, LmRefill refill, LmRewind rewind,
 bool lm_pattern_expire(int64_t now_ms);
 bool lm_pattern_timing(int64_t *epoch_ms, uint32_t *bit_period_us,
                        uint32_t *cycle_frames, uint32_t *led_count);
-bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);
+// `seq` is the ABSOLUTE frame since the epoch (not reduced modulo
+// cycle_frames): the rolling stride masks by it.
+bool lm_pattern_color(uint32_t led, uint32_t seq, uint8_t rgb[3]);
 // Record the monotonic-clock time (t_mono_us, raw micros()) at which the frame
 // loop pushed absolute mapping-pattern frame `seq` (before the cycle modulo)
 // to the LEDs, buffered for the phone to drain via get_frame_timing.

@@ -173,7 +173,8 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("// ---------------------------------------------------------------------------\n")
     lines.append("export type Encoding = " + " | ".join(f'"{v}"' for v in encoding_values) + ";")
     lines.append("export type SyncPattern = " + " | ".join(f'"{v}"' for v in sync_values) + ";")
-    lines.append("export type Fec = " + " | ".join(f'"{v}"' for v in fec_values) + ";\n")
+    lines.append("export type Fec = " + " | ".join(f'"{v}"' for v in fec_values) + ";")
+    lines.append('export type StrideMode = "phased" | "rolling";\n')
     lines.append("export interface CodeParams {")
     lines.append("  ledCount: number;")
     lines.append("  /** Coded BITS per cycle: ceil(log2(ledCount+1)) data bits + FEC parity bits;")
@@ -206,6 +207,12 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  /** Group capture: this fixture's LED i transmits id (i + codeOffset) of a")
     lines.append("   * code book of ledCount ids shared by the group. Absent = 0. */")
     lines.append("  codeOffset?: number | undefined;")
+    lines.append("  /** Stride schedule being driven (docs/design/rolling-stride.md): 'rolling' =")
+    lines.append("   * stride_lit_rolling(LED, pattern-clock frame), no stride reconfigures;")
+    lines.append("   * absent/'phased' = the stridePhase schedule. Only set while striding. */")
+    lines.append("  strideMode?: StrideMode | undefined;")
+    lines.append("  /** Rolling dwell D in code cycles (as the device runs it). */")
+    lines.append("  dwellCycles?: number | undefined;")
     lines.append("}\n")
 
     lines.append("// ---------------------------------------------------------------------------")
@@ -355,6 +362,10 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  /** Requested sync pattern (hue code v2 phase 2). A player that does not")
     lines.append("   * support it runs v1 and says so in the reply's codeParams.syncPattern. */")
     lines.append("  syncPattern?: SyncPattern;")
+    lines.append("  /** Requested stride schedule (feature stride_rolling); the reply's")
+    lines.append("   * codeParams.strideMode says what runs. dwellCycles: rolling dwell D. */")
+    lines.append("  strideMode?: StrideMode;")
+    lines.append("  dwellCycles?: number;")
     lines.append("}\n")
     lines.append("export interface StartMappingMessage {")
     lines.append('  type: "start_mapping";')
@@ -375,6 +386,8 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  strideSpacing?: number;")
     lines.append("  anchorDensity?: number;")
     lines.append("  stridePhase?: number;")
+    lines.append("  strideMode?: StrideMode;")
+    lines.append("  dwellCycles?: number;")
     lines.append("}\n")
     lines.append("export interface ConfigureMessage {")
     lines.append('  type: "configure";')
@@ -819,6 +832,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append(f"Encoding = {_literal(encoding_values)}")
     out.append(f"SyncPattern = {_literal(sync_values)}")
     out.append(f"Fec = {_literal(fec_values)}")
+    out.append('StrideMode = Literal["phased", "rolling"]')
     out.append("")
     out.append("")
     out.append("class CodeParams(_StrictModel):")
@@ -843,6 +857,9 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    stridePhase: Union[int, None] = Field(default=None, ge=0)")
     out.append("    # Group capture: LED i transmits id (i + codeOffset); None = 0.")
     out.append("    codeOffset: Union[int, None] = Field(default=None, ge=0)")
+    out.append("    # Stride schedule (rolling-stride.md); None = phased. Rolling dwell D.")
+    out.append("    strideMode: Union[StrideMode, None] = None")
+    out.append("    dwellCycles: Union[int, None] = Field(default=None, ge=1)")
     out.append("")
     out.append("")
     out.append("# ---------------------------------------------------------------------------")
@@ -976,6 +993,9 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    stopAfterMs: Union[int, None] = None")
     out.append("    # Requested sync pattern (hue code v2); the reply's codeParams say what runs.")
     out.append("    syncPattern: Union[SyncPattern, None] = None")
+    out.append("    # Requested stride schedule (feature stride_rolling) + rolling dwell D.")
+    out.append("    strideMode: Union[StrideMode, None] = None")
+    out.append("    dwellCycles: Union[int, None] = Field(default=None, ge=1)")
     out.append("")
     out.append("")
     out.append("class StartMappingMessage(_StrictModel):")
@@ -998,6 +1018,8 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    strideSpacing: Union[int, None] = Field(default=None, ge=0)")
     out.append("    anchorDensity: Union[int, None] = Field(default=None, ge=0)")
     out.append("    stridePhase: Union[int, None] = Field(default=None, ge=0)")
+    out.append("    strideMode: Union[StrideMode, None] = None")
+    out.append("    dwellCycles: Union[int, None] = Field(default=None, ge=1)")
     out.append("")
     out.append("")
     out.append("class ConfigureMessage(_StrictModel):")
@@ -1393,6 +1415,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "Encoding",
         "SyncPattern",
         "Fec",
+        "StrideMode",
         "CodeParams",
         "LedEntry",
         "OutputMapStats",
