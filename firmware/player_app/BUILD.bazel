@@ -108,6 +108,7 @@ rust_static_library(
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
+        "power_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -148,6 +149,7 @@ rust_static_library(
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player:player_fw",
+        "//firmware/power",
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
@@ -168,6 +170,7 @@ rust_library(
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
+        "power_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -192,6 +195,7 @@ rust_library(
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player",
+        "//firmware/power",
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
@@ -246,6 +250,22 @@ rust_test(
     env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Lamp power (power_ffi.rs): set_power / get_power / set_power_config, the boot
+# fade, the render-frame output, a transition effect on deck B, the toggle trigger
+# and the config record through the C ABI. Own binary.
+rust_test(
+    name = "power_test",
+    srcs = ["tests/power.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],

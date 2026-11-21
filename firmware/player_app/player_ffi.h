@@ -560,6 +560,10 @@ typedef struct {
   bool (*bus_ensure)(void);
   size_t (*scan)(uint8_t *out, size_t cap);
   uint32_t (*cycles)(void);
+  // GPIO driver intrinsics (gpio_read -> 0/1 or -1; gpio_mode 0 input, 1 pull-up,
+  // 2 pull-down -> applied).
+  int32_t (*gpio_read)(uint8_t pin);
+  bool (*gpio_mode)(uint8_t pin, uint8_t mode);
 } LmDrvHost;
 void lm_drv_set_host(const LmDrvHost *host);
 // Run the loaded driver's poll() if due (loop task, player mutex held).
@@ -581,6 +585,30 @@ bool lm_fxdbg_paused(void);
 bool lm_session_busy(int64_t now_ms);
 // Loop task: lapse a pause whose client went away (no session open).
 void lm_fxdbg_poll(uint32_t now_ms, bool session_open);
+
+// -- Lamp power (power_ffi.rs, docs/design/lamp-power.md) ----------------------
+// The config record's size (ledmapper_power::RECORD_LEN, 543) with headroom.
+#define LM_POWER_RECORD_CAP 576
+bool lm_power_seed(const uint8_t *rec, size_t len, int32_t last_on, bool on_stored, bool off_stored);
+// Render task, frame start, player mutex held: bit 1 = render, bit 2 = settled.
+uint32_t lm_power_frame(uint32_t now_ms, uint16_t *level_q8);
+bool lm_power_poll_trigger(uint32_t now_ms);
+uint32_t lm_power_take_load(void);
+void lm_power_set_loading(bool on);
+void lm_power_effect_loaded(uint32_t now_ms);
+uint32_t lm_power_take_store(void);
+uint32_t lm_power_take_clear(void);
+bool lm_power_take_sim(int32_t *pin, uint32_t *pull);
+uint32_t lm_power_cfg_gen(void);
+int32_t lm_power_cfg_record(uint8_t *out, size_t cap);
+bool lm_power_target(bool *settled);
+void lm_power_note_brightness(void);
+void lm_power_tick(bool wss_open, bool ble_connected);
+bool lm_power_subscribed(uint32_t src);
+bool lm_power_push_due(void);
+int32_t lm_power_build_push(uint32_t src, uint32_t now_ms, uint8_t *out, size_t cap);
+void lm_power_push_done(void);
+int32_t lm_power_console(const uint8_t *line, size_t len, uint32_t now_ms, uint8_t *out, size_t cap);
 
 // -- Kiosk mode (kiosk_ffi.rs, docs/design/kiosk-mode.md) ----------------------
 // Loop task only (the gate + handler run under the player mutex, the pollers after).

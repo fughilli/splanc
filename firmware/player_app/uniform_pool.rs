@@ -171,6 +171,16 @@ unsafe fn rebind_all() {
 ///
 /// # Safety
 /// Loop task, under the player mutex.
+/// A dynamic entry's first value (a driver export such as a trigger counter),
+/// None until it has been published.
+pub(crate) unsafe fn dynamic_value(name: &[u8]) -> Option<f32> {
+    let dyn_ = &*addr_of!(DYN);
+    dyn_[..DYN_LEN]
+        .iter()
+        .find(|e| e.live && &e.name[..e.name_len as usize] == name)
+        .map(|e| e.vals[0])
+}
+
 pub(crate) unsafe fn publish(name: &[u8], vals: &[f32]) -> bool {
     if name.is_empty() || name.len() > NAME_MAX || vals.is_empty() || vals.len() > VALS_MAX {
         return false;

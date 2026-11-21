@@ -632,6 +632,12 @@ static const char *kPosePath = "/lfs/pose.pb";
 static const char *kKioskCfgPath = "/lfs/kiosk.cfg";
 static const char *kKioskFxPath = "/lfs/kiosk_fx.pb";
 static const char *kKioskUnPath = "/lfs/kiosk_un.pb";
+// Lamp power (power_ffi.rs, docs/design/lamp-power.md): the config record and
+// the ON / OFF transition effects (their submit_effect frames, replayed onto
+// deck B when a transition starts).
+static const char *kPowerCfgPath = "/lfs/power.cfg";
+static const char *kPowerOnFxPath = "/lfs/pw_on.pb";
+static const char *kPowerOffFxPath = "/lfs/pw_off.pb";
 // The connection the message being dispatched came in on (unlock is per connection):
 // BLE while lm_player_ble_reply runs, else the wss / ws session.
 static uint8_t g_kiosk_src = LM_KIOSK_SRC_WSS;
@@ -966,6 +972,9 @@ static uint32_t g_lut_seq = 0;
 static uint32_t g_cc_gen = 0;  // last color_correction_gen the poll acted on
 static uint32_t g_brightness_gen = 0;  // last brightness_gen the poll acted on
 static uint8_t g_brightness = 255;     // global output scale (255 = unattenuated)
+// This frame's content scale: g_brightness times the lamp power level (a power
+// transition fading; lamp-power.md). Set by render_once at each frame start.
+static uint8_t g_frame_scale = 255;
 
 // Hardware output config (set_hardware_config: GPIO + wire color order per RMT
 // channel). g_hw_gen tracks the last-applied lm_hw_config_gen. The GPIOs
@@ -1115,6 +1124,7 @@ static void poll_brightness() {
   if (gen == g_brightness_gen) return;
   g_brightness_gen = gen;
   g_brightness = lm_brightness_u8();
+  lm_power_note_brightness();  // a power_state push carries it (smart homes)
   Log().printf("[bright] output scale = %u/255 (gen=%u)\n", g_brightness, gen);
 }
 
@@ -1267,7 +1277,7 @@ static inline Rgb cc_apply(const uint8_t rgb[3]) {
   const uint8_t (*lut)[256] = g_lut;
   Rgb c = (lut == nullptr) ? Rgb(rgb[0], rgb[1], rgb[2])
                             : Rgb(lut[0][rgb[0]], lut[1][rgb[1]], lut[2][rgb[2]]);
-  if (g_brightness < 255) c.nscale8(g_brightness);
+  if (g_frame_scale < 255) c.nscale8(g_frame_scale);
   return c;
 }
 
@@ -1305,6 +1315,16 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
   // A locked kiosk persists nothing a visitor does: their effects / uniforms are
   // RAM-only and the idle revert (or a reboot) brings the attract snapshot back.
   if (lm_kiosk_msg_locked()) return;
+  if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect) {
+    // A transition effect (submit_effect power_slot): keep its frame.
+    const uint32_t slot = lm_power_take_store();
+    if (slot != 0) {
+      fs_write_file(slot == 1 ? kPowerOnFxPath : kPowerOffFxPath, req, req_len);
+      Log().printf("[power] stored the %s transition effect (%u B)\n", slot == 1 ? "ON" : "OFF",
+                   (unsigned)req_len);
+      return;
+    }
+  }
   if (reply_arm == kArmResultReady && req_arm == kArmSubmitMap) {
     fs_write_file(kMapPath, req, req_len);
     remove(kTopoPath);  // the previous topology no longer matches this map
@@ -2264,6 +2284,10 @@ static void ws_poll() {
 static const uint32_t kStaticPollMs = 100;
 // Poll cadence while the FX debugger holds the engine paused.
 static const uint32_t kFxDbgHoldPollMs = 20;
+// Lamp off (power_ffi.rs): how often the idle render task looks again.
+static const uint32_t kPowerOffPollMs = 50;
+// The strip was blanked for "off" (re-armed by the next rendered frame).
+static bool g_power_dark = false;
 
 #if defined(LM_NETSTACK)
 static void osc_drain_frame();  // native OSC on the netstack build (below)
@@ -2510,6 +2534,13 @@ static uint32_t render_once() {
 #else
   if (lm_sched_apply((int64_t)millis()) & 2) poll_brightness();
 #endif
+  // Lamp power (power_ffi.rs): off = dark + the effect paused; a transition
+  // scales the content (and may drive the deck-B mix + uniforms of its effect).
+  uint16_t power_q8 = 256;
+  const bool power_render = (lm_power_frame(millis(), &power_q8) & 1) != 0;
+  if (power_render) g_power_dark = false;
+  g_frame_scale = power_q8 >= 256 ? g_brightness
+                                  : (uint8_t)(((uint32_t)g_brightness * power_q8) >> 8);
   // An active mapping capture (the gray-code flashing) and the counting probe
   // are deliberate, transient device takeovers for the phone's camera, so they
   // MUST preempt whatever show is playing. A persisted effect resumed on boot
@@ -2635,6 +2666,18 @@ static uint32_t render_once() {
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
+  } else if (!power_render) {
+    // Lamp OFF: blank once, then idle. Nothing renders or transmits, so the
+    // effect's clock stops (it resumes where it was) and the CPU sleeps; Wi-Fi,
+    // BLE and the session keep running. Mapping / the counting probe above
+    // still take over the strip.
+    if (!g_power_dark) {
+      fill_rgb(leds, g_led_cap, Rgb::Black);
+      show = true;
+      g_power_dark = true;
+      was_active = false;
+    }
+    next_delay_ms = kPowerOffPollMs;
   } else if (lm_fx_active() && lm_fxdbg_hold(millis())) {
     // FX debugger pause (fx_debug_control): the frame clock is frozen and nothing
     // renders or transmits — the strip latches the last frame. Re-check soon for
@@ -3262,6 +3305,110 @@ static void poll_fx_debugger() {
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   lm_fxdbg_poll(millis(), open);
   xSemaphoreGive(player_mutex);
+}
+
+// -- Lamp power (power_ffi.rs, docs/design/lamp-power.md) -----------------------
+// Every loop pass: watch the toggle trigger (a driver's export, e.g. the touch
+// driver's touch_tap), load a transition effect the machine asked for (replay its
+// stored frame onto deck B), apply HITL pull simulations, persist the config /
+// the settled state, and push power_state to the sessions that asked for it.
+static uint32_t g_power_cfg_gen = 0;
+static int g_power_saved = -1;  // the pw_on value in NVS (-1 = unknown)
+
+// Push the power_state built in tx (n bytes) to the subscribed sessions. Outside
+// the player mutex: a full send window must never stall the render task.
+static void power_push_all(int32_t n) {
+  if (n <= 0) return;
+#if defined(LM_NETSTACK)
+  if (lm_power_subscribed(LM_KIOSK_SRC_WSS) && netstack_ws_open()) netstack_ws_send(tx, (size_t)n);
+#else
+  if (lm_power_subscribed(LM_KIOSK_SRC_WSS) && ws_state == WsState::kOpen) {
+    ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+  }
+#endif
+  if (lm_power_subscribed(LM_KIOSK_SRC_BLE) && improv_ble_central_connected()) {
+    player_ble_push(tx, (size_t)n);
+  }
+}
+
+static void poll_power() {
+  uint32_t now = millis();
+#if defined(LM_NETSTACK)
+  lm_power_tick(netstack_ws_open(), improv_ble_central_connected());
+#else
+  lm_power_tick(ws_state == WsState::kOpen, improv_ble_central_connected());
+#endif
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;  // a busy frame: next pass
+  lm_power_poll_trigger(now);
+  const uint32_t load = lm_power_take_load();
+  if (load != 0) {
+    lm_power_set_loading(true);
+    fs_replay(load == 1 ? kPowerOnFxPath : kPowerOffFxPath);
+    lm_power_set_loading(false);
+    lm_power_effect_loaded(millis());
+  }
+  const uint32_t clear = lm_power_take_clear();
+  int32_t sim_pin = -1;
+  uint32_t sim_pull = 0;
+  const bool sim = lm_power_take_sim(&sim_pin, &sim_pull);
+  bool settled = false;
+  const bool target = lm_power_target(&settled);
+  const uint32_t gen = lm_power_cfg_gen();
+  uint8_t rec[LM_POWER_RECORD_CAP];
+  int32_t rn = gen != g_power_cfg_gen ? lm_power_cfg_record(rec, sizeof rec) : -1;
+  int32_t push_n = 0;
+  if (lm_power_push_due()) {
+    push_n = lm_power_build_push(lm_power_subscribed(LM_KIOSK_SRC_WSS) ? LM_KIOSK_SRC_WSS
+                                                                         : LM_KIOSK_SRC_BLE,
+                                 now, tx, sizeof tx);
+    lm_power_push_done();
+  }
+  xSemaphoreGive(player_mutex);
+  power_push_all(push_n);
+
+  if (clear & 1) remove(kPowerOnFxPath);
+  if (clear & 2) remove(kPowerOffFxPath);
+#if defined(LM_SENSORS)
+  if (sim) sensor_gpio_sim(sim_pin, (int)sim_pull);
+#else
+  (void)sim;
+#endif
+  if (gen != g_power_cfg_gen) {
+    g_power_cfg_gen = gen;
+    if (rn > 0 && fs_ok) fs_write_file(kPowerCfgPath, rec, (size_t)rn);
+  }
+  // The settled state, once per change (NVS wear-levels; a burst of taps that
+  // ends where it started writes nothing).
+  if (settled && (int)target != g_power_saved) {
+    g_power_saved = target ? 1 : 0;
+    prefs.putUChar("pw_on", target ? 1 : 0);
+    Log().printf("[power] %s\n", target ? "on" : "off");
+  }
+}
+
+// Boot: the config, the last state and which transition effects are stored.
+// Before the render task starts.
+static void power_begin() {
+  uint8_t rec[LM_POWER_RECORD_CAP];
+  size_t n = 0;
+  if (fs_ok) {
+    FILE *f = fs_open(kPowerCfgPath, "rb");
+    if (f != nullptr) {
+      n = fread(rec, 1, sizeof rec, f);
+      fclose(f);
+    }
+  }
+  auto exists = [](const char *p) {
+    FILE *f = fs_ok ? fs_open(p, "rb") : nullptr;
+    if (f == nullptr) return false;
+    fclose(f);
+    return true;
+  };
+  int last = prefs.isKey("pw_on") ? (int)prefs.getUChar("pw_on", 1) : -1;
+  bool on = lm_power_seed(n ? rec : nullptr, n, last, exists(kPowerOnFxPath), exists(kPowerOffFxPath));
+  g_power_saved = last;
+  g_power_cfg_gen = lm_power_cfg_gen();
+  Log().printf("[power] boot %s (saved %d)\n", on ? "on (fade in)" : "off", last);
 }
 
 // -- Kiosk mode: idle revert + kiosk_status pushes (kiosk_ffi.rs) ---------------
@@ -4017,6 +4164,16 @@ void netstack_console_hook(const char *line, size_t len) {
     poll_kiosk_config();  // persist an "off" now
     return;
   }
+  // "POWER ON|OFF|TOGGLE|STATUS [INSTANT]" (power_ffi.rs): the HITL / USB path.
+  if (len >= 6 && strncasecmp(line, "POWER ", 6) == 0) {
+    char pr[64];
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    int32_t k = lm_power_console(reinterpret_cast<const uint8_t *>(line) + 6, len - 6, millis(),
+                                 reinterpret_cast<uint8_t *>(pr), sizeof pr);
+    xSemaphoreGive(player_mutex);
+    Serial.printf("%s\n", k < 0 ? "[power] console: POWER ON|OFF|TOGGLE|STATUS [INSTANT]" : pr);
+    return;
+  }
   if (len < 5) return;
   char reply[200];
   int32_t n = lm_wifi_console(reinterpret_cast<const uint8_t *>(line) + 5, len - 5,
@@ -4326,6 +4483,7 @@ void setup() {
   (void)render_stack;
   (void)render_tcb;
 #else
+  power_begin();
   xTaskCreateStatic(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
                     render_stack, &render_tcb);
 #endif
@@ -4636,6 +4794,7 @@ void loop() {
 #if defined(LM_NETSTACK)
   poll_mesh_sessions();
 #endif
+  poll_power();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {

@@ -67,6 +67,10 @@ pub use wifi_ffi::*;
 // The FX debugger (docs/design/fx-debugger.md): pause / step / snapshot.
 mod fxdbg;
 pub use fxdbg::*;
+// Lamp power (docs/design/lamp-power.md): on/off, ON/OFF transitions, the
+// toggle trigger, power_state pushes.
+mod power_ffi;
+pub use power_ffi::*;
 // Kiosk mode (docs/design/kiosk-mode.md): the lock gate, idle revert, owner unlock.
 // A public module (not glob re-exported: its pure helpers share names with wifi_ffi's).
 pub mod kiosk_ffi;
@@ -2008,6 +2012,12 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SET_WIFI_POLICY) => return wifi_ffi::handle_set_wifi_policy(frame, out, out_cap),
         Some(ARM_GET_WIFI_POLICY) => return wifi_ffi::handle_get_wifi_policy(out, out_cap),
         // Kiosk mode (kiosk_ffi.rs): zero-copy replies into `out`.
+        // Lamp power (power_ffi.rs): zero-copy power_state replies into `out`.
+        Some(power_ffi::ARM_SET_POWER) => return power_ffi::handle_set_power(frame, recv_ms as u32, out, out_cap),
+        Some(power_ffi::ARM_GET_POWER) => return power_ffi::handle_get_power(recv_ms as u32, out, out_cap),
+        Some(power_ffi::ARM_SET_POWER_CONFIG) => {
+            return power_ffi::handle_set_power_config(frame, recv_ms as u32, out, out_cap)
+        }
         Some(kiosk_ffi::ARM_GET_KIOSK_STATUS) => return kiosk_ffi::handle_get(recv_ms as u32, out, out_cap),
         Some(kiosk_ffi::ARM_SET_KIOSK_CONFIG) => {
             return kiosk_ffi::handle_set_config(frame, recv_ms as u32, out, out_cap)
@@ -2880,6 +2890,10 @@ macro_rules! features {
         // strideMode "rolling" masks with stride_lit_rolling at the ABSOLUTE
         // pattern frame, which main.cpp passes to lm_pattern_color.
         "stride_rolling",
+        // Lamp power (docs/design/lamp-power.md): set_power / get_power /
+        // set_power_config, power_state pushes, submit_effect power_slot, the
+        // driver GPIO intrinsics and trigger uniforms.
+        "power",
         $($extra),*
     ] };
 }
@@ -2930,7 +2944,26 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     if m.store() {
         return effect_store::handle_store(&m);
     }
-    submit_effect_view(&m, deck_index(m.deck()), m.activate())
+    let fxb = pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_FXB).then(|| m.fxb());
+    let id0 = if pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_EFFECT_ID) { m.effect_id() } else { "" };
+    // A transition effect (power_slot): stored, not loaded (power_ffi.rs).
+    if let Some(r) = power_ffi::intercept_submit(m.power_slot(), id0, fxb) {
+        FX_LAST_DECK = DECK_B_IDX as u32; // never persisted as the show
+        return match r {
+            Ok(()) => {
+                let mut rr = pb::ResultReady::default();
+                let _ = rr.r#map_id.push_str(id0);
+                pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ResultReady(rr)) }
+            }
+            Err("bad_fxb") => fx_error("bad_fxb", "fxb failed to parse"),
+            Err("effect_too_large") => fx_error("effect_too_large", "fxb exceeds this player's effect buffer"),
+            Err(why) => fx_error("bad_fxb", why),
+        };
+    }
+    // The replay of a stored transition frame: onto deck B, playing.
+    let loading = power_ffi::loading();
+    let d = if loading { DECK_B_IDX } else { deck_index(m.deck()) };
+    submit_effect_view(&m, d, m.activate() || loading)
 }
 
 /// The submit_effect load: `m`'s fxb onto deck `d`, activated or parked. Also how
@@ -2954,6 +2987,9 @@ unsafe fn submit_effect_view(m: &pv::SubmitEffectView<'_>, d: usize, activate: b
     // activate=true takes over rendering now; false parks it (loaded + valid,
     // set_effect can activate later).
     fx_set_active(d, activate);
+    if power_ffi::loading() {
+        power_ffi::note_load(true);
+    }
     let mut r = pb::ResultReady::default();
     // effect_id echoes back so the app can correlate the ack; also latch it (the
     // deck's keypoints live under it; deck A's pins the PerfReport identity).
@@ -5593,7 +5629,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
 #[inline(never)]
 unsafe fn fx_latch_crossfade() {
     let pl = player();
-    FX_XF_POS = pl.crossfade();
+    // A power transition playing its effect drives the mix (power_ffi.rs).
+    FX_XF_POS = match power_ffi::xf_override() {
+        Some(x) => x,
+        None => pl.crossfade(),
+    };
     FX_XF_MODE = pl.crossfade_mode();
 }
 

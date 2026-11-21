@@ -235,6 +235,11 @@ static mut CUR_SRC: u8 = SRC_INTERNAL;
 static mut MSG_LOCKED: bool = false;
 static mut LOCKOUT_UNTIL_MS: Option<u32> = None;
 
+/// The connection the message being handled came in on (SRC_*).
+pub(crate) unsafe fn current_src() -> u8 {
+    CUR_SRC
+}
+
 unsafe fn any_unlocked() -> bool {
     (*addr_of!(UNLOCKED)).iter().any(|&u| u)
 }
