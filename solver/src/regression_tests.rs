@@ -563,3 +563,67 @@ fn a_starved_imu_on_a_closed_fixture_no_longer_collapses_the_map() {
     let size = size_vs_truth(&map, &starved.truth);
     assert!(size > 0.5, "size {size:.3}");
 }
+
+// ---------------------------------------------------------------------------
+// Rolling stride (docs/design/rolling-stride.md, owner decision D-175 left to
+// the analysis): the rolling schedule has NO bridge phases. Neighbouring blocks
+// sit at different offsets all the time, so every frame co-observes LEDs of
+// several stride classes; with phased coverage-only phases, a class is only
+// ever seen with itself. This pins that a bridgeless rolling capture registers
+// into one rigid map at least as well as the phased schedule WITH its bridges.
+// ---------------------------------------------------------------------------
+
+/// RMS distance (m) between the solved and true positions of the measured
+/// LEDs, after the best similarity alignment.
+fn aligned_rms(map: &OutputMap, truth: &[Vec3]) -> f64 {
+    use crate::linalg::{add, mat_vec, norm, scale, sub};
+    let (est, tru): (Vec<Vec3>, Vec<Vec3>) = map
+        .leds
+        .iter()
+        .filter(|l| l.n_views > 0)
+        .map(|l| (l.xyz, truth[l.id as usize]))
+        .unzip();
+    let (s, r, t) = crate::vio::similarity_align(&est, &tru);
+    let sq: f64 = est
+        .iter()
+        .zip(&tru)
+        .map(|(e, d)| norm(sub(add(scale(mat_vec(&r, *e), s), t), *d)).powi(2))
+        .sum();
+    (sq / est.len() as f64).sqrt()
+}
+
+#[test]
+fn a_rolling_stride_registers_without_bridges() {
+    let base = json!({"stride": 3, "duration": 30, "frameHz": 6, "sweep": 1.0,
+                      "bob": 0.1, "seed": 2});
+    let with = |extra: Value| {
+        let mut v = base.clone();
+        v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        generate(&spec(v))
+    };
+    // The phased schedule as captured today: 5 s phases (3 coverage + 2
+    // bridges) with a second of decode dead time after every global step.
+    let phased = with(json!({"phaseS": 5, "deadS": 1.0}));
+    // Rolling, D = 4 at 0.4 s cycles: 1.6 s dwells, a 4.8 s period, no bridges.
+    let rolling = with(json!({"strideMode": "rolling", "cycleS": 0.4, "dwellCycles": 4}));
+    let n_obs = |sc: &crate::scenario::Scenario| sc.problem["detections"].as_array().unwrap().len();
+    let (pm, pd) = solve(&phased.problem);
+    let (rm, rd) = solve(&rolling.problem);
+    let (pe, re) = (aligned_rms(&pm, &phased.truth), aligned_rms(&rm, &rolling.truth));
+    eprintln!(
+        "phased+bridges: {} obs, {} -> rms {:.4} m, size {:.3}; rolling: {} obs, {} -> rms {:.4} m, size {:.3}",
+        n_obs(&phased),
+        describe(&pd.assessment),
+        pe,
+        size_vs_truth(&pm, &phased.truth),
+        n_obs(&rolling),
+        describe(&rd.assessment),
+        re,
+        size_vs_truth(&rm, &rolling.truth),
+    );
+    assert!(!rd.assessment.degenerate, "rolling: {}", describe(&rd.assessment));
+    assert!(rd.assessment.measured >= 57, "rolling measured {}", describe(&rd.assessment));
+    assert!(re <= (1.5 * pe).max(0.01), "rolling rms {re:.4} m vs phased+bridges {pe:.4} m");
+    let size = size_vs_truth(&rm, &rolling.truth);
+    assert!((0.8..1.25).contains(&size), "rolling size {size:.3}");
+}
