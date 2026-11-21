@@ -123,14 +123,28 @@ impl<S: Sink, O: FnMut() -> std::io::Result<S>> Output<S, O> {
     /// (Ready -> Pending) so the next [`ensure_open`](Self::ensure_open) re-opens
     /// it after the backoff — a write error never parks the output for good.
     pub fn write_frame(&mut self, bufs: &[&[u8]]) -> Event {
+        self.write_with(|sink| {
+            for b in bufs {
+                sink.write(b).map_err(|e| (b.len(), e))?;
+            }
+            Ok(())
+        })
+    }
+
+    /// [`write_frame`](Self::write_frame) with the writes up to the caller (the
+    /// MAX output thread's one-message CSR + STREAM, or a timed split): `f` gets
+    /// the open sink and returns the failing write's length with its error.
+    /// Same policy: a failure drops the sink and backs off.
+    pub fn write_with(
+        &mut self,
+        f: impl FnOnce(&mut S) -> Result<(), (usize, std::io::Error)>,
+    ) -> Event {
         let Some(sink) = self.sink.as_mut() else {
             return self.ensure_open();
         };
-        for b in bufs {
-            if let Err(e) = sink.write(b) {
-                self.sink = None;
-                return self.fail(format!("write of {} B failed: {e}", b.len()));
-            }
+        if let Err((n, e)) = f(sink) {
+            self.sink = None;
+            return self.fail(format!("write of {n} B failed: {e}"));
         }
         self.backoff.reset();
         self.last_err = None;
@@ -260,5 +274,31 @@ mod tests {
         *r.fail.borrow_mut() = true;
         out.ensure_open();
         assert!(matches!(out.write_frame(&[b"x"]), Event::Wait { log: Some(_), .. }));
+    }
+
+    #[test]
+    fn write_with_shares_the_retry_policy() {
+        let (r, mut out) = rig();
+        *r.present.borrow_mut() = true;
+        assert_eq!(out.ensure_open(), Event::Opened { retries: 0 });
+        // The caller's own writes (one combined message here) land as one frame.
+        let ev = out.write_with(|s| s.write_frame(b"cfg", b"stream").map_err(|e| (9, e)));
+        assert_eq!(ev, Event::Ready);
+        assert_eq!(*r.writes.borrow(), vec![b"cfg".to_vec(), b"stream".to_vec()]);
+        // A failure drops the sink, logs the caller's length once, and backs off.
+        *r.fail.borrow_mut() = true;
+        let Event::Wait { delay, log } =
+            out.write_with(|s| s.write_frame(b"cfg", b"stream").map_err(|e| (9, e)))
+        else {
+            panic!()
+        };
+        assert_eq!(delay, ms(500));
+        assert!(log.unwrap().contains("write of 9 B failed"));
+        assert_eq!(out.state(), State::Pending);
+        // Pending: the closure doesn't run, the open is retried instead.
+        *r.fail.borrow_mut() = false;
+        let ran = std::cell::Cell::new(false);
+        assert!(matches!(out.write_with(|_| { ran.set(true); Ok(()) }), Event::Opened { .. }));
+        assert!(!ran.get());
     }
 }

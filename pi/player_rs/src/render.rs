@@ -14,6 +14,14 @@ use ledmapper_player::Player;
 /// `SpidevSink` drives the real bus; `RecordingSink` captures for tests.
 pub trait Sink {
     fn write(&mut self, data: &[u8]) -> std::io::Result<()>;
+
+    /// One frame: the CSR write then the STREAM, each framed by its own CS.
+    /// The default is two writes; `SpidevSink` sends both as one SPI message
+    /// (one syscall, CS toggled between the transfers).
+    fn write_frame(&mut self, config: &[u8], stream: &[u8]) -> std::io::Result<()> {
+        self.write(config)?;
+        self.write(stream)
+    }
 }
 
 /// Test/dry-run sink: keeps every buffer written.

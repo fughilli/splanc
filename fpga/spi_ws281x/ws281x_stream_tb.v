@@ -31,6 +31,7 @@ module ws281x_stream_tb;
   reg                  stream_active = 0;
   wire [MAX_PORTS-1:0] ws;
   wire                 frame_pulse;  // observed only; connected to avoid PINMISSING
+  wire                 frame_done;   // observed only; connected to avoid PINMISSING
 
   ws281x_stream #(
       .MAX_PORTS(MAX_PORTS),
@@ -50,7 +51,12 @@ module ws281x_stream_tb;
       .stream_valid(stream_valid),
       .stream_active(stream_active),
       .ws(ws),
-      .frame_pulse(frame_pulse)
+      .frame_pulse(frame_pulse),
+      .frame_done(frame_done),
+      .underrun(),
+      .underruns(),
+      .min_fill(),
+      .port_underruns()
   );
 
 `ifdef TRACE
