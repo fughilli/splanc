@@ -9,7 +9,11 @@ to watch so a change can be judged, not guessed.
 
 Locking the camera exposure to the Nyquist-capped sweet spot
 (`?exposure=servo`, capped at `bitPeriodMs/2`, see `cv/exposure.ts`
-`planExposureServo` + `xr/exposureControl.ts`) transformed detection:
+`planExposureServo` + `xr/exposureControl.ts`) transformed detection.
+Since 2026-11 this is the DEFAULT wherever the camera takes a manual exposure
+lock, run by the exposure-first light servo (`cv/lightServo.ts`: exposure
+before LED brightness, a measured exposure floor, no brightness ratchet);
+`?exposure=auto` restores camera auto-exposure + the legacy brightness servo:
 
 | metric (per frame, 64-LED strip) | before (bloom/banding) | now (exposure servo)                   |
 | -------------------------------- | ---------------------- | -------------------------------------- |
