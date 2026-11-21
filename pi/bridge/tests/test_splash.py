@@ -3,8 +3,11 @@ frames it shares with the display, and the quiet-system wait."""
 
 import array
 import os
+import shutil
 import socket
 import struct
+import sys
+import tempfile
 import threading
 import uuid
 
@@ -165,7 +168,11 @@ class FakeSplash:
     """A stand-in splash on an abstract socket: answers ``stop`` like splanc-splash."""
 
     def __init__(self, t0_ns=5_000_000_000, stage=2, oled=True):
-        self.address = "\0splanc-splash-test-" + uuid.uuid4().hex
+        if sys.platform.startswith("linux"):
+            self.address = "\0splanc-splash-test-" + uuid.uuid4().hex
+        else:  # no abstract sockets (macOS): a short path, sun_path is ~104 bytes there
+            self._dir = tempfile.mkdtemp(prefix="sps", dir="/tmp")
+            self.address = os.path.join(self._dir, "s")
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.bind(self.address)
         self.sock.listen(4)
@@ -193,6 +200,8 @@ class FakeSplash:
 
     def close(self):
         self.sock.close()
+        if not self.address.startswith("\0"):
+            shutil.rmtree(os.path.dirname(self.address), ignore_errors=True)
         for fd in (self.r, self.w):
             try:
                 os.close(fd)
