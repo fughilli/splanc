@@ -38,7 +38,8 @@ import { IDENTITY, bbox, normQuat, placeFixtures, summarizeRoom, yaw, type Quat,
 import { DeviceSession, ToolError, summarize, type Curve, type TextureSource } from "./session";
 import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixtureplot";
 import type { RGB } from "./plot";
-import type { UniformInput } from "./uniforms";
+import { resolve as resolveUniforms, type UniformInput } from "./uniforms";
+import type { TransitionSpec } from "./power";
 import { canaryRollout, P4_KIND, resolvePackage, type ResolvedPackage } from "./firmware";
 import { registerFxDebugTools } from "./fxdebug";
 import type { TrustVerdict } from "./trust";
@@ -834,6 +835,227 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           ),
         ),
       ),
+  );
+
+  // -- Lamp power (docs/design/lamp-power.md; the "power" feature) ------------------------
+  server.registerTool(
+    "get_power",
+    {
+      description:
+        "Read each lamp's power state: on/off and its phase (on / off / turning_on / turning_off), brightness, " +
+        "the running effect, what made the last change (boot, the app/agent, or the lid's touch sensor), the " +
+        "boot behaviour (last / on / off), the ON and OFF transitions (style, duration, stored effect, look), and " +
+        "the trigger wired to power (e.g. a lid touch sensor wired with setup_touch_sensor) with how often it fired.",
+      inputSchema: { players },
+    },
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.getPower()))),
+  );
+  server.registerTool(
+    "set_power",
+    {
+      description:
+        "Turn lamps on or off (on: true/false) or flip them (toggle: true). Off = LEDs dark and the effect " +
+        "paused; the lamp stays connected (Wi-Fi, app, this agent), so set_power on brings it back where it " +
+        "was. The lamp's configured ON / OFF transition plays (set_transitions); instant: true cuts, duration_s " +
+        "overrides the length for this change only. The state survives a reboot. Prefer this over " +
+        "set_brightness 0 to switch a lamp off.",
+      inputSchema: {
+        on: z.boolean().optional(),
+        toggle: z.boolean().optional().describe("flip the current state instead of `on`"),
+        instant: z.boolean().optional().describe("skip the transition"),
+        duration_s: z.number().min(0.1).max(30).optional().describe("this change's transition length"),
+        players,
+      },
+    },
+    ({ on, toggle, instant, duration_s, players: sel }) =>
+      guard(async () =>
+        ok(
+          await fan(sel, (s) =>
+            s.setPower({
+              ...(on !== undefined ? { on } : {}),
+              ...(toggle !== undefined ? { toggle } : {}),
+              ...(instant !== undefined ? { instant } : {}),
+              ...(duration_s !== undefined ? { durationS: duration_s } : {}),
+            }),
+          ),
+        ),
+      ),
+  );
+  server.registerTool(
+    "setup_touch_sensor",
+    {
+      description:
+        "Wire a capacitive touch module (a TTP223 board, e.g. the DAOKI red PCB with a round pad; its 3-pin " +
+        "header is GND / I/O / VCC) to a lamp: generates its sensor driver (input with the pull toward idle, " +
+        "debounce, lockout, the first 1 s after power-up ignored while the module recalibrates), loads it with " +
+        "deploy_driver's path and, unless bind_power is false, binds its trigger to power so each touch toggles " +
+        "the lamp on/off. Default: momentary, active-high (the module as shipped: pads A and B open). Before " +
+        "calling, ask the user to check the solder pads: A bridged = active_low; B bridged = toggle (\"self-lock\"; " +
+        "better to open it again and use momentary) - or meter I/O: 0 V idle and 3.3 V while touched = " +
+        "active-high momentary. Wiring: VCC to 3V3 (never 5 V: I/O would swing to 5 V), GND to GND, I/O to a free " +
+        "GPIO - ask which; on an ESP32-C6 SuperMini pick 0-3, 10, 11, 22 or 23 (20 and 14 drive LEDs, 6/7/21 an " +
+        "IMU). Tell the user not to touch the lid for about a second after the lamp powers up. ONE sensor driver " +
+        "runs at a time: this REPLACES any loaded driver (e.g. an IMU driver; check driver_state first and ask; " +
+        "the native IMU is unaffected) and the result warns when it did. Effects can react to the same trigger " +
+        "(uniform trigger touch_tap; fired(touch_tap)).",
+      inputSchema: {
+        gpio: z.number().int().min(0).max(30),
+        active_low: z.boolean().optional().describe("OUT reads low while touched (TTP223 jumper A closed)"),
+        mode: z.enum(["momentary", "toggle"]).optional().describe("Default momentary (TTP223 default)"),
+        export_name: z.string().min(1).max(24).optional().describe('The trigger name (default "touch_tap")'),
+        bind_power: z.boolean().optional().describe("Toggle the lamp on each touch (default true)"),
+        players,
+      },
+    },
+    ({ gpio, active_low, mode, export_name, bind_power, players: sel }) =>
+      guard(async () =>
+        ok(
+          await fan(sel, (s) =>
+            s.setupTouchSensor({ gpio, activeLow: active_low, mode, exportName: export_name, bindPower: bind_power }),
+          ),
+        ),
+      ),
+  );
+  server.registerTool(
+    "wire_trigger",
+    {
+      description:
+        "Bind a sensor driver's trigger (an `export trigger name;` of the loaded driver, e.g. touch_tap) to a " +
+        "lamp's power: target power = each firing toggles the lamp on/off; none = unbind (power then changes only " +
+        "by set_power / the app). driver_state lists the loaded driver's exports.",
+      inputSchema: {
+        trigger: z.string().min(1).max(24).optional().describe('Default "touch_tap"'),
+        target: z.enum(["power", "none"]),
+        players,
+      },
+    },
+    ({ trigger, target, players: sel }) =>
+      guard(async () => ok(await fan(sel, (s) => s.wireTrigger(target === "power" ? (trigger ?? "touch_tap") : "")))),
+  );
+  const transition = z
+    .object({
+      style: z
+        .enum(["fade", "cut", "effect"])
+        .optional()
+        .describe("fade (default when no effect is given), cut (instant), effect (play an effect)"),
+      duration_s: z.number().min(0.1).max(30).optional().describe("Default 0.7 s on / 0.9 s off"),
+      library_id: z.string().optional().describe("effect style: an effects-library entry (search_effects)"),
+      source: z.string().optional().describe("effect style: effect source instead of library_id"),
+      effect_id: z
+        .string()
+        .min(1)
+        .max(32)
+        .optional()
+        .describe("effect style: its id on the lamp (default from the library entry); alone, an effect compiled this session"),
+      keypoint: z
+        .string()
+        .min(1)
+        .max(32)
+        .optional()
+        .describe("effect style: a saved look (keypoint) of that effect on the lamp, used as its starting uniforms"),
+      uniforms: z
+        .record(z.string(), uniformValue)
+        .optional()
+        .describe("effect style: uniform values by name (over the keypoint's); at most 8 values of <= 4 floats"),
+    })
+    .optional();
+  server.registerTool(
+    "set_transitions",
+    {
+      description:
+        "Choose how each lamp turns ON and OFF (stored on the lamp, used by set_power, the app and the lid's " +
+        "touch sensor), and what it does at boot. Per direction: fade (a brightness ramp over the running " +
+        "effect; the safe default), cut (instant), or effect: play an effect, blended with the show (ON: from " +
+        "dark into the effect, then into the show; OFF: from the show into the effect, then to dark). Pick an " +
+        "effect from the library (search_effects with words like transition, bloom, sparkle, fade, wipe, " +
+        "dissolve) or pass source. A transition effect may declare `uniform float power;` (the light level: 0 -> 1 " +
+        "while turning on, 1 -> 0 while turning off, so ONE bloom effect serves both directions) and `uniform float " +
+        "transition;` (0 -> 1 progress); without them it just plays and is faded in/out. keypoint = a saved look " +
+        "of that effect on the lamp (list_keypoints while it runs) used as its uniforms. Effects should be cheap " +
+        "(they render alongside the show for a moment). boot: last (restore the state before power was cut, the " +
+        "default), on, or off. clear_effects forgets stored transition effects (that direction then fades).",
+      inputSchema: {
+        on: transition.describe("the ON transition"),
+        off: transition.describe("the OFF transition"),
+        boot: z.enum(["last", "on", "off"]).optional(),
+        clear_effects: z.enum(["on", "off", "both"]).optional(),
+        players,
+      },
+    },
+    (a) =>
+      guard(async () => {
+        type Dir = NonNullable<typeof a.on>;
+        // Resolve each direction's effect source once (library / source / an id compiled this session).
+        const sources: Partial<Record<"on" | "off", { id: string; source: string }>> = {};
+        for (const dir of ["on", "off"] as const) {
+          const d: Dir | undefined = a[dir];
+          if (!d) continue;
+          let { effect_id, source } = d;
+          if (d.library_id) {
+            if (!library) throw new ToolError("library_id needs the effects library (search_effects); pass source");
+            const r = await library.forDeploy(d.library_id, effect_id);
+            source ??= r.entry.source;
+            effect_id = r.effectId;
+          }
+          if (!source && effect_id) source = knownSources.get(effect_id);
+          const wantsEffect = d.style === "effect" || source !== undefined || d.keypoint !== undefined;
+          if (!wantsEffect) continue;
+          if (d.style && d.style !== "effect") {
+            throw new ToolError(`${dir}: an effect, keypoint or source needs style "effect" (got ${d.style})`);
+          }
+          if (!source) {
+            throw new ToolError(`${dir}: style "effect" needs library_id (search_effects), source, or effect_id of an effect compiled this session`);
+          }
+          effect_id ??= slugEffectId("", `${dir}_transition`);
+          knownSources.set(effect_id, source);
+          sources[dir] = { id: effect_id, source };
+        }
+        return ok(
+          await fan(a.players, async (s) => {
+            const spec = async (dir: "on" | "off"): Promise<TransitionSpec | undefined> => {
+              const d = a[dir];
+              if (!d) return undefined;
+              const src = sources[dir];
+              const base: TransitionSpec = { style: d.style ?? (src ? "effect" : "fade"), durationS: d.duration_s };
+              if (!src) return base;
+              const c = await s.compile(src.source);
+              if (!c.ok) {
+                throw new ToolError(
+                  `${dir}: the effect doesn't compile:\n${c.diagnostics.map((x) => `${x.line}:${x.col}: ${x.msg}`).join("\n")}`,
+                );
+              }
+              const values: Record<string, UniformInput> = {};
+              if (d.keypoint) {
+                let kp: Record<string, number | number[]>;
+                try {
+                  kp = await s.keypointValues(d.keypoint, src.id);
+                } catch (e) {
+                  throw new ToolError(
+                    `${dir}: no keypoint "${d.keypoint}" for effect ${src.id} on this lamp (${(e as Error).message}); ` +
+                      "save it while that effect runs (deploy_effect, tune, save_keypoint), or pass uniforms",
+                  );
+                }
+                const declared = new Set(c.uniforms.map((u) => u.name));
+                for (const [k, v] of Object.entries(kp)) if (declared.has(k)) values[k] = v;
+              }
+              Object.assign(values, d.uniforms ?? {});
+              const uniforms = Object.keys(values).length ? resolveUniforms(c.uniforms, values) : undefined;
+              return {
+                ...base,
+                effect: { effectId: src.id, fxb: c.fxb, uniforms: c.uniforms },
+                uniforms,
+                label: d.keypoint,
+              };
+            };
+            return s.setTransitions({
+              on: await spec("on"),
+              off: await spec("off"),
+              boot: a.boot,
+              clear: a.clear_effects,
+            });
+          }),
+        );
+      }),
   );
 
   // -- sensor drivers (FUG-107) -----------------------------------------------------------

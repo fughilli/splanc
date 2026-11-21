@@ -30,8 +30,20 @@ import {
   type HardwareConfigStateMessage,
   type MappingBundle,
   type PerfReportMessage,
+  type PowerState,
+  type SetPowerConfigMessage,
   type UniformValueFlat,
 } from "../../web/src/net/proto";
+import {
+  TOUCH_MODE_MOMENTARY,
+  TOUCH_MODE_TOGGLE,
+  TOUCH_POLL_MS,
+  touchConfigError,
+  touchDriverSource,
+  triggerName,
+  type TouchDriverConfig,
+} from "../../web/src/power/touchDriver";
+import { bootWire, durationMs, MAX_TRANSITION_UNIFORMS, powerView, wireTransition, type PowerBoot, type TransitionSpec } from "./power";
 import { TextureStreamer, type TextureFormat } from "../../web/src/net/textureCodec";
 import { chunkUniformValues, reassembleUniformValues } from "../../web/src/net/uniformWire";
 import {
@@ -120,6 +132,7 @@ export type Feature =
   | "sensors"
   | "drivers"
   | "wifi_policy"
+  | "power"
   | "apply_at"
   | (string & {});
 
@@ -343,6 +356,37 @@ export class DeviceSession {
       if ((r.currentFps ?? 0) > 0) this.playerFps = r.currentFps!;
       if (r.frameCyclesMax > 0 || r.frameCyclesMean > 0) this.lastPerf = { r, at: Date.now() };
     });
+    // Lamp power: one client subscription for the session's life (the client object
+    // outlives reconnects), fanned out to onPowerState subscribers. The player pushes
+    // power_state only to sessions that sent a power arm since connecting, so every
+    // (re)connect sends get_power when the firmware has the feature.
+    this.client.onPowerState((st) => {
+      this.lastPower = st;
+      for (const fn of this.powerSubs) fn(st);
+    });
+    const prevUp = this.client.events.onConnected;
+    this.client.events.onConnected = (w) => {
+      prevUp?.(w);
+      if (this.has("power") && POWER_IN_PROTO) {
+        void this.run(() => this.client.getPower(), true).catch(() => undefined);
+      }
+    };
+  }
+
+  private readonly powerSubs = new Set<(s: PowerState) => void>();
+  private lastPower: PowerState | null = null;
+
+  /** Subscribe to the player's power state: every power_state (replies and the
+   * pushes a lid tap, another client or a settling transition send). Survives
+   * reconnects. Returns an unsubscribe fn. */
+  onPowerState(fn: (s: PowerState) => void): () => void {
+    this.powerSubs.add(fn);
+    return () => this.powerSubs.delete(fn);
+  }
+
+  /** The last power_state this session saw (null until one arrives). */
+  get powerState(): PowerState | null {
+    return this.lastPower;
   }
 
   /** The player's framerate as last reported (fps_state or a perf report; 0 = unknown),
@@ -771,6 +815,151 @@ export class DeviceSession {
     return out;
   }
 
+  // -- Lamp power (docs/design/lamp-power.md; the "power" feature) ----------------
+  // On / off (off = LEDs dark, the effect paused, the network up), the ON / OFF
+  // transitions and the lid's touch sensor. The device pushes power_state on every
+  // change; the tools read it on demand.
+
+  private requirePower(): void {
+    if (!this.has("power")) {
+      throw new ToolError(
+        `the player's firmware (${this.fwVersion}) is too old for power on/off and transitions; update it ` +
+          "(update_firmware) — until then set_brightness 0 is the closest to off",
+      );
+    }
+    if (!POWER_IN_PROTO) throw new ToolError("this agent bundle predates lamp power; update it");
+  }
+
+  async getPower(): Promise<Record<string, unknown>> {
+    this.requirePower();
+    return powerView(await this.run(() => this.client.getPower()));
+  }
+
+  /** Bind a pool trigger (a driver's `export trigger`) to power: each firing
+   * toggles the lamp. "" unbinds. */
+  async wireTrigger(trigger: string): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.requirePower();
+    if (trigger !== "" && !/^[A-Za-z_][A-Za-z0-9_]{0,23}$/.test(trigger)) {
+      throw new ToolError("a trigger name is an identifier (letters, digits, _), at most 24 characters");
+    }
+    return powerView(await this.run(() => this.client.setPowerConfig({ toggleTrigger: trigger })));
+  }
+
+  /** Wire a capacitive touch module (TTP223) up: generate its driver from the
+   * shared template, compile + load it (it replaces any other driver), and bind
+   * its trigger to power unless `bindPower` is false. */
+  async setupTouchSensor(cfg: {
+    gpio: number;
+    activeLow?: boolean | undefined;
+    mode?: "momentary" | "toggle" | undefined;
+    exportName?: string | undefined;
+    bindPower?: boolean | undefined;
+  }): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.requireDrivers();
+    const bind = cfg.bindPower !== false;
+    if (bind) this.requirePower();
+    const exportName = triggerName(cfg.exportName);
+    if (cfg.exportName !== undefined && exportName !== cfg.exportName.trim()) {
+      throw new ToolError("export_name must be an identifier (letters, digits, _), at most 24 characters");
+    }
+    const tc: TouchDriverConfig = {
+      gpio: cfg.gpio,
+      activeLow: cfg.activeLow === true,
+      mode: cfg.mode === "toggle" ? TOUCH_MODE_TOGGLE : TOUCH_MODE_MOMENTARY,
+      exportName,
+    };
+    const err = touchConfigError(tc);
+    if (err) throw new ToolError(`touch sensor: ${err}`);
+    // One driver runs at a time: note what this one replaces (e.g. an IMU driver).
+    let replaced: string[] | null = null;
+    try {
+      const before = await this.rpc<DriverStateReply>({ type: "get_driver_state" }, "driver_state");
+      if (before.running) {
+        const names = (before.exports ?? []).map((e) => e.name);
+        if (!names.includes(exportName)) replaced = names;
+      }
+    } catch {
+      /* best effort: the load below reports real errors */
+    }
+    const driver = await this.deployDriver(touchDriverSource(tc), TOUCH_POLL_MS, false);
+    const out: Record<string, unknown> = {
+      wiring: `module VCC -> 3V3 (not 5 V), GND -> GND, I/O -> GPIO ${cfg.gpio}`,
+      trigger: exportName,
+      polarity: tc.activeLow ? "active-low" : "active-high",
+      mode: cfg.mode ?? "momentary",
+      driver,
+    };
+    if (replaced) {
+      out["warning"] =
+        `replaced the previously loaded sensor driver (exports: ${replaced.join(", ") || "none"}); ` +
+        "only one driver runs at a time";
+    }
+    out["note"] = "don't touch the lid for about a second after the lamp powers up (the module recalibrates)";
+    if (bind) out["power"] = await this.wireTrigger(exportName);
+    out["effects_note"] =
+      `effects can react too: declare \`uniform trigger ${exportName};\` and test \`fired(${exportName})\` in update()`;
+    return out;
+  }
+
+  async setPower(req: { on?: boolean; toggle?: boolean; instant?: boolean; durationS?: number }): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.requirePower();
+    if (req.toggle !== true && req.on === undefined) throw new ToolError("pass on: true / false, or toggle: true");
+    const msg: { on?: boolean; toggle?: boolean; instant?: boolean; durationMs?: number } = {};
+    if (req.toggle === true) msg.toggle = true;
+    else msg.on = req.on === true;
+    if (req.instant === true) msg.instant = true;
+    if (req.durationS !== undefined) msg.durationMs = durationMs(req.durationS);
+    return powerView(await this.run(() => this.client.setPower(msg)));
+  }
+
+  /** A keypoint's by-name values for the effect stored under `effectId` (the
+   * device keeps keypoints per effect id, loaded or not). */
+  async keypointValues(name: string, effectId: string): Promise<Record<string, number | number[]>> {
+    this.requireKeypoints();
+    const r = await this.rpc<KeypointReply>({ type: "get_keypoint", name, effectId, deck: 0 }, "keypoint");
+    const values: Record<string, number | number[]> = {};
+    for (const v of r.values ?? []) values[v.uniform] = v.value.length === 1 ? v.value[0]! : v.value;
+    return values;
+  }
+
+  /** Configure the ON / OFF transitions (and the boot behaviour). An effect
+   * transition's .fxb is stored on the device first (SubmitEffect.power_slot),
+   * then the config is sent. `clear` forgets the stored effects. */
+  async setTransitions(cfg: {
+    on?: TransitionSpec | undefined;
+    off?: TransitionSpec | undefined;
+    boot?: PowerBoot | undefined;
+    clear?: "on" | "off" | "both" | undefined;
+  }): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.requirePower();
+    if (!cfg.on && !cfg.off && cfg.boot === undefined && cfg.clear === undefined) {
+      throw new ToolError("give on and/or off (a transition), boot, or clear");
+    }
+    const stored: Record<string, string> = {};
+    for (const [dir, slot] of [["on", 1], ["off", 2]] as const) {
+      const spec = cfg[dir];
+      if (!spec?.effect) continue;
+      if ((spec.uniforms?.length ?? 0) > MAX_TRANSITION_UNIFORMS) {
+        throw new ToolError(`at most ${MAX_TRANSITION_UNIFORMS} uniform values per transition (got ${spec.uniforms!.length})`);
+      }
+      await this.run(() => this.client.storeTransitionEffect(slot, spec.effect!.effectId, spec.effect!.fxb));
+      stored[dir] = spec.effect.effectId;
+    }
+    const msg: Omit<SetPowerConfigMessage, "type"> = {};
+    if (cfg.boot !== undefined) msg.boot = bootWire(cfg.boot);
+    if (cfg.on) msg.onTransition = wireTransition(cfg.on);
+    if (cfg.off) msg.offTransition = wireTransition(cfg.off);
+    if (cfg.clear) msg.clearEffects = cfg.clear === "on" ? 1 : cfg.clear === "off" ? 2 : 3;
+    const p = await this.run(() => this.client.setPowerConfig(msg));
+    const out = powerView(p);
+    if (Object.keys(stored).length) out["stored_effects"] = stored;
+    return out;
+  }
+
   // -- motion sensor (docs/design/sensor-core.md) ---------------------------------
   // The on-board IMU (MPU-6050 family on I2C), fused on the device. Values are
   // also bound by name into effect uniforms (imu_quat, imu_gravity, ...).
@@ -886,9 +1075,12 @@ export class DeviceSession {
   }
 
   /** Compile and load a sensor driver (`void poll()` + `export`s). */
+  /** The driver compiler (the bundled host compiler; a test may stub it). */
+  driverCompile: (source: string) => Promise<CompileOutcome> = (source) => compile(source);
+
   async deployDriver(source: string, intervalMs: number, feedImu: boolean): Promise<Record<string, unknown>> {
     this.requireDrivers();
-    const c = await compile(source);
+    const c = await this.driverCompile(source);
     if (!c.ok) throw new ToolError(`driver doesn't compile: ${JSON.stringify(c.diagnostics)}`);
     const r = await this.rpc<DriverStateReply>(
       { type: "submit_driver", fxb: c.fxb, pollIntervalMs: intervalMs, feedImu },
@@ -2143,6 +2335,7 @@ export const KEYPOINTS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name 
 export const SENSORS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "get_sensors");
 export const DRIVERS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "submit_driver");
 export const WIFI_POLICY_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_wifi_policy");
+export const POWER_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_power");
 
 interface DriverStateReply {
   running?: boolean;
