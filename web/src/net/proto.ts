@@ -101,6 +101,7 @@ const CLIENT_ARMS: Record<string, string> = {
   // The mesh gateway (docs/design/mesh.md §8; net/mesh.ts).
   mesh_send: "meshSend",
   get_mesh: "getMesh",
+  osc: "osc",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -141,6 +142,7 @@ const SERVER_ARMS: Record<string, string> = {
   ethernet_state: "ethernetState",
   controller_list: "controllerList",
   mesh: "mesh",
+  osc: "osc",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -273,6 +275,11 @@ function fillNulls(type: string, flat: Json): Json {
 }
 
 export function encodeClient(msg: ClientMessage): Uint8Array {
+  // OSC rides at up to 120 Hz: skip the JSON round trip (and base64) for it.
+  if ((msg.type as string) === "osc") {
+    const packet = (msg as unknown as OscDatagramMessage).packet;
+    return toBinary(ClientMessageSchema, create(ClientMessageSchema, { msg: { case: "osc", value: { packet } } }));
+  }
   const { type, ...rest } = msg as unknown as Json & { type: string };
   const arm = CLIENT_ARMS[type];
   if (arm === undefined) throw new Error(`unknown client message type ${type}`);
@@ -293,6 +300,9 @@ export function encodeClient(msg: ClientMessage): Uint8Array {
 
 export function decodeServer(data: Uint8Array): ServerMessage {
   const env = fromBinary(ServerMessageSchema, data);
+  if (env.msg.case === "osc") {
+    return { type: "osc", packet: env.msg.value.packet } as unknown as ServerMessage;
+  }
   const json = toJson(ServerMessageSchema, env, { alwaysEmitImplicit: true }) as Json;
   const arm = Object.keys(json)[0];
   if (arm === undefined) throw new Error("server envelope has no message set");
@@ -310,6 +320,9 @@ export function decodeServer(data: Uint8Array): ServerMessage {
 
 export function decodeClient(data: Uint8Array): ClientMessage {
   const env = fromBinary(ClientMessageSchema, data);
+  if (env.msg.case === "osc") {
+    return { type: "osc", packet: env.msg.value.packet } as unknown as ClientMessage;
+  }
   const json = toJson(ClientMessageSchema, env, { alwaysEmitImplicit: true }) as Json;
   const arm = Object.keys(json)[0];
   if (arm === undefined) throw new Error("client envelope has no message set");
@@ -322,6 +335,10 @@ export function decodeClient(data: Uint8Array): ClientMessage {
 }
 
 export function encodeServer(msg: ServerMessage): Uint8Array {
+  if ((msg.type as string) === "osc") {
+    const packet = (msg as unknown as OscDatagramMessage).packet;
+    return toBinary(ServerMessageSchema, create(ServerMessageSchema, { msg: { case: "osc", value: { packet } } }));
+  }
   const { type, ...rest } = msg as unknown as Json & { type: string };
   const arm = SERVER_ARMS[type];
   if (arm === undefined) throw new Error(`unknown server message type ${type}`);
@@ -831,6 +848,15 @@ export interface SetKioskConfigMessage {
 export interface KioskUnlockMessage {
   type: "kiosk_unlock";
   secret: string;
+}
+
+/** One raw OSC packet (a message or a bundle) inside the session (proto OscDatagram,
+ * feature "osc"): ClientMessage.osc feeds the player's OSC input as if it had come on
+ * udp/9000; ServerMessage.osc carries what a module sends back (the P4 tracker's
+ * /lh/pose) to the session that last sent OSC. */
+export interface OscDatagramMessage {
+  type: "osc";
+  packet: Uint8Array;
 }
 
 /** proto KioskEvent, as its enum name (why a kiosk_status was sent). */
