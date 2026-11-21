@@ -56,7 +56,8 @@ export type IconName =
   | "check"
   | "code"
   | "eye"
-  | "eye-off";
+  | "eye-off"
+  | "wifi";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content (map / sparkle) over a device pentagon, joined by a "cut" arrow) --
@@ -158,6 +159,7 @@ const PATHS: Record<IconName, string> = {
   eye: `<path d="M2.5 12C4.8 7.6 8.1 5.5 12 5.5s7.2 2.1 9.5 6.5c-2.3 4.4-5.6 6.5-9.5 6.5S4.8 16.4 2.5 12Z"/><circle cx="12" cy="12" r="3"/>`,
   // Eye with a slash (hide password): the same eye, struck through.
   "eye-off": `<path d="M2.5 12C4.8 7.6 8.1 5.5 12 5.5s7.2 2.1 9.5 6.5c-2.3 4.4-5.6 6.5-9.5 6.5S4.8 16.4 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path d="M4 4 20 20"/>`,
+  wifi: `<path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.4a9.5 9.5 0 0 1 13 0"/><path d="M8.6 15.7a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19" r="1"/>`,
 };
 
 let installed = false;

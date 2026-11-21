@@ -46,6 +46,7 @@ import { remoteChatEnabled, setRemoteChatEnabled } from "../../net/remoteChat";
 import { debugModeEnabled, setDebugModeEnabled } from "../../store/debugMode";
 import { AI_CREDITS_FLAG, aiCreditsEnabled } from "../../effects/ai/providers/credits";
 import { captureBundlesGroup } from "./captureBundles";
+import { savedNetworks } from "../../store/savedNetworks";
 import { backupGroup } from "./backupSection";
 import { diagnosticsGroup } from "./diagnosticsSection";
 
@@ -138,6 +139,7 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
       ];
     } else {
       panels = [
+        wifiGroup(),
         captureGroup(),
         diffuseGroup(),
         helpGroup(),
@@ -382,6 +384,27 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
   // The interactive tutorial is dismissible and never nags after that, so this
   // is where it's re-launchable, with a reset that lets the first-run hint
   // appear again. (The full user-guide site is linked from About ▸ Documentation.)
+  // Saved Wi-Fi networks (D-72): managed on their own screen.
+  function wifiGroup(): HTMLElement {
+    const g = group("Wi-Fi networks");
+    const n = savedNetworks.list().length;
+    g.append(
+      row(
+        "Saved Wi-Fi networks",
+        n === 0
+          ? "Networks you enter when connecting a fixture are saved here."
+          : `${n} saved. Edit passwords, choose the default, or delete one.`,
+        Button({
+          label: "Manage",
+          variant: "quiet",
+          icon: "wifi",
+          onClick: () => router.navigate("/settings/wifi"),
+        }),
+      ),
+    );
+    return g;
+  }
+
   function helpGroup(): HTMLElement {
     const g = group("Help & tutorial");
     g.append(

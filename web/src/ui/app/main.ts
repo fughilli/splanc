@@ -38,6 +38,7 @@ import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
 import { PerfProfilesScreen } from "../screens/perfProfiles";
 import { SettingsScreen } from "../screens/settings";
+import { WifiNetworksScreen } from "../screens/wifiNetworks";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { HardwareSetupScreen } from "../screens/hardwareSetup";
@@ -194,6 +195,11 @@ async function main(): Promise<void> {
     .add("/settings/color-correction", () => {
       shell.setChrome({ title: "Color correction", back: true, tabs: true });
       return ColorCorrectionScreen(router);
+    })
+    .add("/settings/wifi", () => {
+      // Saved Wi-Fi networks (D-72): also reached from the connect picker.
+      shell.setChrome({ title: "Wi-Fi networks", back: true, tabs: true });
+      return WifiNetworksScreen(router);
     })
     .add("/settings/hardware", () => {
       shell.setChrome({ title: "Hardware Setup", back: true, tabs: true });

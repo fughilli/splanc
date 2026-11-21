@@ -65,7 +65,8 @@ afterEach(async () => {
 async function connectOverBluetooth(board: FakePlayerGatt): Promise<void> {
   bt = installBluetooth(() => board);
   openDeviceSheet();
-  buttonTitled("Connect over Bluetooth (offline)").click();
+  buttonTitled("Connect a fixture").click();
+  buttonTitled("Connect directly over Bluetooth").click();
   await advance(1000);
 }
 
