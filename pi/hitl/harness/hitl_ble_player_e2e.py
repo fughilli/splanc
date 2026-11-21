@@ -24,6 +24,7 @@ import os
 import sys
 
 import hitl_e2e  # flash() + default_bundle()
+from ble_link_core import MAX_LINK_LOSSES, link_loss_summary
 from hitl_client import Reservation
 from provision import reserved_board_ble_mac
 
@@ -109,10 +110,13 @@ def main() -> int:
         cmd = (
             f"PYTHONPATH=/tmp python3 /tmp/hitl_ble_player.py exchange "
             f"--frames-b64 {frames_b64} --timeout {args.timeout:g}"
+            # Ride out a dropped BLE link like the app (see ble_link_core); frames 1.. are
+            # the sharded map, which restarts from window 0 after a drop.
+            f" --max-link-losses {MAX_LINK_LOSSES} --upload-start 1"
         )
         if mac:
             cmd += f" --address {mac}"
-        proc = res.ssh(cmd, capture=True, timeout=args.timeout + 180)
+        proc = res.ssh(cmd, capture=True, timeout=args.timeout + 180 + 120 * MAX_LINK_LOSSES)
         out = (proc.stdout or "").strip()
         if proc.stderr:
             sys.stderr.write(proc.stderr)
@@ -122,6 +126,8 @@ def main() -> int:
             result = json.loads(out.splitlines()[-1])
         except (ValueError, IndexError) as e:
             raise SystemExit(f"BLE driver gave no JSON result: {out!r}") from e
+        print(f"[ble-e2e] central: {result.get('adapter')}", flush=True)
+        print(link_loss_summary(result.get("link_losses") or [], tag="ble-e2e"), flush=True)
         if not result.get("ok"):
             raise SystemExit(f"BLE exchange failed: {result.get('error')}")
 
