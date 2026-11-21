@@ -269,9 +269,9 @@ in
   # counts frames actually written: docs/design/max-ota.md "Health proof".)
   boot.kernelParams = pkgs.lib.optionals (ledOutput == "fpga") [ "spidev.bufsiz=65536" ]
     ++ pkgs.lib.optionals isolateOutputCpu [
-      "isolcpus=${toString outputCpu}"
-      "irqaffinity=0-${toString (outputCpu - 1)}"
-    ];
+    "isolcpus=${toString outputCpu}"
+    "irqaffinity=0-${toString (outputCpu - 1)}"
+  ];
 
   services.sbcApps = {
     # M1 — pattern driver. Real-time FIFO scheduling + CAP_SYS_NICE, owns SPI,
