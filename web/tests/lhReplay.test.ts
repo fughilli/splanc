@@ -202,13 +202,15 @@ test("engine replay matches lhd --host-clock --stream-sweeps", async () => {
   assert.ok(poses.every((p) => typeof p.host_us === "number"));
   assert.ok(poses.every((p) => (p.light_us as number) <= (p.host_us as number)));
   // Health (lh_health, as the P4): this session sees one station ~2.9 m away, so the
-  // position sigma sits around 2.5 cm, past the 2 cm "usable" limit: mostly uncertain
-  // (1), locked (4) while it dips under, acquiring (2) right after the first solve.
+  // position sigma sits around 2.5 cm, over the 2 cm "usable" limit but well inside the
+  // hysteresis a one-station room gets (Uncertain only past POS_SIGMA_ENTER_M, 70 mm;
+  // #546): locked (4) all along, acquiring (2) right after the first solve, never
+  // uncertain (1).
   const hist = [0, 0, 0, 0, 0];
   for (const p of poses) hist[p.health as number]! += 1;
-  assert.ok(hist[1]! > poses.length / 2 && hist[4]! > 10 && hist[2]! > 0, JSON.stringify(hist));
-  // Locked means the position sigma is under 2 cm.
-  for (const p of poses) if (p.health === 4) assert.ok((p.sigma as number) <= 0.02, `locked at sigma ${p.sigma}`);
+  assert.ok(hist[4]! > poses.length * 0.9 && hist[2]! > 0 && hist[1] === 0, JSON.stringify(hist));
+  // Locked means the position sigma is inside the hysteresis band (lh_health.rs).
+  for (const p of poses) if (p.health === 4) assert.ok((p.sigma as number) <= 0.07, `locked at sigma ${p.sigma}`);
 });
 
 // ------------------------------------------------------------------ WebHID level
@@ -351,7 +353,7 @@ test("WebHID tracking over a replayed dongle matches lhd --host-clock --stream-s
   assert.ok(poses.every((p, i) => p.t >= first - 50 && p.t <= last + 1 && (i === 0 || p.t >= poses[i - 1]!.t - 1e-6)));
   // `ok` = locked or coasting (see the engine test for this session's health).
   const ok = poses.filter((p) => p.ok).length;
-  assert.ok(ok > 10 && ok < poses.length / 2, `ok ${ok} of ${poses.length}`);
+  assert.ok(ok > poses.length * 0.9, `ok ${ok} of ${poses.length}`);
 
   const states = statuses.map((s) => s.state);
   assert.deepEqual(states.slice(0, 2), ["disconnected", "connecting"]);
