@@ -34,5 +34,6 @@ rust_test(
 # (//firmware/player_app:sensor_pool_test drives the C ABI through it).
 exports_files([
     "drivers/mpu6050.fx",
+    "drivers/ttp223_touch.fx",
     "tests/fake_mpu.rs",
 ])

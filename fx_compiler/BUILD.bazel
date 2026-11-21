@@ -56,7 +56,10 @@ rust_test(
 rust_test(
     name = "driver_test",
     srcs = ["tests/driver.rs"],
-    compile_data = ["//firmware/sensor:drivers/mpu6050.fx"],
+    compile_data = [
+        "//firmware/sensor:drivers/mpu6050.fx",
+        "//firmware/sensor:drivers/ttp223_touch.fx",
+    ],
     edition = "2021",
     deps = [
         ":fx_compiler",

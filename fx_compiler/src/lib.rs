@@ -191,6 +191,10 @@ pub enum UiKind {
     /// `min..max` (the declared range, else [`MAT_DEFAULT_RANGE`]). Usually set
     /// by an API / OSC / tracker stream rather than by hand.
     Matrix { min: f32, max: f32 },
+    /// A `uniform trigger` (docs/design/lamp-power.md): a float COUNTER a
+    /// producer bumps (a driver's `fire()`, a client "fire" button); update()
+    /// asks `fired(t)` whether it moved since the last frame.
+    Trigger,
 }
 
 /// The range of a `mat3`/`mat4` uniform declared without one (`uniform mat4
@@ -549,6 +553,9 @@ pub struct Compiler {
     // FUG-107: driver exports, and the poll() entry (stored in the shade slot
     // of the header with FLAG_DRIVER — no format-version bump).
     exports: Vec<ExportInfo>,
+    /// `uniform trigger` name -> the hidden state slot holding the count
+    /// `fired()` last saw.
+    trigger_last: HashMap<String, u8>,
     poll_entry: u16,
     // FUG-125: run the bytecode optimizer in `finish`. Off only for the
     // differential test harness / instruction-count measurements.
@@ -734,6 +741,7 @@ impl Compiler {
             uses_uv: false,
             uses_room: false,
             exports: Vec::new(),
+            trigger_last: HashMap::new(),
             poll_entry: NO_ENTRY,
             optimize,
             memo,
@@ -953,7 +961,13 @@ impl Compiler {
     fn export_decl(&mut self) -> Result<(), Diagnostic> {
         self.advance(); // 'export'
         let tyname = self.eat_ident()?;
-        let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
+        // `export trigger tap;`: a float counter poll() bumps with `fire(tap)`.
+        let is_trigger = tyname == "trigger";
+        let ty = if is_trigger {
+            Ty::Float
+        } else {
+            Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?
+        };
         if !matches!(ty, Ty::Float | Ty::Int | Ty::Vec2 | Ty::Vec3 | Ty::Vec4) {
             return self.err("export must be float, int or vecN");
         }
@@ -964,6 +978,9 @@ impl Compiler {
             unit = s;
         }
         self.expect_sym(';')?;
+        if is_trigger && unit.is_empty() {
+            unit = "trigger".to_string();
+        }
         let slot = self.alloc_state(ty.width())?;
         self.note_sym("state", &name, slot, ty.width());
         self.syms.insert(name.clone(), Sym { kind: SymKind::State, slot, ty });
@@ -979,6 +996,9 @@ impl Compiler {
         let first_line = self.lx_toks[self.p].1;
         self.advance(); // 'uniform'
         let tyname = self.eat_ident()?;
+        if tyname == "trigger" {
+            return self.trigger_uniform_decl(first_line);
+        }
         let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
         if matches!(ty, Ty::Void) {
             return self.err("a uniform cannot be void");
@@ -1019,6 +1039,88 @@ impl Compiler {
         );
         self.uniforms.push(UniformInfo { name, ty, slot, ui, default, doc, unit, comp_range });
         Ok(())
+    }
+
+    // uniform trigger tap;   uniform trigger tap "lid tap";
+    // A float counter bound by name like any uniform (the uniform pool feeds a
+    // driver's `export trigger` into it); `fired(tap)` in update() is true once
+    // per change. Its last-seen count lives in a hidden state slot.
+    fn trigger_uniform_decl(&mut self, first_line: u32) -> Result<(), Diagnostic> {
+        let name = self.eat_ident()?;
+        let mut unit = String::new();
+        if let Tok::Str(u) = self.cur().clone() {
+            self.advance();
+            unit = u;
+        }
+        self.expect_sym(';')?;
+        let end_line = self.lx_toks[self.p.saturating_sub(1)].1;
+        let doc = self.uniform_doc(first_line, end_line);
+        let slot = self.n_uniform_slots;
+        if slot as usize + 1 > MAX_UNIFORM_SLOTS {
+            return self.err(format!("too many uniforms (over the VM's {MAX_UNIFORM_SLOTS} uniform slots)"));
+        }
+        self.n_uniform_slots += 1;
+        let last = self.alloc_state(1)?;
+        self.trigger_last.insert(name.clone(), last);
+        self.syms.insert(name.clone(), Sym { kind: SymKind::Uniform, slot, ty: Ty::Float });
+        self.uniforms.push(UniformInfo {
+            name,
+            ty: Ty::Float,
+            slot,
+            ui: UiKind::Trigger,
+            default: vec![0.0],
+            doc,
+            unit,
+            comp_range: None,
+        });
+        Ok(())
+    }
+
+    // fired(tap): did the trigger move since the last frame (update() only)?
+    // fire(tap): bump an `export trigger` (a driver's poll()).
+    fn trigger_call(&mut self, name: &str) -> Result<Ty, Diagnostic> {
+        use fx_vm_op::*;
+        let arg = self.eat_ident()?;
+        self.expect_sym(')')?;
+        if name == "fired" {
+            if self.cur_fn != "update" && self.cur_fn != "poll" {
+                return self.err("fired() is only valid in update() (a trigger fires once per frame, not per LED)");
+            }
+            let Some(&last) = self.trigger_last.get(&arg) else {
+                return self.err(format!("fired() needs a `uniform trigger`; '{arg}' is not one"));
+            };
+            let slot = self.syms[&arg].slot;
+            // count != last  ->  bool;  then last = count.
+            self.emit(LOAD_UNIFORM);
+            self.emit(slot);
+            self.emit(1);
+            self.emit(LOAD_STATE);
+            self.emit(last);
+            self.emit(1);
+            self.emit(CMP);
+            self.emit(5);
+            self.emit(LOAD_UNIFORM);
+            self.emit(slot);
+            self.emit(1);
+            self.emit(STORE_STATE);
+            self.emit(last);
+            self.emit(1);
+            return Ok(Ty::Bool);
+        }
+        let Some(e) = self.exports.iter().find(|e| e.name == arg && e.unit == "trigger") else {
+            return self.err(format!("fire() needs an `export trigger`; '{arg}' is not one"));
+        };
+        let slot = e.slot;
+        self.emit(LOAD_STATE);
+        self.emit(slot);
+        self.emit(1);
+        self.push_const(1.0f32.to_bits());
+        self.emit(ADD);
+        self.emit(1);
+        self.emit(STORE_STATE);
+        self.emit(slot);
+        self.emit(1);
+        Ok(Ty::Void)
     }
 
     /// A uniform's doc string: the comment trailing its declaration on the end
@@ -2830,6 +2932,35 @@ impl Compiler {
 
     fn call(&mut self, name: &str) -> Result<Ty, Diagnostic> {
         self.expect_sym('(')?;
+        // Trigger ops take the trigger's NAME.
+        if name == "fired" || name == "fire" {
+            return self.trigger_call(name);
+        }
+        // GPIO driver intrinsics (docs/design/lamp-power.md): the I2C ops aimed at
+        // the pseudo device GPIO_DEV (no 7-bit I2C address reaches 0x80), which
+        // the driver host routes to the pins. gpio_read(pin) -> 0 / 1 (-1 when
+        // unavailable); gpio_mode(pin, mode) (0 input, 1 input + pull-up, 2 input
+        // + pull-down) -> 1 when applied. Only live in a driver's poll().
+        if name == "gpio_read" || name == "gpio_mode" {
+            self.push_const(GPIO_DEV as u32);
+            let args = self.call_args()?;
+            self.expect_sym(')')?;
+            self.lint.taint = self.lint.builtin(name);
+            if args.iter().any(|a| !matches!(a, Ty::Int)) {
+                return self.err("gpio arguments must be int (wrap with int(...))");
+            }
+            if name == "gpio_read" {
+                self.need(&args, 1)?;
+                // reg = pin; the read's "mode" byte 1 = one byte.
+                self.emit(fx_vm_op::I2C_READ);
+                self.emit(1);
+            } else {
+                self.need(&args, 2)?;
+                // reg = pin, val = mode.
+                self.emit(fx_vm_op::I2C_WRITE);
+            }
+            return Ok(Ty::Int);
+        }
         // Texture ops take a texture NAME (not a value) as their first argument.
         if name == "sample" || name == "paint" {
             let ty = self.texture_call(name)?;
@@ -4149,6 +4280,10 @@ pub fn exports_manifest_json(exports: &[ExportInfo]) -> String {
     s
 }
 
+/// The pseudo I2C address the GPIO driver intrinsics use (gpio_read /
+/// gpio_mode): outside the 7-bit range, so the driver host routes it to pins.
+pub const GPIO_DEV: u8 = 0x80;
+
 pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
     let mut s = String::from("[");
     for (i, u) in uniforms.iter().enumerate() {
@@ -4162,6 +4297,7 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
             UiKind::Color => "{\"kind\":\"color\"}".to_string(),
             UiKind::Toggle => "{\"kind\":\"toggle\"}".to_string(),
             UiKind::Matrix { min, max } => format!("{{\"kind\":\"matrix\",\"min\":{min},\"max\":{max}}}"),
+            UiKind::Trigger => "{\"kind\":\"trigger\"}".to_string(),
             UiKind::Dropdown(o) => {
                 let opts: Vec<String> = o.iter().map(|x| format!("\"{x}\"")).collect();
                 format!("{{\"kind\":\"dropdown\",\"options\":[{}]}}", opts.join(","))
@@ -4173,6 +4309,8 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
         let (min, max) = match &u.ui {
             UiKind::Slider { min, max, .. } | UiKind::Matrix { min, max } => (*min, *max),
             UiKind::Color | UiKind::Toggle => (0.0, 1.0),
+            // A counter: any non-negative count.
+            UiKind::Trigger => (0.0, 16_777_216.0),
             UiKind::Dropdown(o) => (0.0, o.len().saturating_sub(1) as f32),
         };
         let _ = write!(
