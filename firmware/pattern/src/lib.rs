@@ -537,6 +537,213 @@ pub fn stride_lit(led: u32, phase: u32, spacing: u32, anchor_density: u32) -> bo
 }
 
 // ---------------------------------------------------------------------------
+// Rolling stride (docs/design/rolling-stride.md). The phased schedule above
+// steps EVERY LED at once (the phone sends `configure { stridePhase }`), so
+// every track dies together. The rolling schedule is instead a pure function
+// of (LED, pattern-clock frame): the lamp and the phone evaluate the same
+// function, and nothing is ever reconfigured to stride.
+//
+//   - BLOCKS of `B = A·S` LEDs (A clamped up to 3, as for the bridges). Within
+//     a block, the lit LEDs are the stride-`S` grid at the block's OFFSET
+//     `o`, and `o` steps 0, 1, …, S-1, 0, … once per DWELL of `W = D·C`
+//     frames (D = `dwell_cycles` code cycles of C frames). The class of LED
+//     `x` is `x mod S`, so each LED is lit for one dwell per PERIOD `S·W`.
+//   - Each block runs that clock shifted by its own offset: block `b+1` steps
+//     ONE CODE CYCLE (C frames) BEFORE block `b` ([`rolling_block_shift`]),
+//     a short wave travelling toward LED 0. Any D consecutive blocks thus
+//     spread their steps evenly over the dwell, and neighbouring offsets never
+//     invert except at the wrap (S-1 -> 0), for one cycle.
+//   - An LED is lit for its OWN whole code cycles only (under hue code v2 its
+//     cycle is rotated by `stagger_phase`): from the first own-cycle start in
+//     its dwell to the last own cycle that ends inside it. A track is never
+//     cut mid-cycle.
+//   - BOUNDARY RULE (owner decision D-173): two LEDs less than `S` apart in
+//     neighbouring blocks (only at the offset wrap) never light together; the
+//     one whose lit interval started LATER stays dark for every own cycle of
+//     its that overlaps the other's interval (ties: the lower index keeps).
+//     The earlier one is never interrupted, so no live track is cut.
+//
+// Bridge phases do not exist in rolling mode: neighbouring blocks sit at
+// different offsets all the time, so every frame co-lights LEDs of several
+// classes and the co-observation graph is connected by construction (the
+// design doc's analysis and `solver` scenario `strideMode: rolling` pin it).
+// ---------------------------------------------------------------------------
+
+/// The default rolling dwell `D`, in code cycles (design doc: D = 4 leaves
+/// staggered LEDs D-1 = 3 whole own cycles per dwell, one more than the
+/// decoder's two confirmations need; D = 3 leaves exactly two).
+pub const ROLLING_DWELL_DEFAULT: u32 = 4;
+/// The smallest dwell the kernel runs (a 1-cycle dwell leaves a staggered LED
+/// no whole own cycle at all); smaller requests are clamped up.
+pub const ROLLING_DWELL_MIN: u32 = 2;
+/// The largest dwell accepted (bounds the i64 schedule arithmetic; far longer
+/// than any useful dwell).
+pub const ROLLING_DWELL_MAX: u32 = 64;
+
+/// Rolling-stride geometry: everything [`stride_lit_rolling`] needs besides
+/// the code spec and the frame. Built once per capture (cold).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RollingStride {
+    /// `S`, the stride spacing (`<= 1` lights every LED).
+    pub spacing: u32,
+    /// `A`: the block is `A·S` LEDs; clamped up to 3.
+    pub anchor_density: u32,
+    /// `D`: dwell length in code cycles; clamped to
+    /// [`ROLLING_DWELL_MIN`]..=[`ROLLING_DWELL_MAX`].
+    pub dwell_cycles: u32,
+    /// Physical LEDs on the strip (no neighbour past it exists). 0 = unbounded.
+    pub led_count: u32,
+    /// Group capture: LED `i` transmits code-book id `i + code_offset`, so its
+    /// own cycle is `stagger_phase(i + code_offset)`. 0 for a solo capture.
+    pub code_offset: u32,
+}
+
+impl RollingStride {
+    pub const fn new(spacing: u32, anchor_density: u32, dwell_cycles: u32, led_count: u32, code_offset: u32) -> Self {
+        RollingStride { spacing, anchor_density, dwell_cycles, led_count, code_offset }
+    }
+    /// The block length `B = A·S` (A clamped up to 3).
+    pub const fn block_len(&self) -> u32 {
+        let a = if self.anchor_density < 3 { 3 } else { self.anchor_density };
+        a * self.spacing
+    }
+    /// `D` as the kernel runs it.
+    pub const fn dwell(&self) -> u32 {
+        let d = self.dwell_cycles;
+        if d < ROLLING_DWELL_MIN {
+            ROLLING_DWELL_MIN
+        } else if d > ROLLING_DWELL_MAX {
+            ROLLING_DWELL_MAX
+        } else {
+            d
+        }
+    }
+    /// Frames per dwell (`W = D·C`).
+    pub const fn dwell_frames(&self, spec: &CodeSpec) -> u32 {
+        self.dwell() * cycle_len(spec)
+    }
+    /// Frames per period (`S·W`): every LED lights once per period.
+    pub const fn period_frames(&self, spec: &CodeSpec) -> u32 {
+        let s = if self.spacing < 1 { 1 } else { self.spacing };
+        s * self.dwell_frames(spec)
+    }
+}
+
+const fn cycle_len(spec: &CodeSpec) -> u32 {
+    if spec.cycle_frames < 1 {
+        1
+    } else {
+        spec.cycle_frames
+    }
+}
+
+const fn div_floor(a: i64, b: i64) -> i64 {
+    let q = a / b;
+    if (a % b != 0) && ((a < 0) != (b < 0)) {
+        q - 1
+    } else {
+        q
+    }
+}
+
+const fn mod_floor(a: i64, b: i64) -> i64 {
+    let r = a % b;
+    if r < 0 {
+        r + b
+    } else {
+        r
+    }
+}
+
+/// Block `b`'s clock shift in frames, in `[0, S·W)`: its dwell `k` spans
+/// frames `[k·W + shift, (k+1)·W + shift)` and lights class `k mod S`.
+/// Block `b+1` runs one code cycle ahead of block `b` (`shift(b+1) =
+/// shift(b) - C`, mod the period). Part of the wire format: the lamp and the
+/// phone must agree (the goldens pin it).
+pub const fn rolling_block_shift(block: u32, rs: &RollingStride, spec: &CodeSpec) -> u32 {
+    let p = rs.period_frames(spec) as u64;
+    let c = cycle_len(spec) as u64;
+    ((p - (block as u64 * c) % p) % p) as u32
+}
+
+/// LED `led`'s first CANDIDATE lit interval `[start, end)` (pattern-clock
+/// frames since the epoch) that ends after frame `t`: its class's dwell in its
+/// block's clock, clipped to frames >= 0 and trimmed to the LED's own whole
+/// code cycles. `start` may be after `t` (the LED is dark at `t`). The
+/// boundary rule ([`stride_lit_rolling`]) is applied on top.
+pub fn rolling_interval(led: u32, t: i64, spec: &CodeSpec, rs: &RollingStride) -> (i64, i64) {
+    let s = rs.spacing.max(1) as i64;
+    let c = cycle_len(spec) as i64;
+    let w = rs.dwell_frames(spec) as i64;
+    let b = rs.block_len().max(1);
+    let shift = rolling_block_shift(led / b, rs, spec) as i64;
+    let class = (led as i64) % s;
+    let own = stagger_phase(led.wrapping_add(rs.code_offset), spec) as i64;
+    let t = if t < 0 { 0 } else { t };
+    // The dwell containing t, then back to the latest dwell of this LED's class.
+    let k0 = div_floor(t - shift, w);
+    let mut k = k0 - mod_floor(k0 - class, s);
+    loop {
+        let ws = k * w + shift;
+        let ws = if ws < 0 { 0 } else { ws };
+        let we = (k + 1) * w + shift;
+        let start = ws + mod_floor(own - ws, c);
+        if we > start {
+            let cycles = (we - start) / c;
+            let end = start + cycles * c;
+            if cycles > 0 && end > t {
+                return (start, end);
+            }
+        }
+        k += s;
+    }
+}
+
+/// Is LED `led` lit at pattern-clock frame `seq` (absolute frames since the
+/// pattern epoch, NOT reduced modulo the cycle) under the rolling stride?
+/// `spacing <= 1` lights every LED. Allocation-free; the player calls it per
+/// LED per rendered frame. Interior LEDs cost one [`rolling_interval`]; the
+/// LEDs within `S-1` of a block boundary also evaluate their neighbours across
+/// it (the boundary rule).
+pub fn stride_lit_rolling(led: u32, seq: u32, spec: &CodeSpec, rs: &RollingStride) -> bool {
+    let s = rs.spacing;
+    if s <= 1 {
+        return true;
+    }
+    if rs.led_count > 0 && led >= rs.led_count {
+        return false;
+    }
+    let t = seq as i64;
+    let (start, _end) = rolling_interval(led, t, spec, rs);
+    if start > t {
+        return false;
+    }
+    let c = cycle_len(spec) as i64;
+    let b = rs.block_len();
+    let block = led / b;
+    // The own cycle containing t: the LED yields it whole or not at all.
+    let cs = start + ((t - start) / c) * c;
+    let ce = cs + c;
+    let lo = led.saturating_sub(s - 1);
+    let hi = led as u64 + (s - 1) as u64;
+    let mut yy = lo as u64;
+    while yy <= hi && yy <= u32::MAX as u64 {
+        let y = yy as u32;
+        yy += 1;
+        // Same block: one class at a time, S apart; never a conflict.
+        let other_block = y / b != block;
+        let exists = rs.led_count == 0 || y < rs.led_count;
+        if y != led && other_block && exists {
+            let (ys, _ye) = rolling_interval(y, cs, spec, rs);
+            if ys < ce && (ys < start || (ys == start && y < led)) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
 // Hue code v2 phase 2: staggered cycles with a pilot (docs/design/hue-code-v2.md).
 //
 // v1 (`SyncPattern::OnOff`) shows the white/green sync delimiter on EVERY LED
@@ -1444,5 +1651,128 @@ mod tests {
         }
         assert_eq!(stride_phase_count(1), 1);
         assert!(stride_lit(7, 3, 1, 3), "S<=1 lights every LED");
+    }
+    /// The lit set at frame `t`.
+    fn rolling_lit(n: u32, t: u32, spec: &CodeSpec, rs: &RollingStride) -> Vec<u32> {
+        (0..n).filter(|&x| stride_lit_rolling(x, t, spec, rs)).collect()
+    }
+
+    fn rolling_specs(n: u32) -> [CodeSpec; 2] {
+        [CodeSpec::derive(n, 4, true), CodeSpec::derive_sync(n, 4, true, SyncPattern::StaggerPilot)]
+    }
+
+    #[test]
+    fn rolling_block_shift_is_a_one_cycle_wave() {
+        for spec in rolling_specs(60) {
+            for (s, d) in [(2u32, 2u32), (3, 4), (5, 3)] {
+                let rs = RollingStride::new(s, 3, d, 0, 0);
+                let p = rs.period_frames(&spec);
+                assert_eq!(p, s * d * spec.cycle_frames);
+                for b in 0..40 {
+                    let (x, y) = (rolling_block_shift(b, &rs, &spec), rolling_block_shift(b + 1, &rs, &spec));
+                    assert!(x < p);
+                    assert_eq!((x + p - y) % p, spec.cycle_frames, "block {} steps one cycle ahead of {b}", b + 1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rolling_keeps_spacing_lights_whole_own_cycles_and_covers_everyone() {
+        for s in [2u32, 3, 4, 6] {
+            for a in [0u32, 3, 4] {
+                for d in [2u32, 3, 4] {
+                    let rs0 = RollingStride::new(s, a, d, 0, 0);
+                    let b = rs0.block_len();
+                    let n = 4 * b + 3;
+                    let rs = RollingStride { led_count: n, ..rs0 };
+                    for spec in rolling_specs(n) {
+                        let c = spec.cycle_frames;
+                        let p = rs.period_frames(&spec);
+                        let frames = 3 * p;
+                        let lit: Vec<Vec<u32>> = (0..frames).map(|t| rolling_lit(n, t, &spec, &rs)).collect();
+                        for (t, l) in lit.iter().enumerate() {
+                            assert!(
+                                l.windows(2).all(|w| w[1] - w[0] >= s),
+                                "S={s} A={a} D={d} C={c} frame {t}: {l:?}"
+                            );
+                        }
+                        // Per LED: runs of whole own cycles (never cut mid-cycle), one
+                        // per period, of D-1 own cycles at least (D-2 for the
+                        // block-start LED, which yields one cycle at the wrap).
+                        for x in 0..n {
+                            let own = stagger_phase(x, &spec);
+                            let on: Vec<u32> = (0..frames).filter(|&t| lit[t as usize].contains(&x)).collect();
+                            let mut runs: Vec<(u32, u32)> = Vec::new();
+                            for &t in &on {
+                                match runs.last_mut() {
+                                    Some((s0, len)) if *s0 + *len == t => *len += 1,
+                                    _ => runs.push((t, 1)),
+                                }
+                            }
+                            let inner: Vec<(u32, u32)> =
+                                runs.iter().copied().filter(|&(t0, len)| t0 > 0 && t0 + len < frames).collect();
+                            assert!(inner.len() >= 2, "S={s} A={a} D={d} led {x}: runs {runs:?}");
+                            let floor = if x % b == 0 { d - 2 } else { d - 1 };
+                            for &(t0, len) in &inner {
+                                assert_eq!((t0 + c - own % c) % c, 0, "led {x} starts mid own cycle at {t0}");
+                                assert_eq!(len % c, 0, "led {x}: partial own cycle at {t0}");
+                                assert!(len / c >= floor, "S={s} A={a} D={d} C={c} led {x}: {} own cycles", len / c);
+                            }
+                            for w in runs.windows(2) {
+                                let gap = w[1].0 - w[0].0;
+                                let wf = rs.dwell_frames(&spec);
+                                assert!(gap + wf >= p && gap <= p + wf, "led {x}: runs {} apart, period {p}", gap);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rolling_d4_keeps_most_lit_leds_past_their_first_cycle() {
+        // The design goal: at EVERY frame a steady share of the lit LEDs has
+        // been lit a whole own cycle already (a decode in hand) — D = 4 keeps
+        // over half (about 60% on this strip); the phased schedule drops to zero
+        // at each step.
+        let n = 600;
+        let rs = RollingStride::new(3, 3, 4, n, 0);
+        let spec = CodeSpec::derive_sync(n, 4, true, SyncPattern::StaggerPilot);
+        let c = spec.cycle_frames as i64;
+        let p = rs.period_frames(&spec);
+        for t in p..3 * p {
+            let lit = rolling_lit(n, t, &spec, &rs);
+            assert!(lit.windows(2).all(|w| w[1] - w[0] >= 3), "frame {t}");
+            assert!(lit.len() as u32 >= n / 3 / 2, "frame {t}: {} lit", lit.len());
+            let past = lit.iter().filter(|&&x| t as i64 >= rolling_interval(x, t as i64, &spec, &rs).0 + c).count();
+            assert!(past * 100 >= lit.len() * 50, "frame {t}: {past}/{} past their first cycle", lit.len());
+        }
+    }
+
+    #[test]
+    fn rolling_edges() {
+        let spec = CodeSpec::derive(40, 4, true);
+        let off = RollingStride::new(1, 3, 4, 40, 0);
+        assert!((0..40).all(|x| stride_lit_rolling(x, 17, &spec, &off)), "S<=1 lights every LED");
+        let rs = RollingStride::new(3, 3, 4, 40, 0);
+        assert!(!(40..60).any(|x| (0..500).any(|t| stride_lit_rolling(x, t, &spec, &rs))), "past the strip: dark");
+        assert_eq!(RollingStride::new(3, 3, 0, 0, 0).dwell(), ROLLING_DWELL_MIN);
+        assert_eq!(RollingStride::new(3, 3, 1000, 0, 0).dwell(), ROLLING_DWELL_MAX);
+        // A group capture rotates own cycles by the CODED id.
+        let st = CodeSpec::derive_sync(200, 4, true, SyncPattern::StaggerPilot);
+        let solo = RollingStride::new(3, 3, 4, 100, 0);
+        let grouped = RollingStride { code_offset: 100, ..solo };
+        let x = 7;
+        assert_eq!(
+            (rolling_interval(x, 500, &st, &grouped).0 - stagger_phase(x + 100, &st) as i64) % st.cycle_frames as i64,
+            0
+        );
+        assert_eq!((rolling_interval(x, 500, &st, &solo).0 - stagger_phase(x, &st) as i64) % st.cycle_frames as i64, 0);
+        // Far into a capture (u32 frames) it still runs.
+        let t = u32::MAX - 7;
+        let lit = rolling_lit(40, t, &spec, &rs);
+        assert!(lit.windows(2).all(|w| w[1] - w[0] >= 3) && !lit.is_empty());
     }
 }
