@@ -60,20 +60,23 @@ def test_final_sample_locks_to_existing_logo_vectors():
                     assert a_point == pytest.approx(e_point, abs=1e-12, rel=0)
 
 
-def test_deterministic_generation_and_v1_compatibility(tmp_path):
+def test_deterministic_generation_and_v2_loop(tmp_path):
     outputs = [tmp_path / "first.bin", tmp_path / "second.bin"]
     for output in outputs:
         assert g.main(["--svg", str(LOGO), "--splash", str(SOURCE), "--out", str(output)]) == 0
     data = outputs[0].read_bytes()
     assert data == outputs[1].read_bytes()
-    assert data[:10] == b"SPLB\x01\xf0\x80\x40\xe0\x01"  # v1, 240 fps, 128x64, 480 frames
+    # v2: 240 fps, 128x64, 768 frames, the loading loop from frame 480 (after the 2 s intro).
+    assert data[:12] == b"SPLB\x02\xf0\x80\x40\x00\x03\xe0\x01"
     animation = boot.unpack(data)
     assert animation.fps == 240 and animation.duration == 2
-    assert len(animation.frames) == 480
+    assert animation.loop_start == 480 and len(animation.frames) == 768
+    # The loop rests on the intro's last frame, so intro -> loop is seamless.
+    assert animation.frames[-1].tobytes() == animation.frames[479].tobytes()
     assert all(animation.frames[i].getbbox() is None for i in range(8))  # 1/30 s of black
-    assert animation.at(200).tobytes() == animation.frames[-1].tobytes()
+    assert animation.index(200) >= animation.loop_start  # still moving, in the loop
     assert animation.frames[0].getbbox() is None
-    for i, frame in enumerate(animation.frames[1:], start=1):
+    for i, frame in enumerate(animation.frames[1:480], start=1):
         assert frame.mode == "1" and frame.size == (128, 64)
         if 8 <= i < 120:  # The splash fits; the later scan line intentionally exits the panel.
             x0, y0, x1, y1 = frame.getbbox()
@@ -81,7 +84,7 @@ def test_deterministic_generation_and_v1_compatibility(tmp_path):
     # Pixel baseline from main 4da9640 (then 30 fps): at each of its frame times from
     # 0.5 s onward (every eighth 240 fps frame) the glide, wordmark, LEDs, glint and
     # last held frame must remain byte-identical.
-    old_times = animation.frames[120::8]
+    old_times = animation.frames[120:480:8]
     assert hashlib.sha256(b"".join(f.tobytes() for f in old_times)).hexdigest() == (
         "73adc3b7b93b4ccd24d502053728d84241f4487ca523b685b7d46259657f15ef"
     )
