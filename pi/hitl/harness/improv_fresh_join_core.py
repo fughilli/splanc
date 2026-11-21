@@ -212,3 +212,22 @@ def grade(
         # but not the whole proof either.
         return {"verdict": "SKIP", "problems": [], "skip": "; ".join(infra)}
     return {"verdict": "PASS", "problems": [], "skip": None}
+
+
+def metric_points(phases: dict, serial: dict | None) -> list[dict]:
+    """The HITL_METRIC records of a run (hitl_metrics.emit kwargs): each phase's
+    provisioner wall time (BLE scan + connect + SendWifi -> outcome; the budgets
+    apply from the write ack inside the provisioner, so no limit here), and the BLE
+    supervision drops seen while unleased. An infra phase (the provisioner never
+    reached the firmware) is left out."""
+    out: list[dict] = []
+    for name in ALL_PHASES:
+        p = phases.get(name)
+        if not p or "wall_s" not in p or classify(p) == "infra":
+            continue
+        out.append({"metric": "phase_wall_time", "value": p["wall_s"], "unit": "s", "phase": name})
+    if serial and serial.get("ble_drops") is not None:
+        # parse_serial's count: supervision timeouts while unleased (the absent
+        # window's link losses, plus a central that closed after the report).
+        out.append({"metric": "ble_drops_unleased", "value": serial["ble_drops"], "unit": "count"})
+    return out

@@ -45,6 +45,7 @@ import subprocess
 import sys
 import time
 
+import hitl_metrics
 import improv_fresh_join_core as core
 
 
@@ -206,6 +207,8 @@ def run(args) -> int:
     log = "\n".join(res.serial_logs.values()) if res.serial_logs else ""
     serial = core.parse_serial(log) if log else None
     g = core.grade(setup, phases, serial, args.join_budget, args.absent_budget)
+    for m in core.metric_points(phases, serial):
+        hitl_metrics.emit("improv_fresh_join", m.pop("metric"), m.pop("value"), m.pop("unit"), **m)
     if g["verdict"] == "FAIL" and log:
         _log("----- DUT serial log (tail) -----")
         _log(log[-12000:])

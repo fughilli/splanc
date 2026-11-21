@@ -40,6 +40,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 
+import hitl_metrics
 import serial_capture
 
 
@@ -472,6 +473,8 @@ class Reservation:
             f"reserved: id={self.id} on {self.server} unit={self._unit} class={self.priority}",
             flush=True,
         )
+        # Default the gate's HITL_METRIC records to this rig + DUT.
+        hitl_metrics.set_context(rig=_host_of(self.server or "") or None, dut=self._unit)
         self._start_hold_watchdog()
         self._serial_start()
 

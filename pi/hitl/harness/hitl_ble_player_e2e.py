@@ -24,6 +24,7 @@ import os
 import sys
 
 import hitl_e2e  # flash() + default_bundle()
+import hitl_metrics
 from hitl_client import Reservation
 from provision import reserved_board_ble_mac
 
@@ -124,6 +125,17 @@ def main() -> int:
             raise SystemExit(f"BLE driver gave no JSON result: {out!r}") from e
         if not result.get("ok"):
             raise SystemExit(f"BLE exchange failed: {result.get('error')}")
+        # BLE request write -> reply notification, per frame (desk D-75: the
+        # occasional ~2 s notify delay). Telemetry; the gate's limit is the reply wait.
+        for i, rtt in enumerate(result.get("rtts_ms") or []):
+            hitl_metrics.emit(
+                "ble_player_e2e",
+                "ble_request_rtt",
+                rtt,
+                "ms",
+                limit=args.timeout * 1000.0,
+                phase="welcome" if i == 0 else "request",
+            )
 
         replies = [proto_wire.decode_server(base64.b64decode(r)) for r in result["replies_b64"]]
         if len(replies) != len(frames):

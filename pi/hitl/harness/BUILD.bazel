@@ -146,6 +146,7 @@ py_library(
         "heavy_effect_reachability_core.py",
         "hitl_client.py",
         "hitl_improv.py",
+        "hitl_metrics.py",
         "hitl_ws.py",
         "improv.py",
         "improv_fresh_join_core.py",

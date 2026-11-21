@@ -22,6 +22,8 @@ import sys
 import time
 from urllib.parse import urlparse
 
+import hitl_metrics
+
 
 class HarnessError(RuntimeError):
     """A HITL step failed in a way worth reporting with a diagnostic."""
@@ -247,6 +249,7 @@ def provision_dut(
                 flush=True,
             )
     last: HarnessError | None = None
+    t0 = time.monotonic()
     for attempt in range(1, attempts + 1):
         if attempt > 1:
             # Back off first so a transient BLE/RF failure (GATT unable_to_connect,
@@ -268,9 +271,18 @@ def provision_dut(
             res.ssh_serialized(  # USB-serial op; serialize on single-USB-bus rigs
                 "hitl-monitor --reset --seconds 4", capture=True, timeout=30
             )
+        t_try = time.monotonic()
         try:
             url = _run_provisioner(res, ssid, password, timeout, address=address)
             print(f"[improv] OK — DUT joined WiFi, redirect={url}", flush=True)
+            # This attempt's provisioner wall time (BLE scan + connect + SendWifi ->
+            # PROVISIONED + redirect; `timeout` runs from the write ack inside it), and
+            # the whole provisioning incl. resets/back-offs (what a gate waits for).
+            hitl_metrics.emit(
+                "provision", "improv_attempt_wall_time", time.monotonic() - t_try, "s"
+            )
+            hitl_metrics.emit("provision", "improv_total_wall_time", time.monotonic() - t0, "s")
+            hitl_metrics.emit("provision", "improv_attempts", attempt, "count", limit=attempts)
             return url
         except HarnessError as e:
             last = e
