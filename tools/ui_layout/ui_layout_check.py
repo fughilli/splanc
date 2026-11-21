@@ -23,8 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import connect_scenarios  # noqa: E402
 import credits_scenarios  # noqa: E402
 import layout_guard  # noqa: E402
+import newfixture_scenarios  # noqa: E402
 
-SCENARIO_MODULES = [connect_scenarios, credits_scenarios]
+SCENARIO_MODULES = [connect_scenarios, credits_scenarios, newfixture_scenarios]
 
 
 def find_dist() -> Path:
