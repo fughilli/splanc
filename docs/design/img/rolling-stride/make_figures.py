@@ -90,7 +90,7 @@ class Rolling:
 
     def __init__(self, n, s, a, d, c, staggered, offset=0):
         self.n, self.S, self.C = n, s, c
-        self.D = min(max(d, 2), 64)
+        self.D = min(max(d, 3), 64)
         self.B = max(a, 3) * s
         self.W = self.D * c
         self.P = s * self.W
