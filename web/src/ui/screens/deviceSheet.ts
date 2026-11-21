@@ -28,6 +28,8 @@ import { inLoader } from "../../net/otaUpdate";
 import { formatWifiStatus } from "../../net/wifiPolicy";
 import { WifiPolicySection } from "./wifiPolicySection";
 import { KioskSection } from "./kioskSection";
+import { PowerSection } from "./powerSection";
+import { deviceHasPower } from "../../power/power";
 import { deviceHasKiosk } from "../../net/kiosk";
 import { isBleUrl } from "../../net/bleTransport";
 
@@ -616,8 +618,25 @@ function openDeviceDetail(dev: KnownDevice): void {
     })();
   }
 
+  // -- Lamp power (firmware advertising "power"): the on/off toggle, live with
+  // the device's power_state pushes (a tap on the lid flips it here too).
+  const powerCard =
+    isActive && client && deviceHasPower(client.welcome)
+      ? PowerSection(client, {
+          onTransitions: () => {
+            sheet.close();
+            location.hash = "#/device/transitions";
+          },
+          onSensors: () => {
+            sheet.close();
+            location.hash = "#/sensors";
+          },
+        })
+      : null;
+
   sheet.body.append(
     nameField,
+    ...(powerCard ? [powerCard] : []),
     actionGrid,
     divider,
     rowFor("LAN address", deviceHost(cur)),
