@@ -33,7 +33,8 @@
 #      switch to the real root, followed the boot stages and handed over to
 #      splanc-display before its first frame; the boot timeline (first splash
 #      frame vs splanc-display's first frame) and frame-timing stats under CPU
-#      load (the splash at SCHED_FIFO vs the Python animation at Nice=10) are
+#      load (the splash at nice -10, and with its opt-in SCHED_FIFO, vs the
+#      Python animation at Nice=10) are
 #      copied out as splash-timing.txt.
 { pkgs, bridgeModules }:
 let
@@ -96,7 +97,7 @@ pkgs.testers.runNixOSTest {
     splancBridge.updaterExtraArgs = [ "--allow-http" ];
     networking.networkmanager.enable = true;
     virtualisation.memorySize = 1024;
-    virtualisation.cores = 4; # like the Pi 3/4/Zero 2 W (the splash pins itself to the last core)
+    virtualisation.cores = 4; # like the Pi 3/4/Zero 2 W
     # No framebuffer in the VM: the display writes the HDMI page to a PNG.
     systemd.services.splanc-display.environment = {
       SPLANC_DISPLAY_HDMI = "png:/run/splanc-display/hdmi.png";
@@ -263,6 +264,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed("systemctl start splanc-bridge.service")
         machine.wait_until_succeeds("test -s /run/splanc-bridge/status.json", timeout=60)
         machine.succeed("systemctl is-active splanc-bridge.service")
+
     with subtest("boot splash: stage 1 -> switch_root -> hand-off to splanc-display"):
         def kmsg_time(pattern):
             out = machine.succeed(f"dmesg | grep -m1 -- {pattern!r} || true").strip()
@@ -309,14 +311,14 @@ pkgs.testers.runNixOSTest {
             "--oled null --hdmi off 2>&1 | grep -m1 'frames:' || echo 'no frame within 120 s (starved)'"
         )
         py_idle = machine.succeed(py_bench).strip()
-        rt_idle = machine.succeed("splanc-splash bench 6 2>&1 | grep bench:").strip()
+        rt_idle = machine.succeed("splanc-splash bench 6 --rt 2>&1 | grep bench:").strip()
         ncpu = int(machine.succeed("nproc").strip())
         machine.succeed(
             f"for i in $(seq {ncpu}); do sh -c 'while :; do :; done' >/dev/null 2>&1 & "
             "echo $! >>/tmp/busy.pids; done"
         )
-        rt = machine.succeed("splanc-splash bench 6 2>&1 | grep bench:").strip()
-        nort = machine.succeed("splanc-splash bench 6 --no-rt 2>&1 | grep bench:").strip()
+        rt = machine.succeed("splanc-splash bench 6 --rt 2>&1 | grep bench:").strip()
+        nort = machine.succeed("splanc-splash bench 6 2>&1 | grep bench:").strip()
         py = machine.succeed(py_bench).strip()
         machine.succeed("kill $(cat /tmp/busy.pids)")
         timing = (
@@ -324,7 +326,7 @@ pkgs.testers.runNixOSTest {
             + "\nidle:\n"
             + f"  splash SCHED_FIFO: {rt_idle}\n  Python Nice=10:    {py_idle}\n"
             + f"under load ({ncpu} busy loops at nice 0):\n"
-            + f"  splash SCHED_FIFO: {rt}\n  splash no RT:      {nort}\n"
+            + f"  splash SCHED_FIFO: {rt}\n  splash nice -10:   {nort}\n"
             + f"  Python Nice=10:    {py}\n"
         )
         print(timing)

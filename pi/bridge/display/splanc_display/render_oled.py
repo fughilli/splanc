@@ -18,8 +18,8 @@ from PIL import Image, ImageChops, ImageDraw
 from . import boot as boot_mod
 from . import draw as d
 from . import fonts, gliders
-from . import updates as upd
 from . import splash as splash_mod
+from . import updates as upd
 from .anim import Scene, SlideView
 from .status import (
     WAITING,
@@ -915,6 +915,18 @@ def _render(status: Status, view: View, now: Optional[float], frames) -> Image.I
         view.page == "boot" or (view.slide and "boot" in (view.slide.src.page, view.slide.dst.page))
     ):
         frames = default_frames()
+    if view.page == "boot" and view.slide is None and frames is not None and not view.overlay:
+        # The boot animation fills the whole panel, unshifted: pixel for pixel what
+        # the early boot splash (pi/bridge/splash) drew before its hand-off,
+        # including the stage text on the panel's last row.
+        panel = frames.at(view.boot_t or 0.0).copy()
+        if (
+            view.boot_text
+            and (view.boot_t or 0.0) >= frames.duration
+            and frames.loop_start is not None
+        ):
+            splash_mod.draw_stage(panel, view.boot_text)
+        return panel
     if view.slide is not None:
         sv = view.slide
         img = _compose(

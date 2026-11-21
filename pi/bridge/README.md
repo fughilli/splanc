@@ -103,20 +103,24 @@ splanc-display takes over without a visible seam:
    itself `@splanc-splash` (stage 1's kill loop and systemd leave `@` processes alone), so it
    keeps running across the switch to the real root. It drives the SH1106 like luma does
    (`/dev/spidev0.0` at 8 MHz, DC/RST through the GPIO character device, luma's init
-   sequence and page layout, rotated 180°) and, when there is a framebuffer, HDMI: the same
-   picture scaled up on VT 8 in graphics mode (the simpledrm framebuffer from power-on, then
-   vc4's when it replaces it).
+   sequence and page layout, rotated 180°) and, once the KMS driver's framebuffer is there,
+   HDMI: the same picture scaled up on VT 8 in graphics mode. It never draws on (or even
+   opens) simpledrm's framebuffer, the firmware's, which vc4 unregisters from under its
+   users when it loads moments later in the initrd; `splanc.splash_fb=early` allows it.
 2. **What it shows**: exactly what splanc-display shows for its boot scene,
    `boot_frames.bin` (the 2 s logo intro, then a 1.2 s "loading" loop: a head runs along
-   the LED row), with a stage hint under it once the logo is complete: Starting… (initrd),
+   the LED row), played at 60 fps (every fourth frame of the 240 fps file; both play by the
+   clock), with a stage hint under it once the logo is complete: Starting… (initrd),
    Loading system… (real root), Connecting… (NetworkManager up, no default route),
    Starting bridge… (online), Almost ready… (the bridge wrote its status). The frames and
    texts are compiled in (`tools/gen_splash_assets.py`, the display's own font code), so
    there is nothing to read from disk at boot.
-3. **Smoothness**: `SCHED_FIFO` priority 10, `mlockall`, pinned to the last core on 4-core
-   boards, frames paced on `CLOCK_MONOTONIC` deadlines (`clock_nanosleep` `TIMER_ABSTIME`;
-   a late frame is skipped, the animation never drifts), only changed SH1106 pages and
-   framebuffer cells written. A frame is well under a millisecond of CPU.
+3. **Smoothness**: nice -10, `mlockall`, frames paced on `CLOCK_MONOTONIC` deadlines
+   (`clock_nanosleep` `TIMER_ABSTIME`; a late frame is skipped, the animation never
+   drifts), only changed SH1106 pages and framebuffer cells written. A frame is well under
+   a millisecond of CPU. `SCHED_FIFO` priority 10, pinned to the last core on 4-core boards,
+   is opt-in (`splanc.splash_rt=1`): a real-time task is the one thing here that could
+   starve the rest of the boot, so it stays off until measured on a Pi.
 4. **Hand-off** (`display/splanc_display/splash.py`): splanc-display imports everything,
    renders its first frames off-screen, then waits until the system is quiet (two 0.5 s
    windows below 50% CPU across all cores and, where the kernel has PSI, CPU pressure
@@ -138,17 +142,16 @@ and portrait rotations and flips for `OLED_ROTATE=0`. With no HAT fitted it writ
 empty SPI bus, which is harmless (see `hat.py`).
 
 It gives up after 600 s without a hand-off. Kernel command line: `splanc.splash=0` (off),
-`splanc.splash_max=<s>`, `splanc.splash_rt=0`, `splanc.splash_cpu=<n|-1>`,
-`splanc.splash_stats=1` (frame timing to the kernel log every 10 s; a summary is always
-logged at the hand-off). On the bridge: `dmesg | grep splanc-splash` (start, stages, frame
-timing, hand-off), `journalctl -u splanc-display | grep -E 'took over|first'`,
+`splanc.splash_oled=0` (HDMI only), `splanc.splash_fb=0` (OLED only), `splanc.splash_fb=early`
+(also simpledrm's framebuffer), `splanc.splash_rt=1` (`SCHED_FIFO`; with
+`splanc.splash_cpu=<n|-1>`), `splanc.splash_max=<s>`, `splanc.splash_stats=1` (frame timing
+to the kernel log every 10 s; a summary is always logged at the hand-off). Each one turns a
+single part off or on, so a problem on a board can be narrowed down from the command line.
+On the bridge: `dmesg | grep splanc-splash` (start, stages, frame timing, hand-off),
+`journalctl -u splanc-display | grep -E 'took over|first'`,
 `splanc-splash bench 10` (pacing under the current load) and
 `SPLANC_DISPLAY_FRAME_STATS=1` in the service environment (the Python animation's frame
 intervals, to compare).
-
-The image also shortens the time before the initrd: U-Boot's extlinux menu waits 1 s
-instead of 5 (Pi 3/4/Zero 2 W) and the kernel prints only warnings to the consoles
-(`image/nix/rpi.nix`).
 
 ## The bridge contract
 

@@ -18,20 +18,26 @@
  * not reset) attached, and exits. splanc-display continues the animation from
  * t0 (splanc_display/splash.py).
  *
- * Smoothness: SCHED_FIFO (priority 10), mlockall, everything in RAM (the
- * binary is static, the frames are compiled in), deadline pacing on
+ * Smoothness: nice -10, mlockall, everything in RAM (the binary is static,
+ * the frames are compiled in, at SPL_FPS: 60), deadline pacing on
  * CLOCK_MONOTONIC with TIMER_ABSTIME (late frames are skipped, never
- * drifted), only the SH1106 pages / framebuffer cells that changed are
- * written, and on 4-core boards it runs on the last core. A frame costs well
- * under a millisecond; the kernel's RT throttling (95%) bounds it anyway.
+ * drifted), and only the SH1106 pages / framebuffer cells that changed are
+ * written. A frame costs well under a millisecond. SCHED_FIFO (priority 10,
+ * pinned to the last core on 4-core boards) is opt-in: splanc.splash_rt=1.
  *
  * Never blocks boot: `start` forks and returns at once; every device is
  * optional (no HAT, no HDMI, no spidev: it just draws less); it exits on its own
  * after splanc.splash_max seconds (default 600).
  *
- * Kernel command line: splanc.splash=0 (off), splanc.splash_max=<s>,
- * splanc.splash_cpu=<n|-1>, splanc.splash_rt=0, splanc.splash_stats=1 (frame
- * timing to the kernel log every 10 s; a summary is always logged at exit).
+ * HDMI: only the KMS driver's framebuffer (vc4) is drawn on, never simpledrm's
+ * (the firmware framebuffer that vc4 removes, from under its users, when it
+ * loads in the initrd; the VT is taken only then too). splanc.splash_fb=early
+ * draws on simpledrm's as well, splanc.splash_fb=0 leaves HDMI alone.
+ *
+ * Kernel command line: splanc.splash=0 (off), splanc.splash_oled=0,
+ * splanc.splash_fb=0|early, splanc.splash_max=<s>, splanc.splash_rt=1,
+ * splanc.splash_cpu=<n|-1> (with rt), splanc.splash_stats=1 (frame timing to
+ * the kernel log every 10 s; a summary is always logged at exit).
  *
  * Usage:
  *   splanc-splash start             daemonize (the initrd)
@@ -39,7 +45,7 @@
  *   splanc-splash stop [hdmi=0|1]   ask a running splash to hand over (prints its reply)
  *   splanc-splash bench <seconds> [opts]
  *                                   pace + compose frames with no device, print timing
- * opts: --oled=<spidev path|none|file:PATH> --fb=<path|none> --no-rt --cpu=<n>
+ * opts: --oled=<spidev path|none|file:PATH> --fb=<path|none> --rt --no-rt --cpu=<n>
  *       --max=<s> --stats  (file:PATH writes the SH1106 page stream, for tests)
  */
 #define _GNU_SOURCE
@@ -61,6 +67,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -92,7 +99,8 @@ static struct {
 	int bench;
 	double bench_s;
 	int enabled;
-} opt = {.rt = 1, .cpu = -2, .max_s = 600.0, .enabled = 1};
+	int fb_early; /* also draw on simpledrm's (firmware) framebuffer */
+} opt = {.rt = 0, .cpu = -2, .max_s = 600.0, .enabled = 1};
 
 /* ---- logging ---------------------------------------------------------------- */
 
@@ -421,6 +429,9 @@ static struct {
 	int valid;
 	int64_t next_check;
 	int misses;
+	ino_t ino;
+	dev_t rdev;
+	int skipped_simple;
 } fb = {.fd = -1, .tty_fd = -1};
 
 static void fb_close(void)
@@ -490,6 +501,21 @@ static void fb_check(int64_t now)
 	const char *path = opt.fb ? opt.fb : "/dev/fb0";
 	if (!strcmp(path, "none"))
 		return;
+	if (!opt.fb_early && !strcmp(path, "/dev/fb0")) {
+		/* Don't even open simpledrm's framebuffer (see below): its name is in sysfs. */
+		char name[64];
+		if (read_file(open_root("/sys/class/graphics/fb0/name", O_RDONLY), name, sizeof name) > 0 &&
+		    !strncmp(name, "simple", 6)) {
+			if (fb.fd >= 0 && ++fb.misses >= 4)
+				fb_close();
+			if (!fb.skipped_simple) {
+				LOG("HDMI: waiting for the KMS framebuffer (fb0 is the firmware's: %.*s)",
+				    (int)strcspn(name, "\n"), name);
+				fb.skipped_simple = 1;
+			}
+			return;
+		}
+	}
 	int fd = open_root(path, O_RDWR);
 	if (fd < 0) {
 		/* Gone for good (2 s), or just a moment of the root switch? */
@@ -500,17 +526,32 @@ static void fb_check(int64_t now)
 	fb.misses = 0;
 	struct fb_fix_screeninfo fix;
 	struct fb_var_screeninfo var;
-	if (ioctl(fd, FBIOGET_FSCREENINFO, &fix) < 0 || ioctl(fd, FBIOGET_VSCREENINFO, &var) < 0) {
+	struct stat st;
+	if (fstat(fd, &st) < 0 || ioctl(fd, FBIOGET_FSCREENINFO, &fix) < 0 ||
+	    ioctl(fd, FBIOGET_VSCREENINFO, &var) < 0) {
 		close(fd);
 		return;
 	}
-	if (fb.fd >= 0 && !strncmp(fix.id, fb.fix.id, sizeof fix.id) && fix.smem_start == fb.fix.smem_start &&
-	    fix.smem_len == fb.fix.smem_len && var.xres == fb.var.xres && var.yres == fb.var.yres &&
-	    var.bits_per_pixel == fb.var.bits_per_pixel) {
+	/* The same device node (devtmpfs makes a new one when a driver replaces
+	 * the framebuffer) with the same mode: keep drawing. */
+	if (fb.fd >= 0 && st.st_ino == fb.ino && st.st_rdev == fb.rdev && !strncmp(fix.id, fb.fix.id, sizeof fix.id) &&
+	    fix.smem_start == fb.fix.smem_start && fix.smem_len == fb.fix.smem_len && var.xres == fb.var.xres &&
+	    var.yres == fb.var.yres && var.bits_per_pixel == fb.var.bits_per_pixel) {
 		close(fd);
 		return;
 	}
 	fb_close();
+	if (!opt.fb_early && !strncmp(fix.id, "simple", 6)) {
+		/* simpledrm: the firmware's framebuffer, which the KMS driver (vc4)
+		 * unregisters when it loads, moments later, in the initrd. Leave it
+		 * (and the console) alone; draw once vc4's framebuffer is there. */
+		if (!fb.skipped_simple) {
+			LOG("HDMI: waiting for the KMS framebuffer (%s is the firmware's)", fix.id);
+			fb.skipped_simple = 1;
+		}
+		close(fd);
+		return;
+	}
 	if (var.bits_per_pixel != 16 && var.bits_per_pixel != 32) {
 		WARN("framebuffer %s: %u bpp unsupported", fix.id, var.bits_per_pixel);
 		close(fd);
@@ -524,6 +565,8 @@ static void fb_check(int64_t now)
 	}
 	munlock(mem, len); /* device memory / fbdev deferred I/O: not ours to pin */
 	fb.fd = fd;
+	fb.ino = st.st_ino;
+	fb.rdev = st.st_rdev;
 	fb.mem = mem;
 	fb.len = len;
 	fb.fix = fix;
@@ -710,8 +753,8 @@ static int sock_poll(int *hdmi)
 static void sock_reply(int c, int64_t t0, int64_t frame, int with_oled)
 {
 	char msg[128];
-	int n = snprintf(msg, sizeof msg, "ok t0=%lld stage=%d oled=%d frame=%lld\n", (long long)t0, stage,
-			 with_oled, (long long)frame);
+	int n = snprintf(msg, sizeof msg, "ok t0=%lld stage=%d oled=%d frame=%lld fps=%d\n", (long long)t0, stage,
+			 with_oled, (long long)frame, SPL_FPS);
 	struct iovec io = {msg, (size_t)n};
 	union {
 		char buf[CMSG_SPACE(sizeof(int))];
@@ -758,6 +801,14 @@ static void cmdline_opts(void)
 			opt.cpu = atoi(t + 18);
 		else if (!strcmp(t, "splanc.splash_rt=0"))
 			opt.rt = 0;
+		else if (!strcmp(t, "splanc.splash_rt=1"))
+			opt.rt = 1;
+		else if (!strcmp(t, "splanc.splash_oled=0"))
+			opt.oled = "none";
+		else if (!strcmp(t, "splanc.splash_fb=0"))
+			opt.fb = "none";
+		else if (!strcmp(t, "splanc.splash_fb=early"))
+			opt.fb_early = 1;
 		else if (!strcmp(t, "splanc.splash_stats=1"))
 			opt.stats = 1;
 	}
@@ -767,9 +818,15 @@ static void realtime(void)
 {
 	if (mlockall(MCL_CURRENT | MCL_FUTURE) < 0)
 		WARN("mlockall: %s", strerror(errno));
+	if (!opt.rt) {
+		/* The default: ahead of ordinary boot work, but never able to starve it. */
+		if (setpriority(PRIO_PROCESS, 0, -10) < 0)
+			WARN("nice -10: %s", strerror(errno));
+		return;
+	}
 	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 	int cpu = opt.cpu;
-	if (cpu == -2) /* default: the last core on boards with 4 */
+	if (cpu == -2) /* with RT, by default: the last core on boards with 4 */
 		cpu = ncpu >= 4 ? (int)ncpu - 1 : -1;
 	if (cpu >= 0 && cpu < ncpu) {
 		cpu_set_t set;
@@ -918,6 +975,8 @@ static void parse_opts(int argc, char **argv, int from)
 			opt.fb = a + 5;
 		else if (!strcmp(a, "--no-rt"))
 			opt.rt = 0;
+		else if (!strcmp(a, "--rt"))
+			opt.rt = 1;
 		else if (!strncmp(a, "--cpu=", 6))
 			opt.cpu = atoi(a + 6);
 		else if (!strncmp(a, "--max=", 6))

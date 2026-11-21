@@ -1,10 +1,11 @@
 """Check splanc-splash's SH1106 byte stream against luma.oled (the build's check).
 
-    check_stream.py STREAM FRAME STAGE
+    check_stream.py STREAM FRAME STAGE [FPS]
 
 STREAM is what ``splanc-splash run --oled=file:STREAM`` wrote (records of: DC
-level, u16 length, bytes), FRAME/STAGE the frame index and stage its hand-off
-reply named. Checks that
+level, u16 length, bytes), FRAME/STAGE/FPS the frame index, stage and frame rate
+its hand-off reply named (the splash plays boot_frames.bin at a lower rate than
+the file's: tools/gen_splash_assets.py). Checks that
 
 * the init sequence is luma.oled's sh1106 init (what splanc-display's luma would
   send) followed by splanc-display's contrast, so the panel is configured
@@ -79,6 +80,7 @@ def ram(recs):
 
 def main(argv) -> int:
     path, fi, stage = argv[1], int(argv[2]), int(argv[3])
+    fps = int(argv[4]) if len(argv) > 4 and argv[4] else None
     from luma.oled.device import sh1106
     from splanc_display import boot, splash
 
@@ -93,8 +95,9 @@ def main(argv) -> int:
     ), f"init differs:\n ours {ours[0][1].hex()}\n luma {want_init.hex()}"
 
     frames = boot.load()
-    img = frames.frames[frames.index(fi / frames.fps)].copy()
-    if frames.loop_start is not None and fi >= frames.loop_start:
+    t = fi / (fps or frames.fps)  # the moment the splash drew its last frame for
+    img = frames.at(t).copy()
+    if frames.loop_start is not None and frames.index(t) >= frames.loop_start:
         splash.draw_stage(img, splash.STAGES[stage])
     cap.recs.clear()
     dev.display(img)

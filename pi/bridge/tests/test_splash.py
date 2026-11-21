@@ -60,19 +60,66 @@ def test_boot_frames_v2_loop_round_trip():
     assert v1.loop_start is None and v1.index(5.0) == 6 and v1.cycle_end(9.0) == 9.0
 
 
+def test_splash_assets_subsample_keeps_the_timing():
+    """The splash plays boot_frames.bin at a lower rate (every n-th frame): at its
+    own frame times it shows exactly the file's frame, loop included."""
+    import gen_boot_frames
+    import gen_splash_assets
+
+    intro = [Image.new("1", (128, 64), 0) for _ in range(8)]
+    for i, img in enumerate(intro):
+        img.putpixel((i, 1), 1)
+    loop = [Image.new("1", (128, 64), 0) for _ in range(4)]
+    for i, img in enumerate(loop):
+        img.putpixel((i, 2), 1)
+    fr = boot.unpack(gen_boot_frames.pack(intro, fps=40, loop=loop))
+    sub = gen_splash_assets.subsample(fr, 20)
+    assert sub.fps == 20 and len(sub.frames) == 6 and sub.loop_start == 4
+    assert sub.duration == pytest.approx(fr.duration)
+    assert sub.loop_duration == pytest.approx(fr.loop_duration)
+    for k in range(40):  # three loop cycles past the intro
+        assert sub.at(k / 20).tobytes() == fr.at(k / 20).tobytes(), k
+    with pytest.raises(ValueError):
+        gen_splash_assets.subsample(fr, 30)  # not a divisor of 40 fps
+    text = gen_splash_assets.header(sub, ("Hi",), splash.draw_stage)
+    assert "#define SPL_FPS 20" in text and "#define SPL_LOOP_START 4" in text
+
+
+def test_boot_scene_is_the_splash_frame_pixel_for_pixel():
+    """After the hand-off the boot scene must be exactly what the splash drew (its
+    frame + stage text on the full 128x64 panel, unshifted), or the seam shows."""
+    import gen_boot_frames
+
+    intro, loop = frames_with_loop()
+    fr = boot.unpack(gen_boot_frames.pack(intro, fps=10, loop=loop))
+    from splanc_display.status import Status
+
+    st = Status(state="waiting")
+    for text in splash.STAGES:
+        for t in (0.05, 0.45, 0.65, 2.15):
+            want = fr.at(t).copy()
+            if t >= fr.duration:
+                splash.draw_stage(want, text)
+            got = render_oled.render(
+                st, View(page="boot", boot_t=t, boot_text=text), now=0, frames=fr
+            )
+            assert got.size == (128, 64)
+            assert got.convert("1").tobytes() == want.tobytes(), (text, t)
+
+
 def test_generated_loop_starts_and_ends_on_the_intro_last_frame():
     """intro -> loop and loop -> loop never jump: the rest frame is the intro's last."""
     import gen_boot_frames as g
 
     here = os.path.dirname(os.path.abspath(__file__))
-    svg = os.path.join(here, "..", "..", "..", "web", "public", "icons", "splanc.svg")
+    root = os.path.join(here, "..", "..", "..")
     if "TEST_SRCDIR" in os.environ:
-        svg = os.path.join(
-            os.environ["TEST_SRCDIR"], "_main", "web", "public", "icons", "splanc.svg"
-        )
-    if not os.path.exists(svg):
-        pytest.skip("logo svg not reachable")
-    intro = g.build_frames(svg)
+        root = os.path.join(os.environ["TEST_SRCDIR"], "_main")
+    svg = os.path.join(root, "web", "public", "icons", "splanc.svg")
+    source = os.path.join(root, "shared", "brand", "splash", "frames.json")
+    if not (os.path.exists(svg) and os.path.exists(source)):
+        pytest.skip("logo svg / splash source not reachable")
+    intro = g.build_frames(svg, source)
     loop = g.build_loop(svg, intro[-1])
     assert len(loop) == int(round(g.LOOP_SECONDS * g.FPS))
     assert loop[-1].tobytes() == intro[-1].tobytes()

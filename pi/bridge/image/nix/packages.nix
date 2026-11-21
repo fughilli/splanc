@@ -165,7 +165,8 @@ let
       echo "$reply"
       frame=$(echo "$reply" | sed -n 's/.* frame=\([0-9]*\).*/\1/p')
       stage=$(echo "$reply" | sed -n 's/.* stage=\([0-9]*\).*/\1/p')
-      PYTHONPATH=${splancPy} python3 check_stream.py $TMPDIR/oled.bin "$frame" "$stage"
+      fps=$(echo "$reply" | sed -n 's/.* fps=\([0-9]*\).*/\1/p')
+      PYTHONPATH=${splancPy} python3 check_stream.py $TMPDIR/oled.bin "$frame" "$stage" "$fps"
       runHook postCheck
     '';
     installPhase = ''

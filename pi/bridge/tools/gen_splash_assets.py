@@ -1,6 +1,6 @@
 """The early boot splash's art, as a C header (a build step of pi/bridge/splash).
 
-    gen_splash_assets.py --frames boot_frames.bin --out splash_assets.h
+    gen_splash_assets.py --frames boot_frames.bin --out splash_assets.h [--fps 60]
 
 The splash (splanc-splash.c, started from the initrd) draws exactly what
 splanc-display draws for its boot scene, so the hand-off between them can't be
@@ -8,6 +8,12 @@ seen: the same boot_frames.bin (intro + "loading" loop, tools/gen_boot_frames.py
 and the stage texts (splanc_display.splash.STAGES) rendered by the display's
 own font code (splash.draw_stage). Everything is 1-bit 128x64, rows of 16 bytes,
 most significant bit = leftmost pixel (PIL mode "1" tobytes()).
+
+The splash plays them at ``--fps`` (default 60: every fourth frame of the 240 fps
+file), not at the file's own rate: the frames are compiled into the binary (and
+into the initrd), and the splash's whole job is a steady, cheap animation while
+the rest of the boot is busy. Both play by the clock, so splanc-display (at the
+panel's rate) continues the very same motion from the splash's start time.
 
 Needs Pillow and the splanc_display package on the path (the image's splancPy).
 """
@@ -35,6 +41,22 @@ def _c_string(s: str) -> str:
         c = chr(b)
         out.append(c if 0x20 <= b < 0x7F and c not in '"\\?' else f"\\{b:03o}")
     return '"' + "".join(out) + '"'
+
+
+def subsample(frames, fps: int):
+    """``frames`` (a boot.BootFrames) at ``fps``: every n-th frame, n = file fps / fps.
+    The intro and the loop must both be whole multiples of n frames (the loop then
+    repeats with exactly the same period)."""
+    if fps <= 0 or frames.fps % fps:
+        raise ValueError(f"{frames.fps} fps is not a multiple of {fps}")
+    n = frames.fps // fps
+    intro = frames.intro_frames
+    if intro % n or (len(frames.frames) - intro) % n:
+        raise ValueError(f"intro/loop lengths are not multiples of {n} frames")
+    from splanc_display.boot import BootFrames
+
+    loop = intro // n if frames.loop_start is not None else None
+    return BootFrames(frames.frames[::n], fps, loop)
 
 
 def header(frames, stages, draw_stage) -> str:
@@ -72,6 +94,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--frames", required=True, help="boot_frames.bin (gen_boot_frames.py)")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--fps", type=int, default=60, help="the splash's frame rate (default 60)")
     a = ap.parse_args(argv)
     from splanc_display import boot, splash
 
@@ -79,13 +102,15 @@ def main(argv=None) -> int:
     if frames is None:
         print(f"{a.frames}: not a boot frames file", file=sys.stderr)
         return 1
+    if a.fps != frames.fps:
+        frames = subsample(frames, a.fps)
     text = header(frames, splash.STAGES, splash.draw_stage)
     tmp = a.out + ".tmp"
     with open(tmp, "w") as f:
         f.write(text)
     os.replace(tmp, a.out)
     print(
-        f"{a.out}: {len(frames.frames)} frames (loop from {frames.loop_start}), "
+        f"{a.out}: {len(frames.frames)} frames at {frames.fps} fps (loop from {frames.loop_start}), "
         f"{len(splash.STAGES)} stage texts",
         file=sys.stderr,
     )
