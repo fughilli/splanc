@@ -68,6 +68,34 @@ fn frames(from: u32, to: u32, step: u32) -> (bool, u16, bool) {
     last
 }
 
+/// A submit_effect frame by hand (the .fxb can outgrow the host profile's
+/// inline bytes cap): ClientMessage.submit_effect = 21 {1 id, 2 fxb, 4 deck = 1,
+/// 7 power_slot}.
+fn submit_frame(id: &str, fxb: &[u8], slot: u8) -> Vec<u8> {
+    fn varint(o: &mut Vec<u8>, mut v: usize) {
+        loop {
+            let b = (v & 0x7f) as u8;
+            v >>= 7;
+            if v == 0 {
+                o.push(b);
+                return;
+            }
+            o.push(b | 0x80);
+        }
+    }
+    let mut body = vec![0x0a];
+    varint(&mut body, id.len());
+    body.extend_from_slice(id.as_bytes());
+    body.push(0x12);
+    varint(&mut body, fxb.len());
+    body.extend_from_slice(fxb);
+    body.extend_from_slice(&[0x20, 1, 0x38, slot]);
+    let mut f = vec![0xaa, 0x01]; // field 21, LEN
+    varint(&mut f, body.len());
+    f.extend_from_slice(&body);
+    f
+}
+
 fn transition(style: u32, ms: u32) -> pb::PowerTransition {
     pb::PowerTransition { r#style: style, r#duration_ms: ms, ..Default::default() }
 }
@@ -171,12 +199,8 @@ fn power_through_the_c_abi() {
 
     // A transition effect: stored (not loaded), then played on deck B.
     let fxb = effect_fxb();
-    let mut sub = pb::SubmitEffect::default();
-    sub.r#effect_id = micropb::heapless::String::try_from("lib-glow").unwrap();
-    sub.r#fxb = micropb::heapless::Vec::from_slice(&fxb).unwrap();
-    sub.r#deck = 1;
-    sub.r#power_slot = 1;
-    match send(&frame_of(CMsg::SubmitEffect(sub.clone())), 13_100) {
+    let store = submit_frame("lib-glow", &fxb, 1);
+    match send(&store, 13_100) {
         SMsg::ResultReady(r) => assert_eq!(r.r#map_id.as_str(), "lib-glow"),
         other => panic!("result_ready expected, got {other:?}"),
     }
@@ -192,7 +216,7 @@ fn power_through_the_c_abi() {
     set_power(true, 13_300);
     assert_eq!(unsafe { lm_power_take_load() }, 1);
     unsafe { lm_power_set_loading(true) };
-    match send(&frame_of(CMsg::SubmitEffect(sub)), 13_300) {
+    match send(&store, 13_300) {
         SMsg::ResultReady(_) => {}
         other => panic!("result_ready expected, got {other:?}"),
     }
