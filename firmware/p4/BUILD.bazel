@@ -103,3 +103,5 @@ filegroup(
     name = "partitions_p4_ota_bin",
     srcs = ["partitions_p4_ota.bin"],
 )
+
+exports_files(["sdkconfig_overrides.h"])

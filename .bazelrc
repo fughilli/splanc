@@ -93,3 +93,10 @@ build:td --macos_minimum_os=10.14
 # places in IRAM that this firmware never runs with the cache off -> flash). See
 # firmware/player_app/ld/.
 build --@embedded//ld:esp32c6_sections_override=//firmware/player_app/ld:esp32c6_sections_ld
+
+# ESP32-P4: static buffers in PSRAM (EXT_RAM_BSS_ATTR). The sdkconfig overlay turns on
+# CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY, embedded rebuilds esp_psram from IDF
+# source with it (heap reservation + boot zeroing) and places .ext_ram.bss in PSRAM.
+build --@embedded//sdk:esp32p4_sdkconfig_overrides=//firmware/p4:sdkconfig_overrides.h
+build --@embedded//sdk:esp32p4_esp_psram_from_source
+build --@embedded//ld:esp32p4_sections_override=@embedded//ld:esp32p4_ext_ram_bss_sections_ld
