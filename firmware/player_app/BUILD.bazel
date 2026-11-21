@@ -107,6 +107,7 @@ rust_static_library(
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
+        "pb_out.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -165,6 +166,7 @@ rust_library(
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
+        "pb_out.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -977,56 +979,64 @@ rust_test(
     ] if sfx == "_meshspike" else []),
 ) for sfx, extra in NETSTACK_VARIANTS]
 
-# -- ESP32-C6 front end for the P4 player (docs/design/p4-c6-split.md §2, §4) ----------
-# The netstack player with LM_FRONTEND: Wi-Fi, BLE Improv, TLS/wss and mDNS stay here;
-# player messages go to the P4 as link frames over the SDIO slave (frontend_link.cpp),
-# except the arms the front end owns. No rendering and no LED or sensor pins: GPIO20-23
-# are the SDIO link on the P4 boards. The P4 image carries this one and flashes it onto
-# the board's C6 (//firmware/p4/c6flash).
-_FRONTEND_LEDS = 64
-
+# -- ESP32-C6 front end for the P4 player (docs/design/p4-c6-split.md §2, §4.3) --------
+# A pure relay (relay_main.cpp): Wi-Fi, BLE Improv + the BLE player transport, TLS/wss,
+# mDNS and the Wi-Fi rejoin policy stay here; every other player message goes to the P4 as
+# link frames over the SDIO slave (frontend_link.cpp). No player core, no effects engine,
+# no rendering and no LED or sensor pins: GPIO20-23 are the SDIO link on the P4 boards. The
+# P4 image carries this one and flashes it onto the board's C6 (//firmware/p4/c6flash).
 rust_static_library(
-    name = "player_ffi_frontend",
+    name = "relay_ffi",
     srcs = [
-        "driver_ffi.rs",
-        "ffi.rs",
-        "fxdbg.rs",
-        "kiosk_ffi.rs",
-        "sensor_ffi.rs",
-        "uniform_pool.rs",
+        "pb_out.rs",
+        "relay_ffi.rs",
         "wifi_ffi.rs",
     ],
-    # Its own crate name: the archive is named after it, and :player_ffi's would collide.
-    crate_name = "ledmapper_player_ffi_frontend",
-    crate_root = "ffi.rs",
+    crate_name = "ledmapper_relay_ffi",
+    crate_root = "relay_ffi.rs",
     edition = "2021",
-    # The front end's player core only answers while the P4 is down: a token LED cap.
-    rustc_env = {
-        "LM_MAX_LEDS": "%d" % _FRONTEND_LEDS,
-        "LM_MAX_LEDS_PER_CHANNEL": "%d" % (_FRONTEND_LEDS // 2),
-    },
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
-        "//firmware/arena",
-        "//firmware/fps",
-        "//firmware/fx_jit",
-        "//firmware/fx_vm",
-        "//firmware/keypoint",
         "//firmware/mdns",
-        "//firmware/netout",
-        "//firmware/osc",
         "//firmware/ota",
-        "//firmware/player:player_fw",
-        "//firmware/sensor",
-        "//firmware/store",
-        "//firmware/sysmode",
-        "//shared/protocol/rust:ledmapper_pb_fw",
         "//shared/protocol/rust:ledmapper_view",
-        "@crates//:micropb",
         "@pbview",
+    ],
+)
+
+# The same relay_ffi.rs on the host, for :relay_ffi_test.
+rust_library(
+    name = "relay_ffi_host",
+    srcs = [
+        "pb_out.rs",
+        "relay_ffi.rs",
+        "wifi_ffi.rs",
+    ],
+    crate_name = "ledmapper_relay_ffi",
+    crate_root = "relay_ffi.rs",
+    edition = "2021",
+    deps = [
+        "//firmware/mdns",
+        "//firmware/ota",
+        "//shared/protocol/rust:ledmapper_view",
+        "@pbview",
+    ],
+)
+
+# The relay's routing reads (the arm, a rename's name), the Wi-Fi policy arms it answers
+# itself, and its mDNS identity, through the C ABI.
+rust_test(
+    name = "relay_ffi_test",
+    srcs = ["tests/relay_ffi.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":relay_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
     ],
 )
 
@@ -1035,45 +1045,30 @@ cc_binary(
     srcs = [
         "frontend_link.cpp",
         "frontend_link.h",
-        "led_config.h",
-        "main.cpp",
         "player_ffi.h",
-        "player_module.h",
-        "sensor_bus.h",
+        "relay_main.cpp",
         "serial_log.h",
-        "ws2812.h",
-        "ws2812_none.cpp",
         ":agent_bundle_h",
         ":build_info_h",
     ],
     copts = ["-fno-rtti"],
+    # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + relay_ffi) each carry the
+    # panic handler / compiler-builtins; take the first (as the player does).
     linkopts = ["-Wl,--allow-multiple-definition"],
-    local_defines = [
-        "LM_NETSTACK",
-        "LM_FRONTEND",
-        "LM_MAX_LEDS=%d" % _FRONTEND_LEDS,
-        "LM_MAX_LEDS_PER_CHANNEL=%d" % (_FRONTEND_LEDS // 2),
-    ],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
-        ":board_caps_res",
-        ":color_correction",
         ":device_cert",
         ":improv_ble_netstack",
         ":improv_codec",
         ":netstack_transport",
         ":ota_app",
-        ":player_ffi_frontend",
-        ":ws_codec",
-        "//firmware/landing:landing_page",
+        ":relay_ffi",
         "//firmware/p4/link:link_codec",
         "@embedded//libs/board:arduino_core",
-        "@embedded//libs/vendor:ble",
         "@embedded//libs/vendor:preferences",
-        "@embedded//libs/vendor:wifi",
     ],
 )
 
@@ -1082,6 +1077,22 @@ firmware_binary(
     binary = ":player_app_frontend",
     board = "esp32c6",
     opt_mode = "opt",
+    tags = ["manual"],
+)
+
+# The front end alone on a C6 dev board (no P4: every forwarded message answers
+# player_unavailable). Bench only: its static RAM, idle heap and the network side (Improv,
+# wss, mDNS, the Wi-Fi policy) measured on a HITL C6, which has no P4 attached.
+esptool_flash(
+    name = "flash_esp32c6_frontend",
+    app = ":esp32c6_frontend",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "esp32c6_frontend_flashbundle",
+    flash = ":flash_esp32c6_frontend",
     tags = ["manual"],
 )
 
