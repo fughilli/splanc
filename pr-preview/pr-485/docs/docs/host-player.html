@@ -234,6 +234,7 @@
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -267,6 +268,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
@@ -374,6 +376,9 @@ bazel-bin/pi/player_rs/player_host<span class="w"> </span>--output<span class="w
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--start</span> <span class="pre">N</span></code></p></td>
 <td><p>Show an N-LED mapping pattern at startup without the app, to check wiring.</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--output-latency-ms</span> <span class="pre">MS</span></code></p></td>
+<td><p>Render effects MS milliseconds ahead of the shared time base, to cancel the network and controller latency to the LEDs. Default 0. See <a class="reference internal" href="#shared-time-and-output-latency">Shared time and output latency</a>.</p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -431,9 +436,9 @@ brightness is the only one that applies.</p></li>
 <li><p>Start <code class="docutils literal notranslate"><span class="pre">player_host</span></code>. It logs <code class="docutils literal notranslate"><span class="pre">add</span> <span class="pre">it</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">app</span> <span class="pre">at</span> <span class="pre">wss://&lt;this</span> <span class="pre">host&gt;:8443</span></code>.</p></li>
 <li><p>In the app, choose <strong>Add device → Enter address</strong> and enter
 <code class="docutils literal notranslate"><span class="pre">wss://&lt;mac-hostname-or-ip&gt;:8443</span></code>. The player uses a self-signed certificate,
-like the devices do. The first time, open <code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:8443</span></code> in the same
-browser and accept the warning. The page itself then shows an error, which is
-expected.</p></li>
+like the devices do. The app offers to trust it the first time (or open
+<code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:8443</span></code> in the same browser and accept the warning); the page
+then confirms the certificate and shows the address to enter.</p></li>
 <li><p>Map it the usual way: set the LED count, run the capture with the phone
 camera, and solve. The player shows the mapping patterns over DDP or Art-Net
 and reports back which frame it showed, as the devices do. Effects need the
@@ -441,6 +446,67 @@ solved map on the player, so make sure the app uploads it.</p></li>
 <li><p>Push effects from the Effects tab. The map and the active effect are saved to
 the state directory and come back after a restart.</p></li>
 </ol>
+</section>
+<section id="shared-time-and-output-latency">
+<h2>Shared time and output latency<a class="headerlink" href="#shared-time-and-output-latency" title="Link to this heading">¶</a></h2>
+<p>The bridge’s <code class="docutils literal notranslate"><span class="pre">align_time</span></code> (agent <code class="docutils literal notranslate"><span class="pre">alignTime</span></code>) gives every player the same effect
+clock: it syncs each player’s clock with <code class="docutils literal notranslate"><span class="pre">time_sync_ping</span></code> and sends
+<code class="docutils literal notranslate"><span class="pre">set_time_base</span></code> with a common epoch in that player’s own clock. The host player
+and the Pi player advertise the <code class="docutils literal notranslate"><span class="pre">time_base</span></code> feature and take part like a C6:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">time_sync_pong</span></code> is stamped with the player’s monotonic clock (ms since the
+process started), the same clock the render loop reads.</p></li>
+<li><p>While a time base is set, effect <code class="docutils literal notranslate"><span class="pre">time</span></code> = (now − epoch) / 1000 s, held at 0
+before the epoch, and update()’s <code class="docutils literal notranslate"><span class="pre">dt</span></code> = this frame’s time − the previous
+frame’s, in whole Q16.16 ticks, so <code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">+=</span> <span class="pre">dt</span> <span class="pre">*</span> <span class="pre">speed</span></code> comes out the same
+on every synced player. The bridge’s small drift-slewing epoch nudges (1–2 ms)
+flow into <code class="docutils literal notranslate"><span class="pre">dt</span></code> the same way they move <code class="docutils literal notranslate"><span class="pre">time</span></code>. The rule is the C6’s
+(<code class="docutils literal notranslate"><span class="pre">time_base_frame</span></code> in <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span></code>, ported to
+<code class="docutils literal notranslate"><span class="pre">pi/player_rs/src/clock.rs</span></code>): <code class="docutils literal notranslate"><span class="pre">dt</span></code> is 0 before the epoch and 0 when shared
+time steps back, and when it jumps forward by more than a frame + 250 ms (a
+re-align) <code class="docutils literal notranslate"><span class="pre">dt</span></code> is the normal frame period. <code class="docutils literal notranslate"><span class="pre">set_time_base</span></code> with <code class="docutils literal notranslate"><span class="pre">clear</span></code> goes
+back to the free-running clock.</p></li>
+</ul>
+<p>The Pi player only shows mapping and counting patterns today, so its time base
+has nothing to drive yet. It is kept so an effects layer can use it.</p>
+<section id="output-latency-output-latency-ms">
+<h3>Output latency (<code class="docutils literal notranslate"><span class="pre">--output-latency-ms</span></code>)<a class="headerlink" href="#output-latency-output-latency-ms" title="Link to this heading">¶</a></h3>
+<p>A C6 lights its LEDs right after it renders a frame. A host player’s frame goes
+over UDP to a WLED board, which buffers it and drives the strip, so it lights
+some milliseconds later. On the same effect time, the WLED fixture is behind.
+<code class="docutils literal notranslate"><span class="pre">--output-latency-ms</span> <span class="pre">MS</span></code> makes the player render at shared time + MS. Set MS to
+the measured latency and the two fixtures line up. Negative values work too.
+The offset applies only while a time base is set. It is per player: run one
+<code class="docutils literal notranslate"><span class="pre">player_host</span></code> per controller if two controllers need different offsets. The
+welcome reports it as the feature string <code class="docutils literal notranslate"><span class="pre">output_latency_ms=MS</span></code>, and the
+player logs it at startup.</p>
+<p>How to measure it:</p>
+<ol class="arabic simple">
+<li><p>Put a C6 fixture and the WLED fixture side by side and run <code class="docutils literal notranslate"><span class="pre">align_time</span></code> on
+both.</p></li>
+<li><p>Deploy an effect with a sharp edge in time, for example a full white flash for
+one frame each second: <code class="docutils literal notranslate"><span class="pre">vec3</span> <span class="pre">shade(Led</span> <span class="pre">led)</span> <span class="pre">{</span> <span class="pre">return</span> <span class="pre">vec3(fract(time)</span> <span class="pre">&lt;</span> <span class="pre">0.05</span> <span class="pre">?</span> <span class="pre">1.0</span> <span class="pre">:</span> <span class="pre">0.0);</span> <span class="pre">}</span></code>.</p></li>
+<li><p>Record both with something that resolves a few ms:</p>
+<ul class="simple">
+<li><p>A logic analyser on both data lines (the C6’s LED GPIO and the WLED board’s
+output pin). The gap between the starts of the two bursts is the latency,
+plus the difference in strip transfer time (about 30 µs per LED for
+WS2812). Compare the first LED of each strip.</p></li>
+<li><p>Or a phone in slow-motion video (240 fps is about 4 ms per frame). Count the
+frames between the two flashes over a few flashes and average.</p></li>
+</ul>
+</li>
+<li><p>Restart <code class="docutils literal notranslate"><span class="pre">player_host</span></code> with <code class="docutils literal notranslate"><span class="pre">--output-latency-ms</span> <span class="pre">&lt;gap&gt;</span></code> and check again: the
+flashes should start in the same frame.</p></li>
+</ol>
+<p>Typical values on wired Ethernet are about 10–40 ms. Wi-Fi adds more and varies
+more. The latency changes with the frame rate, the LED count and WLED’s settings,
+so measure again when you change those.</p>
+<p>Scheduled commands: <code class="docutils literal notranslate"><span class="pre">pi/player_rs/src/schedule.rs</span></code> and <code class="docutils literal notranslate"><span class="pre">server::apply_due</span></code> hold
+the seam for an <code class="docutils literal notranslate"><span class="pre">apply_at</span></code> time on control commands. The render loop applies due
+commands at each frame boundary, at now + the output latency, so a scheduled
+change lands ahead by the same offset as the effect clock.</p>
+</section>
 </section>
 <section id="what-is-supported">
 <h2>What is supported<a class="headerlink" href="#what-is-supported" title="Link to this heading">¶</a></h2>
@@ -453,6 +519,7 @@ from their neighbours, as on the device.</p></li>
 <li><p>On one deck: <code class="docutils literal notranslate"><span class="pre">submit_effect</span></code>, <code class="docutils literal notranslate"><span class="pre">set_effect</span></code>, <code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code> (with
 <code class="docutils literal notranslate"><span class="pre">control_ack</span></code>), <code class="docutils literal notranslate"><span class="pre">get_effect_uniforms</span></code> and <code class="docutils literal notranslate"><span class="pre">list_effects</span></code>.</p></li>
 <li><p>Output brightness.</p></li>
+<li><p>Shared time (<code class="docutils literal notranslate"><span class="pre">time_sync_ping</span></code>, <code class="docutils literal notranslate"><span class="pre">set_time_base</span></code>) and the output latency offset.</p></li>
 </ul>
 <p>Not served yet. The welcome’s feature list leaves these out, so the app doesn’t
 offer them:</p>
@@ -468,13 +535,67 @@ offer them:</p>
 <p>Uniform values are not saved. After a restart the effect starts from its
 manifest defaults.</p>
 </section>
+<section id="virtual-led-wall-map-a-screen-from-the-phone-app">
+<h2>Virtual LED wall: map a screen from the phone app<a class="headerlink" href="#virtual-led-wall-map-a-screen-from-the-phone-app" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/player_rs:wall</span></code> turns a laptop screen into a fixture the installed phone
+app adds by address, with no LED hardware:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//pi/player_rs:wall<span class="w"> </span>--<span class="w"> </span>--leds<span class="w"> </span><span class="m">400</span>
+</pre></div>
+</div>
+<p>It runs <code class="docutils literal notranslate"><span class="pre">player_host</span></code> with no LED output (<code class="docutils literal notranslate"><span class="pre">--output</span> <span class="pre">null</span></code>) and has it serve the
+built web app’s virtual wall (<code class="docutils literal notranslate"><span class="pre">web/wall.html</span></code>) on its own WSS port
+(<code class="docutils literal notranslate"><span class="pre">--web-root</span></code>). It prints the two URLs and a QR code:</p>
+<ol class="arabic simple">
+<li><p><strong>On the laptop</strong>, open <code class="docutils literal notranslate"><span class="pre">https://localhost:8443/wall.html</span></code>, accept the
+certificate warning, and press <strong>Fullscreen</strong>. The wall idles (dim dots)
+until the phone starts mapping.</p></li>
+<li><p><strong>On the phone</strong>, in the Splanc app: <strong>Device</strong> tab → link icon (<em>Enter
+address manually</em>) → <strong>Enter address</strong> (the Wi-Fi fields can stay empty) →
+<code class="docutils literal notranslate"><span class="pre">wss://&lt;laptop</span> <span class="pre">IP&gt;:8443</span></code>. The app shows its “trust the certificate” card the
+first time, as for a real player; its popup lands on the player’s trust page,
+which hands the app back. Scanning the printed QR code opens that trust page
+directly instead.</p></li>
+<li><p><strong>Map it</strong>: LED count = the <code class="docutils literal notranslate"><span class="pre">--leds</span></code> value, point the camera at the wall,
+capture and solve as usual.</p></li>
+</ol>
+<p>How it works. The player is the real session core, so the phone sees an
+ordinary fixture: <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code> sets the code book and stamps the pattern
+epoch on the player’s clock. The wall page is a second client of the same
+player. Loaded from the player’s origin, it connects same-origin to
+<code class="docutils literal notranslate"><span class="pre">wss://localhost:8443/ws</span></code> with the certificate the browser already accepted.
+It syncs to the player clock (<code class="docutils literal notranslate"><span class="pre">time_sync</span></code>), polls <code class="docutils literal notranslate"><span class="pre">get_pattern</span></code> for the code
+book and epoch, and renders every frame itself with the WASM hue-code kernel at
+the display’s refresh rate. Nothing is streamed over the network, so frame
+timing is the browser’s vsync on the player’s clock, as on a real fixture.</p>
+<p>Notes:</p>
+<ul class="simple">
+<li><p>A firewall prompt on the Mac must allow incoming connections for
+<code class="docutils literal notranslate"><span class="pre">player_host</span></code>. The phone and the laptop must be on the same network.</p></li>
+<li><p>The wall’s own flags still work: <code class="docutils literal notranslate"><span class="pre">wall.html?cols=20&amp;dot=0.5</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">?url=wss://host:port/ws</span></code> points a wall page served elsewhere (e.g.
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:serve</span></code>) at any control plane, as before.</p></li>
+<li><p>Only mapping is rendered: LED counting, effects and brightness from the app
+reach the player but do not show on the wall.</p></li>
+<li><p>Any <code class="docutils literal notranslate"><span class="pre">player_host</span></code> flag passes through (<code class="docutils literal notranslate"><span class="pre">--serve-port</span></code>, <code class="docutils literal notranslate"><span class="pre">--name</span></code>, …). Giving an
+<code class="docutils literal notranslate"><span class="pre">--output</span></code> drives real LEDs too, in step with the wall.</p></li>
+<li><p>Every Pi and host player now answers a plain <code class="docutils literal notranslate"><span class="pre">https://&lt;player&gt;/</span></code> with the
+trust page (it posts <code class="docutils literal notranslate"><span class="pre">ledmapper-cert-ok</span></code> back to the app’s popup, like the
+netstack firmware) instead of an empty response.</p></li>
+</ul>
+<p>Headless check: <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/player_rs:wall_smoke</span></code> starts the wall player,
+opens the wall in headless Chromium and starts a mapping from a second client
+(standing in for the phone). It checks that the canvas, sampled at every LED
+centre, matches the kernel’s colours for one frame of the cycle, and that this
+frame is the one the player’s clock has due.</p>
+</section>
 <section id="testing">
 <h2>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>Unit tests: <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//pi/player_rs:player_rs_test</span></code>. These cover the DDP and
 Art-Net packet formats, output specs and pixel layout, and the effects layer
 end to end with a real compiled shader (map, chunked upload, uniforms,
-uniforms manifest, restore).</p></li>
+uniforms manifest, restore), plus time sync, the time base (effect time and
+<code class="docutils literal notranslate"><span class="pre">dt</span></code>) and the output latency offset.</p></li>
 <li><p>Live smoke test, no hardware needed: <code class="docutils literal notranslate"><span class="pre">pi/player_rs/tools/smoke_host.py</span></code> (usage
 in its header). It runs the real binary, connects over real WSS and checks the
 DDP pixels that come out.</p></li>
@@ -496,9 +617,9 @@ certificate, and the setup was reported working. The first run hit Chrome’s
 non-bypassable <code class="docutils literal notranslate"><span class="pre">ERR_SSL_KEY_USAGE_INCOMPATIBLE</span></code>, because the self-signed cert
 was built as a CA (key usage <code class="docutils literal notranslate"><span class="pre">keyCertSign</span></code> / <code class="docutils literal notranslate"><span class="pre">cRLSign</span></code> only). It is now an
 end-entity cert with <code class="docutils literal notranslate"><span class="pre">digitalSignature</span></code> (<code class="docutils literal notranslate"><span class="pre">server.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">self_signed_config</span></code>).
-This fixes the Pi player too. After you accept the warning, the browser shows
-<code class="docutils literal notranslate"><span class="pre">ERR_EMPTY_RESPONSE</span></code>, which is expected: the player only answers WebSocket
-upgrades.</p></li>
+This fixes the Pi player too. After you accept the warning, the browser
+showed <code class="docutils literal notranslate"><span class="pre">ERR_EMPTY_RESPONSE</span></code>, because the player only answered WebSocket
+upgrades. It now serves the trust page there (see “Virtual LED wall”).</p></li>
 </ul>
 <p>Next steps:</p>
 <ol class="arabic simple">
@@ -579,7 +700,12 @@ at login.</p></li>
 </li>
 <li><a class="reference internal" href="#wled-setup">WLED setup</a></li>
 <li><a class="reference internal" href="#using-it-from-the-app">Using it from the app</a></li>
+<li><a class="reference internal" href="#shared-time-and-output-latency">Shared time and output latency</a><ul>
+<li><a class="reference internal" href="#output-latency-output-latency-ms">Output latency (<code class="docutils literal notranslate"><span class="pre">--output-latency-ms</span></code>)</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#what-is-supported">What is supported</a></li>
+<li><a class="reference internal" href="#virtual-led-wall-map-a-screen-from-the-phone-app">Virtual LED wall: map a screen from the phone app</a></li>
 <li><a class="reference internal" href="#testing">Testing</a></li>
 <li><a class="reference internal" href="#handoff-where-this-stands-2026-11-11">Handoff: where this stands (2026-11-11)</a></li>
 </ul>

@@ -20,5 +20,9 @@
       "offset": "0x10000",
       "file": "esp32p4_player_c6.bin"
     }
-  ]
+  ],
+  "chip_rev": {
+    "max": 399,
+    "min": 301
+  }
 }
