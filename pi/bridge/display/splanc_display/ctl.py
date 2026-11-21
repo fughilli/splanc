@@ -129,6 +129,17 @@ def run(cmd: str) -> int:
     return 0
 
 
+def show_matter(rc: int) -> int:
+    """After a Matter command: the code to type, once status.json shows it."""
+    if rc != 0:
+        return rc
+    time.sleep(0.5)
+    m = st.load().matter
+    if m is not None and m.show_code:
+        print(f"Matter pairing code: {m.manual_grouped}  (QR payload {m.qr})")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="splanc-bridge")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -143,6 +154,11 @@ def main(argv=None) -> int:
     p = sub.add_parser("revoke", help="unpair one client (an ID from `clients`)")
     p.add_argument("id")
     p.add_argument("--yes", action="store_true")
+    sub.add_parser(
+        "matter-pair", help="let another Matter controller add the bridge (15 min window)"
+    )
+    p = sub.add_parser("matter-reset", help="forget every Matter controller (Apple Home, HA, ...)")
+    p.add_argument("--yes", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "status":
         return show_status(a.json)
@@ -150,6 +166,17 @@ def main(argv=None) -> int:
         return show_clients(a.json)
     if a.cmd == "revoke":
         return revoke(a.id, a.yes)
+    if a.cmd == "matter-pair":
+        return show_matter(run("matter_pair"))
+    if a.cmd == "matter-reset":
+        if not a.yes:
+            print(
+                "splanc-bridge: matter-reset removes the bridge from every smart-home app; "
+                "pass --yes to confirm",
+                file=sys.stderr,
+            )
+            return 2
+        return show_matter(run("matter_reset"))
     if a.cmd == "revoke-all" and not a.yes:
         if not sys.stdin.isatty():
             print(

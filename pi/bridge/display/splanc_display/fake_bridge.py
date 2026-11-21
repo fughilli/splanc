@@ -177,6 +177,28 @@ def many_players(now: float, n: int = 9) -> list:
     return out
 
 
+# The CSA test pairing (passcode 20202021, test vendor 0xFFF1): no real bridge uses it.
+SAMPLE_MATTER_QR = "MT:-24J0AFN00KA0648G00"
+SAMPLE_MATTER_MANUAL = "34970112332"
+
+
+def sample_matter(commissioned: bool = False, **over) -> dict:
+    """The status file's ``matter`` block (agent/src/bridge/matter.ts MatterStatus)."""
+    doc = {
+        "state": "ready",
+        "commissioned": commissioned,
+        "commissionable": not commissioned,
+        "qr": SAMPLE_MATTER_QR,
+        "manual": SAMPLE_MATTER_MANUAL,
+        "fabrics": [{"label": "Apple Home", "vendor": 4937}] if commissioned else [],
+        "lamps": len(SAMPLE_PLAYERS),
+        "port": 5540,
+        "error": None,
+    }
+    doc.update(over)
+    return doc
+
+
 def sample(state: str, now: float, code: str = "K7QX-M2PD", **over) -> dict:
     """A plausible status document for ``state``."""
     doc = {
@@ -324,6 +346,14 @@ class FakeBridge:
             return {"ok": True, "revoked": grant}
         if cmd == "identify":
             return {"ok": True, "players": len(self.doc.get("players") or [])}
+        if cmd in ("matter_pair", "matter_reset"):
+            m = self.doc.get("matter")
+            if not isinstance(m, dict):
+                return {"ok": False, "error": "the Matter bridge is off (SPLANC_MATTER=0)"}
+            m = sample_matter(commissioned=cmd == "matter_pair" and m.get("commissioned") is True)
+            m["commissionable"] = True
+            self.set(dict(self.doc, matter=m, updated_at=int(now)))
+            return {"ok": True, "matter": m}
         return {"ok": False, "error": f"unknown command {cmd!r}"}
 
 

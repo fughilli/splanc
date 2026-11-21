@@ -133,6 +133,10 @@ seconds:
 1. **Home**: the state, the pairing code in large letters, the short pairing link, the time left
    and the number of clients.
 2. **Scan to pair**: a QR code of the pairing link.
+   After it, while the Matter bridge runs, the **Matter** page: the bridge's Matter QR code and
+   11-digit code for Apple Home, Home Assistant and other Matter apps, or which app it was added
+   to. Press the joystick there to add it to another app
+   ([Splanc lamps in Apple Home and other Matter apps](guides/matter.md)).
 3. **Fixtures**: every player the bridge knows, in a list that scrolls. Each row shows ● for
    connected, ○ for found but idle, ◐ for reconnecting, or × for unreachable, and on the right
    the frame rate (or, for an unreachable one, how long ago it was last heard from).
@@ -268,15 +272,16 @@ Put the card in your computer: its boot partition (it may be called `FIRMWARE` o
 file **`splanc-bridge.conf`** you can edit with any text editor. The Pi reads it every time it
 boots.
 
-| Setting                    | What it does                                                            |
-| -------------------------- | ----------------------------------------------------------------------- |
-| `HOSTNAME=splanc-bridge`   | The Pi's name on your network (`<name>.local`).                         |
-| `WIFI_COUNTRY=US`          | Two-letter country code for Wi-Fi channels.                             |
-| `SPLANC_RELAY=`            | The relay to use (empty: Splanc's).                                     |
-| `OLED=auto`                | The OLED HAT: `auto`, `spi`, `i2c` or `off`.                            |
-| `OLED_ROTATE=2`            | `0`–`3`, in steps of 90°. Use `0` if the OLED picture is upside down.   |
-| `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                  |
-| `SPLANC_AUTO_UPDATE=1`     | `0` stops the bridge looking for updates by itself (software + system). |
+| Setting                    | What it does                                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `HOSTNAME=splanc-bridge`   | The Pi's name on your network (`<name>.local`).                                                         |
+| `WIFI_COUNTRY=US`          | Two-letter country code for Wi-Fi channels.                                                             |
+| `SPLANC_RELAY=`            | The relay to use (empty: Splanc's).                                                                     |
+| `OLED=auto`                | The OLED HAT: `auto`, `spi`, `i2c` or `off`.                                                            |
+| `OLED_ROTATE=2`            | `0`–`3`, in steps of 90°. Use `0` if the OLED picture is upside down.                                   |
+| `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                                                  |
+| `SPLANC_AUTO_UPDATE=1`     | `0` stops the bridge looking for updates by itself (software + system).                                 |
+| `SPLANC_MATTER=1`          | `0` turns the Matter bridge off ([Splanc lamps in Apple Home and other Matter apps](guides/matter.md)). |
 
 To put the bridge on another Wi-Fi network (a venue, a new router), use the Splanc app on your
 phone, the same way you add a fixture: **Add device over Bluetooth**, choose the network, then

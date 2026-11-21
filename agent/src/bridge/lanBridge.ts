@@ -35,6 +35,7 @@ import { createServer } from "../server";
 import { loadLanCert } from "./lanCert";
 import { LiveMux, type LiveConn } from "./live";
 import { DEFAULT_LIVE_PORT, LanTickets, LiveLan } from "./liveLan";
+import type { MatterStatus } from "./matter";
 import { RelayLink } from "./relayLink";
 
 export const DEFAULT_STATUS_PATH = "/run/splanc-bridge/status.json";
@@ -101,6 +102,15 @@ export interface BridgeStatus {
   lan_ip: string;
   error: string | null;
   updated_at: number;
+  /** The Matter bridge (optional in contract v1: added later; absent = not enabled). */
+  matter?: MatterStatus;
+}
+
+/** What LanBridge needs from the Matter bridge (matter.ts), kept narrow for tests. */
+export interface MatterHandle {
+  status(): MatterStatus;
+  openWindow(): Promise<void>;
+  reset(): Promise<void>;
 }
 
 export interface LanBridgeOptions {
@@ -131,6 +141,9 @@ export interface LanBridgeOptions {
   bugs?: BugFilingOptions;
   /** Read each connected player's LED count once for the display (default true). */
   details?: boolean;
+  /** The Matter bridge, when enabled: its status goes into status.json, and the
+   * control socket gets matter_pair / matter_reset. */
+  matter?: MatterHandle;
 }
 
 interface Session {
@@ -304,6 +317,7 @@ export class LanBridge {
       lan_ip: lanIp(),
       error: this.fatal ?? (this.stopping ? "bridge stopped" : state === "offline" ? l.lastError : null),
       updated_at: Math.floor(nowMs / 1000),
+      ...(this.opts.matter ? { matter: this.opts.matter.status() } : {}),
     };
   }
 
@@ -549,12 +563,30 @@ export class LanBridge {
         return this.clients();
       case "revoke":
         return this.revokeClient(cmd.grant);
+      case "matter_pair":
+      case "matter_reset":
+        return this.matterCommand(cmd.cmd);
       default:
         return {
           ok: false,
-          error: `unknown cmd ${JSON.stringify(cmd.cmd)} (new_pairing_code, revoke_all, identify, status, live, clients, revoke)`,
+          error: `unknown cmd ${JSON.stringify(cmd.cmd)} (new_pairing_code, revoke_all, identify, status, live, clients, revoke, matter_pair, matter_reset)`,
         };
     }
+  }
+
+  /** matter_pair: re-open the commissioning window (another controller can add the
+   * bridge for 15 min); matter_reset: forget every Matter controller. */
+  private async matterCommand(cmd: "matter_pair" | "matter_reset"): Promise<Record<string, unknown>> {
+    const m = this.opts.matter;
+    if (!m) return { ok: false, error: "the Matter bridge is off (SPLANC_MATTER=0)" };
+    try {
+      if (cmd === "matter_pair") await m.openWindow();
+      else await m.reset();
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    this.writeStatus(true);
+    return { ok: true, matter: m.status() };
   }
 
   private async listenControl(): Promise<void> {

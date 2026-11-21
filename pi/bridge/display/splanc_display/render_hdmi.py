@@ -161,6 +161,50 @@ def _pairing(c: _Canvas, s: Status, now: float) -> None:
         d.draw_qr(c.dr, matrix, x, top, box, dark=(0, 0, 0), quiet=4)
 
 
+def _matter_pairing(c: _Canvas, s: Status) -> None:
+    """The Matter bridge waiting for a controller: its manual code + QR (docs/guides/matter.md)."""
+    m = s.matter
+    matrix = d.qr_matrix(m.qr)
+    left_w = 1080
+    c.text((80, 200), "ADD TO YOUR SMART HOME (MATTER)", "bold", 34, MUTED)
+    size = c.fit(m.manual_grouped, "monobold", 170, left_w)
+    c.text((72, 256), m.manual_grouped, "monobold", size, TEXT)
+    y = 256 + size * 1.25
+    for line in (
+        "In Apple Home, Home Assistant, Alexa or SmartThings:",
+        "add a Matter device, then scan the QR code",
+        "or type the code. One code adds every Splanc lamp.",
+    ):
+        c.text((80, y), line, "sans", 40, MUTED)
+        y += 58
+    if matrix:
+        side = 560
+        n = len(matrix)
+        box = max(1, c.s(side) // (n + 8))
+        px = box * (n + 8)
+        x = c.s(BASE_W - 80 - side) + (c.s(side) - px) // 2
+        top = c.s(170) + (c.s(side) - px) // 2
+        c.dr.rounded_rectangle(
+            [x, top, x + px - 1, top + px - 1], radius=c.s(20), fill=(255, 255, 255)
+        )
+        d.draw_qr(c.dr, matrix, x, top, box, dark=(0, 0, 0), quiet=4)
+
+
+def _matter_line(s: Status) -> str:
+    m = s.matter
+    if m is None:
+        return ""
+    if m.state == "error":
+        return "error: " + (m.error or "unknown")
+    if m.state != "ready":
+        return m.state or "-"
+    if m.commissioned:
+        n = len(m.fabrics)
+        who = m.fabrics[0] if n == 1 else _plural(n, "controller")
+        return f"added to {who}"
+    return "code " + m.manual_grouped
+
+
 def _message(c: _Canvas, s: Status, now: float, oled: bool) -> None:
     big, sub = _headline(s, now, oled)
     accent = ACCENT.get(s.state, MUTED)
@@ -283,13 +327,16 @@ def _panels(c: _Canvas, s: Status, oled: bool, now: float) -> None:
         ("Relay", short_url(s.relay, 60) or "-"),
         ("Bridge", s.bridge_id or "-"),
     ]
+    if s.matter is not None:
+        rows_n.append(("Matter", _matter_line(s)))
+    pitch = 46 if len(rows_n) <= 3 else 36
     for i, (k, v) in enumerate(rows_n):
-        y = top + 86 + i * 46
+        y = top + 86 + i * pitch
         c.text((x + 36, y), k, "sans", 32, MUTED)
         c.text(
             (x + 170, y),
-            c.ell(v, "mono" if k != "Relay" else "sans", 32, w - 206),
-            "mono" if k != "Relay" else "sans",
+            c.ell(v, "mono" if k not in ("Relay", "Matter") else "sans", 32, w - 206),
+            "mono" if k not in ("Relay", "Matter") else "sans",
             32,
             TEXT,
         )
@@ -325,6 +372,8 @@ def render(
     _header(c, status)
     if status.active_code(now):
         _pairing(c, status, now)
+    elif status.matter is not None and status.matter.show_code:
+        _matter_pairing(c, status)
     else:
         _message(c, status, now, oled)
     _panels(c, status, oled, now)

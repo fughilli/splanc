@@ -6,7 +6,8 @@ Pure and clock-injected (``clock`` returns seconds) so it is tested with fakes;
 
 Screens: five top-level pages (home, qr, players = the fixture list, network,
 clients = the paired-client list), a sixth on the SD image (updates: the system
-and agent updaters + "Check now") and, under each list, one item's detail
+and agent updaters + "Check now"), "matter" after "qr" while the bridge runs its
+Matter bridge (its pairing QR + code) and, under each list, one item's detail
 (``detail`` = a fixture, ``client`` = a paired client, ``update`` = one updater).
 Button map (Waveshare 1.3" OLED HAT):
 
@@ -18,6 +19,8 @@ Button map (Waveshare 1.3" OLED HAT):
                     except on a list (fixtures, clients) where they move the selection;
                     press = open the selected item (list) or go home (other pages)
     in a detail     up/down scroll it; left or press = back to its list
+    Matter page     press = let another controller add the bridge (opens a 15 min
+                    commissioning window once it has been added)
     Updates page    press on "Check now" = check both updaters; on System/Agent =
                     its detail, where press (with an update on offer) asks
                     "Install?" -> press or KEY3 = install, any other key = later.
@@ -71,6 +74,7 @@ Dispatch = Callable[..., None]
 
 DONE_TEXT = {
     "new_pairing_code": "New code requested",
+    "matter_pair": "Matter pairing open",
     "identify": "Identifying fixtures",
     "revoke_all": "All clients revoked",
     "revoke": "Client revoked",
@@ -225,6 +229,18 @@ class OledUI:
         """The paired-client list changed: as set_fixtures, for the Clients page."""
         self._set_items(self._cl, keys, rows_of)
 
+    def set_matter(self, enabled: bool) -> None:
+        """Show the Matter page (after "qr") while the bridge runs its Matter bridge."""
+        have = "matter" in self.pages
+        if enabled == have:
+            return
+        cur = self.pages[self.page]
+        pages = [p for p in self.pages if p != "matter"]
+        if enabled:
+            pages.insert(pages.index("qr") + 1 if "qr" in pages else len(pages), "matter")
+        self.pages = tuple(pages)
+        self.page = self.pages.index(cur) if cur in self.pages else 0
+
     def set_updates(self, keys, rows_of: Optional[Callable[[str], int]] = None) -> None:
         """The Updates page's rows: the updaters shown ("system", "agent") + "check"."""
         self._set_items(self._up, keys, rows_of)
@@ -309,6 +325,8 @@ class OledUI:
             and key in ("up", "down", "press")
         ):
             self._list_key(self._menus[self.pages[self.page]], key, now)
+        elif key == "press" and self.pages[self.page] == "matter":
+            self._run("matter_pair", now)
         elif key in ("right", "down"):
             self._goto(self.page + 1, now, manual=True)
         elif key in ("left", "up"):
