@@ -503,6 +503,10 @@ git_override(
 # Lighthouse (Vive Tracker) tracking: lh_kernel, lh_protocol, lh_device (no_std)
 # from fughilli/lighthouse, pinned (re-sync, not fork: bump the commit). The
 # ESP32-P4 player runs them with the tracker wired to the P4's USB OTG port.
+# @004e3d1 = fughilli/lighthouse#5 (station lifecycle: expiry, tilt, a station moved under a
+# still tracker solved again, lone-station relock) rebased onto main @42d1a17, with no
+# bootstrap while spinning, a slave-first lock shifting a slot instead of dropping, and a
+# bootstrap stale only if a station it used moved.
 # @42d1a17 = main after fughilli/lighthouse#7 (slow solves off the input path:
 # KernelConfig::defer_solves, which the P4 runs on a worker task; bootstrap "up" only while
 # the accelerometer reads gravity alone; a margin before a still scene ends) and #6 (a lone
@@ -514,9 +518,9 @@ git_override(
 bazel_dep(name = "lighthouse", version = "0.0.0")
 archive_override(
     module_name = "lighthouse",
-    integrity = "sha256-5suDXPZHGuLU+XyaEBmlaBsCbI+pVdcKZbxDjMLPeVM=",
-    strip_prefix = "lighthouse-42d1a17d3acdd41fd90f2bb5a2c72ffd6422fcbf",
-    urls = ["https://github.com/fughilli/lighthouse/archive/42d1a17d3acdd41fd90f2bb5a2c72ffd6422fcbf.tar.gz"],
+    integrity = "sha256-rN5oDBrvcT2b8/EYSZWdL9xUoP/fA5n55XG5Q9GXUtU=",
+    strip_prefix = "lighthouse-004e3d1298488c83d1287655ca17db876ed81e2a",
+    urls = ["https://github.com/fughilli/lighthouse/archive/004e3d1298488c83d1287655ca17db876ed81e2a.tar.gz"],
 )
 
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
