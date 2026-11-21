@@ -223,6 +223,8 @@ Any key wakes it. That first press only wakes the screen and does nothing else.
 | Joystick left / up                                 | Previous page. On the **Fixtures** and **Clients** pages, up picks the previous item instead.                                                                              |
 | Joystick press                                     | Back to the home page. On the **Fixtures** and **Clients** pages, it opens the picked item.                                                                                |
 | In a fixture's or client's details                 | Up / down scroll. Left or press go back to the list.                                                                                                                       |
+| On the **Updates** page                            | Press on **Check now** to look for updates. Press on **System** or **Agent** to see the version you have, the new one and its size.                                        |
+| In an update's details                             | Press to install it: an **Install update?** screen asks first. Press (or **KEY3**) again to install; any other key, or 10 seconds of waiting, means later.                 |
 
 **KEY1** works from every screen: it goes to the home page so you can see the new code.
 
@@ -233,18 +235,32 @@ fixture's or client's details are open.
 
 ## Updates
 
-- **The Splanc software updates itself.** About two minutes after it boots and then once a day,
-  the Pi checks splanc.io for a new Splanc release. If there is one, it downloads it, checks its
-  checksum, switches to it and restarts the bridge. Your pairings are kept. The previous version
-  stays on the card too.
-- **The Pi's operating system updates itself too** (cards written with a flasher release that has
-  system updates). It checks a few times a day; a new Splanc bridge system downloads in the
-  background, and once no app is connected through the bridge, the Pi restarts into it (about a
-  minute without the bridge; your fixtures keep playing). Your pairings and Wi-Fi are kept. If the
-  new system doesn't come up healthy within five minutes, the Pi goes back to the previous one by
-  itself. Only updates signed by Splanc are accepted.
+Nothing updates unless you say so on the bridge itself. The bridge only looks for updates by
+itself; installing one always takes a press on the OLED HAT.
+
+- **Finding updates.** About two minutes after it boots and then once a day, the Pi checks
+  splanc.io for a new Splanc release. A few times a day it also checks for a new Splanc bridge
+  system (cards written with a flasher release that has system updates). When there is one, an
+  up arrow appears in the OLED's title bar and the HDMI page says **Update available**. Nothing is
+  downloaded yet.
+- **Checking now.** Go to the **Updates** page (joystick left from the home page) and press on
+  **Check now**.
+- **Installing.** On the **Updates** page, press on **System** or **Agent**. The details show the
+  version you have, the new one and the download size. Press to install, then press again on the
+  **Install update?** screen. The details show the progress (downloading, verifying, installing).
+  - The Splanc software (**Agent**) switches over and restarts the bridge within a minute. Your
+    pairings are kept. The previous version stays on the card too.
+  - A new system (**System**) restarts the Pi (about a minute without the bridge; your fixtures
+    keep playing). If an app is connected through the bridge, the Pi waits until it disconnects;
+    press again on **Restart now** to restart anyway. Your pairings and Wi-Fi are kept. If the new
+    system doesn't come up healthy within five minutes, the Pi goes back to the previous one by
+    itself. Only updates signed by Splanc are accepted.
+- **Without the OLED HAT**, install over SSH: `sudo splanc-system-update install` (system) or
+  `sudo splanc-bridge update` (Splanc software).
 - Writing the card again with the flasher also works, but starts fresh: you pair your agents again
-  afterwards.
+  afterwards. To keep the pairing (for example to move a bridge written before system updates
+  existed onto a current card), back it up and restore it onto the new card with
+  [bridge_migrate](../tools/bridge_migrate/README.md).
 
 ## Changing settings later
 
@@ -252,15 +268,15 @@ Put the card in your computer: its boot partition (it may be called `FIRMWARE` o
 file **`splanc-bridge.conf`** you can edit with any text editor. The Pi reads it every time it
 boots.
 
-| Setting                    | What it does                                                          |
-| -------------------------- | --------------------------------------------------------------------- |
-| `HOSTNAME=splanc-bridge`   | The Pi's name on your network (`<name>.local`).                       |
-| `WIFI_COUNTRY=US`          | Two-letter country code for Wi-Fi channels.                           |
-| `SPLANC_RELAY=`            | The relay to use (empty: Splanc's).                                   |
-| `OLED=auto`                | The OLED HAT: `auto`, `spi`, `i2c` or `off`.                          |
-| `OLED_ROTATE=2`            | `0`–`3`, in steps of 90°. Use `0` if the OLED picture is upside down. |
-| `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                |
-| `SPLANC_AUTO_UPDATE=1`     | `0` turns the automatic updates (software + system) off.              |
+| Setting                    | What it does                                                            |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `HOSTNAME=splanc-bridge`   | The Pi's name on your network (`<name>.local`).                         |
+| `WIFI_COUNTRY=US`          | Two-letter country code for Wi-Fi channels.                             |
+| `SPLANC_RELAY=`            | The relay to use (empty: Splanc's).                                     |
+| `OLED=auto`                | The OLED HAT: `auto`, `spi`, `i2c` or `off`.                            |
+| `OLED_ROTATE=2`            | `0`–`3`, in steps of 90°. Use `0` if the OLED picture is upside down.   |
+| `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                  |
+| `SPLANC_AUTO_UPDATE=1`     | `0` stops the bridge looking for updates by itself (software + system). |
 
 To put the bridge on another Wi-Fi network (a venue, a new router), use the Splanc app on your
 phone, the same way you add a fixture: **Add device over Bluetooth**, choose the network, then
@@ -298,9 +314,9 @@ the Pi booted (or reboot it with the screen connected).
 for an upside-down picture set `OLED_ROTATE=0` in `splanc-bridge.conf`. If you changed the HAT's
 resistors to I2C, set `OLED=i2c`.
 
-**The screen says "has no bridge yet. Checking for an update…"**: the card has a Splanc release
-from before the cloud bridge existed. Leave the Pi connected to the internet: it updates itself
-within a few minutes, then shows a pairing code.
+**The screen says "has no bridge yet"**: the card has a Splanc release from before the cloud bridge
+existed. Connect the Pi to the internet, open the **Updates** page, press on **Agent** and install
+the update. The bridge then shows a pairing code.
 
 **No fixtures found**: the Pi must be on the same network as the fixtures. Guest Wi-Fi networks
 often isolate devices from each other, and some mesh systems block the multicast traffic that
