@@ -40,6 +40,7 @@
 #include "frontend_link.h"
 #include "improv_ble.h"
 #include "netstack_transport.h"
+#include "firmware/player_app/osc_route.h"  // OSC in/out over UDP and the wss session
 #include "tls_region.h"
 
 // relay_ffi.rs
@@ -47,6 +48,8 @@ extern "C" {
 int32_t lm_relay_device_name(const uint8_t *frame, size_t len, uint8_t *out, size_t cap);
 int32_t lm_relay_local(const uint8_t *frame, size_t len, uint8_t *out, size_t cap);
 bool lm_is_live_move(const uint8_t *data, size_t len);
+bool lm_osc_session_packet(const uint8_t *data, size_t len, const uint8_t **pkt, size_t *pkt_len);
+int32_t lm_osc_build_push(const uint8_t *packet, size_t len, uint8_t *out, size_t out_cap);
 void lm_relay_set_identity(const char *mac, const char *name, const char *fw, const char *tls_state);
 }
 
@@ -121,10 +124,43 @@ void apply_rename(const uint8_t *msg, size_t len) {
   Log().printf("[relay] renamed to \"%s\"\n", g_name);
 }
 
+// OSC (osc_route.h): the uniforms and modules are the P4's, so every OSC input goes on to
+// it as LK_OSC, whether it came on udp/9000 or as ClientMessage.osc on a session; what the
+// P4's modules send back (LK_OSC from the P4) goes to the last OSC sender, by UDP or as a
+// ServerMessage.osc push. The push buffer is allocated by the first session OSC.
+lm_osc_route::Router g_osc_route;
+uint8_t *g_osc_push = nullptr;
+
+struct OscOut {
+  bool datagram_send(const uint8_t *p, size_t n) { return netstack_osc_send(p, n); }
+  bool session_open() { return netstack_ws_open(); }
+  int encode_push(const uint8_t *p, size_t n, uint8_t *buf, size_t cap) {
+    return (int)lm_osc_build_push(p, n, buf, cap);
+  }
+  // Never blocks: the netstack drops a push its send window can't take (false then).
+  bool session_send(uint8_t *buf, size_t n) { return netstack_ws_send(buf, n); }
+};
+
 // One player message from wss session `session` (or the BLE central): the reply's length
 // in tx, 0 for none, or -1 to drop the session (the client resumes).
 int handle(uint16_t session, const uint8_t *msg, size_t len) {
   const int32_t arm = lm_envelope_arm(msg, len);
+  // OSC over the session (feature "osc"): on to the P4 like a udp/9000 datagram, and the
+  // P4's modules answer this session from now on. No reply, like the datagram.
+  {
+    const uint8_t *pkt = nullptr;
+    size_t pn = 0;
+    if (lm_osc_session_packet(msg, len, &pkt, &pn)) {
+      if (pn == 0 || pn > lm_osc_route::kPacketMax) return 0;
+      if (!g_osc_push) {
+        g_osc_push = static_cast<uint8_t *>(
+            heap_caps_malloc(kWsSendHeadroom + lm_osc_route::kPushMax, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      }
+      g_osc_route.on_session_in();
+      frontend_link_osc(pkt, pn);
+      return 0;
+    }
+  }
   // The TLS identity and the Wi-Fi policy are this chip's: answered here, P4 or not.
   if (arm == kArmGetTlsInfo) {
     g_stats.local++;
@@ -373,7 +409,21 @@ bool lm_ws_reply_droppable() { return g_reply_droppable; }
 // busy are the P4's, and it refuses a second client's window itself (link_transport.cpp).
 bool lm_ws_session_busy() { return false; }
 // OSC on udp/9000: the uniforms (and any module's addresses) are the P4's.
-void lm_netstack_osc_rx(const uint8_t *data, size_t len) { frontend_link_osc(data, len); }
+void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
+  if (len == 0 || len > lm_osc_route::kPacketMax) return;
+  g_osc_route.on_datagram_in();
+  frontend_link_osc(data, len);
+}
+
+// The P4's OSC out (frontend_link.cpp, LK_OSC): back to the last OSC sender.
+bool lm_module_osc_send(const uint8_t *data, size_t len) {
+  OscOut out;
+  uint8_t *buf = g_osc_push ? g_osc_push + kWsSendHeadroom : nullptr;
+  const lm_osc_route::Sent r = g_osc_route.send(out, data, len, buf, lm_osc_route::kPushMax);
+  return r == lm_osc_route::Sent::kDatagram || r == lm_osc_route::Sent::kSession;
+}
+
+int lm_osc_route_stats(char *buf, size_t cap) { return g_osc_route.format(buf, cap); }
 
 // The BLE player transport (improv_ble_netstack.cpp): the same contract as lm_ws_dispatch.
 int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
