@@ -18,6 +18,7 @@ py_binary(
     name = "ui_layout_check",
     srcs = [
         "credits_scenarios.py",
+        "oobe_scenarios.py",
         "ui_layout_check.py",
     ],
     data = ["//web:dist"],

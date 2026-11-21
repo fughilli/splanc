@@ -176,9 +176,12 @@ export class Router {
     const push = this.pendingPush;
     this.pendingPush = null;
     const pushedFrom = push !== null && push.hash === location.hash ? push.from : null;
-    const raw = location.hash.replace(/^#/, "") || "/onboard";
+    // No hash (the installed app's start_url, a bare link) → "/", which no route
+    // claims, so the fallback decides: setup on a first run, else the home tab.
+    // (It used to force "/onboard", so every launch opened "Set up your device".)
+    const raw = location.hash.replace(/^#/, "") || "/";
     const [pathPart, queryPart] = raw.split("?");
-    const path = pathPart || "/onboard";
+    const path = pathPart || "/";
 
     // Leave-guard: only when the screen path actually changes. If the mounted
     // screen vetoes (unsaved changes → user cancels), put the hash back and keep

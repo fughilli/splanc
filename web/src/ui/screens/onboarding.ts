@@ -29,7 +29,7 @@ export function OnboardingScreen(router: Router): Screen {
   intro.className = "screen-sub";
   intro.textContent = "Set up a device, or skip and work offline — you can add one later.";
 
-  const done = (): void => router.navigate("/maps");
+  const done = (): void => router.navigate("/effects"); // home: pick an effect
 
   // Adding a device here does NOT whisk the user away — provisioning connects in
   // the background and the bottom CTA flips to "Continue" once it lands, so they
