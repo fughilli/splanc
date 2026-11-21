@@ -155,7 +155,8 @@ impl Improv {
             error: ErrorState::None,
             error_detail: join_failure::NONE,
             result: Buf::new(),
-            capabilities: 0x00,
+            // Identify is supported: the player blinks every output (D-259).
+            capabilities: 0x01,
         }
     }
 
