@@ -7,7 +7,14 @@ and the failed-verification backoff. no_std, no alloc; SHA-256 from
 
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
-package(default_visibility = ["//visibility:public"])
+# Bench-only until stage 3 (owner, D-124): nothing that ships to players may
+# depend on this. Visibility enforces it at analysis time; widening it to
+# //firmware/player_app is the stage-3 decision, not a drive-by.
+package(default_visibility = [
+    "//firmware/fx_aot:__pkg__",
+    "//firmware/fx_perf_bench:__pkg__",
+    "//firmware/fx_sig:__pkg__",
+])
 
 SRCS = [
     "src/keyring.rs",

@@ -1,12 +1,14 @@
 # Native (AOT) effect execution on the ESP32-C6
 
-Status: **design + stages 1–2, rebased onto main (#350 fused ops, #328 memo),
-plus the signature-checking infrastructure** (this PR). The trust model is
-decided (2026-10-28, "Trust" below): unsigned on-device lowering, and
-user-key HMAC signatures for prebuilt images, with a public dev key on every
-device for now. Stage 3 (wiring both into `player_app`) remains. Background numbers:
-[fx-perf-study.md](fx-perf-study.md), "Q1 — the native ceiling" and "A native
-AOT path: feasibility".
+Status: **design + stages 1–2, bench-only.** `firmware/fx_aot` (lowering,
+verifier, emulator) and `firmware/fx_sig` (signature container) are built and
+measured in the bench image (`firmware/fx_perf_bench`) only. Their Bazel
+visibility admits only the bench, so no player image can link them; nothing is
+shipped to players (owner, D-124, 2026-11-21). The signing model is decided
+(2026-11-21, "Signing model" below) and supersedes the 2026-10-22 and
+2026-10-28 trust decisions. Stage 3 (wiring into `player_app`) remains.
+Background numbers: [fx-perf-study.md](fx-perf-study.md), "Q1 — the native
+ceiling" and "A native AOT path: feasibility".
 
 ## Why
 
@@ -293,6 +295,62 @@ them into `fx_load`/`fx_clear`/park in `ffi.rs`:
 
 ## Trust: who may produce native code the device runs?
 
+### Signing model (owner decision, 2026-11-21, D-124)
+
+> Users sign native code for their own devices. On a mesh, the mesh admin key
+> signs, so only devices that trust the mesh admin run native effects. Devices
+> that don't trust the admin (freely associating ones) fall back to the VM.
+
+What that means for a device deciding whether to run a native image:
+
+| the device is | it runs native code signed by | everything else |
+|---|---|---|
+| standalone, paired to its owner | the owner's **user key** (4-byte HMAC, `fx_sig` key ring ids 1..31) | VM |
+| a member of a mesh whose admin it trusts (closed mesh: it holds the admin public key, `mesh.md` §7.9) | the **mesh admin key** (ECDSA P-256 over the `.fxn`, verified with the admin public key it already holds), and its owner's user key | VM |
+| freely associating (auto-peered, no admin public key) | nobody | VM |
+| unpaired, no mesh | nobody (the public dev key is bench-only) | VM |
+
+- **The VM is always the fallback.** An effect never refuses to play because
+  of a signature; a missing, wrong or untrusted signature only means the VM
+  runs it.
+- **Mesh distribution.** The app (which holds the admin secret, `splanc.meshAdmin.v1`)
+  lowers the effect once, signs the `.fxn` with the admin signing key and
+  distributes it with the `.fxb`. Each member verifies once per load (one
+  ECDSA-P256 verify; M7 measured a grant, ECDSA verify + ECDH, at 53–55 ms on
+  the C6, so well under that). Members can verify but cannot forge, which is
+  why the mesh uses the asymmetric admin key and not a shared HMAC key (the
+  same reason `mesh.md` §7.9 dropped `K_admin`).
+- **Scope and revocation.** The admin-signed image binds the mesh id, the
+  native ABI and a minimum firmware like the HMAC form does. Rotating the admin
+  secret (or a member leaving / `mesh admin reset`) removes that trust: the old
+  images then run on the VM. A device trusts a mesh admin only while it is a
+  member of that mesh.
+- **Container.** The admin form is the asymmetric variant the format already
+  reserves (container version 2 or a flag bit, "Signature format"), with the
+  signer named by mesh id instead of a key id. The HMAC form is unchanged.
+- **The sandbox is unchanged** for every path: verifier on every image, FX
+  arena only, PMP X + PMA no-W, instruction budget.
+
+**What this supersedes.**
+
+- 2026-10-22: "(a) unsigned on-device lowering + a dedicated first-party
+  P-256 `native` key (ids 3/4), never in the loader ring". There is no
+  first-party/CI native key in this model; ids 3/4 stay unassigned.
+- 2026-10-28: the HMAC user-key form stays (it is "users sign for their own
+  devices"), but the compiled-in public **dev key is bench-only**: release
+  firmware must not trust it (it ships with key id 0 revoked, or without it).
+- Path (c) below is replaced by the mesh-admin form; the CI-held key is not
+  built.
+- **Open:** whether unsigned on-device lowering, path (a), survives. The
+  owner's rule reads as "native only with a trusted signature", so a freely
+  associating device would not lower effects itself either. See "Decisions
+  needed".
+
+The history below is kept for the reasoning; where it conflicts with this
+section, this section wins.
+
+### Earlier decision (2026-10-28, superseded in part)
+
 **Owner decision (2026-10-28).** "Users should be able to sign effects for
 their own fixtures — we need an efficient way to check those signatures. 4
 bytes of an HMAC computed against a user's provisioned key would be sufficient
@@ -573,19 +631,25 @@ ring's precomputed pad states (three software compressions). Best of 3:
 
 ## Decisions needed from the owner before production
 
-1. **Pairing scheme** for per-user keys: which channel delivers the key (BLE
+1. **Unsigned on-device lowering (path a).** Options: (i) drop it: native
+   only with a trusted signature (user key or mesh admin), everything else on
+   the VM; (ii) keep it for every device (the firmware lowers bytecode it has
+   already accepted; no foreign code runs); (iii) keep it only on devices that
+   have an owner or trust a mesh admin. **Recommended: (i)** — it is the literal
+   reading of the 2026-11-21 rule, it keeps the verifier from being the only
+   barrier against untrusted input on freely associating devices, and the
+   signed path covers the user's own and mesh-administered fixtures.
+2. **Pairing scheme** for per-user keys: which channel delivers the key (BLE
    Improv ECDH + physical presence is the proposal), and whether one key per
    user covers all their fixtures (fleet scope) or per-device keys are wanted.
-2. **Whether to revoke the dev key in release firmware** once pairing exists
-   (recommended: release builds ship `revoked` bit 0 set; dev builds don't).
+   Recommended: one key per user, delivered by BLE Improv ECDH with physical
+   presence.
 3. **Backoff parameters**: 3 free failures, 0.5 s doubling, 60 s cap,
-   device-wide. Accept, or prefer per-session limits plus a lower global cap.
-4. **(c) P-256 first-party images**: confirm they stay unbuilt until a
-   first-party native library exists.
-5. **Code placement:** DECIDED (2026-10-23): the FX arena, never general heap;
+   device-wide. Recommended: accept as is.
+4. **Code placement:** DECIDED (2026-10-23): the FX arena, never general heap;
    no flash partition; littlefs stores only. See "Where native code lives".
-6. **Trust model:** DECIDED (2026-10-28): user-key HMAC (dev key for now) +
-   unsigned on-device lowering.
+5. **Trust model:** DECIDED (2026-11-21): user-key HMAC for own devices, mesh
+   admin P-256 on a mesh, VM otherwise; dev key bench-only.
 
 ## Plan
 
@@ -614,10 +678,14 @@ ring's precomputed pad states (three software compressions). Best of 3:
      and programming PMP+PMA per "Netstack wiring" (the allocation math and the
      W^X mechanism already exist);
    - for (b), the same `authenticate` step in `player_app`'s effect load
-     (prefer a valid `.fxn`, else lower, else VM) with the hardware SHA
+     (prefer a valid `.fxn` under a trusted key, else VM; see decision 1 for
+     on-device lowering) with the hardware SHA
      (mbedtls is already linked), the `splanc_fxsig` NVS namespace, and the
      fallback reason in the load reply;
-   - pairing / per-user key provisioning per "Provisioning seam".
+   - pairing / per-user key provisioning per "Provisioning seam";
+   - the mesh-admin form: verify against the admin public key a member holds
+     (`firmware/mesh` admin, M7), the app signs on distribution;
+   - release firmware revokes (or omits) the dev key.
 5. **Stage 4:** a Thumb-2 backend for future boards.
 
 ## Status, measured numbers, and what is not verified
