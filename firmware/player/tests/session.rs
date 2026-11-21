@@ -327,6 +327,71 @@ fn full_phone_session() {
 /// record_frame_shown: the reply carries the active capture's context, the
 /// samples in emit order, and the overflow-drop count; a second poll comes
 /// back empty (the log was drained, not re-read).
+/// The wire bytes of a set_counting_pattern with `n` one-LED blocks. Built by
+/// hand: the host struct holds at most MAX_COUNTING_BLOCKS, but a phone can send
+/// more (repeated fields just concatenate on the wire).
+fn counting_frame(n: usize) -> Vec<u8> {
+    use micropb::{MessageEncode, PbEncoder};
+    let block = |i: usize| {
+        let mut m = pb::SetCountingPattern::default();
+        let mut b = pb::ColorBlock { r#start: i as i32, r#count: 1, ..Default::default() };
+        b.r#rgb.extend_from_slice(&[0.0, 1.0, 0.0]).unwrap();
+        m.r#blocks.push(b).unwrap();
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 256>::new());
+        m.encode(&mut enc).unwrap();
+        enc.into_writer().to_vec()
+    };
+    let inner: Vec<u8> = (0..n).flat_map(block).collect();
+    // ClientMessage.set_counting_pattern = 14, length-delimited.
+    let mut out = vec![(14 << 3) | 2];
+    let mut len = inner.len();
+    while len >= 0x80 {
+        out.push((len as u8 & 0x7f) | 0x80);
+        len >>= 7;
+    }
+    out.push(len as u8);
+    out.extend(inner);
+    out
+}
+
+#[test]
+fn counting_pattern_over_capacity_is_refused_not_truncated() {
+    use ledmapper_player::MAX_COUNTING_BLOCKS;
+    use micropb::{MessageDecode, PbDecoder};
+    let mut player = Player::new("esp32-0001", 64);
+    let mut send_raw = |frame: &[u8], now: i64| {
+        let reply = player.handle_frame(frame, now, now).expect("a reply");
+        let mut buf = vec![0u8; 16 * 1024];
+        let n = player.encode_reply(&reply, &mut buf).expect("reply fits");
+        let mut back = pb::ServerMessage::default();
+        back.decode(&mut PbDecoder::new(&buf[..n]), n).expect("reply decodes");
+        (back.r#msg, player.counting_len(), player.counting_color(0))
+    };
+    // Exactly the capacity latches every block (the last LED is block 31).
+    let (r, len, _) = send_raw(&counting_frame(MAX_COUNTING_BLOCKS), 1000);
+    assert!(matches!(r, Some(SMsg::CountingState(ref cs)) if cs.r#active), "{r:?}");
+    assert_eq!(len, MAX_COUNTING_BLOCKS as u32);
+    // One more is an error, and the latched pattern is left as it was (it used
+    // to latch the first 32 and still answer counting_state).
+    let (r, len, c0) = send_raw(&counting_frame(MAX_COUNTING_BLOCKS + 1), 1100);
+    match r {
+        Some(SMsg::Error(e)) => {
+            assert_eq!(e.r#code.as_str(), "bad_message");
+            assert!(e.r#message.as_str().contains("max 32"), "{}", e.r#message.as_str());
+        }
+        other => panic!("33 blocks must be refused, got {other:?}"),
+    }
+    assert_eq!(len, MAX_COUNTING_BLOCKS as u32, "the previous pattern stays latched");
+    assert_eq!(c0, Some((0, 255, 0)));
+    // Far past it too (the view walks the whole frame, nothing overflows).
+    let (r, _, _) = send_raw(&counting_frame(200), 1200);
+    assert!(matches!(r, Some(SMsg::Error(_))), "{r:?}");
+    // The shared install path refuses an oversized slice the same way.
+    let blocks = vec![(0u32, 1u32, (1u8, 2u8, 3u8)); MAX_COUNTING_BLOCKS + 1];
+    assert!(matches!(player.set_counting_blocks(1300, &blocks, None, None).r#msg, Some(SMsg::Error(_))));
+    assert_eq!(player.counting_len(), MAX_COUNTING_BLOCKS as u32);
+}
+
 #[test]
 fn frame_timing_drain() {
     let mut player = Player::new("esp32-0001", 16);
