@@ -1,8 +1,8 @@
-// The C6 front end's half of the P4 link (the LM_FRONTEND build of main.cpp;
+// The C6 front end's half of the P4 link (relay_main.cpp, the pure relay;
 // docs/design/p4-c6-split.md §2.2, §4.1): link frames (//firmware/p4/link) over the SDIO
 // slave, one frame per packet. The P4 is the SDIO host.
 //
-// Forwarding is synchronous in this first cut: main.cpp hands a player message to
+// Forwarding is synchronous in this first cut: relay_main.cpp hands a player message to
 // frontend_forward, which sends it as PLAYER frames and waits for the REPLY (the P4
 // answers in a few ms). PUSH frames that arrive meanwhile, or between messages, go
 // straight to the open wss session. A HELLO every 100 ms carries this image's ELF
