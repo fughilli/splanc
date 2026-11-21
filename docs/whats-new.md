@@ -3,6 +3,19 @@
 Notable changes, newest first. Each entry links the PRs and the doc that covers
 it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md).
 
+## November 2026
+
+### Effects stored on the device
+
+- **A player keeps up to 8 compiled effects on its own flash.** **Store on device**
+  in the effect editor puts one there without running it. **Device settings →
+  Stored effects** lists them, opens one (it plays, its uniforms appear as live
+  controls, and the device resumes it on boot) or deletes one. New firmware
+  feature `effect_store`.
+- Shows that live on the fixture don't need the phone's library to come back.
+  This is how demo effects get pre-installed on a fixture.
+- Details: [effect-store.md](design/effect-store.md).
+
 ## October 2026
 
 ### Heavy effects no longer lock players off the network (1.12.4)
