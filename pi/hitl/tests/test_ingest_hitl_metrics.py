@@ -132,6 +132,23 @@ def test_legacy_lines():
         ("adv", 0.964, True),
         ("conn", -0.165, True),
     ]
+    # An early run's harness-clock `<ph>_s` (4.84 s: teardown included) is not the gate's
+    # firmware-clock measurement: it must not surface as name_seen_latency.
+    got = lx.extract(
+        "//x:ble_rename",
+        "ble_rename",
+        ["RESULT unit=c6-fa0324 budget=5s adv=PASS conn=PASS adv_s=0.81 conn_s=4.84 verdict=PASS"],
+    )
+    assert got == []
+    got = lx.extract(
+        "//x:ble_rename",
+        "ble_rename",
+        [
+            "RESULT unit=c6-fa0324 budget=5s adv=PASS conn=PASS conn_s=4.84 adv_fw_s=0.964"
+            " conn_fw_s=-0.165 verdict=PASS"
+        ],
+    )
+    assert [(r["phase"], r["value"]) for r in got] == [("adv", 0.964), ("conn", -0.165)]
     got = lx.extract(
         "//x:mesh_apply_at_skew",
         "mesh_apply_at_skew",

@@ -443,8 +443,12 @@ def ble_rename(gate, lines):
         kv = _kv(line)
         budget = _num(kv.get("budget")) or 5.0
         for ph in ("adv", "conn", "final"):
-            # `<ph>_fw_s` (firmware clock, current) or `<ph>_s` (harness clock, early runs)
-            v = _num(kv.get(f"{ph}_fw_s", kv.get(f"{ph}_s")))
+            # Only `<ph>_fw_s`: the firmware-clock rename -> on-air time the gate grades.
+            # Early runs printed `<ph>_s` on the harness clock instead, which includes the
+            # central's teardown (r3's 4.84 s conn was a missed LL_TERMINATE riding out
+            # the 6 s supervision timeout, not a slow rename), so those are not the same
+            # metric and are skipped rather than plotted against the gate's limit.
+            v = _num(kv.get(f"{ph}_fw_s"))
             if v is not None:
                 yield rec("ble_rename", "name_seen_latency", v, "s", budget, phase=ph)
 
