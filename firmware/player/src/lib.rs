@@ -536,6 +536,9 @@ pub struct Player {
     /// welcome at encode time like the board descriptor (the firmware profile
     /// carries no inline feature strings).
     features: &'static [&'static str],
+    /// One feature set at run time after the static ones (the firmware's flash: its JEDEC id
+    /// and whether erase auto-suspend is on, PR-41), empty for none.
+    extra_feature: micropb::heapless::String<32>,
     /// The .fxb format version the effects VM accepts (welcome.fxb_format).
     fxb_format: u32,
     /// This fixture's room pose (set_fixture_pose); None = unposed. `pose_gen`
@@ -603,6 +606,7 @@ impl Player {
             board_caps: None,
             board_caps_sets: (false, false, false),
             features: &[],
+            extra_feature: micropb::heapless::String::new(),
             fxb_format: 0,
             pose: None,
             pose_gen: 0,
@@ -1544,8 +1548,7 @@ impl Player {
         let cap = out.len();
         let mut w: &mut [u8] = out;
         let feats: usize = self
-            .features
-            .iter()
+            .all_features()
             .map(|f| 1 + sizeof_varint32(f.len() as u32) + f.len())
             .sum();
         let pose_len = self.pose.as_ref().map(|p| p.compute_size());
@@ -1557,7 +1560,7 @@ impl Player {
             enc.encode_tag(Tag::from_parts(1, WIRE_TYPE_LEN)).ok()?;
             enc.encode_varint32(inner as u32).ok()?;
             wl.encode(&mut enc).ok()?;
-            for f in self.features {
+            for f in self.all_features() {
                 enc.encode_tag(Tag::from_parts(10, WIRE_TYPE_LEN)).ok()?;
                 enc.encode_string(f).ok()?;
             }
@@ -1625,6 +1628,17 @@ impl Player {
     pub fn set_features(&mut self, features: &'static [&'static str], fxb_format: u32) {
         self.features = features;
         self.fxb_format = fxb_format;
+    }
+
+    /// A feature known only at run time, served after the static ones (empty: none).
+    pub fn set_extra_feature(&mut self, f: &str) {
+        self.extra_feature.clear();
+        let _ = self.extra_feature.push_str(f);
+    }
+
+    /// The static features, then the run-time one.
+    fn all_features(&self) -> impl Iterator<Item = &str> {
+        self.features.iter().copied().chain(Some(self.extra_feature.as_str()).filter(|f| !f.is_empty()))
     }
 
     /// The features declared by [`Player::set_features`].
@@ -2273,7 +2287,7 @@ impl Player {
         j.str(self.fw_git_commit.as_str());
         j.raw(if self.fw_git_dirty { ",\"dirty\":true}" } else { ",\"dirty\":false}" });
         j.raw(",\"protocol\":{\"package\":\"ledmapper.v1\",\"ws_path\":\"/ws\",\"profile\":\"core\",\"features\":[");
-        for (i, f) in self.features.iter().enumerate() {
+        for (i, f) in self.all_features().enumerate() {
             if i > 0 {
                 j.raw(",");
             }

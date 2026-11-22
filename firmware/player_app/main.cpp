@@ -752,9 +752,21 @@ static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
 
 // fs_write_file of `data ++ more` (the effect store writes a record as its header
 // and the .fxb it came with, without staging them together).
+static bool fs_write_parts_(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
+                            size_t more_len, int64_t t0);
+// Below the render task (PR-41): a littlefs write is mostly CPU around the flash operations
+// (CRCs, a metadata compaction: up to ~200 ms), which at render's priority (loopTask's while
+// a client is on a settled link, #371) took turns with frames.
 static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
                            size_t more_len) {
-  const int64_t t0 = esp_timer_get_time();
+  const uint32_t prio = lm_prio_below_render();
+  const bool ok = fs_write_parts_(path, data, len, more, more_len, esp_timer_get_time());
+  lm_prio_restore(prio);
+  return ok;
+}
+
+static bool fs_write_parts_(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
+                            size_t more_len, int64_t t0) {
   char tmp[64];
   int pn = snprintf(tmp, sizeof tmp, "%s.tmp", path);
   if (pn < 0 || (size_t)pn >= sizeof tmp) {
@@ -1386,6 +1398,9 @@ static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, siz
 // (PR-41): queued, then done right after the mutex is released, before the reply goes out.
 static bool g_fs_defer = false;
 static void fs_deferred_flush();
+// ...and the files they READ under it are read before it is taken (fs_prefetch).
+static void fs_prefetch(const uint8_t *msg, size_t len);
+static void fs_prefetch_drop();
 // littlefs usage for the effect store's space check, measured outside the player mutex
 // (esp_littlefs_info walks the filesystem: ~50 ms of flash reads, which under the mutex held
 // the render task off). Refreshed after each message that wrote, below render (PR-41).
@@ -1637,6 +1652,7 @@ static int dispatch_plain(const uint8_t *msg, size_t len) {
     xSemaphoreGive(tex_mutex);
     if (n >= 0) return (int)n;
   }
+  fs_prefetch(msg, len);  // keypoint / effect-store files, read before the lock
   uint32_t t0 = (uint32_t)micros();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   uint32_t t1 = (uint32_t)micros();
@@ -1648,6 +1664,7 @@ static int dispatch_plain(const uint8_t *msg, size_t len) {
   g_fs_defer = false;
   uint32_t t2 = (uint32_t)micros();
   xSemaphoreGive(player_mutex);
+  fs_prefetch_drop();
   fs_deferred_flush();  // the store hooks' writes, without the render task waiting on them
   if (t1 - t0 > g_mtx_wait_max_us) g_mtx_wait_max_us = t1 - t0;
   if (t2 - t1 > g_handle_max_us) g_handle_max_us = t2 - t1;
@@ -1804,10 +1821,14 @@ static int load_stored_effect(const uint8_t *in, size_t len) {
   uint8_t msg[160];
   if (!fs_ok || len > sizeof msg) return kNotStaged;
   memcpy(msg, in, len);
+  fs_prefetch(msg, len);  // the record headers lm_fxs_find / lm_fxs_load look through
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t slot = lm_fxs_find(msg, len);
   xSemaphoreGive(player_mutex);
-  if (slot < 0) return kNotStaged;
+  if (slot < 0) {
+    fs_prefetch_drop();
+    return kNotStaged;
+  }
   char path[48];
   snprintf(path, sizeof path, "%s/fxs.%d", kFsBase, (int)slot);
   FILE *f = fs_open(path, "rb");
@@ -1820,12 +1841,14 @@ static int load_stored_effect(const uint8_t *in, size_t len) {
   fclose(f);
   if (rec == nullptr || rn != (size_t)size) {
     rx_stage_put(rec);
+    fs_prefetch_drop();
     return kNotStaged;
   }
   size_t off = 0, plen = 0;
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_fxs_load(msg, len, rec, rn, tx, sizeof tx, &off, &plen);
   xSemaphoreGive(player_mutex);
+  fs_prefetch_drop();
   if (plen > 0 && !lm_kiosk_msg_locked()) {
     fs_write_file(kEffectPath, rec + off, plen);
     remove(kEffectSelPath);  // the old effect's selection / uniforms
@@ -3410,11 +3433,13 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
   // Ordinary single-frame message (control traffic, set_texture, or a small
   // unsharded submit_*). rx holds the whole frame.
   int64_t now = (int64_t)millis();
+  fs_prefetch(rx, frame.len);
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   g_fs_defer = true;
   int32_t n = lm_player_handle(rx, frame.len, now, now, tx, sizeof tx);
   g_fs_defer = false;
   xSemaphoreGive(player_mutex);
+  fs_prefetch_drop();
   fs_deferred_flush();
   poll_after_message();
   if (n > 0) {
@@ -4004,6 +4029,12 @@ void netstack_console_hook(const char *line, size_t len) {
 }
 #endif
 
+#if defined(LM_FLASH_SUSPEND)
+// The flash's JEDEC id and whether erase auto-suspend is on (setup), for welcome.features.
+static uint32_t g_flash_jedec = 0;
+static bool g_flash_suspend = false;
+#endif
+
 void setup() {
   Serial.begin(115200);
   // Logging is async (serial_log.h): Log() only appends to an in-RAM ring, and
@@ -4023,6 +4054,8 @@ void setup() {
   {
     uint32_t jedec = 0;
     const int fs = lm_flash_auto_suspend_enable(&jedec);
+    g_flash_jedec = jedec;
+    g_flash_suspend = fs == LM_FLASH_SUSPEND_ON;
     Log().printf("[flash] auto-suspend %s jedec=%06lx\n",
                  fs == LM_FLASH_SUSPEND_ON                  ? "on"
                  : fs == LM_FLASH_SUSPEND_UNSUPPORTED_FLASH ? "off (flash not supported)"
@@ -4196,6 +4229,15 @@ void setup() {
   lm_player_set_build_info(reinterpret_cast<const uint8_t *>(LM_GIT_COMMIT), strlen(LM_GIT_COMMIT),
                            LM_GIT_DIRTY, reinterpret_cast<const uint8_t *>(kFwVersion),
                            strlen(kFwVersion));
+#if defined(LM_FLASH_SUSPEND)
+  {
+    // The app and agent read the flash and its auto-suspend from welcome.features (PR-41).
+    char ff[32];
+    int fn = snprintf(ff, sizeof ff, "flash_%06lx_suspend_%s", (unsigned long)g_flash_jedec,
+                      g_flash_suspend ? "on" : "off");
+    if (fn > 0 && fn < (int)sizeof ff) lm_player_set_extra_feature(reinterpret_cast<const uint8_t *>(ff), (size_t)fn);
+  }
+#endif
   Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local build %s%s\n", macstr,
                g_device_name, g_ap_ssid, g_hostname, LM_GIT_COMMIT_SHORT,
                LM_GIT_DIRTY ? "-dirty" : "");
@@ -4715,7 +4757,9 @@ static void fs_usage_refresh() {
 }
 
 static void fs_deferred_flush() {
-  if (g_fs_nops) g_fs_usage_stale = true;  // removals change it too
+  if (g_fs_nops == 0) return;
+  g_fs_usage_stale = true;  // removals change it too
+  const uint32_t prio = lm_prio_below_render();  // (fs_write_parts is too; removals here)
   for (int i = 0; i < g_fs_nops; i++) {
     FsOp &op = g_fs_ops[i];
     if (op.data == nullptr) {
@@ -4727,6 +4771,89 @@ static void fs_deferred_flush() {
     }
   }
   g_fs_nops = 0;
+  lm_prio_restore(prio);
+}
+
+// Read-ahead for the keypoint and effect-store handlers (PR-41): they look through their
+// files (a keypoint save opens all 16 slots of its effect; a store listing reads 8 record
+// headers) from inside lm_player_handle, i.e. with the player mutex held, and the render
+// task waited out those littlefs reads (30-70 ms on hitl-rig-1). The files a message can
+// read are known before the lock (the effect's key needs the lock only for a moment, no
+// flash): read them first, on the heap for this message only, and serve the hooks from
+// here. A path not read ahead still goes to the flash (never the case for these arms).
+struct FsPre {
+  char name[20];
+  uint8_t *data;  // nullptr: no such file
+  uint16_t len;   // bytes held (a record header for fxs.<n>)
+  uint16_t size;  // the file's size (capped)
+};
+static FsPre *g_pre = nullptr;
+static int g_pre_n = 0;
+
+static void fs_prefetch_drop() {
+  for (int i = 0; i < g_pre_n; i++) free(g_pre[i].data);
+  free(g_pre);
+  g_pre = nullptr;
+  g_pre_n = 0;
+}
+
+static void fs_prefetch(const uint8_t *msg, size_t len) {
+  if (!fs_ok) return;
+  const int32_t arm = lm_envelope_arm(msg, len);
+  const bool kp = arm >= 40 && arm <= 44;  // save / delete / list / get / blend keypoints
+  const bool fxs = arm == kArmSubmitEffect || (arm >= 140 && arm <= 142);  // the effect store
+  if (!kp && !fxs) return;
+  uint32_t key = 0;
+  if (kp) {
+    xSemaphoreTake(player_mutex, portMAX_DELAY);  // the deck's effect: no flash
+    key = lm_kp_key(msg, len);
+    xSemaphoreGive(player_mutex);
+    if (key == 0) return;
+  }
+  const int n = kp ? 16 : 8;  // keypoint::MAX_KEYPOINTS / effect_store::MAX_STORED
+  const size_t cap = kp ? 2048 : lm_fxs_header_cap();
+  g_pre = static_cast<FsPre *>(calloc(n, sizeof(FsPre)));
+  if (g_pre == nullptr) return;
+  g_pre_n = n;
+  const uint32_t prio = lm_prio_below_render();  // littlefs lookups: below render too
+  for (int i = 0; i < n; i++) {
+    FsPre &e = g_pre[i];
+    if (kp) snprintf(e.name, sizeof e.name, "kp_%08lx.%d", (unsigned long)key, i);
+    else snprintf(e.name, sizeof e.name, "fxs.%d", i);
+    char path[48];
+    snprintf(path, sizeof path, "%s/%s", kFsBase, e.name);
+    FILE *f = fs_open(path, "rb");
+    if (f == nullptr) continue;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    size_t want = size > 0 ? ((size_t)size < cap ? (size_t)size : cap) : 0;
+    e.data = static_cast<uint8_t *>(malloc(want ? want : 1));
+    if (e.data != nullptr) {
+      e.len = (uint16_t)fread(e.data, 1, want, f);
+      e.size = (uint16_t)(size > 0xffff ? 0xffff : size);
+    } else {
+      g_pre_n = i;  // out of heap: the rest from flash, as before
+      fclose(f);
+      break;
+    }
+    fclose(f);
+  }
+  lm_prio_restore(prio);
+}
+
+// -1: not read ahead (use the flash), -2: read ahead and absent, else the bytes copied.
+static int32_t fs_prefetched(const char *name, uint8_t *buf, size_t cap) {
+  for (int i = 0; i < g_pre_n; i++) {
+    const FsPre &e = g_pre[i];
+    if (strcmp(e.name, name) != 0) continue;
+    if (e.data == nullptr) return -2;
+    if (cap > e.len && e.size > e.len) return -1;  // wants more than was read ahead
+    size_t got = e.len < cap ? e.len : cap;
+    memcpy(buf, e.data, got);
+    return (int32_t)got;
+  }
+  return -1;
 }
 
 static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap) {
@@ -4737,6 +4864,16 @@ static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t 
     size_t got = op->len < cap ? op->len : cap;
     memcpy(buf, op->data, got);
     return (int32_t)got;
+  }
+  if (g_pre_n) {
+    char nm[20];
+    if (len < sizeof nm) {
+      memcpy(nm, name, len);
+      nm[len] = 0;
+      const int32_t p = fs_prefetched(nm, buf, cap);
+      if (p == -2) return -1;
+      if (p >= 0) return p > 0 ? p : -1;
+    }
   }
   FILE *f = fs_open(path, "rb");
   if (f == nullptr) return -1;

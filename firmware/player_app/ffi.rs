@@ -1527,6 +1527,17 @@ pub unsafe extern "C" fn lm_player_set_build_info(
     player().set_build_info(commit_s, dirty, version_s);
 }
 
+/// A feature only the firmware knows at run time, served after the static ones in
+/// welcome.features and the agent manifest (the flash: "flash_<jedec>_suspend_on|off", PR-41).
+///
+/// # Safety
+/// `f` must point to `len` readable bytes; after `lm_player_init`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_player_set_extra_feature(f: *const u8, len: usize) {
+    let s = core::str::from_utf8(core::slice::from_raw_parts(f, len)).unwrap_or("");
+    player().set_extra_feature(s);
+}
+
 /// The per-device TLS identity as the firmware last published it (lm_set_tls_info):
 /// "generating" | "ready" ("" = never published) + the cert pin.
 struct TlsIdentity {
@@ -3791,6 +3802,27 @@ fn kp_file(key: u32, n: usize) -> ([u8; 16], usize) {
     }
     b[len] = b'0' + (n % 10) as u8;
     (b, len + 1)
+}
+
+/// The keypoint file key the keypoint arm in `frame` addresses (0: not a keypoint arm, or
+/// nothing to address). main.cpp reads that effect's `kp_<key>.<n>` files BEFORE it takes the
+/// player mutex, so the handler reads nothing from flash while the render task waits on the
+/// lock (PR-41). Needs the mutex (the deck's effect), not the flash.
+///
+/// # Safety
+/// `frame` valid for `len` bytes; player mutex held.
+#[no_mangle]
+pub unsafe extern "C" fn lm_kp_key(frame: *const u8, len: usize) -> u32 {
+    let f = core::slice::from_raw_parts(frame, len);
+    let (d, id) = match client_arm(f) {
+        Some(CArm::SaveKeypoint(m)) => (deck_index(m.deck()), None),
+        Some(CArm::BlendKeypoints(m)) => (deck_index(m.deck()), None),
+        Some(CArm::DeleteKeypoint(m)) => (deck_index(m.deck()), m.effect_id()),
+        Some(CArm::ListKeypoints(m)) => (deck_index(m.deck()), m.effect_id()),
+        Some(CArm::GetKeypoint(m)) => (deck_index(m.deck()), m.effect_id()),
+        _ => return 0,
+    };
+    kp_target(d, id).map_or(0, |(k, _)| k)
 }
 
 /// Read record `n` of effect `key` into KP_IO; its length, if it exists.

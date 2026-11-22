@@ -41,6 +41,9 @@ void lm_player_set_identity(const uint8_t *mac, size_t mac_len,
 // LM_GIT_DIRTY / LM_VERSION).
 void lm_player_set_build_info(const uint8_t *commit, size_t commit_len, bool dirty,
                               const uint8_t *version, size_t version_len);
+// A run-time feature appended to welcome.features and the agent manifest (the flash:
+// "flash_<jedec>_suspend_on|off").
+void lm_player_set_extra_feature(const uint8_t *f, size_t len);
 // Render the agent discovery manifest (GET /.well-known/splanc.json, schema
 // "splanc-agent/1") into out (cap bytes); returns its length, or -2 when it
 // doesn't fit. cert_sha256: the TLS certificate's SHA-256, lowercase hex.
@@ -120,6 +123,11 @@ void lm_kp_set_store(lm_kp_read_fn read, lm_kp_write_fn write, lm_kp_remove_fn r
 // and that target encoded as a set_uniforms ClientMessage frame (length, or <0).
 bool lm_kp_commit(void);
 int32_t lm_kp_commit_frame(uint8_t *out, size_t cap);
+// The keypoint file key ("kp_%08x.<n>") the keypoint arm in frame addresses, 0 if none
+// (player mutex held; no flash), and the effect store's record header size: main.cpp reads
+// those files before it takes the mutex (PR-41).
+uint32_t lm_kp_key(const uint8_t *frame, size_t len);
+uint32_t lm_fxs_header_cap(void);
 // The effect store (effect_store.rs, docs/design/effect-store.md): one record per
 // stored effect, file "fxs.<n>" under the FS base. read / remove as the keypoint
 // hooks; write stores a ++ b as one atomic (power-loss-safe) file and returns 0, -2 when

@@ -13,10 +13,8 @@ over 1.5 frame periods) in each phase from the DUT serial log:
 5. settings: committed uniforms (/lfs/fx.pb), color correction (the LUT record), a device
    rename (NVS).
 
-Verdict (flash_render_core): PASS = auto-suspend on and no late frame in the map and settings
-phases, with a flash write seen in each (the effect-store and keypoint phases are reported:
-their handlers hold the player mutex for littlefs reads, the follow-up; `--strict` gates
-them); FAIL otherwise (the DUT serial log is printed); SKIP on bench failures, or a flash
+Verdict (flash_render_core): PASS = auto-suspend on and no late frame in any writer phase,
+with a flash write seen in each; FAIL otherwise (the DUT serial log is printed); SKIP on bench failures, or a flash
 without suspend support (`--allow-no-suspend` runs the phases anyway: the A/B baseline on an
 image without auto-suspend).
 
@@ -193,7 +191,7 @@ def run(args) -> int:
     if rep.suspend is not None and rep.suspend != "on" and not args.allow_no_suspend:
         _log(f"[flr] flash auto-suspend {rep.suspend} (jedec {rep.jedec}) — SKIP (hardware)")
         return 0
-    verdict, why = core.verdict(rep, require_suspend=not args.allow_no_suspend, strict=args.strict)
+    verdict, why = core.verdict(rep, require_suspend=not args.allow_no_suspend)
     summary = {
         name: {
             "late": rep.late_in(name),
@@ -249,11 +247,6 @@ def main() -> int:
         "--allow-no-suspend",
         action="store_true",
         help="run and report without auto-suspend (the A/B baseline); never PASSes on late frames",
-    )
-    ap.add_argument(
-        "--strict",
-        action="store_true",
-        help="gate the effect-store and keypoint phases too (their handlers hold the player mutex)",
     )
     return run(ap.parse_args())
 
