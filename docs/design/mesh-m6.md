@@ -15,7 +15,14 @@ one wss connection to a only. Logs and JSON: `/workspace/.claude/mesh/m6/runs/`.
 
 ## Results
 
-Runs r4 and r5 (2026-11-22): r4 **PASS**; r5 passed every M6 gate (8/8 rounds, spread 0.36–1.8 ms, late joiner 6.3 s, reboot 1.5 s with no reload, member heap min 42 892 B) and failed only on one late frame at a's first join, next to its membership write (126 ms) that logged after the `[late]` line: the gate now attributes a write that ends in the window it delayed (r5 re-judged from its logs: pass). Numbers from r4. Effects: `meshStorm` (1 981 B fxb, 7 uniforms,
+Runs r4, r5 and r6 (2026-11-22), all passing every M6 gate; r6 is the final code (scene
+dispatches moved onto the relayed-control path for the loopTask stack bound): 8/8 rounds,
+spread 0.23–1.33 ms, submit to all 0.59–1.31 s, late joiner 5.7 s, reboot 1.5 s with no
+reload, member heap min 42 896 B. r5 and r6 first reported late frames the gate could not
+attribute: on r5 a's membership write at its first join (logged after its `[late]` line),
+on r6 the gateway's sharded-upload windows to `/lfs/upload.tmp` (only the first window is
+logged). Both are flash writes; the gate now attributes them, and r4–r6 re-judged from
+their logs have no late frame outside effect loads and flash writes. Numbers below from r4. Effects: `meshStorm` (1 981 B fxb, 7 uniforms,
 a 1 998 B submit_effect frame) and `meshEmber` (2 907 B fxb, 11 uniforms, 2 924 B frame),
 alternating; odd rounds go as 1 KB `upload_chunk` windows (the BLE path's sharding).
 
@@ -127,7 +134,7 @@ second phase with anything but OK gets a catch-up too.
 ## Cost
 
 - **Flash** (default image, both built here from the same base): M7 tip (fc7177a01) 2 275 104 B →
-  **M6 2 281 728 B (+6 624 B)**; `//firmware/loader:layout_test` passes with **12 032 B**
+  **M6 2 283 056 B (+7 952 B)**; `//firmware/loader:layout_test` passes with **10 704 B**
   of its headroom left. M6's own code is ~+19 KB (the crate's blob/scene/share 7 KB, the
   firmware store and scene glue 7 KB, the player's staged load, check and scene frames
   2.5 KB, the gateway arm 1.5 KB); the swarm's firmware image updater and settings
@@ -138,7 +145,10 @@ second phase with anything but OK gets a catch-up too.
 - **Heap while on**: the mesh block grows by the blob slots' bookkeeping (~200 B); blob
   bytes are heap only while a blob is in use (≤ 3 slots, freed 20 s after last use).
 - **Stack**: fetching, serving and hashing on the tick stack (painted high water as M7);
-  the staged load on the tick stack from the render task (render keeps its 5 KB).
+  the staged load on the tick stack from the render task (render keeps its 5 KB); a
+  scene's dispatches go through the transport like relayed control (`ns_mesh_take_dispatch`),
+  so `//firmware/player_app:stack_bound_test` holds: loopTask bound 9 280 B (11 920 B with
+  margin of 12 288 B).
 
 
 ## Open

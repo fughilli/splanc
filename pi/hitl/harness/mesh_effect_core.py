@@ -148,11 +148,21 @@ def late_frames(lines: list[str]) -> list[dict]:
     out: list[dict] = []
     cur = {"load": False, "save": False}
     prev = dict(cur)
+    # A sharded upload logs only its first window; it writes /lfs/upload.tmp until the
+    # reassembled frame is handed on (the gateway's `gw share` line), so the windows in
+    # between are flash-write windows too.
+    uploading = False
     for t in lines:
         if _LOAD.search(t):
             cur["load"] = True
         if _SAVE.search(t):
             cur["save"] = True
+        if "[upload] " in t and "first window" in t:
+            uploading = True
+        if uploading:
+            cur["save"] = True
+            if "[mesh] gw share " in t or "[upload] " in t and ("decoded" in t or "NOT" in t):
+                uploading = False
         if _FT_LINE.search(t):
             prev, cur = cur, {"load": False, "save": False}
         elif _SAVE.search(t) or _LOAD.search(t):

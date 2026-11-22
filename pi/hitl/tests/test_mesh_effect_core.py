@@ -124,3 +124,18 @@ def test_save_logged_after_its_late_line():
         FT,
     ]
     assert late_frames(lines)[0]["save_us"] == 0
+
+
+def test_sharded_upload_windows_are_flash_writes():
+    lines = [
+        FT,
+        "[upload] kind 2 id 1: first window 1024 B",
+        FT,
+        "[late] n=1 max=21000 ago_ms=57",
+        "[mesh] gw share op=65a len=1999 heap=40764",
+        FT,
+        "[late] n=3 max=22931 ago_ms=895",
+        FT,
+        "[late] n=1 max=30000 ago_ms=5",
+    ]
+    assert [x["save_us"] for x in late_frames(lines)] == [0, 0, None]
