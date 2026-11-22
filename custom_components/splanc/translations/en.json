@@ -1,0 +1,49 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Add a Splanc lamp",
+        "description": "Enter the lamp's IP address or host name (for example 192.168.1.40 or splanc-a1b2c3.local). The lamp must be on the same network as Home Assistant.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "The lamp's address. The Splanc app shows it under the device's details."
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Add {name}?",
+        "description": "Home Assistant found the Splanc lamp **{name}** at {host}. Add it?\n\nThe lamp talks to one app at a time. If the Splanc app is using it right now, close the app's device screen for a moment and try again."
+      },
+      "reauth_confirm": {
+        "title": "{name} has a new certificate",
+        "description": "The lamp at {host} now presents a different security certificate.\n\nPinned: `{old}`\nNow: `{new}`\n\nThis is expected after a factory reset (a full flash erase). If you did not reset the lamp, something else may be answering at its address: do not confirm. Confirm to trust the new certificate."
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the lamp. Check the address and that the lamp is powered and on this network. If the Splanc app is using the lamp right now, close its device screen for a moment and try again.",
+      "busy": "Another client (usually the Splanc app) is using the lamp right now. Close the app's device screen for a moment and try again."
+    },
+    "abort": {
+      "already_configured": "This lamp is already set up.",
+      "not_splanc": "This is not a Splanc lamp.",
+      "wrong_lamp": "A different lamp answered at this address.",
+      "reauth_successful": "The new certificate is trusted."
+    }
+  },
+  "entity": {
+    "event": {
+      "touch": {
+        "name": "Lid tap",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "tap": "Tap"
+            }
+          }
+        }
+      }
+    }
+  }
+}
