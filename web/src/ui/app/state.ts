@@ -45,6 +45,8 @@ import { toast, type PillState } from "../kit";
 import type { FpsStateMessage } from "../../net/proto";
 import { inLoader } from "../../net/otaUpdate";
 import { pushPendingOnConnect } from "../../capture/imuCalReconnect";
+import { deviceHasMesh } from "../../net/mesh";
+import { unlockMeshOnConnect } from "../../store/meshSession";
 
 export interface ConnStatus {
   state: PillState;
@@ -295,6 +297,9 @@ class AppState {
           );
         }
         void sync;
+        // A fixture in a mesh this app administers: unlock this connection with the stored
+        // admin key, so mesh control and administration work at once (mesh M7).
+        if (!updater && deviceHasMesh(client.welcome)) unlockMeshOnConnect(client, () => this.client === client);
       } catch (e) {
         // Drop a PROVISIONAL BLE entry that never learned an identity (no welcome
         // MAC). It's keyed on an ephemeral Web Bluetooth device.id, so a failed or

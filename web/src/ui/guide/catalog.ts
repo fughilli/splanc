@@ -714,6 +714,48 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     ],
   },
   {
+    id: "mesh",
+    title: "Meshing fixtures",
+    icon: "graph",
+    tab: "device",
+    route: "/mesh/new",
+    summary: "Link fixtures with mesh firmware so they change together, on the same frame.",
+    sections: [
+      {
+        body: [
+          "Fixtures with the mesh firmware (their device settings show a **Mesh** section) can " +
+            "talk to each other directly, with no extra hardware. Control one, and every fixture " +
+            "in its mesh changes on the same frame.",
+        ],
+      },
+      {
+        heading: "Create a mesh",
+        bullets: [
+          "Open a fixture's ⋮ device settings and tap **Create a mesh**.",
+          "Pick the fixtures to link (any you have added to the app), then name the mesh.",
+          "The app makes the mesh's admin key and keeps it on this phone or browser (it can't be " +
+            "copied out), sets each fixture up in turn over its Wi-Fi or Bluetooth connection, and " +
+            "shows them joining and syncing their clocks.",
+        ],
+      },
+      {
+        heading: "Managing a mesh",
+        bullets: [
+          "When the app connects to a fixture in a mesh it created, it unlocks it with the stored key " +
+            "by itself.",
+          "**Control the whole mesh** sends effects, sliders, brightness and crossfades through " +
+            "that fixture to all of them.",
+          "**Add a fixture to this mesh** runs the same set-up for more fixtures.",
+          "A fixture asking to join shows up with **Admit**. Admit only your own.",
+          "Tap a member to **Remove** it (it leaves and can be added again) or, for a lost or " +
+            "given-away fixture, **Block it for good** (the mesh changes its keys).",
+          "Only the phone or browser that created a mesh can manage it. If its data is cleared, " +
+            "reset each fixture's mesh from its USB console (`MESH LEAVE`) and create a new one.",
+        ],
+      },
+    ],
+  },
+  {
     id: "flashing",
     title: "Flashing firmware",
     icon: "chip",

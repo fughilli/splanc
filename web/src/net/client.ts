@@ -80,7 +80,8 @@ import { LiveControl, applyAt } from "./liveControl";
 import {
   meshAdminMessage,
   meshResultError,
-  wrapForMesh,
+  meshLargeSender,
+  meshRoute,
   type MeshAdminOp,
   type MeshAdminResultInfo,
   type MeshInfoMessage,
@@ -1838,10 +1839,12 @@ export class LedMapperClient {
   private send(msg: ClientMessage): boolean {
     if (this.sock === null || this.sock.readyState !== SOCKET_OPEN) return false;
     try {
-      // Whole-mesh control: relayable messages go through this fixture to every member;
-      // the reply is still this fixture's own (net/mesh.ts).
-      const wire = this.meshAll_ ? (wrapForMesh(msg, encodeClient) ?? msg) : msg;
-      this.sock.send(encodeClient(wire));
+      // Whole-mesh control: relayable messages go through this fixture to every member; the
+      // reply is still this fixture's own (net/mesh.ts). One too big for a mesh packet (an
+      // effect program) goes here directly and to the others through mesh effect sharing.
+      const route = this.meshAll_ ? meshRoute(msg, encodeClient) : ({ kind: "direct" } as const);
+      this.sock.send(encodeClient(route.kind === "wrap" ? route.wire : msg));
+      if (route.kind === "large") meshLargeSender()?.share(this, msg, route.inner);
       if (KIOSK_ACTIVITY_TYPES.has(msg.type as string)) for (const fn of this.activitySubs) fn();
       return true;
     } catch {

@@ -9,7 +9,7 @@
  * same frame; live slider moves go on arrival (they are superseded within milliseconds).
  *
  * Only the relay allow-list goes over the mesh (the firmware checks it too). Effect programs
- * bigger than one mesh packet reach only the connected fixture until effect sharing (M6).
+ * bigger than one mesh packet go through mesh effect sharing (`MeshLargeSender`, M6).
  */
 
 import type { ClientMessage } from "@ledmapper/protocol";
@@ -181,6 +181,33 @@ export function wrapForMesh(msg: ClientMessage, encode: (m: ClientMessage) => Ui
     wantReply: false,
     ...(lead > 0 ? { leadMs: lead } : {}),
   } as unknown as ClientMessage;
+}
+
+/** How a message goes out under "Control the whole mesh": wrapped in one mesh packet,
+ * shared as a large payload (an effect program bigger than one packet), or to the connected
+ * fixture alone (not relayable). */
+export type MeshRoute = { kind: "wrap"; wire: ClientMessage } | { kind: "large"; inner: Uint8Array } | { kind: "direct" };
+
+export function meshRoute(msg: ClientMessage, encode: (m: ClientMessage) => Uint8Array): MeshRoute {
+  const flat = msg as unknown as { type: string };
+  if (!MESH_RELAY_TYPES.has(flat.type)) return { kind: "direct" };
+  const wire = wrapForMesh(msg, encode);
+  return wire ? { kind: "wrap", wire } : { kind: "large", inner: encode(msg) };
+}
+
+/** Delivers a relayable message too big for one mesh packet (an effect program) to every
+ * member: mesh effect sharing (M6, firmware in progress). The connected fixture always gets
+ * the message directly as well; the sharer gets it to the others. Pluggable so the app's
+ * control paths stay the same when the firmware API lands. */
+export interface MeshLargeSender {
+  share(client: object, msg: ClientMessage, inner: Uint8Array): void;
+}
+let largeSender: MeshLargeSender | null = null;
+export function setMeshLargeSender(s: MeshLargeSender | null): void {
+  largeSender = s;
+}
+export function meshLargeSender(): MeshLargeSender | null {
+  return largeSender;
 }
 
 const SEND_ERRORS: Record<string, string> = {

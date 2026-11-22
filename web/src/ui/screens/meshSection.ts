@@ -1,0 +1,317 @@
+/**
+ * Device settings: the "Mesh" section (docs/design/mesh.md §9, mesh M5 + M7 membership).
+ * Only for players advertising "mesh" (deviceSheet.ts gates it; older firmware never sees
+ * a mesh message).
+ *
+ *  - Not in a mesh: "Create a mesh" (the dedicated flow, meshFlow.ts) and, when this app
+ *    already administers a mesh, "Add to <mesh>".
+ *  - In a mesh this app administers: the connection is unlocked with the stored admin key
+ *    automatically; the members (name, time sync, signal), fixtures waiting to join with
+ *    Admit, "Add a fixture to this mesh", "Remove from mesh", and the "Control the whole
+ *    mesh" switch (M5).
+ *  - In a closed mesh another phone administers: its status and where to manage it.
+ *  - A dev mesh (no admin key): the M5 status + switch, as before.
+ */
+
+import { Button, Sheet, Switch, confirmDialog, icon, toast } from "../kit";
+import type { MeshAdminOp, MeshAdminResultInfo, MeshStateInfo } from "../../net/mesh";
+import { admitPending, ejectMember, ensureUnlocked, leaveMesh, revokeMembers, MeshAdminFailure } from "../../net/meshAdmin";
+import { meshStore, type MeshRecord } from "../../store/meshStore";
+import { meshSignerLookup } from "../../store/meshSession";
+import { meshSectionModel, nodeLabel, type MeshMemberRow, type MeshSectionModel } from "./meshModel";
+import { installMeshStyles } from "./meshUi.css";
+import { toHex } from "../../net/meshKeys";
+
+export interface MeshSectionClient {
+  getMesh(timeoutMs?: number): Promise<MeshStateInfo>;
+  meshAdmin(op: MeshAdminOp, timeoutMs?: number): Promise<MeshAdminResultInfo>;
+  readonly meshAll: boolean;
+  setMeshAll(on: boolean): void;
+}
+
+export interface MeshSectionOpts {
+  /** The connected fixture's saved-device id and name. */
+  deviceId: string;
+  deviceName: string;
+  onChange?: (on: boolean) => void;
+  onShown?: (shown: boolean) => void;
+  /** Leave the sheet for a route (the flow). */
+  navigate?: (hash: string) => void;
+}
+
+/** How often the open section re-reads the mesh (joiners, sync, members). */
+const POLL_MS = 3000;
+
+function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): HTMLElement {
+  installMeshStyles();
+  const el = h("div", "mesh-section");
+  el.hidden = true;
+  const go = (hash: string): void => (opts.navigate ? opts.navigate(hash) : void (location.hash = hash));
+  let lastKey = "";
+  let busy = false;
+
+  const render = (m: MeshSectionModel, rec: MeshRecord | undefined, meshes: MeshRecord[]): void => {
+    // Re-render only on a visible change (the poll must not reset a focused button).
+    const key = JSON.stringify([m, meshes.map((x) => [x.meshId, x.name])]);
+    if (key === lastKey) return;
+    lastKey = key;
+    el.replaceChildren();
+    el.hidden = false;
+    opts.onShown?.(true);
+    el.append(h("div", "device-detail-cap", m.kind === "none" ? "Mesh" : m.meshName));
+    el.append(h("div", "mesh-status-line", m.status));
+
+    if (m.kind === "none") {
+      const actions = h("div", "mesh-actions");
+      const from = encodeURIComponent(opts.deviceId);
+      for (const x of meshes) {
+        actions.append(Button({ label: `Add to “${x.name}”`, icon: "plus", onClick: () => go(`#/mesh/add/${x.meshId}?from=${from}`) }));
+      }
+      actions.append(
+        Button({
+          label: "Create a mesh",
+          icon: "graph",
+          variant: meshes.length ? "quiet" : "primary",
+          onClick: () => go(`#/mesh/new?from=${from}`),
+        }),
+      );
+      el.append(actions);
+      return;
+    }
+    if (m.kind === "joining") return;
+
+    if (m.canControl) el.append(controlRow(m.members.length - 1));
+
+    el.append(h("div", "mesh-sub", "Fixtures in this mesh"));
+    const list = h("ul", "mesh-members");
+    for (const row of m.members) list.append(memberItem(row, m, rec));
+    el.append(list);
+
+    if (m.pending.length) {
+      const box = h("div", "mesh-pending");
+      box.append(h("div", "mesh-pending-title", m.pending.length === 1 ? "A new fixture wants to join" : `${m.pending.length} new fixtures want to join`));
+      for (const p of m.pending) {
+        const row = h("div", "mesh-pending-row");
+        const text = h("div", "mesh-row-text");
+        text.append(h("span", "mesh-row-title", nodeLabel(p.node ?? 0)), h("span", "mesh-row-hint", "Nearby, asking to join. Admit it only if it is yours."));
+        const admit = Button({
+          label: "Admit",
+          variant: "primary",
+          onClick: () =>
+            void act(admit, async () => {
+              await admitPending(client, p);
+              if (rec && p.node && p.keyHash) {
+                await meshStore.putMember(rec.meshId, { deviceId: "", label: nodeLabel(p.node), node: p.node, keyHash: toHex(p.keyHash) });
+              }
+              toast(`${nodeLabel(p.node ?? 0)} admitted`);
+            }),
+        });
+        row.append(text, admit);
+        box.append(row);
+      }
+      el.append(box);
+    }
+
+    if (m.kind === "foreign") {
+      el.append(
+        h(
+          "div",
+          "mesh-row-hint",
+          "This mesh was created on another phone or browser, which holds its admin key. Manage it there. " +
+            "If that key is lost, reset the fixture's mesh from its USB console (MESH LEAVE).",
+        ),
+      );
+      return;
+    }
+    if (m.kind === "admin" && rec) {
+      const actions = h("div", "mesh-actions");
+      actions.append(
+        Button({ label: "Add a fixture to this mesh", icon: "plus", onClick: () => go(`#/mesh/add/${rec.meshId}`) }),
+        Button({ label: "Remove from mesh", variant: "quiet", onClick: () => openMemberSheet(m.members[0]!, m, rec) }),
+      );
+      el.append(actions);
+    }
+  };
+
+  const controlRow = (others: number): HTMLElement => {
+    const row = h("div", "mesh-row");
+    const text = h("div", "mesh-row-text");
+    const title = h("span", "mesh-row-title", "Control the whole mesh");
+    title.id = "mesh-all-title";
+    text.append(
+      title,
+      h(
+        "span",
+        "mesh-row-hint",
+        `Effects, sliders, brightness and crossfades also go to the ${others} other fixture${others === 1 ? "" : "s"}, on the same frame.`,
+      ),
+    );
+    const sw = Switch({
+      on: client.meshAll,
+      label: "Control the whole mesh",
+      onChange: (v) => {
+        client.setMeshAll(v);
+        opts.onChange?.(v);
+      },
+    });
+    sw.el.setAttribute("aria-labelledby", title.id);
+    row.append(text, sw.el);
+    return row;
+  };
+
+  const memberItem = (row: MeshMemberRow, m: MeshSectionModel, rec: MeshRecord | undefined): HTMLElement => {
+    const li = h("li", "");
+    const b = h("button", "mesh-member");
+    b.type = "button";
+    const dot = h("span", row.synced ? "mesh-member-dot mesh-member-dot--ok" : "mesh-member-dot");
+    const text = h("span", "mesh-row-text");
+    text.append(h("span", "mesh-member-name", row.self ? `${row.name} (this one)` : row.name), h("span", "mesh-member-detail", row.detail));
+    const chev = h("span", "mesh-member-chev");
+    chev.append(icon("chevron"));
+    b.append(dot, text, chev);
+    b.addEventListener("click", () => openMemberSheet(row, m, rec));
+    li.append(b);
+    return li;
+  };
+
+  const openMemberSheet = (row: MeshMemberRow, m: MeshSectionModel, rec: MeshRecord | undefined): void => {
+    const sheet = Sheet(row.self ? `${row.name} (this one)` : row.name);
+    const body = h("div", "mesh-sheet");
+    const kv = (k: string, v: string): HTMLElement => {
+      const r = h("div", "mesh-kv");
+      r.append(h("span", "", k), h("span", "", v));
+      return r;
+    };
+    body.append(kv("Mesh", m.meshName), kv("Status", row.detail), kv("Mesh node", nodeLabel(row.node).replace("Fixture ", "")));
+    if (m.kind !== "admin" || !rec) {
+      body.append(h("div", "mesh-row-hint", "Only the phone or browser that created this mesh can remove fixtures from it."));
+      sheet.body.append(body);
+      return;
+    }
+    const actions = h("div", "mesh-actions");
+    const canEject = row.self || row.keyHash !== null;
+    if (!canEject) {
+      body.append(h("div", "mesh-row-hint", "This app did not add this fixture, so it does not know its key. Connect to it and remove it from its own Mesh section."));
+    }
+    const remove = Button({
+      label: row.self ? "Remove this fixture from the mesh" : "Remove from mesh",
+      variant: "danger",
+      disabled: !canEject,
+      onClick: () =>
+        void (async () => {
+          const ok = await confirmDialog({
+            title: `Remove ${row.name}?`,
+            message: row.self
+              ? `It leaves “${m.meshName}” and turns its mesh off. You can add it again later.`
+              : `It leaves “${m.meshName}” and turns its mesh off. The other fixtures keep playing. You can add it again later.`,
+            confirmLabel: "Remove",
+            danger: true,
+          });
+          if (!ok) return;
+          await act(remove, async () => {
+            if (row.self) {
+              const tok = await meshStore.provisionerToken(rec.meshId, row.node).catch(() => null);
+              try {
+                await leaveMesh(client, tok);
+              } finally {
+                tok?.fill(0);
+              }
+            }
+            else await ejectMember(client, row.node, row.keyHash!);
+            await meshStore.dropMember(rec.meshId, row.node);
+            toast(`${row.name} removed from the mesh`);
+            sheet.close();
+          });
+        })(),
+    });
+    actions.append(remove);
+    if (!row.self && row.keyHash !== null) {
+      const block = Button({
+        label: "Block it for good…",
+        variant: "quiet",
+        onClick: () =>
+          void (async () => {
+            const ok = await confirmDialog({
+              title: `Block ${row.name} for good?`,
+              message:
+                "For a lost or given-away fixture. The mesh changes its keys and this fixture can never rejoin, even with a reset. " +
+                "Its mesh turns useless within a minute; the others keep playing.",
+              confirmLabel: "Block for good",
+              danger: true,
+            });
+            if (!ok) return;
+            await act(block, async () => {
+              const signer = await meshStore.signer(rec.meshId);
+              const r = await revokeMembers(client, signer, rec, [{ node: row.node, keyHash: row.keyHash! }]);
+              try {
+                await meshStore.rotated(rec.meshId, r);
+              } finally {
+                r.siteSecret.fill(0);
+              }
+              toast(`${row.name} blocked; the mesh has new keys`);
+              sheet.close();
+            });
+          })(),
+      });
+      actions.append(block);
+    }
+    body.append(actions);
+    sheet.body.append(body);
+  };
+
+  const act = async (btn: HTMLButtonElement, fn: () => Promise<void>): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    btn.disabled = true;
+    try {
+      await fn();
+      lastKey = "";
+      await refresh();
+    } catch (e) {
+      toast(e instanceof MeshAdminFailure ? `The fixture said: ${e.message}` : `Couldn't do that: ${(e as Error).message}`, { error: true });
+    } finally {
+      busy = false;
+      btn.disabled = false;
+    }
+  };
+
+  const hide = (): void => {
+    el.hidden = true;
+    opts.onShown?.(false);
+  };
+
+  const refresh = async (): Promise<void> => {
+    let s = await client.getMesh();
+    const meshes = await meshStore.list().catch(() => [] as MeshRecord[]);
+    const rec = s.on ? meshes.find((x) => x.meshId === (s.meshId ?? 0) >>> 0) : undefined;
+    // Unlock this connection with the stored key (once per connection; renewed near expiry).
+    if (rec && s.member && s.adminKey) {
+      const before = s.session;
+      if ((await ensureUnlocked(client as unknown as MeshSectionClient & object, meshSignerLookup, s)) && !before) {
+        s = await client.getMesh();
+      }
+    }
+    render(meshSectionModel(s, rec, opts.deviceName), rec, s.on ? [] : meshes);
+  };
+
+  const tick = (): void => {
+    if (!el.isConnected) return; // the sheet re-rendered or closed
+    if (!busy) void refresh().catch(() => (lastKey === "" ? hide() : undefined));
+    setTimeout(tick, POLL_MS);
+  };
+  try {
+    void refresh()
+      .then(() => setTimeout(tick, POLL_MS))
+      .catch(hide);
+  } catch {
+    hide();
+  }
+  return el;
+}
