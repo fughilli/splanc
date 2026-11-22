@@ -1,6 +1,7 @@
 # brcmfmac (+ brcmutil and the vendor modules) rebuilt for the image kernel with the
-# action-frame series (0001-0004, sent upstream to wireless-next) and the 6.12 channel
-# backport (0005). Only the driver is rebuilt, from the kernel's own source, config and
+# action-frame series (0001-0004, sent upstream to wireless-next), the 6.12 channel
+# backport (0005) and a local patch that sends non-P2P action frames without the 40 ms
+# pre-send delay (0006). Only the driver is rebuilt, from the kernel's own source, config and
 # patches; the modules go to lib/modules/<ver>/updates, which depmod prefers over the
 # kernel's own copies. The kernel's `dev` output is not cached anywhere we pull from (the
 # kernel `out` is, on fugstudio.cachix.org), so the build reads the MODVERSIONS CRCs of
@@ -40,6 +41,7 @@ kernel.stdenv.mkDerivation {
     ./0003-wifi-brcmfmac-do-not-wait-for-an-ACK-of-group-addres.patch
     ./0004-wifi-brcmfmac-send-action-frames-that-are-not-P2P-GA.patch
     ./0005-wifi-brcmfmac-mgmt_tx-channel-number-6.12-backport.patch
+    ./0006-wifi-brcmfmac-send-other-action-frames-without-the-retry-delay.patch
   ];
 
   nativeBuildInputs = (kernel.moduleBuildDependencies or [ ]) ++ [
