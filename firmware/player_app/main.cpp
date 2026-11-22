@@ -398,11 +398,12 @@ extern "C" uint32_t lm_prio_below_render() {
 extern "C" void lm_prio_restore(uint32_t prio) {
   if (uxTaskPriorityGet(nullptr) != (UBaseType_t)prio) vTaskPrioritySet(nullptr, (UBaseType_t)prio);
 }
-// render: static bound ~3.8 KB (stack_bound_test; render_once -> the FX VM -> a sensor
+// render: static bound ~3.9 KB (stack_bound_test; render_once -> the FX VM -> a sensor
 // driver's I2C bus recovery, whose Log().printf runs ROM vsnprintf, ~1.5 KB on its own;
-// JIT segments use no machine stack), so 5 KB is what the gate's x1.25 + ISR context
-// needs. The measured high-water (~0.8 KB, `[stack]` status line) is NOT a sizing basis.
-static const uint32_t kRenderTaskStack = 5120;
+// JIT segments use no machine stack), so 5.25 KB is what the gate's x1.25 + ISR context
+// needs (5 KB until the lamp-power trigger/GPIO intrinsics put the bound at 3,856 B).
+// The measured high-water (~0.8 KB, `[stack]` status line) is NOT a sizing basis.
+static const uint32_t kRenderTaskStack = 5376;
 // xmit: just stages/sends the LED frame; static bound ~0.9 KB (stack_bound_test; the gate
 // needs 1.4 KB), measured ~0.5 KB. It must never format a log line (ROM vsnprintf is
 // ~1.5 KB): its outcomes are handed to loop() to log (g_hw_reconfig_result).
