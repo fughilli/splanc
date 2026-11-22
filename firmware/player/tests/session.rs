@@ -1267,3 +1267,95 @@ fn reserved_gpios_are_refused() {
         panic!("Ethernet off: the pin is free again");
     };
 }
+
+/// Rolling stride (docs/design/rolling-stride.md): start_mapping strideMode
+/// "rolling" masks with the kernel's stride_lit_rolling at the ABSOLUTE
+/// pattern frame — only on a player advertising FEATURE_STRIDE_ROLLING. Others
+/// keep the phased schedule and don't echo a mode, so the phone knows to
+/// rotate phases itself. Configure keeps the mode; a bad dwell is refused.
+#[test]
+fn rolling_stride_only_when_advertised_and_masks_by_absolute_frame() {
+    fn start(player: &mut Player, mode: Option<&str>, dwell: Option<i32>) -> SMsg {
+        let mut opts = pb::StartMappingOptions::default();
+        opts.r#led_count = 40;
+        opts.set_symbols(4);
+        opts.set_stride_spacing(3);
+        opts.set_anchor_density(3);
+        opts.set_sync_pattern(micropb::heapless::String::try_from("stagger_pilot").unwrap());
+        if let Some(m) = mode {
+            opts.set_stride_mode(micropb::heapless::String::try_from(m).unwrap());
+        }
+        if let Some(d) = dwell {
+            opts.set_dwell_cycles(d);
+        }
+        let mut start = pb::StartMapping::default();
+        start.set_options(opts);
+        send(player, CMsg::StartMapping(start), 1000.0).expect("reply")
+    }
+    // No feature: phased, no echo.
+    let mut fw = Player::new("esp32-0007", 64);
+    send(&mut fw, CMsg::Hello(pb::Hello::default()), 1.0);
+    let SMsg::MappingStarted(st) = start(&mut fw, Some("rolling"), None) else { panic!("mapping_started") };
+    assert_eq!(st.r#code_params.r#stride_mode(), None, "phased: no mode echo");
+    assert_eq!(st.r#code_params.r#dwell_cycles(), None);
+    assert_eq!(fw.pattern_color(1, 0), Some((0, 0, 0)), "phased phase 0 lights class 0 only");
+
+    static FEATS: &[&str] = &[ledmapper_player::FEATURE_STAGGER_PILOT, ledmapper_player::FEATURE_STRIDE_ROLLING];
+    let mut host = Player::new("host-0002", 64);
+    host.set_features(FEATS, 0);
+    send(&mut host, CMsg::Hello(pb::Hello::default()), 1.0);
+    // Unrequested: phased.
+    let SMsg::MappingStarted(st) = start(&mut host, None, None) else { panic!("mapping_started") };
+    assert_eq!(st.r#code_params.r#stride_mode(), None);
+    // A bad dwell is refused.
+    assert!(matches!(start(&mut host, Some("rolling"), Some(0)), SMsg::Error(_)));
+    assert!(matches!(start(&mut host, Some("diagonal"), None), SMsg::Error(_)));
+    // Rolling, default dwell 4.
+    let SMsg::MappingStarted(st) = start(&mut host, Some("rolling"), None) else { panic!("mapping_started") };
+    let cp = &st.r#code_params;
+    assert_eq!(cp.r#stride_mode().map(|s| s.as_str()), Some("rolling"));
+    assert_eq!(cp.r#dwell_cycles().copied(), Some(pat::ROLLING_DWELL_DEFAULT as i32));
+    let spec = pat::CodeSpec::derive_sync(40, 4, true, pat::SyncPattern::StaggerPilot);
+    assert_eq!(cp.r#cycle_frames as u32, spec.cycle_frames);
+    let rs = pat::RollingStride::new(3, 3, 4, 40, 0);
+    let check = |player: &Player, rs: &pat::RollingStride| {
+        // Two periods of ABSOLUTE frames (well past one cycle): the mask is the
+        // kernel's, lit LEDs show their code colour at seq mod C.
+        for seq in 0..2 * rs.period_frames(&spec) {
+            for led in 0..40 {
+                let got = player.pattern_color(led, seq).expect("active");
+                if pat::stride_lit_rolling(led, seq, &spec, rs) {
+                    let want = pat::color_for_frame(led, seq % spec.cycle_frames, &spec);
+                    assert_eq!(got, want, "lit led {led} seq {seq}");
+                } else {
+                    assert_eq!(got, (0, 0, 0), "masked led {led} seq {seq}");
+                }
+            }
+        }
+    };
+    check(&host, &rs);
+    // A brightness-only Configure keeps rolling (and the dwell).
+    let mut copts = pb::ConfigureOptions::default();
+    copts.set_dwell_cycles(3);
+    let mut configure = pb::Configure::default();
+    configure.set_options(copts);
+    let Some(SMsg::PatternState(ps)) = send(&mut host, CMsg::Configure(configure), 2000.0) else {
+        panic!("pattern_state")
+    };
+    assert_eq!(ps.r#code_params.r#stride_mode().map(|s| s.as_str()), Some("rolling"));
+    assert_eq!(ps.r#code_params.r#dwell_cycles().copied(), Some(3));
+    check(&host, &pat::RollingStride::new(3, 3, 3, 40, 0));
+    // ...and Configure strideMode "phased" switches back.
+    let mut copts = pb::ConfigureOptions::default();
+    copts.set_stride_mode(micropb::heapless::String::try_from("phased").unwrap());
+    let mut configure = pb::Configure::default();
+    configure.set_options(copts);
+    let Some(SMsg::PatternState(ps)) = send(&mut host, CMsg::Configure(configure), 3000.0) else {
+        panic!("pattern_state")
+    };
+    assert_eq!(ps.r#code_params.r#stride_mode(), None);
+    for led in 0..40 {
+        let lit = host.pattern_color(led, 500).unwrap() != (0, 0, 0);
+        assert_eq!(lit, pat::stride_lit(led, 0, 3, 3), "phased again: led {led}");
+    }
+}

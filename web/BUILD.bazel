@@ -278,6 +278,11 @@ _TEST_SOURCE_DATA = {
         ":kernel_golden_stagger16",
         ":kernel_golden_stagger16_sym4",
     ],
+    # The kernel's rolling-stride golden (docs/design/rolling-stride.md),
+    # checked through the wasm binding.
+    "tests/rollingStride.test.ts": [
+        ":kernel_golden_stride_rolling",
+    ],
     # Real diffused-rope frames + exact LED centres (tests/tools/build_diffuse_dataset.py).
     "tests/diffuseRope.test.ts": glob(["tests/testdata/diffuse_rope/**"]),
 }
@@ -294,6 +299,7 @@ _TEST_SOURCE_DATA = {
     for g in [
         "golden_stagger16",
         "golden_stagger16_sym4",
+        "golden_stride_rolling",
     ]
 ]
 

@@ -29,9 +29,18 @@ use std::path::PathBuf;
 /// effect time follows the shared epoch (crate::clock); host_main appends the
 /// `output_latency_ms=N` report. `hue_stagger_pilot`: this host player runs the
 /// hue code v2 staggered pilot when a start_mapping asks for it
-/// (ledmapper_player::FEATURE_STAGGER_PILOT).
-pub const FEATURES: &[&str] =
-    &["effects", "list_effects", "uniform_commit", "control_ack", crate::clock::FEATURE_TIME_BASE, "hue_stagger_pilot"];
+/// (ledmapper_player::FEATURE_STAGGER_PILOT). `stride_rolling`: it runs the
+/// rolling stride (render.rs passes the absolute pattern frame;
+/// ledmapper_player::FEATURE_STRIDE_ROLLING).
+pub const FEATURES: &[&str] = &[
+    "effects",
+    "list_effects",
+    "uniform_commit",
+    "control_ack",
+    crate::clock::FEATURE_TIME_BASE,
+    "hue_stagger_pilot",
+    "stride_rolling",
+];
 
 /// ClientMessage oneof field numbers this layer handles.
 const ARM_SUBMIT_MAP: u32 = 13;

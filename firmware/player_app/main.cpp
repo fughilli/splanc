@@ -2431,12 +2431,17 @@ static uint32_t render_once() {
     int64_t since_ms = (int64_t)millis() - epoch_ms;
     if (since_ms < 0) since_ms = 0;
     uint32_t seq = (uint32_t)(((uint64_t)since_ms * 1000ULL) / bit_period_us);
-    uint32_t frame_index = seq % cycle_frames;
-    if (frame_index != last_shown_frame) {
+    // Redraw on every new ABSOLUTE frame (not just a new cycle frame): the
+    // rolling stride's mask changes with seq, and a stall of exactly one cycle
+    // would otherwise leave a stale mask up.
+    (void)cycle_frames;
+    if (seq != last_shown_frame) {
       uint32_t n = led_count < g_led_cap ? led_count : g_led_cap;
       xmit_len = n;  // drive exactly the mapping strip
       for (uint32_t i = 0; i < n; i++) {
-        if (lm_pattern_color(i, frame_index, rgb)) {
+        // The ABSOLUTE frame: the rolling stride masks by it (the core reduces
+        // it modulo cycle_frames for the code itself).
+        if (lm_pattern_color(i, seq, rgb)) {
           leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
         }
       }
@@ -2449,7 +2454,7 @@ static uint32_t render_once() {
       // drained by the phone via get_frame_timing. micros() wraps ~71 min; the
       // analysis uses only deltas, so the one wrap-straddling gap is ignored.
       lm_pattern_frame_shown(seq, micros());
-      last_shown_frame = frame_index;
+      last_shown_frame = seq;
       show = true;
     }
     // Sleep until the NEXT frame boundary (seq+1), so we land on the clock.

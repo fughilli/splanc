@@ -108,6 +108,16 @@ message CodeParams {
   // SHARED code-book size (every fixture in the group derives the same bits /
   // cycle_frames from it). Unset = 0 (single-fixture capture).
   optional int32 code_offset = 13;
+  // Rolling stride (docs/design/rolling-stride.md; stride_lit_rolling in
+  // firmware/pattern): "rolling" when the lit subset is the pure function of
+  // (LED, pattern-clock frame) — blocks of anchor_density*stride_spacing LEDs
+  // each stepping their offset on their own clock, every dwell_cycles code
+  // cycles — so the phone never reconfigures to stride (stride_phase is then
+  // unused). Unset/"phased" = the stride_phase schedule above. Echoes what the
+  // device is driving; only set while striding is on.
+  optional string stride_mode = 14;
+  // Rolling dwell D in code cycles (the clamped value the kernel runs).
+  optional int32 dwell_cycles = 15;
 }
 
 // One labeled observation of one LED in one frame (§7.4).
@@ -312,6 +322,12 @@ message StartMappingOptions {
   // reply's code_params.sync_pattern, which is what the client decodes.
   // Unset = "on_off".
   optional string sync_pattern = 12;
+  // Requested stride schedule (CodeParams.stride_mode): "rolling" on players
+  // advertising the "stride_rolling" feature, else (or unset) "phased". A
+  // player without the feature runs phased and its reply says so.
+  optional string stride_mode = 13;
+  // Rolling dwell D in code cycles (unset = the kernel default, 4).
+  optional int32 dwell_cycles = 14;
 }
 
 message StartMapping {
@@ -325,9 +341,15 @@ message ConfigureOptions {
   optional double brightness = 4;
   // Diffuse-capture striding (see StartMappingOptions). The phone re-sends this
   // each epoch to ADVANCE the phase (Configure restamps the pattern epoch).
+  // In rolling mode nothing is re-sent to stride; spacing/anchor still change
+  // the geometry (the diffuse servo's stride on/off).
   optional int32 stride_spacing = 5;
   optional int32 anchor_density = 6;
   optional int32 stride_phase = 7;
+  // Stride schedule / rolling dwell (see StartMappingOptions); unset keeps the
+  // active capture's.
+  optional string stride_mode = 8;
+  optional int32 dwell_cycles = 9;
 }
 
 // Mid-capture renegotiation; reply is PatternState with the new epoch.
