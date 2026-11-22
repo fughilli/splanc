@@ -1788,6 +1788,7 @@ extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uin
     // -4: mesh_admin provision / leave (M7): the mesh comes on first, then handles it (a
     // join persists the state; leave erases it and turns the mesh off again).
     if (r != -4) return r;
+    lm_mesh::BelowRender below;  // building the mesh (PR-40)
     if (!lm_mesh::on()) return -2;  // the player core answers error{unsupported}
   }
   return ns_mesh_app(g_mesh, conn, in, (uint32_t)len, esp_timer_get_time(), out, (uint32_t)cap, inner, inner_len);

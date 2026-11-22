@@ -104,3 +104,21 @@ test("mesh_admin (M7): the wire both ways, and the firmware's answer", async () 
   assert.match(meshAdminError(m.admin) ?? "", /grant was refused/);
   assert.equal(meshAdminError({ op: 1, error: "MESH_ADMIN_OK" }), null);
 });
+
+test("mesh_admin provisioner token (D-324): issued on provision, presented on leave", async () => {
+  const { meshAdminMessage } = await import("../src/net/mesh");
+  const tok = new Uint8Array(16).fill(9);
+  // proto3 JSON: bytes come back base64.
+  const bytes = (v: unknown): number[] =>
+    typeof v === "string" ? Array.from(Buffer.from(v, "base64")) : Array.from((v as Uint8Array | undefined) ?? []);
+  const back = decodeClient(encodeClient(meshAdminMessage({ leave: { provisionerToken: tok } }))) as unknown as {
+    leave: { provisionerToken?: Uint8Array };
+  };
+  assert.deepEqual(bytes(back.leave.provisionerToken), Array.from(tok));
+  // A bare leave still encodes (the old shape).
+  assert.ok(encodeClient(meshAdminMessage({ leave: {} })).length > 0);
+  // ServerMessage{mesh{admin{op: PROVISION, value: 0, provisioner_token}}} as encode_admin writes it.
+  const ans = "ba031a" + "1a18" + "0801" + "1000" + "1800" + "2210" + "09".repeat(16);
+  const m = decodeServer(unhex(ans)) as unknown as MeshInfoMessage;
+  assert.deepEqual(bytes(m.admin?.provisionerToken), Array.from(tok));
+});

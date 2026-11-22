@@ -107,6 +107,12 @@ uint32_t ns_mesh_dev_forge(void *m, uint32_t kind, const uint8_t *data, uint32_t
 // main.cpp: the persisted membership (/lfs/mesh.bin); store(nullptr, 0) erases it.
 uint32_t lm_mesh_state_load(uint8_t *buf, uint32_t cap) __attribute__((weak));
 uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) __attribute__((weak));
+// main.cpp: drop the calling task (loopTask) strictly below the render task for a span of
+// mesh work, returning its priority for lm_prio_restore. Crypto never blocks render (PR-40):
+// loopTask shares render's priority while a client is on a settled link (#371), and a
+// 10-55 ms ECDSA/ECDH there would round-robin with frames.
+uint32_t lm_prio_below_render() __attribute__((weak));
+void lm_prio_restore(uint32_t prio) __attribute__((weak));
 uint8_t *ns_mesh_xfer(void *m, uint32_t *cap) __attribute__((weak));
 uint32_t ns_mesh_status_due(void *m, int64_t now_us) __attribute__((weak));
 void ns_mesh_conns(void *m, uint32_t ws, uint32_t ble) __attribute__((weak));
@@ -150,6 +156,19 @@ extern "C" uint32_t lm_mesh_ecdh(const uint8_t *peer, uint8_t *out) {
 }
 
 namespace lm_mesh {
+
+// Mesh work (the tick, session crypto, joins, the app's mesh arms: grant and rotation-order
+// verifies) runs below the render task, whatever loopTask's priority is (PR-40).
+struct BelowRender {
+  uint32_t prio;
+  bool on;
+  BelowRender() : prio(0), on(lm_prio_below_render != nullptr) {
+    if (on) prio = lm_prio_below_render();
+  }
+  ~BelowRender() {
+    if (on) lm_prio_restore(prio);
+  }
+};
 
 // Stack for building the MeshStack in place: ns_mesh_create's worst path is 19.6 KB (the
 // ELF call graph, long calls included; MeshStack::init_in 11.3 KB + NetOf::new 4 KB + ...),
@@ -308,13 +327,15 @@ void off() {
 // transport keeps no buffer for it), and turn the mesh off if it left its mesh.
 void persist() {
   if (!ns_mesh_persist || !ns_mesh_get(g_mesh, 9)) return;
+  const int64_t t0 = esp_timer_get_time();
   uint32_t cap = ns_mesh_state_len();
   uint8_t *b = static_cast<uint8_t *>(malloc(cap));
   if (!b) return;  // retried next pass (dirty stays set only if persist was not called)
   int32_t r = ns_mesh_persist(g_mesh, b, cap);
   if (r != 0 && lm_mesh_state_store) {
     uint32_t ok = lm_mesh_state_store(r > 0 ? b : nullptr, r > 0 ? (uint32_t)r : 0);
-    Serial.printf("[mesh] state %s %s\n", r > 0 ? "saved" : "erased", ok ? "ok" : "FAILED");
+    Serial.printf("[mesh] state %s %s us=%lu\n", r > 0 ? "saved" : "erased", ok ? "ok" : "FAILED",
+                  (unsigned long)(esp_timer_get_time() - t0));
   }
   memset(b, 0, cap);
   free(b);
@@ -343,6 +364,7 @@ void report(uint32_t what) {
 
 // One loop pass while the mesh is on. `assoc`: associated to the AP (the join is DONE).
 void service(bool assoc) {
+  BelowRender below;  // the whole pass: tick (joins, rotation orders), crypto job, persist
   // The TSF next to esp_timer (mesh time's RX-stamp mapping; a wide bracket is skipped).
   if (uint32_t mode = ns_mesh_get(g_mesh, 5)) {
     int64_t e0 = esp_timer_get_time();

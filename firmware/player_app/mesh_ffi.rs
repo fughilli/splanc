@@ -87,6 +87,19 @@ extern "C" {
     // op 0 = get (1: set, in *epoch_ms; 0: none), 1 = put *epoch_ms and shift the queued
     // apply_at changes by `shift_ms`, 2 = clear, 3 = frame alignment on (*epoch_ms != 0).
     fn lm_mesh_tb(op: i32, epoch_ms: *mut i64, shift_ms: i64) -> i32;
+    // main.cpp: loopTask strictly below the render task for a span (PR-40), and back.
+    fn lm_prio_below_render() -> u32;
+    fn lm_prio_restore(prio: u32);
+}
+
+/// Runs `f` below the render task's priority (PR-40: crypto never blocks render). loopTask
+/// shares render's priority while a client is on a settled link (#371); an ECDSA verify or
+/// an ECDH there (10-55 ms on a C6) would round-robin with frames.
+pub(crate) fn below_render<T>(f: impl FnOnce() -> T) -> T {
+    let p = unsafe { lm_prio_below_render() };
+    let r = f();
+    unsafe { lm_prio_restore(p) };
+    r
 }
 
 /// How often the player's time base is reconciled with the mesh's epoch.
@@ -285,6 +298,22 @@ pub struct Mesh {
     want_off: bool,
     crypto_us_max: u32,
     crypto_us_last: u32,
+    /// The provisioner's token (desk D-324): issued to the connection that provisioned this
+    /// fixture into its mesh, persisted with the membership; it lets that user leave or
+    /// re-provision without an admin grant. Erased with the membership.
+    pub(crate) owner_token: Option<[u8; OWNER_TOKEN_LEN]>,
+}
+
+/// Bytes of the provisioner token (D-324).
+pub const OWNER_TOKEN_LEN: usize = 16;
+/// The persisted record: the crate's state, then a flag and the provisioner token.
+const RECORD_LEN: usize = STATE_LEN + 1 + OWNER_TOKEN_LEN;
+
+/// 16 random bytes from the C6's RNG (a provisioner token).
+pub(crate) fn random_token() -> [u8; OWNER_TOKEN_LEN] {
+    let mut t = [0u8; OWNER_TOKEN_LEN];
+    EspRng.fill(&mut t);
+    t
 }
 
 impl Mesh {
@@ -394,6 +423,7 @@ pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8
     f!((*p).want_off).write(false);
     f!((*p).crypto_us_max).write(0);
     f!((*p).crypto_us_last).write(0);
+    f!((*p).owner_token).write(None);
     p
 }
 
@@ -410,7 +440,13 @@ unsafe fn build_stack(dst: *mut Stack, me: NodeId, mac: [u8; 6], channel: u8, co
 #[no_mangle]
 pub unsafe extern "C" fn ns_mesh_restore(m: *mut Mesh, state: *const u8, len: u32, now_us: i64) -> u32 {
     let m = &mut *m;
-    let Some(s) = MeshState::decode(core::slice::from_raw_parts(state, len as usize)) else {
+    let b = core::slice::from_raw_parts(state, len as usize);
+    // A record with the provisioner token (D-324), or a bare state (written before it).
+    let (b, tok) = match b.len() {
+        RECORD_LEN => (&b[..STATE_LEN], (b[STATE_LEN] == 1).then(|| b[STATE_LEN + 1..].try_into().unwrap_or([0; OWNER_TOKEN_LEN]))),
+        _ => (b, None),
+    };
+    let Some(s) = MeshState::decode(b) else {
         m.log(format_args!("[mesh] stored state unusable ({len} B): not restored"));
         return 0;
     };
@@ -418,6 +454,7 @@ pub unsafe extern "C" fn ns_mesh_restore(m: *mut Mesh, state: *const u8, len: u3
     m.stack.restore(now_us, s);
     m.provisioned_us = Some(now_us);
     m.persist = true;
+    m.owner_token = tok;
     let me = m.stack.me();
     m.log(format_args!(
         "[mesh] restored id={me:04x} mesh_id={:08x} epoch={} mode={} admin_key={} site_secret={} revoked={} groups={}",
@@ -444,16 +481,28 @@ pub unsafe extern "C" fn ns_mesh_persist(m: *mut Mesh, out: *mut u8, cap: u32) -
     if !m.persist {
         return 0;
     }
+    let out = core::slice::from_raw_parts_mut(out, cap as usize);
     match m.stack.membership.state {
-        None => -1,
-        Some(s) => s.encode_into(core::slice::from_raw_parts_mut(out, cap as usize)) as i32,
+        None => {
+            m.owner_token = None;
+            -1
+        }
+        Some(_) if out.len() < RECORD_LEN => 0,
+        Some(s) => {
+            if s.encode_into(&mut out[..STATE_LEN]) != STATE_LEN {
+                return 0;
+            }
+            out[STATE_LEN] = m.owner_token.is_some() as u8;
+            out[STATE_LEN + 1..RECORD_LEN].copy_from_slice(&m.owner_token.unwrap_or([0; OWNER_TOKEN_LEN]));
+            RECORD_LEN as i32
+        }
     }
 }
 
 /// Bytes of the persisted state.
 #[no_mangle]
 pub extern "C" fn ns_mesh_state_len() -> u32 {
-    STATE_LEN as u32
+    RECORD_LEN as u32
 }
 
 /// One session crypto job (a grant's ECDSA verify plus an ECDH, or a member Ack's ECDH),
@@ -1269,6 +1318,12 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 #[cfg(test)]
 mod stubs {
     #[no_mangle]
+    extern "C" fn lm_prio_below_render() -> u32 {
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_prio_restore(_: u32) {}
+    #[no_mangle]
     extern "C" fn ns_mac_send_p2p(_: *const u8, _: u32, _: u32, _: u32, _: u32, _: u32) -> u32 {
         1
     }
@@ -1385,7 +1440,11 @@ mod tests {
             out[..n as usize].to_vec()
         };
         // ServerMessage{mesh{admin{op, error}}}: the error byte, 0 if absent (OK).
-        let error = |r: &[u8]| -> u8 { r.windows(1).zip(r.iter().skip(1)).find(|(w, _)| w[0] == 0x10).map_or(0, |(_, e)| *e) };
+        let error = |r: &[u8]| -> u8 {
+            // Before the provisioner token (field 4, 16 bytes), whose bytes could look like a tag.
+            let r = &r[..r.windows(2).position(|w| w == [0x22, 16]).unwrap_or(r.len())];
+            r.windows(1).zip(r.iter().skip(1)).find(|(w, _)| w[0] == 0x10).map_or(0, |(_, e)| *e)
+        };
         const MESH: u32 = 0x5350_4c37;
         let admin = AdminSigner::from_secret(b"m7-admin-secret!", MESH);
         let mut block = vec![0u8; ns_mesh_size() as usize];
@@ -1401,8 +1460,8 @@ mod tests {
         assert_eq!(error(&app(m, 1, &prov)), 0);
         unsafe {
             assert_eq!(ns_mesh_get(m, 9), 1, "to persist");
-            let mut st = vec![0u8; STATE_LEN];
-            assert_eq!(ns_mesh_persist(m, st.as_mut_ptr(), st.len() as u32), STATE_LEN as i32);
+            let mut st = vec![0u8; ns_mesh_state_len() as usize];
+            assert_eq!(ns_mesh_persist(m, st.as_mut_ptr(), st.len() as u32), RECORD_LEN as i32);
             assert_eq!(ns_mesh_get(m, 9), 0);
             let mut t = 0;
             while t < 6_000_000 {
@@ -1445,6 +1504,93 @@ mod tests {
             let s = (*m2).stack.membership.state.unwrap();
             assert_eq!((s.mesh_id, s.admin_key, s.site_secret), (MESH, Some(pk), Some([0x51; 32])));
             ns_mesh_destroy(m2);
+        }
+    }
+
+    /// D-324: the provision answer carries a provisioner token; with it (and only with it)
+    /// that user leaves or re-provisions a fixture holding an admin key without a grant, and
+    /// the token survives a reboot with the membership.
+    #[test]
+    fn provisioner_token_leaves_without_a_grant() {
+        use splanc_mesh::host_keys::AdminSigner;
+        fn frame(op: u32, body: impl FnOnce(&mut mesh_gw::Pb<'_>)) -> std::vec::Vec<u8> {
+            let mut b = [0u8; 400];
+            let n = {
+                let mut w = mesh_gw::Pb::new(&mut b);
+                w.msg(101, |a| a.msg(op, body));
+                w.n
+            };
+            b[..n].to_vec()
+        }
+        let app = |m: *mut Mesh, conn: u32, f: &[u8]| -> std::vec::Vec<u8> {
+            let mut out = [0u8; 1024];
+            let (mut ip, mut il) = (core::ptr::null(), 0u32);
+            let n = unsafe { mesh_gw::ns_mesh_app(m, conn, f.as_ptr(), f.len() as u32, 0, out.as_mut_ptr(), out.len() as u32, &mut ip, &mut il) };
+            assert!(n > 0);
+            out[..n as usize].to_vec()
+        };
+        let error = |r: &[u8]| -> u8 {
+            // Before the provisioner token (field 4, 16 bytes), whose bytes could look like a tag.
+            let r = &r[..r.windows(2).position(|w| w == [0x22, 16]).unwrap_or(r.len())];
+            r.windows(1).zip(r.iter().skip(1)).find(|(w, _)| w[0] == 0x10).map_or(0, |(_, e)| *e)
+        };
+        // MeshAdminResult.provisioner_token (field 4, 16 bytes).
+        let token = |r: &[u8]| -> Option<[u8; 16]> { r.windows(18).find(|w| w[0] == 0x22 && w[1] == 16).map(|w| w[2..].try_into().unwrap()) };
+        const MESH: u32 = 0x5350_4c38;
+        let pk = AdminSigner::from_secret(b"m7-admin-secret!", MESH).public();
+        let prov = |tok: Option<[u8; 16]>| {
+            frame(mesh_gw::op::PROVISION, |p| {
+                p.u(1, MESH.into());
+                p.bytes(2, &[0x52; 32]);
+                p.bytes(3, &pk);
+                if let Some(t) = tok {
+                    p.bytes(7, &t);
+                }
+            })
+        };
+        let leave = |tok: Option<[u8; 16]>| {
+            frame(mesh_gw::op::LEAVE, |p| {
+                if let Some(t) = tok {
+                    p.bytes(1, &t);
+                }
+            })
+        };
+        let mac = [0x8c, 0xfd, 0x49, 0x12, 0x31, 0x70];
+        let mut block = vec![0u8; ns_mesh_size() as usize];
+        let m = unsafe { ns_mesh_create(block.as_mut_ptr(), ns_mesh_size(), mac.as_ptr(), 1, 0, 0) };
+        let r = app(m, 1, &prov(None));
+        assert_eq!(error(&r), 0);
+        let tok = token(&r).expect("the provision answer carries the provisioner token");
+        unsafe {
+            let mut st = vec![0u8; ns_mesh_state_len() as usize];
+            assert_eq!(ns_mesh_persist(m, st.as_mut_ptr(), st.len() as u32), RECORD_LEN as i32);
+            // Another connection without the token: locked (admin key held, no grant).
+            assert_eq!(error(&app(m, 2, &leave(None))) as u32, mesh_gw::aerr::LOCKED);
+            let mut wrong = tok;
+            wrong[0] ^= 1;
+            assert_eq!(error(&app(m, 2, &leave(Some(wrong)))) as u32, mesh_gw::aerr::LOCKED);
+            assert_eq!(error(&app(m, 2, &prov(Some(wrong)))) as u32, mesh_gw::aerr::LOCKED);
+            // After a reboot the token still works (persisted with the membership).
+            ns_mesh_destroy(m);
+            let mut block2 = vec![0u8; ns_mesh_size() as usize];
+            let m2 = ns_mesh_create(block2.as_mut_ptr(), ns_mesh_size(), mac.as_ptr(), 1, 0, 0);
+            assert_eq!(ns_mesh_restore(m2, st.as_ptr(), st.len() as u32, 0), 1);
+            assert_eq!((*m2).owner_token, Some(tok));
+            // Re-provisioning with it keeps it; leaving with it erases membership and token.
+            let r = app(m2, 3, &prov(Some(tok)));
+            assert_eq!((error(&r), token(&r)), (0, Some(tok)));
+            assert_eq!(error(&app(m2, 3, &leave(Some(tok)))), 0);
+            assert_eq!(ns_mesh_get(m2, 7), 1, "wants off");
+            assert_eq!(ns_mesh_persist(m2, st.as_mut_ptr(), st.len() as u32), -1, "erase");
+            assert_eq!((*m2).owner_token, None);
+            // A bare state (written before D-324) still restores, without a token.
+            let mut block3 = vec![0u8; ns_mesh_size() as usize];
+            let m3 = ns_mesh_create(block3.as_mut_ptr(), ns_mesh_size(), mac.as_ptr(), 1, 0, 0);
+            let bare = &st[..STATE_LEN];
+            assert_eq!(ns_mesh_restore(m3, bare.as_ptr(), bare.len() as u32, 0), 1);
+            assert_eq!((*m3).owner_token, None);
+            ns_mesh_destroy(m2);
+            ns_mesh_destroy(m3);
         }
     }
 

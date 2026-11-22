@@ -6,6 +6,7 @@ import copy
 import unittest
 
 import mesh_join_admin_core as core
+import pytest
 
 MEMBERSHIP = (
     "[mesh] membership phase=member mode=closed epoch=2 admin_key=1 site_secret=1 persist=1 "
@@ -105,6 +106,44 @@ class ParseTest(unittest.TestCase):
         ]
         self.assertEqual(core.rounds_ok(sends, {5}, {6}), 1)
         self.assertEqual(core.rounds_ok(sends, {5, 6}, set()), 1)
+
+
+@pytest.mark.requirements("PR-40")
+class LateFramesTest(unittest.TestCase):
+    """PR-40: a late frame is attributed to a flash write in its [ft] window (or the one
+    before), else it is CPU work on the render path (crypto) and always fails."""
+
+    LINES = [
+        "[ft] r84:11970/12000/12040 w84:1/1/1 dt12 fps=80 sl=11-11",
+        "[mesh] crypto job=1 us=53000",
+        "[ft] r84:11970/12000/12040 w84:1/1/1 dt12 fps=80 sl=11-11",
+        "[mesh] state saved ok us=91000",
+        "[ft] r83:11970/12180/25499 w83:1/1/1 dt25 fps=80 sl=11-12",
+        "[late] n=1 max=25499 ago_ms=700",
+        "[ft] r84:11970/12000/12040 w84:1/1/1 dt12 fps=80 sl=11-11",
+        "[ft] r82:11970/12300/40000 w82:1/1/1 dt40 fps=80 sl=11-12",
+        "[late] n=2 max=40000 ago_ms=300",
+    ]
+
+    def test_attribution(self) -> None:
+        late = core.late_frames(self.LINES)
+        self.assertEqual([(x["n"], x["save_us"]) for x in late], [(1, 91000), (2, None)])
+        self.assertEqual(core.late_counts({"a": late}), (2, 1))
+
+    def test_gate(self) -> None:
+        p = good()
+        p["unlock"]["late"] = {"a": [{"n": 1, "max_us": 30000, "ago_ms": 5, "save_us": None}]}
+        ok, why = core.verdict(p)
+        self.assertFalse(ok)
+        self.assertTrue(any("not explained by a flash write" in w for w in why), why)
+        p = good()
+        p["revoke"]["late"] = {"b": [{"n": 1, "max_us": 30000, "ago_ms": 5, "save_us": 90000}]}
+        self.assertFalse(core.verdict(p)[0])
+        self.assertTrue(core.verdict(p, allow_save_late=True)[0])
+        # The effect's start (baseline) and the reboot are exempt.
+        p = good()
+        p["baseline"]["late"] = {"c": [{"n": 3, "max_us": 30000, "ago_ms": 5, "save_us": None}]}
+        self.assertTrue(core.verdict(p)[0])
 
 
 class VerdictTest(unittest.TestCase):

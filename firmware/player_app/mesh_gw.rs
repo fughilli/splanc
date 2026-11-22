@@ -25,7 +25,7 @@
 //! the firmware profile).
 
 use splanc_mesh::admin::{SessionMsg, UnlockError};
-use splanc_mesh::crypto::DeviceKey;
+use splanc_mesh::crypto::{ct_eq, DeviceKey};
 use splanc_mesh::gateway::{self, client_arm, relay_arm, with_apply_at, OpResult, ReplyMsg, Status, StatusMsg};
 use splanc_mesh::membership::{Credentials, Groups, Mode, Phase, ProvisionSource};
 use splanc_mesh::meshtime::SyncState;
@@ -517,10 +517,13 @@ pub unsafe extern "C" fn ns_mesh_app(m: *mut Mesh, conn: u32, frame: *const u8, 
         }
         gateway::arm::MESH_ADMIN => {
             let Some(a) = parse_admin(frame) else {
-                return encode_admin(out, 0, aerr::BAD_REQUEST, 0) as i32;
+                return encode_admin(out, 0, aerr::BAD_REQUEST, 0, None) as i32;
             };
-            let (e, v) = admin(m, conn, &a, now_us);
-            encode_admin(out, a.op, e, v) as i32
+            // Below render (PR-40): unlock verifies the admin's grant, revoke the rotation order.
+            let (e, v) = crate::below_render(|| admin(m, conn, &a, now_us));
+            // A provision answers with the provisioner token (D-324), to that connection only.
+            let tok = if a.op == op::PROVISION && e == aerr::OK { m.owner_token } else { None };
+            encode_admin(out, a.op, e, v, tok.as_ref().map(|t| &t[..])) as i32
         }
         gateway::arm::MESH_SEND => {
             let Some(s) = parse_send(frame) else {
@@ -588,8 +591,8 @@ fn app_off(frame: &[u8], out: &mut [u8]) -> i32 {
         // Joining (or leaving) a mesh turns it on first: the transport does, then asks again.
         Some((gateway::arm::MESH_ADMIN, _)) => match parse_admin(frame) {
             Some(a) if a.op == op::PROVISION || a.op == op::LEAVE => -4,
-            Some(a) => encode_admin(out, a.op, aerr::NO_MESH, 0) as i32,
-            None => encode_admin(out, 0, aerr::BAD_REQUEST, 0) as i32,
+            Some(a) => encode_admin(out, a.op, aerr::NO_MESH, 0, None) as i32,
+            None => encode_admin(out, 0, aerr::BAD_REQUEST, 0, None) as i32,
         },
         _ => -2,
     }
@@ -628,7 +631,7 @@ pub mod aerr {
 pub struct Admin<'a> {
     pub op: u32,
     pub v: [u64; 8],
-    pub by: [Option<&'a [u8]>; 4],
+    pub by: [Option<&'a [u8]>; 8],
     pub list: [u32; 8],
     pub n_list: usize,
 }
@@ -665,7 +668,7 @@ fn parse_op<'a>(b: &'a [u8], a: &mut Admin<'a>) -> Option<()> {
                 }
             }
             0 if (f as usize) < 8 => a.v[f as usize] = varint(b, &mut o)?,
-            2 if (f as usize) < 4 => {
+            2 if (f as usize) < 8 => {
                 let n = varint(b, &mut o)? as usize;
                 let end = o.checked_add(n).filter(|&e| e <= b.len())?;
                 a.by[f as usize] = Some(&b[o..end]);
@@ -703,14 +706,17 @@ pub fn parse_admin(frame: &[u8]) -> Option<Admin<'_>> {
     (a.op != 0).then_some(a)
 }
 
-/// `ServerMessage{mesh{admin{op, error, value}}}` into `out`.
-pub fn encode_admin(out: &mut [u8], op: u32, error: u32, value: u32) -> usize {
+/// `ServerMessage{mesh{admin{op, error, value, provisioner_token}}}` into `out`.
+pub fn encode_admin(out: &mut [u8], op: u32, error: u32, value: u32, token: Option<&[u8]>) -> usize {
     let mut w = Pb::new(out);
     w.msg(SMSG_MESH, |i| {
         i.msg(3, |r| {
             r.u(1, op.into());
             r.u(2, error.into());
             r.u(3, value.into());
+            if let Some(t) = token {
+                r.bytes(4, t);
+            }
         })
     });
     if w.ok {
@@ -738,9 +744,16 @@ fn key8(b: Option<&[u8]>) -> Option<[u8; 8]> {
 /// Carry out one `mesh_admin` from connection `conn`: (error, value).
 fn admin(m: &mut Mesh, conn: usize, a: &Admin<'_>, now_us: i64) -> (u32, u32) {
     // On a fixture that holds an admin key, joining another mesh or leaving needs this
-    // connection unlocked (a grant), so nobody on the network can pull it out of its mesh.
+    // connection unlocked (a grant), so nobody on the network can pull it out of its mesh —
+    // or the provisioner token the user who provisioned it holds (D-324; field 7 of
+    // provision, 1 of leave).
     let held = m.stack.membership.admin_key().is_some();
-    let may_reprovision = !held || m.stack.signing_session(conn);
+    let tok_field = if a.op == op::PROVISION { 7 } else { 1 };
+    let by_token = match (a.by[tok_field], m.owner_token) {
+        (Some(t), Some(o)) => ct_eq(t, &o),
+        _ => false,
+    };
+    let may_reprovision = !held || by_token || m.stack.signing_session(conn);
     match a.op {
         op::PROVISION => {
             if !may_reprovision {
@@ -788,6 +801,10 @@ fn admin(m: &mut Mesh, conn: usize, a: &Admin<'_>, now_us: i64) -> (u32, u32) {
             m.provisioned_us = Some(now_us);
             m.member_us = None;
             m.persist = true;
+            // The provisioner token (D-324): kept for its holder, a fresh one otherwise.
+            if !by_token {
+                m.owner_token = Some(crate::random_token());
+            }
             m.dirty = true;
             m.want_off = false;
             // Presence only: secrets are never logged.
@@ -822,9 +839,10 @@ fn admin(m: &mut Mesh, conn: usize, a: &Admin<'_>, now_us: i64) -> (u32, u32) {
                 return (aerr::LOCKED, 0);
             }
             m.stack.leave();
+            m.owner_token = None;
             m.want_off = true;
             m.dirty = true;
-            m.log(format_args!("[mesh] left the mesh (app, conn={conn})"));
+            m.log(format_args!("[mesh] left the mesh (app, conn={conn}{})", if by_token { ", provisioner token" } else { "" }));
             (aerr::OK, 0)
         }
         _ => {
@@ -1314,7 +1332,7 @@ mod tests {
         let n = app_off(&ad, &mut out) as usize;
         assert_eq!(&out[..n], &[0xba, 0x03, 6, 0x1a, 4, 0x08, 3, 0x10, aerr::NO_MESH as u8]);
         // ServerMessage{mesh{admin{op 2, error BAD_GRANT}}}.
-        let n = encode_admin(&mut out, op::UNLOCK, aerr::BAD_GRANT, 0);
+        let n = encode_admin(&mut out, op::UNLOCK, aerr::BAD_GRANT, 0, None);
         assert_eq!(hex(&out[..n]), "ba03061a0408021004");
     }
 

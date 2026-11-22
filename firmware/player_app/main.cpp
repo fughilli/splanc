@@ -383,6 +383,18 @@ static constexpr uint32_t kMidFramePollMs = 4;
 // taken while waiting for player_mutex (render takes it INSIDE player_mutex).
 static SemaphoreHandle_t tex_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
+
+// Background work that must never delay a frame (PR-40: the mesh's crypto, joins and
+// rotations) drops the calling task strictly below render for its span; render then preempts
+// it the moment a frame is due, whatever priority the data plane gave loopTask (#371).
+extern "C" uint32_t lm_prio_below_render() {
+  UBaseType_t p = uxTaskPriorityGet(nullptr);
+  if (p >= kRenderTaskPrio) vTaskPrioritySet(nullptr, kRenderTaskPrio - 1);
+  return (uint32_t)p;
+}
+extern "C" void lm_prio_restore(uint32_t prio) {
+  if (uxTaskPriorityGet(nullptr) != (UBaseType_t)prio) vTaskPrioritySet(nullptr, (UBaseType_t)prio);
+}
 // render: static bound ~3.8 KB (stack_bound_test; render_once -> the FX VM -> a sensor
 // driver's I2C bus recovery, whose Log().printf runs ROM vsnprintf, ~1.5 KB on its own;
 // JIT segments use no machine stack), so 5 KB is what the gate's x1.25 + ISR context
@@ -2252,6 +2264,11 @@ static inline uint32_t wall_span_us(int64_t from_us, int64_t to_us) {
 }
 static int64_t g_wire_last_us = 0;   // last effect-frame transmit start (xmit task)
 static uint32_t g_fx_dt_max_ms = 0;  // largest effect time step this window
+// Late effect frames this window (PR-40): a render-start interval over 1.5 periods of the live
+// rung — a dropped frame. The `[late]` line (HITL gates: mesh_join_admin) says how many, the
+// worst, and how long before the line the worst one started.
+static uint32_t g_late_n = 0, g_late_max_us = 0;
+static int64_t g_late_at_us = 0;
 static uint32_t g_fx_delay_min = 0xffffffffu, g_fx_delay_max = 0;  // render sleeps this window
 // Last effect frame's render-start time, 0 when the previous frame wasn't an effect
 // frame (so the next one starts its time base fresh instead of seeing a "gap").
@@ -2594,7 +2611,15 @@ static uint32_t render_once() {
     uint32_t dt_ms = s_fx_last_ms == 0 ? 33 : now - s_fx_last_ms;
     if (s_fx_last_ms != 0 && (int32_t)(now - s_fx_last_ms) < 0) dt_ms = s_fx_good_dt_ms;
     else if (s_fx_last_ms != 0) s_fx_good_dt_ms = dt_ms;
-    if (s_fx_last_ms != 0 && fx_last_us != 0) g_cad_render.add(now_us - fx_last_us);
+    if (s_fx_last_ms != 0 && fx_last_us != 0) {
+      g_cad_render.add(now_us - fx_last_us);
+      const uint32_t iv = (uint32_t)(now_us - fx_last_us);
+      const uint32_t period_us = lm_fps_budget_cycles() / (kCpuHz / 1000000u);
+      if (period_us != 0 && iv > period_us + period_us / 2) {
+        g_late_n++;
+        if (iv > g_late_max_us) g_late_max_us = iv, g_late_at_us = fx_last_us;
+      }
+    }
     s_fx_last_ms = now == 0 ? 1 : now;
     fx_last_us = now_us;
     s_fx_frame_start_us = now_us;
@@ -2708,6 +2733,12 @@ static uint32_t render_once() {
                      (unsigned)g_fx_dt_max_ms, (unsigned)lm_fps_current_fps(),
                      (unsigned)(g_fx_delay_min == 0xffffffffu ? 0 : g_fx_delay_min),
                      (unsigned)g_fx_delay_max);
+        if (g_late_n != 0) {
+          Log().printf("[late] n=%u max=%u ago_ms=%u\n", (unsigned)g_late_n, (unsigned)g_late_max_us,
+                       (unsigned)((esp_timer_get_time() - g_late_at_us) / 1000));
+          g_late_n = 0;
+          g_late_max_us = 0;
+        }
         g_fx_delay_min = 0xffffffffu;
         g_fx_delay_max = 0;
         g_cad_render.clear();

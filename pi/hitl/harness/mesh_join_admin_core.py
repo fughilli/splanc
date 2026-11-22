@@ -11,6 +11,9 @@ _KV = re.compile(r"(\w+)=(\S+)")
 _CRYPTO = re.compile(r"\[mesh\] crypto job=(\d+) us=(\d+)")
 _TIMEBASE = re.compile(r"\[mt\] timebase gen=(\d+) origin=([0-9a-f]{4})")
 _HEARD = re.compile(r"\[mt\] epoch heard gen=(\d+) origin=([0-9a-f]{4})")
+_LATE = re.compile(r"\[late\] n=(\d+) max=(\d+) ago_ms=(\d+)")
+_FT_LINE = re.compile(r"\[ft\] r\d+:")
+_SAVE = re.compile(r"\[mesh\] state (?:saved|erased) \S+(?: us=(\d+))?")
 
 
 def kv(line: str) -> dict[str, str]:
@@ -52,6 +55,39 @@ def membership(lines: list[str]) -> dict:
 def crypto_us(lines: list[str]) -> list[int]:
     """Session crypto jobs (a grant's verify + ECDH, an Ack's ECDH): µs each."""
     return [int(m.group(2)) for t in lines if (m := _CRYPTO.search(t))]
+
+
+def late_frames(lines: list[str]) -> list[dict]:
+    """The firmware's `[late]` windows (PR-40: a render-start interval over 1.5 frame periods,
+    i.e. a dropped frame): {n, max_us, ago_ms, save_us}. `save_us` is the membership write
+    (a littlefs flash write, which stalls the whole chip) in the same [ft] window or the one
+    before, if any: those are told apart from CPU work (crypto) that must never delay one."""
+    out: list[dict] = []
+    cur: int | None = None  # a save in the window being collected (µs; 0 if not timed)
+    prev: int | None = None
+    for t in lines:
+        if m := _SAVE.search(t):
+            cur = int(m.group(1) or 0)
+        elif _FT_LINE.search(t):
+            prev, cur = cur, None
+        elif m := _LATE.search(t):
+            save = prev if prev is not None else cur
+            out.append(
+                {
+                    "n": int(m.group(1)),
+                    "max_us": int(m.group(2)),
+                    "ago_ms": int(m.group(3)),
+                    "save_us": save,
+                }
+            )
+    return out
+
+
+def late_counts(per_dut: dict[str, list[dict]]) -> tuple[int, int]:
+    """(late frames with no flash write near them, late frames next to a membership write)."""
+    cpu = sum(x["n"] for v in per_dut.values() for x in v if x["save_us"] is None)
+    save = sum(x["n"] for v in per_dut.values() for x in v if x["save_us"] is not None)
+    return cpu, save
 
 
 def timebase_origins(lines: list[str]) -> set[str]:
@@ -103,9 +139,11 @@ def rounds_ok(sends: list[dict], want_ok: set[int], want_absent: set[int]) -> in
 
 GATE_FPS_DROP = 2
 EXEMPT = ("reboot",)
+# No late frame (PR-40) anywhere but while the effect starts (baseline) and the reboot.
+LATE_EXEMPT = ("baseline", "reboot")
 
 
-def verdict(phases: dict[str, dict]) -> tuple[bool, list[str]]:
+def verdict(phases: dict[str, dict], allow_save_late: bool = False) -> tuple[bool, list[str]]:
     """The gate (each phase records what it saw; missing evidence fails):
 
     - form: a and b, holding the site secret, form a closed mesh by themselves;
@@ -124,7 +162,10 @@ def verdict(phases: dict[str, dict]) -> tuple[bool, list[str]]:
     - reboot: a and b come back from flash on the new epoch with c revoked; after a fresh
       unlock b gets control, c does not, and c's rejoins are still refused;
     - render: fps not below the baseline - 2 in any phase but the reboot; no resets outside
-      the reboot phase.
+      the reboot phase;
+    - no blip (PR-40): no late frame (a render interval over 1.5 periods) on any DUT in any
+      phase but the baseline and the reboot. `allow_save_late` tolerates the ones next to a
+      membership flash write (a chip-wide flash stall, not crypto), reported either way.
     """
     why: list[str] = []
     base = phases.get("baseline", {}).get("fps_min")
@@ -235,4 +276,10 @@ def verdict(phases: dict[str, dict]) -> tuple[bool, list[str]]:
                 why.append(f"{name}: render {fm} fps < baseline {base} - {GATE_FPS_DROP}")
         if p.get("resets") and name not in EXEMPT:
             why.append(f"{name}: {p['resets']} reset(s)")
+        if name not in LATE_EXEMPT and "late" in p:
+            cpu, save = late_counts(p["late"])
+            if cpu:
+                why.append(f"{name}: {cpu} late frame(s) not explained by a flash write (PR-40)")
+            if save and not allow_save_late:
+                why.append(f"{name}: {save} late frame(s) next to a membership flash write (PR-40)")
     return (not why, why)

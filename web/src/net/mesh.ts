@@ -109,6 +109,9 @@ export interface MeshAdminResultInfo {
   op?: number;
   error?: string | number;
   value?: number;
+  /** provision: the provisioner token (16 bytes, desk D-324). Keep it per fixture: it lets
+   * this user leave or re-provision the fixture without an admin grant. */
+  provisionerToken?: Uint8Array;
 }
 
 /** A `mesh` server message (MeshInfo oneof): a result, a state or an admin answer. */
@@ -122,11 +125,11 @@ export interface MeshInfoMessage {
 /** One `mesh_admin` operation (ledmapper.proto MeshAdmin, mesh M7). The app signs grants
  * and rotation orders with the admin secret (M8); this is the wire. */
 export type MeshAdminOp =
-  | { provision: { meshId: number; siteSecret?: Uint8Array; adminKey?: Uint8Array; mode?: number; channel?: number; groups?: number[] } }
+  | { provision: { meshId: number; siteSecret?: Uint8Array; adminKey?: Uint8Array; mode?: number; channel?: number; groups?: number[]; provisionerToken?: Uint8Array } }
   | { unlock: { grant: Uint8Array } }
   | { admit: { node: number; keyHash: Uint8Array } }
   | { revoke: { order: Uint8Array; meshKey: Uint8Array; siteSecret: Uint8Array; exclude?: number[] } }
-  | { leave: Record<string, never> }
+  | { leave: { provisionerToken?: Uint8Array } }
   | { groups: { node: number; groups: number[] } }
   | { eject: { node: number; keyHash: Uint8Array } };
 

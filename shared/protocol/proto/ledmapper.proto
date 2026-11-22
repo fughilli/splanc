@@ -1476,6 +1476,9 @@ message MeshProvision {
   // 0: follow the AP (or derive one from the mesh id).
   uint32 channel = 5;
   repeated uint32 groups = 6;
+  // The provisioner token this fixture issued when it was last provisioned (desk D-324):
+  // re-provisions a fixture that holds an admin key without a grant.
+  bytes provisioner_token = 7;
 }
 
 // Unlock this fixture as the gateway: the admin's signed grant ("this fixture may command
@@ -1502,8 +1505,11 @@ message MeshRevoke {
   repeated uint32 exclude = 4;
 }
 
-// This fixture leaves its mesh: the mesh turns off and its state is erased.
-message MeshLeave {}
+// This fixture leaves its mesh: the mesh turns off and its state is erased. On a fixture that
+// holds an admin key: needs an admin session on this connection, or the provisioner token.
+message MeshLeave {
+  bytes provisioner_token = 1;
+}
 
 message MeshAssignGroups {
   uint32 node = 1;
@@ -1555,6 +1561,11 @@ message MeshAdminResult {
   MeshAdminError error = 2;
   // unlock: the session; admit / revoke / eject: mesh packets sent.
   uint32 value = 3;
+  // provision: the provisioner token (16 bytes, desk D-324), only to the connection that
+  // provisioned. The app keeps it: it lets that user leave or re-provision this fixture
+  // without an admin grant (device-local admin rights; mesh-wide commands still need the
+  // admin key's signed session).
+  bytes provisioner_token = 4;
 }
 
 // A fixture waiting to join this mesh (approval: MeshAdmin.admit).

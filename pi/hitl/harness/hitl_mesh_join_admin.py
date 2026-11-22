@@ -62,6 +62,8 @@ from mesh_join_admin_core import (
     admin_error,
     crypto_us,
     heard_origins,
+    late_counts,
+    late_frames,
     member_status,
     membership,
     rounds_ok,
@@ -176,6 +178,8 @@ def run(args: argparse.Namespace) -> int:
         mins = [r.get("fps_min") for r in p["render"].values() if r.get("fps_min") is not None]
         p["fps_min"] = min(mins) if mins else None
         p["crypto_us"] = {d.label: crypto_us(d.since(marks[d.label])) for d in duts}
+        p["late"] = {d.label: late_frames(d.since(marks[d.label])) for d in duts}
+        p["late_cpu"], p["late_save"] = late_counts(p["late"])
         _log(f"{name}: {json.dumps(p, default=str)[:1500]}")
         if name not in resets_ok and p["resets"]:
             _log(f"{name}: RESET seen; serial logs: {[d.log.name for d in duts]}")
@@ -643,7 +647,7 @@ def run(args: argparse.Namespace) -> int:
                         p[d.label] = repr(e)
 
         resets = {d.label: [t for t in d.since(0) if is_reset(t)] for d in duts}
-        ok, why = verdict(phases)
+        ok, why = verdict(phases, allow_save_late=not args.fail_on_flash_late)
         if record.get("errors"):
             ok, why = False, why + [f"phase {k} raised {v}" for k, v in record["errors"].items()]
         record.update({"phases": phases, "resets": resets, "verdict": {"pass": ok, "reasons": why}})
@@ -654,7 +658,8 @@ def run(args: argparse.Namespace) -> int:
         for name, p in phases.items():
             lines.append(
                 f"- {name}: rounds {p.get('rounds')}; fps_min {p.get('fps_min')}; resets {p.get('resets')}; "
-                f"crypto_us {p.get('crypto_us')}"
+                f"crypto_us {p.get('crypto_us')}; late frames: {p.get('late_cpu')} cpu, "
+                f"{p.get('late_save')} next to a flash write"
             )
         with open(os.path.join(args.out, "results.md"), "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -690,7 +695,11 @@ def main() -> int:
     ap.add_argument("--unapproved-s", type=float, default=20.0)
     ap.add_argument("--sync-timeout", type=float, default=30.0)
     ap.add_argument("--join-timeout", type=float, default=30.0)
-    ap.add_argument("--grant-ttl-s", type=int, default=3600)
+    # D-328: 12 h grants (the gateway refuses longer ones).
+    ap.add_argument("--grant-ttl-s", type=int, default=12 * 3600)
+    # Late frames next to a membership flash write (a chip-wide littlefs stall, ~1 frame at a
+    # fixture's first join; desk D-323 follow-up) are reported; this makes them fail too.
+    ap.add_argument("--fail-on-flash-late", action="store_true")
     ap.add_argument("--overlap-s", type=float, default=65.0)
     ap.add_argument("--pings", type=int, default=15)
     ap.add_argument("--rounds", type=int, default=8)
