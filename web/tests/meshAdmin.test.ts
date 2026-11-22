@@ -11,6 +11,7 @@ import { test } from "node:test";
 import { decodeClient, encodeClient } from "../src/net/proto";
 import { meshAdminMessage, type MeshAdminOp, type MeshAdminResultInfo, type MeshResultInfo, type MeshStateInfo } from "../src/net/mesh";
 import {
+  adminSignerFromSecret,
   fromHex,
   grantSignedBytes,
   keyHash,
@@ -28,7 +29,9 @@ import {
   isMemberOf,
   MeshAdminFailure,
   provisionFixture,
+  revocationReplaces,
   revokeMembers,
+  REV_REPLACE,
   unlockFixture,
   unlockedSession,
   waitForMember,
@@ -122,7 +125,7 @@ test("mesh_admin with bytes survives the proto boundary", () => {
   assert.equal(p.provision.adminKey, Buffer.from(ADMIN_PK).toString("base64"));
 });
 
-test("the store keeps no plaintext site secret and a non-extractable admin key", async () => {
+test("the store keeps no plaintext site or admin secret", async () => {
   const be = new MemoryMeshBackend();
   const store = new MeshStore();
   store.setBackend(be);
@@ -131,10 +134,13 @@ test("the store keeps no plaintext site secret and a non-extractable admin key",
   assert.notEqual(rec.meshId, 0);
   const site = await store.siteSecret(rec.meshId);
   assert.equal(site.length, 32);
-  const raw = be.m.get(`mesh:${rec.meshId}`) as { adminPrivate: CryptoKey; site: { ct: Uint8Array } };
-  assert.equal(raw.adminPrivate.extractable, false);
+  const raw = be.m.get(`mesh:${rec.meshId}`) as { adminPrivate?: CryptoKey; admin: { ct: Uint8Array }; site: { ct: Uint8Array } };
+  assert.equal(raw.adminPrivate, undefined, "no device-bound key (D-442: the admin secret, sealed)");
   const hay = toHex(raw.site.ct);
   assert.ok(!hay.includes(toHex(site)), "the site secret is sealed");
+  const backup = await store.exportBackup(rec.meshId);
+  const admin = JSON.parse(atob(backup.slice("splanc-mesh-1:".length))).admin as string;
+  assert.ok(!toHex(raw.admin.ct).includes(admin), "the admin secret is sealed");
   const wrap = be.m.get("wrap-key") as CryptoKey;
   assert.equal(wrap.extractable, false);
   // A fresh store over the same backend sees the mesh (persistence), but no secrets.
@@ -142,7 +148,7 @@ test("the store keeps no plaintext site secret and a non-extractable admin key",
   again.setBackend(be);
   const list = await again.list();
   assert.equal(list.length, 1);
-  assert.equal(Object.keys(list[0]!).some((k) => k === "site" || k === "adminPrivate"), false);
+  assert.equal(Object.keys(list[0]!).some((k) => k === "site" || k === "admin" || k === "adminPrivate"), false);
   assert.deepEqual(await again.siteSecret(rec.meshId), site);
   // Roster bookkeeping, and a rotation replaces the secret.
   await again.putMember(rec.meshId, { deviceId: "d1", label: "Desk", node: 0x10, keyHash: "aa".repeat(8) });
@@ -266,6 +272,50 @@ test("revoke: the next epoch and revocation version, the excluded node, a verifi
   signed.set(new TextEncoder().encode("SMrekey1"));
   signed.set(op.order.subarray(0, 56), 8);
   assert.ok(await verifyAdminSignature(rec.adminPublic, signed, op.order.subarray(56)));
+});
+
+test("D-442: the admin key derives from its exportable secret exactly as mesh_admin_tool's", async () => {
+  const secret = Uint8Array.from({ length: 16 }, (_, i) => i);
+  const signer = await adminSignerFromSecret(secret, 0x5e1f00d1);
+  assert.deepEqual(signer.publicKey, ADMIN_PK);
+  const msg = new TextEncoder().encode("SMgrant1 test");
+  assert.ok(await verifyAdminSignature(ADMIN_PK, msg, await signer.sign(msg)));
+});
+
+test("D-442: a mesh backup moves the admin key and site secret to another phone", async () => {
+  const a = new MeshStore();
+  a.setBackend(new MemoryMeshBackend());
+  const rec = await a.create("Home");
+  const text = await a.exportBackup(rec.meshId);
+  assert.match(text, /^splanc-mesh-1:/);
+  const b = new MeshStore();
+  b.setBackend(new MemoryMeshBackend());
+  const got = await b.importBackup(text);
+  assert.equal(got.meshId, rec.meshId);
+  assert.equal(got.name, "Home");
+  assert.deepEqual(got.adminPublic, rec.adminPublic);
+  assert.deepEqual(await b.siteSecret(rec.meshId), await a.siteSecret(rec.meshId));
+  const msg = new TextEncoder().encode("x");
+  assert.ok(await verifyAdminSignature(rec.adminPublic, msg, await (await b.signer(rec.meshId)).sign(msg)));
+  await assert.rejects(b.importBackup("hello"), /not a Splanc mesh backup/);
+  await assert.rejects(b.importBackup("splanc-mesh-1:@@@"), /damaged/);
+});
+
+test("D-443: near capacity, a block starts a fresh revocation list", async () => {
+  assert.equal(revocationReplaces(0, 1), false);
+  assert.equal(revocationReplaces(5, 1), false);
+  assert.equal(revocationReplaces(6, 1), true, "fewer than two free slots: replace");
+  const store = new MeshStore();
+  store.setBackend(new MemoryMeshBackend());
+  const rec = await store.create("Home");
+  const full = { ...rec, revVersion: 6, revoked: ["01", "02", "03", "04", "05", "06"].map((x) => x.repeat(8)) };
+  const fx = new FakeFixture();
+  fx.state = { on: true, member: true, meshId: rec.meshId, keyEpoch: 3, node: 1, deviceKey: GK, revoked: 6 };
+  const r = await revokeMembers(fx, await store.signer(rec.meshId), full, [{ node: 0x7c02, keyHash: "0011223344556677" }], fx.state);
+  assert.equal(r.replaced, true);
+  assert.equal(r.revVersion, 7, "the stored version has no flag");
+  const order = (fx.ops[0] as { revoke: { order: Uint8Array } }).revoke.order;
+  assert.equal((order[21]! << 8) | order[22]!, 7 | REV_REPLACE, "the order carries the replace flag");
 });
 
 test("the Mesh section model", () => {

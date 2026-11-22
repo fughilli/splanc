@@ -3,9 +3,10 @@
  * fixture"). One record per mesh the user created here:
  *
  *  - the mesh id and the user's name for it;
- *  - the admin key pair: a WebCrypto P-256 key whose private half is NON-EXTRACTABLE.
- *    IndexedDB stores the CryptoKey object itself, so it signs grants in this browser and
- *    can never be read out (not by the page, not into a backup). Fixtures get its public half;
+ *  - the admin secret (16 B, desk D-442): the P-256 admin key derives from it
+ *    (net/meshKeys.ts adminSignerFromSecret, as mesh_admin_tool does), so the mesh can be
+ *    backed up and administered from a second phone (exportBackup / importBackup). It is
+ *    sealed like the site secret; fixtures get only the key's public half;
  *  - the site secret (32 B; it lets the user's own fixtures join by themselves), sealed with
  *    AES-GCM under a second non-extractable key kept beside it, so the plaintext never sits
  *    in storage (localStorage, backups, a diagnostics export);
@@ -18,10 +19,11 @@
  */
 
 import {
-  exportPublicKey,
-  generateAdminKeyPair,
+  adminSignerFromSecret,
+  fromHex,
   randomBytes,
   randomU32,
+  toHex,
   webCryptoSigner,
   type MeshAdminSigner,
 } from "../net/meshKeys";
@@ -57,7 +59,10 @@ interface Sealed {
 }
 
 interface StoredMesh extends MeshRecord {
-  adminPrivate: CryptoKey;
+  /** The admin secret (D-442), sealed. */
+  admin?: Sealed;
+  /** A device-bound key from before D-442 (non-extractable; such a mesh cannot be exported). */
+  adminPrivate?: CryptoKey;
   site: Sealed;
   /** Provisioner tokens (D-324) by node, sealed like the site secret. */
   tokens?: Record<string, Sealed>;
@@ -76,6 +81,19 @@ const DB_VERSION = 1;
 const OS = "kv";
 const WRAP_KEY = "wrap-key";
 const MESH_PREFIX = "mesh:";
+/** A mesh backup's text form (exportBackup): this prefix, then base64 JSON. */
+export const BACKUP_PREFIX = "splanc-mesh-1:";
+
+function utf8ToB64(s: string): string {
+  let bin = "";
+  for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+function b64ToUtf8(s: string): string {
+  const bin = atob(s.replace(/\s+/g, ""));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
 
 class IdbBackend implements MeshBackend {
   private dbp: Promise<IDBDatabase> | null = null;
@@ -254,13 +272,15 @@ export class MeshStore {
     return new Uint8Array(pt);
   }
 
-  /** A new mesh: a fresh id, admin key pair and site secret, kept here. */
+  /** A new mesh: a fresh id, admin secret and site secret, kept here. */
   async create(name: string, opts: { meshId?: number } = {}): Promise<MeshRecord> {
     await this.load();
     let meshId = opts.meshId ?? randomU32();
     while (opts.meshId === undefined && this.cache.has(meshId)) meshId = randomU32();
-    const pair = await generateAdminKeyPair();
-    const adminPublic = await exportPublicKey(pair.publicKey);
+    const secret = randomBytes(16);
+    const adminPublic = (await adminSignerFromSecret(secret, meshId)).publicKey;
+    const admin = await this.seal(secret, meshId);
+    secret.fill(0);
     const site = randomBytes(32);
     const sealed = await this.seal(site, meshId);
     site.fill(0);
@@ -269,7 +289,7 @@ export class MeshStore {
       name: name.trim() || "Home mesh",
       createdAt: new Date().toISOString(),
       adminPublic,
-      adminPrivate: pair.privateKey,
+      admin,
       site: sealed,
       keyEpoch: 1,
       revVersion: 0,
@@ -278,10 +298,99 @@ export class MeshStore {
     });
   }
 
-  /** The admin signer for a mesh (the private key never leaves the browser). */
+  private signers = new Map<number, MeshAdminSigner>();
+
+  /** The admin signer for a mesh (derived once per session from its sealed secret). */
   async signer(meshId: number): Promise<MeshAdminSigner> {
+    const have = this.signers.get(meshId >>> 0);
+    if (have) return have;
     const s = await this.stored(meshId);
-    return webCryptoSigner(s.adminPrivate, s.adminPublic);
+    let signer: MeshAdminSigner;
+    if (s.admin) {
+      const secret = await this.unseal(s.admin, meshId);
+      signer = await adminSignerFromSecret(secret, meshId);
+      secret.fill(0);
+    } else if (s.adminPrivate) {
+      signer = webCryptoSigner(s.adminPrivate, s.adminPublic);
+    } else {
+      throw new Error("this app does not hold that mesh's admin key");
+    }
+    this.signers.set(meshId >>> 0, signer);
+    return signer;
+  }
+
+  /** Whether the mesh's admin key can be backed up (made after D-442). */
+  async exportable(meshId: number): Promise<boolean> {
+    return (await this.stored(meshId)).admin !== undefined;
+  }
+
+  /** The mesh as one text a second phone imports (D-442): its id, name, admin secret, site
+   * secret, key epoch, revocations and members. Whoever holds it administers the mesh. */
+  async exportBackup(meshId: number): Promise<string> {
+    const s = await this.stored(meshId);
+    if (!s.admin) throw new Error("this mesh was made before admin backups: re-create it to back it up");
+    const admin = await this.unseal(s.admin, meshId);
+    const site = await this.unseal(s.site, meshId);
+    const body = {
+      v: 1,
+      meshId: s.meshId >>> 0,
+      name: s.name,
+      admin: toHex(admin),
+      site: toHex(site),
+      keyEpoch: s.keyEpoch,
+      revVersion: s.revVersion,
+      revoked: s.revoked,
+      members: s.members.map((m) => ({ label: m.label, node: m.node, keyHash: m.keyHash })),
+    };
+    admin.fill(0);
+    site.fill(0);
+    return BACKUP_PREFIX + utf8ToB64(JSON.stringify(body));
+  }
+
+  /** A mesh from another phone's backup (exportBackup). Replaces this app's copy of the same
+   * mesh. Checks the admin secret against nothing but itself: the fixtures decide. */
+  async importBackup(text: string): Promise<MeshRecord> {
+    const t = text.trim();
+    if (!t.startsWith(BACKUP_PREFIX)) throw new Error("not a Splanc mesh backup");
+    let b: {
+      v?: number;
+      meshId?: number;
+      name?: string;
+      admin?: string;
+      site?: string;
+      keyEpoch?: number;
+      revVersion?: number;
+      revoked?: string[];
+      members?: { label?: string; node?: number; keyHash?: string }[];
+    };
+    try {
+      b = JSON.parse(b64ToUtf8(t.slice(BACKUP_PREFIX.length)));
+    } catch {
+      throw new Error("this mesh backup is damaged");
+    }
+    if (b.v !== 1 || typeof b.meshId !== "number" || !b.admin || !b.site) throw new Error("this mesh backup is damaged");
+    const meshId = b.meshId >>> 0;
+    const admin = fromHex(b.admin);
+    const site = fromHex(b.site);
+    if (admin.length !== 16 || site.length !== 32) throw new Error("this mesh backup is damaged");
+    await this.load();
+    const adminPublic = (await adminSignerFromSecret(admin, meshId)).publicKey;
+    const rec: StoredMesh = {
+      meshId,
+      name: (b.name ?? "").trim() || "Home mesh",
+      createdAt: new Date().toISOString(),
+      adminPublic,
+      admin: await this.seal(admin, meshId),
+      site: await this.seal(site, meshId),
+      keyEpoch: b.keyEpoch ?? 1,
+      revVersion: b.revVersion ?? 0,
+      members: (b.members ?? []).map((m) => ({ deviceId: "", label: m.label ?? "", node: m.node ?? 0, keyHash: m.keyHash ?? "" })),
+      revoked: [...(b.revoked ?? [])],
+    };
+    admin.fill(0);
+    site.fill(0);
+    this.signers.delete(meshId);
+    return this.write(rec);
   }
 
   /** The site secret, for a provision about to go to a fixture. Callers zero it after use. */
@@ -314,12 +423,16 @@ export class MeshStore {
   }
 
   /** After a successful revoke: the new keys' epoch and site secret, and who is out. */
-  async rotated(meshId: number, r: { keyEpoch: number; revVersion: number; siteSecret: Uint8Array; revoked: string[]; nodes: number[] }): Promise<MeshRecord> {
+  async rotated(
+    meshId: number,
+    r: { keyEpoch: number; revVersion: number; siteSecret: Uint8Array; revoked: string[]; nodes: number[]; replaced?: boolean },
+  ): Promise<MeshRecord> {
     const s = await this.stored(meshId);
     s.site = await this.seal(r.siteSecret, meshId);
     s.keyEpoch = r.keyEpoch;
     s.revVersion = r.revVersion;
-    s.revoked = [...new Set([...s.revoked, ...r.revoked])];
+    // A replacing order (D-443) starts a fresh list on the fixtures: keep the same here.
+    s.revoked = r.replaced ? [...r.revoked] : [...new Set([...s.revoked, ...r.revoked])];
     s.members = s.members.filter((m) => !r.nodes.includes(m.node) && !r.revoked.includes(m.keyHash));
     return this.write(s);
   }
@@ -332,6 +445,7 @@ export class MeshStore {
 
   /** Forget a mesh here (its fixtures keep it; recovery is then the USB console). */
   async forget(meshId: number): Promise<void> {
+    this.signers.delete(meshId >>> 0);
     await this.be().del(MESH_PREFIX + (meshId >>> 0));
     this.cache.delete(meshId >>> 0);
     this.emit();

@@ -5,8 +5,8 @@
  *   #/mesh/new[?from=<device id>]          intro → pick fixtures → name → set up → joined
  *   #/mesh/add/<mesh id>[?from=<device id>] pick fixtures → set up → joined
  *
- * The app makes the mesh's secrets here (store/meshStore.ts: a non-extractable WebCrypto
- * P-256 admin key and a sealed site secret), provisions each picked fixture over whatever
+ * The app makes the mesh's secrets here (store/meshStore.ts: an admin secret the P-256 admin
+ * key derives from, exportable as a backup (D-442), and a sealed site secret), provisions each picked fixture over whatever
  * connection it has to it (the app's own connection, wss or Bluetooth, or a short-lived wss
  * one), then unlocks one of them as the gateway and shows the others joining and syncing.
  */
@@ -204,7 +204,7 @@ export function MeshFlowScreen(router: Router, mode: MeshFlowMode, opts: { meshI
       facts.append(li);
     };
     fact("device", "Pick your fixtures", "Any of your Splanc fixtures with mesh firmware. They talk to each other directly, no extra hardware.");
-    fact("check", "This phone keeps the key", "The app makes the mesh's admin key and keeps it on this device. Only it can add or remove fixtures.");
+    fact("check", "This phone keeps the key", "The app makes the mesh's admin key and keeps it on this device. Back it up from the mesh's settings to manage the mesh from another phone too.");
     fact("play", "Control them together", "Effects, brightness and sliders then change on every fixture on the same frame (a slider being dragged follows within milliseconds).");
     page({
       hero: "graph",

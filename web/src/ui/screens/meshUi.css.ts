@@ -63,6 +63,9 @@ const CSS = `
 .mesh-kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.9375rem; }
 .mesh-kv > span:first-child { color: var(--text-dim); }
 .mesh-sheet { display: flex; flex-direction: column; gap: 16px; padding-bottom: 8px; }
+.mesh-backup-text { width: 100%; box-sizing: border-box; font: 0.75rem/1.4 ui-monospace, monospace; padding: 10px;
+  border-radius: 8px; border: 1px solid var(--border, #444); background: var(--surface-2, transparent); color: inherit;
+  resize: vertical; word-break: break-all; }
 
 /* -- The flow (#/mesh/new, #/mesh/add/:id) ------------------------------------- */
 .mf-pick { display: flex; flex-direction: column; gap: 12px; }

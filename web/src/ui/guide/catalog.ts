@@ -733,9 +733,9 @@ export const GUIDE_TOPICS: GuideTopic[] = [
         bullets: [
           "Open a fixture's ⋮ device settings and tap **Create a mesh**.",
           "Pick the fixtures to link (any you have added to the app), then name the mesh.",
-          "The app makes the mesh's admin key and keeps it on this phone or browser (it can't be " +
-            "copied out), sets each fixture up in turn over its Wi-Fi or Bluetooth connection, and " +
-            "shows them joining and syncing their clocks.",
+          "The app makes the mesh's admin key and keeps it on this phone or browser, sets each " +
+            "fixture up in turn over its Wi-Fi or Bluetooth connection, and shows them joining and " +
+            "syncing their clocks.",
         ],
       },
       {
@@ -751,8 +751,12 @@ export const GUIDE_TOPICS: GuideTopic[] = [
           "A fixture asking to join shows up with **Admit**. Admit only your own.",
           "Tap a member to **Remove** it (it leaves and can be added again) or, for a lost or " +
             "given-away fixture, **Block it for good** (the mesh changes its keys).",
-          "Only the phone or browser that created a mesh can manage it. If its data is cleared, " +
-            "reset each fixture's mesh from its USB console (`MESH LEAVE`) and create a new one.",
+          "**Back up this mesh** gives you one text with the mesh's admin key. Keep it like a " +
+            "password. On another phone, **Use a mesh from another phone** adds the mesh there, so " +
+            "both can manage it.",
+          "Without that backup only the phone or browser that created a mesh can manage it. If its " +
+            "data is cleared, reset each fixture's mesh from its USB console (`MESH LEAVE`) and " +
+            "create a new one.",
         ],
       },
     ],

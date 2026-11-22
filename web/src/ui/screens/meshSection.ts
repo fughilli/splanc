@@ -81,6 +81,7 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
           variant: meshes.length ? "quiet" : "primary",
           onClick: () => go(`#/mesh/new?from=${from}`),
         }),
+        Button({ label: "Use a mesh from another phone", variant: "quiet", onClick: () => openImportSheet() }),
       );
       el.append(actions);
       return;
@@ -126,10 +127,14 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
         h(
           "div",
           "mesh-row-hint",
-          "This mesh was created on another phone or browser, which holds its admin key. Manage it there. " +
-            "If that key is lost, reset the fixture's mesh from its USB console (MESH LEAVE).",
+          "This mesh was created on another phone or browser, which holds its admin key. Manage it there, " +
+            "or bring it here with that phone's mesh backup. If the key is lost, reset the fixture's mesh from " +
+            "its USB console (MESH LEAVE).",
         ),
       );
+      const actions = h("div", "mesh-actions");
+      actions.append(Button({ label: "Use a mesh from another phone", variant: "quiet", onClick: () => openImportSheet() }));
+      el.append(actions);
       return;
     }
     if (m.kind === "admin" && rec) {
@@ -137,9 +142,93 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
       actions.append(
         Button({ label: "Add a fixture to this mesh", icon: "plus", onClick: () => go(`#/mesh/add/${rec.meshId}`) }),
         Button({ label: "Remove from mesh", variant: "quiet", onClick: () => openMemberSheet(m.members[0]!, m, rec) }),
+        Button({ label: "Back up this mesh", variant: "quiet", onClick: () => void openBackupSheet(rec) }),
       );
       el.append(actions);
     }
+  };
+
+  /** D-442: the mesh's admin secret (and site secret) as one text, for a second phone. */
+  const openBackupSheet = async (rec: MeshRecord): Promise<void> => {
+    const sheet = Sheet(`Back up “${rec.name}”`);
+    const body = h("div", "mesh-sheet");
+    if (!(await meshStore.exportable(rec.meshId))) {
+      body.append(h("div", "mesh-row-hint", "This mesh was made before backups existed. Create it again to back it up."));
+      sheet.body.append(body);
+      return;
+    }
+    const text = await meshStore.exportBackup(rec.meshId);
+    body.append(
+      h(
+        "div",
+        "mesh-row-hint",
+        "Whoever has this text can add, remove and control every fixture in this mesh. Keep it like a password: " +
+          "in a password manager, or a file only you can open. On another phone, open a fixture's Mesh section and " +
+          "choose “Use a mesh from another phone”.",
+      ),
+    );
+    const area = h("textarea", "mesh-backup-text");
+    area.readOnly = true;
+    area.value = text;
+    area.rows = 5;
+    area.setAttribute("aria-label", "Mesh backup");
+    const actions = h("div", "mesh-actions");
+    actions.append(
+      Button({
+        label: "Copy",
+        variant: "primary",
+        onClick: () =>
+          void navigator.clipboard
+            ?.writeText(text)
+            .then(() => toast("Mesh backup copied"))
+            .catch(() => toast("Couldn't copy: select the text and copy it", { error: true })),
+      }),
+      Button({
+        label: "Save as a file",
+        variant: "quiet",
+        onClick: () => {
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(new Blob([text + "\n"], { type: "text/plain" }));
+          a.download = `${rec.name.replace(/[^A-Za-z0-9 _-]+/g, "").trim() || "mesh"}.splanc-mesh.txt`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        },
+      }),
+    );
+    body.append(area, actions);
+    sheet.body.append(body);
+  };
+
+  /** D-442: a mesh backed up on another phone (openBackupSheet), pasted here. */
+  const openImportSheet = (): void => {
+    const sheet = Sheet("Use a mesh from another phone");
+    const body = h("div", "mesh-sheet");
+    body.append(h("div", "mesh-row-hint", "Paste the mesh backup made on the other phone (“Back up this mesh”). This phone can then add, remove and control the mesh's fixtures too."));
+    const area = h("textarea", "mesh-backup-text");
+    area.rows = 5;
+    area.placeholder = "splanc-mesh-1:…";
+    area.setAttribute("aria-label", "Mesh backup");
+    const actions = h("div", "mesh-actions");
+    const add = Button({
+      label: "Add this mesh",
+      variant: "primary",
+      onClick: () =>
+        void (async () => {
+          try {
+            const rec = await meshStore.importBackup(area.value);
+            area.value = "";
+            toast(`“${rec.name}” added to this phone`);
+            sheet.close();
+            lastKey = "";
+            await refresh();
+          } catch (e) {
+            toast((e as Error).message, { error: true });
+          }
+        })(),
+    });
+    actions.append(add);
+    body.append(area, actions);
+    sheet.body.append(body);
   };
 
   /** Which fixtures got the last whole-mesh change (an effect, a slider, brightness). */

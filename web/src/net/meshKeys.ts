@@ -6,8 +6,10 @@
  *
  * Signatures are ECDSA P-256 over SHA-256 of the signed bytes, r ‖ s (64 bytes): exactly
  * what WebCrypto's ECDSA returns (IEEE P1363), and what the C6 verifies with MbedTLS.
- * The signing key is a WebCrypto key the browser keeps non-extractable (store/meshStore.ts):
- * fixtures only ever get its public half.
+ * The signing key derives from a 16-byte admin secret (desk D-442: exportable, so a mesh can
+ * be backed up and administered from a second phone), exactly as mesh_admin_tool derives it
+ * (host_keys.rs AdminSigner::from_secret); the browser imports the derived private key as a
+ * non-extractable WebCrypto key to sign. Fixtures only ever get its public half.
  */
 
 /** The admin's signer: the public key fixtures hold (65 B, uncompressed P-256) and sign(). */
@@ -186,4 +188,125 @@ export function webCryptoSigner(privateKey: CryptoKey, publicKey: Uint8Array): M
 export async function verifyAdminSignature(publicKey: Uint8Array, msg: Uint8Array, sig: Uint8Array): Promise<boolean> {
   const k = await subtle().importKey("raw", publicKey as BufferSource, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
   return subtle().verify({ name: "ECDSA", hash: "SHA-256" }, k, sig as BufferSource, msg as BufferSource);
+}
+
+// -- The admin key from its exportable secret (D-442) -------------------------------------
+
+// P-256 (SEC 2): the field prime, the group order, the generator. Plain BigInt affine
+// arithmetic: one scalar multiplication per mesh, when its signer is first needed.
+const P256_P = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn;
+const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+const P256_G: [bigint, bigint] = [
+  0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296n,
+  0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5n,
+];
+
+function mod(a: bigint, m: bigint): bigint {
+  const r = a % m;
+  return r < 0n ? r + m : r;
+}
+
+function inv(a: bigint, m: bigint): bigint {
+  let [r0, r1, t0, t1] = [mod(a, m), m, 1n, 0n];
+  while (r1 !== 0n) {
+    const q = r0 / r1;
+    [r0, r1] = [r1, r0 - q * r1];
+    [t0, t1] = [t1, t0 - q * t1];
+  }
+  return mod(t0, m);
+}
+
+type Pt = [bigint, bigint] | null;
+
+function ptAdd(a: Pt, b: Pt): Pt {
+  if (a === null) return b;
+  if (b === null) return a;
+  const p = P256_P;
+  let l: bigint;
+  if (a[0] === b[0]) {
+    if (mod(a[1] + b[1], p) === 0n) return null;
+    l = mod((3n * a[0] * a[0] - 3n) * inv(2n * a[1], p), p);
+  } else {
+    l = mod((b[1] - a[1]) * inv(b[0] - a[0], p), p);
+  }
+  const x = mod(l * l - a[0] - b[0], p);
+  return [x, mod(l * (a[0] - x) - a[1], p)];
+}
+
+function bytesToBig(b: Uint8Array): bigint {
+  let v = 0n;
+  for (const x of b) v = (v << 8n) | BigInt(x);
+  return v;
+}
+
+function bigTo32(v: bigint): Uint8Array {
+  const out = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  return out;
+}
+
+/** The public key (65 B uncompressed) of private scalar `d`. */
+export function p256PublicKey(d: Uint8Array): Uint8Array {
+  let k = bytesToBig(d);
+  let acc: Pt = null;
+  let add: Pt = P256_G;
+  while (k > 0n) {
+    if (k & 1n) acc = ptAdd(acc, add);
+    add = ptAdd(add, add);
+    k >>= 1n;
+  }
+  if (acc === null) throw new Error("bad scalar");
+  const out = new Uint8Array(65);
+  out[0] = 4;
+  out.set(bigTo32(acc[0]), 1);
+  out.set(bigTo32(acc[1]), 33);
+  return out;
+}
+
+/** The private scalar of a mesh's admin secret: HKDF-SHA256(salt = mesh id BE, ikm = secret,
+ * info = "splanc mesh admin sign" ‖ ctr), the first ctr that gives a valid scalar (host_keys.rs). */
+export async function adminScalar(secret: Uint8Array, meshId: number): Promise<Uint8Array> {
+  if (secret.length !== 16) throw new Error("an admin secret is 16 bytes");
+  const ikm = await subtle().importKey("raw", secret as BufferSource, "HKDF", false, ["deriveBits"]);
+  const salt = new W().u32(meshId >>> 0).done();
+  const label = enc.encode("splanc mesh admin sign");
+  for (let ctr = 0; ctr < 256; ctr++) {
+    const info = new Uint8Array(label.length + 1);
+    info.set(label);
+    info[label.length] = ctr;
+    const d = new Uint8Array(
+      await subtle().deriveBits({ name: "HKDF", hash: "SHA-256", salt: salt as BufferSource, info: info as BufferSource }, ikm, 256),
+    );
+    const v = bytesToBig(d);
+    if (v > 0n && v < P256_N) return d;
+  }
+  throw new Error("no valid scalar");
+}
+
+function b64url(b: Uint8Array): string {
+  let s = "";
+  for (const x of b) s += String.fromCharCode(x);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** The admin signer of a mesh's exportable secret (D-442): the derived private key imported as
+ * a non-extractable WebCrypto key; the scalar is zeroed once imported. */
+export async function adminSignerFromSecret(secret: Uint8Array, meshId: number): Promise<MeshAdminSigner> {
+  const d = await adminScalar(secret, meshId);
+  const publicKey = p256PublicKey(d);
+  const jwk: JsonWebKey = {
+    kty: "EC",
+    crv: "P-256",
+    d: b64url(d),
+    x: b64url(publicKey.subarray(1, 33)),
+    y: b64url(publicKey.subarray(33, 65)),
+    ext: false,
+  };
+  d.fill(0);
+  const key = await subtle().importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  jwk.d = "";
+  return webCryptoSigner(key, publicKey);
 }

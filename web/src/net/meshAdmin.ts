@@ -204,6 +204,21 @@ export interface Rotation {
   siteSecret: Uint8Array;
   revoked: string[];
   nodes: number[];
+  /** The order started a fresh revocation list (D-443): the store replaces, not merges. */
+  replaced?: boolean;
+}
+
+/** The firmware's revocation list (rekey.rs REVOKED_MAX) and the order flag that replaces it
+ * (REV_REPLACE). Desk D-443: the list never fills. Every block already rolls the mesh key and
+ * site secret for the remaining members, so once the list nears capacity the next block starts
+ * a fresh one holding only the newly blocked fixtures; the older ones keep only a dead key. */
+export const REVOKED_MAX = 8;
+export const REV_REPLACE = 0x8000;
+
+/** Whether this block starts a fresh list: the stored entries plus the new ones would leave
+ * fewer than two free slots. */
+export function revocationReplaces(stored: number, adding: number): boolean {
+  return stored + adding > REVOKED_MAX - 2;
 }
 
 /** Remove fixtures for good: a signed rotation to a new mesh key and site secret that leaves
@@ -212,13 +227,15 @@ export interface Rotation {
 export async function revokeMembers(
   c: MeshAdminClient,
   signer: MeshAdminSigner,
-  mesh: Pick<MeshRecord, "meshId" | "keyEpoch" | "revVersion">,
+  mesh: Pick<MeshRecord, "meshId" | "keyEpoch" | "revVersion"> & { revoked?: string[] },
   out: { node: number; keyHash: string }[],
   state?: MeshStateInfo,
 ): Promise<Rotation> {
   const s = state ?? (await c.getMesh());
   const epoch = (((s.keyEpoch ?? mesh.keyEpoch) + 1) & 0xff) || 1;
-  const revVersion = (mesh.revVersion + 1) & 0xffff;
+  const revVersion = ((mesh.revVersion & 0x7fff) + 1) & 0x7fff || 1;
+  const stored = Math.max(s.revoked ?? 0, mesh.revoked?.length ?? 0);
+  const replaced = revocationReplaces(stored, out.length);
   const meshKey = randomBytes(16);
   const siteSecret = randomBytes(32);
   const order = await signRekeyOrder(signer, {
@@ -226,7 +243,7 @@ export async function revokeMembers(
     epoch,
     meshKey,
     siteSecret,
-    revVersion,
+    revVersion: replaced ? revVersion | REV_REPLACE : revVersion,
     revoked: out.map((m) => fromHex8(m.keyHash)),
   });
   try {
@@ -234,7 +251,7 @@ export async function revokeMembers(
   } finally {
     meshKey.fill(0);
   }
-  return { keyEpoch: epoch, revVersion, siteSecret, revoked: out.map((m) => m.keyHash), nodes: out.map((m) => m.node) };
+  return { keyEpoch: epoch, revVersion, siteSecret, revoked: out.map((m) => m.keyHash), nodes: out.map((m) => m.node), replaced };
 }
 
 function fromHex8(h: string): Uint8Array {
