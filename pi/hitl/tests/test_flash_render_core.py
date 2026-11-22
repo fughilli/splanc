@@ -48,8 +48,7 @@ class FlashRenderTest(unittest.TestCase):
         )
         rep = core.report(lock.replace("[late] n=1 max=30000", "[x]"), PHASES)
         self.assertEqual(rep.late_in("effect_store"), 1)
-        self.assertEqual(core.verdict(rep)[0], "PASS")  # under the player mutex: reported
-        self.assertEqual(core.verdict(rep, strict=True)[0], "FAIL")
+        self.assertEqual(core.verdict(rep)[0], "FAIL")  # every writer phase is gated
         self.assertTrue(any(w.startswith("map: 1 late frame") for w in why), why)
         clean = LOG.replace("[late] n=1 max=30000", "[x]")
         self.assertEqual(core.verdict(core.report(clean, PHASES)), ("PASS", []))

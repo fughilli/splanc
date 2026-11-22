@@ -202,6 +202,13 @@ pub unsafe extern "C" fn lm_fxs_set_store(read: Option<FxsRead>, write: Option<F
     FXS_REMOVE = remove;
 }
 
+/// Bytes of a record header (what a listing or lookup reads): main.cpp reads them before it
+/// takes the player mutex (PR-41).
+#[no_mangle]
+pub extern "C" fn lm_fxs_header_cap() -> u32 {
+    HEADER_CAP as u32
+}
+
 /// Whether the submit_effect just handled stored the effect (nothing to persist).
 ///
 /// # Safety
