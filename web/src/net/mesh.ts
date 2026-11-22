@@ -158,8 +158,12 @@ export function meshAdminMessage(op: MeshAdminOp): ClientMessage {
   return { type: "mesh_admin", ...op } as unknown as ClientMessage;
 }
 
-/** Live moves (seq'd, or any uniform write) go on arrival; discrete changes are scheduled. */
-export function meshLeadMs(msg: { type: string; seq?: unknown }): number {
+/** Live moves (a slider or crossfade being dragged) go on arrival: they are superseded
+ * within milliseconds. Discrete changes, and a slider's committed value (let go), are
+ * scheduled `MESH_LEAD_MS` ahead on the mesh clock, so every fixture settles on the same
+ * frame. */
+export function meshLeadMs(msg: { type: string; seq?: unknown; commit?: unknown }): number {
+  if (msg.commit === true) return MESH_LEAD_MS;
   if (msg.type === "set_uniforms" || msg.type === "blend_keypoints") return 0;
   if (msg.seq !== undefined && msg.seq !== null) return 0;
   return MESH_LEAD_MS;

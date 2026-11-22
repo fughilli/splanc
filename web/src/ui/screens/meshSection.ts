@@ -168,7 +168,8 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
       h(
         "span",
         "mesh-row-hint",
-        `Effects, sliders, brightness and crossfades also go to the ${others} other fixture${others === 1 ? "" : "s"}, on the same frame.`,
+        `Effects, sliders, brightness and crossfades also go to the ${others} other fixture${others === 1 ? "" : "s"}. ` +
+          "Each change lands on the same frame; a slider being dragged follows within a few milliseconds.",
       ),
     );
     const sw = Switch({

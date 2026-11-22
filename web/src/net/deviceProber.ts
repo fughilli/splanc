@@ -153,7 +153,9 @@ class DeviceProber {
    * the just-freed device. */
   async probeNow(id: string): Promise<void> {
     const dev = deviceStore.list().find((d) => d.id === id);
-    if (!dev) return;
+    // Never the active device: the app's own client is (re)connecting to it, and a
+    // probe beside it would take the player's TLS slot from that handshake.
+    if (!dev || id === deviceStore.activeId()) return;
     await this.probeOne(dev);
     this.interval = MIN_INTERVAL; // stay brisk after a manual poke
     this.emit();

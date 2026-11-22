@@ -43,6 +43,9 @@ test("discrete changes are scheduled ahead; live moves go on arrival", () => {
   assert.equal((xf as unknown as Record<string, unknown>)["wantReply"], false, "a crossfade move");
   const done = wrapForMesh(msg({ type: "set_uniforms", values: [{ slot: 1, value: [0.2] }], seq: 4, commit: true }), encodeClient);
   assert.equal((done as unknown as Record<string, unknown>)["wantReply"], true, "the slider let go (commit)");
+  // …and its committed value is scheduled like a discrete change: every fixture settles on
+  // the same frame. The moves before it went on arrival.
+  assert.equal((done as unknown as Record<string, unknown>)["leadMs"], MESH_LEAD_MS, "the commit is scheduled");
   const once = wrapForMesh(msg({ type: "set_uniforms", values: [{ slot: 1, value: [0.2] }] }), encodeClient);
   assert.equal((once as unknown as Record<string, unknown>)["wantReply"], true, "a one-shot set");
   // Already scheduled by the caller: left alone.

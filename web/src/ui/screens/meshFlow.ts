@@ -205,7 +205,7 @@ export function MeshFlowScreen(router: Router, mode: MeshFlowMode, opts: { meshI
     };
     fact("device", "Pick your fixtures", "Any of your Splanc fixtures with mesh firmware. They talk to each other directly, no extra hardware.");
     fact("check", "This phone keeps the key", "The app makes the mesh's admin key and keeps it on this device. Only it can add or remove fixtures.");
-    fact("play", "Control them together", "Effects, sliders and brightness then change on every fixture on the same frame.");
+    fact("play", "Control them together", "Effects, brightness and sliders then change on every fixture on the same frame (a slider being dragged follows within milliseconds).");
     page({
       hero: "graph",
       title: "Create a mesh",

@@ -130,7 +130,11 @@ class AppState {
       trustedBefore?: boolean;
     },
   ): void {
-    this.disconnect();
+    // Release the current connection without probing the device it frees yet: when it
+    // is the device we are about to connect to (every reload: restoreActive), that probe
+    // opened a second wss next to this one, the player's one TLS slot took one of them
+    // and reset the other, and the app sat at "retrying…" for ~3 s.
+    const freed = this.detach();
     // A Bluetooth device is only reachable through its BLE socket factory (made by
     // the connect flow from a live GATT device). Without one, the fallback below
     // would hand `ble:<id>` to the native WssBridge, which crashes iOS. Keep it
@@ -141,6 +145,8 @@ class AppState {
     }
     const dev = deviceStore.upsert(wssUrl, label);
     deviceStore.setActive(dev.id);
+    // A different device was freed: probe it now (it is no longer the active one).
+    if (freed && freed !== dev.id) void deviceProber.probeNow(freed);
     // coldRetryLimit defaults to 1 (give up fast on an untrusted cert so we don't
     // starve the cert-approval page's TLS slot). The trust flow passes a higher
     // value: once the user has accepted the cert the only thing left that can
@@ -424,6 +430,15 @@ class AppState {
   }
 
   disconnect(): void {
+    const wasActive = this.detach();
+    // While connected the prober skips the active device; now that it's freed,
+    // probe it immediately so its row flips to reachable/offline right away
+    // instead of after up to a full poll interval.
+    if (wasActive) void deviceProber.probeNow(wasActive);
+  }
+
+  /** Close the connection and clear the active device; returns the device it freed. */
+  private detach(): string | null {
     this.clearReconnectWatch();
     const old = this.client;
     // Detach first: closing fires onDisconnected, which must not treat this
@@ -434,10 +449,7 @@ class AppState {
     const wasActive = deviceStore.activeId();
     deviceStore.setActive(null);
     this.setStatus({ state: "offline", text: "offline", certUrl: null, error: null });
-    // While connected the prober skips the active device; now that it's freed,
-    // probe it immediately so its row flips to reachable/offline right away
-    // instead of after up to a full poll interval.
-    if (wasActive) void deviceProber.probeNow(wasActive);
+    return wasActive;
   }
 
   /** Capture/demo-mode seam (FUG-103 docs screenshots): force a connected client

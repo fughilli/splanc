@@ -35,7 +35,8 @@ const CSS = `
 .mesh-member-dot--ok { background: var(--ok); }
 .mesh-member-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mesh-member-detail { font-size: var(--f-caption); color: var(--text-dim); }
-.mesh-member-chev { color: var(--text-dim); transform: rotate(-90deg); }
+/* The kit chevron already points right ("opens a sheet"); no rotation. */
+.mesh-member-chev { color: var(--text-dim); display: inline-flex; }
 .mesh-member-chev svg { width: 16px; height: 16px; }
 
 .mesh-member-dot--bad { background: var(--err); }
