@@ -167,6 +167,7 @@ py_library(
         "loaded_tls_core.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
+        "mesh_app_e2e_core.py",
         "mesh_apply_at_skew_core.py",
         "mesh_effect_core.py",
         "mesh_gateway_core.py",
@@ -1991,6 +1992,57 @@ py_binary(
         ":harness",
         "//pi/server",
         "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# The real app drives real C6s through the mesh flow (PR #613's UI on the M6/M7 firmware):
+# the //web:ios_payload bundle in headless Chromium (Playwright) over wss through the rig,
+# on hitl-rig-1's three C6s: "Create a mesh" (the app provisions each and its browser-signed
+# grant unlocks the gateway), "Control the whole mesh" (an effect typed into the editor,
+# a slider, brightness: one frame on every DUT, AP-beacon clock), eject + re-add, reboot
+# catch-up, reload auto-unlock; screenshots of every screen (phone + desktop) and every
+# late frame with its cause. Pure logic: mesh_app_e2e_core. Needs a browser: manual.
+py_binary(
+    name = "mesh_app_e2e",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_app_e2e.py",
+        "hitl_mesh_apply_at_skew.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "ab_demo/meshStorm.fx",
+        "hitl_improv.py",
+        "improv.py",
+        "mesh_serial_bridge.py",
+        ":mesh_gateway_fxbs",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+        "//shared/protocol/proto:ledmapper.proto",
+        "//web:ios_payload",
+    ],
+    env = {
+        "HITL_SKU": "esp32c6",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_EFFECT_SRC_RUNFILE": "_main/pi/hitl/harness/ab_demo/meshStorm.fx",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/meshTint.fxb",
+        "MESH_PROTO_RUNFILE": "_main/shared/protocol/proto/ledmapper.proto",
+        "MESH_WEB_RUNFILE": "_main/web/ios_payload",
+    },
+    imports = ["."],
+    main = "hitl_mesh_app_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "//tools/ui_layout:layout_guard",
+        "@rules_python//python/runfiles",
+        requirement("playwright"),
         requirement("websockets"),
     ],
 )
