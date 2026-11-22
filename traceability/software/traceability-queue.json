@@ -73,12 +73,11 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "under-verified",
+      "kind": "unverified",
       "entity": "PR-14",
-      "message": "demands hil, best passing evidence is simulation",
+      "message": "no test evidence",
       "route": "human-gate",
-      "demanded_level": "hil",
-      "provided_level": "simulation"
+      "demanded_level": "hil"
     },
     {
       "kind": "under-verified",
@@ -112,12 +111,11 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "under-verified",
+      "kind": "unverified",
       "entity": "PR-21",
-      "message": "demands hil, best passing evidence is simulation",
+      "message": "no test evidence",
       "route": "human-gate",
-      "demanded_level": "hil",
-      "provided_level": "simulation"
+      "demanded_level": "hil"
     },
     {
       "kind": "under-verified",
@@ -136,12 +134,11 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "under-verified",
+      "kind": "unverified",
       "entity": "PR-26",
-      "message": "demands hitl, best passing evidence is simulation",
+      "message": "no test evidence",
       "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "simulation"
+      "demanded_level": "hitl"
     },
     {
       "kind": "under-verified",
@@ -152,12 +149,11 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "under-verified",
+      "kind": "unverified",
       "entity": "PR-28",
-      "message": "demands hil, best passing evidence is simulation",
+      "message": "no test evidence",
       "route": "human-gate",
-      "demanded_level": "hil",
-      "provided_level": "simulation"
+      "demanded_level": "hil"
     },
     {
       "kind": "under-verified",
@@ -230,7 +226,7 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-1",
-      "message": "high risk; mitigation is PARTIAL",
+      "message": "high risk; mitigation is OPEN",
       "route": "human-gate"
     },
     {
@@ -242,7 +238,7 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-3",
-      "message": "high risk; mitigation is PARTIAL",
+      "message": "high risk; mitigation is OPEN",
       "route": "human-gate"
     },
     {
