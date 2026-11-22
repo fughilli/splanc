@@ -44,8 +44,12 @@ def _components(up: set, nodes: Sequence[int]) -> dict:
     return {n: find(n) for n in nodes}
 
 
-def link_states(timeline, bench: sc.Bench, edge_db: float = 119.0):
-    """[(t_rel_us, set of up pairs)] after each step."""
+def link_states(timeline, bench: sc.Bench, edge_db: float | None = None):
+    """[(t_rel_us, set of up pairs)] after each step. A pair is up while its loss
+    (every leak path, for a cut pair on the node model) is under the 1M DSSS edge
+    at the bench's TX power (default sc.BENCH_TX_DBM + 99 dB)."""
+    if edge_db is None:
+        edge_db = sc.BENCH_TX_DBM + 99.0
     state: dict = {}
     out = []
     for t, v in timeline:
