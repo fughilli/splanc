@@ -244,8 +244,10 @@ fn set_stride_params(cp: &mut pb::CodeParams, active: &ActiveCapture) {
 /// Counting-pattern block capacity the player stores. Matches the HOST wire cap
 /// (SetCountingPattern.blocks); the firmware decodes that arm zero-copy (ffi.rs)
 /// straight into this, so it is the real decode capacity, not the (stubbed)
-/// firmware micropb profile.
-const MAX_COUNTING_BLOCKS: usize = 32;
+/// firmware micropb profile. A request with more blocks is refused
+/// (`bad_message`, current pattern untouched) rather than truncated: the probe
+/// is read back by a camera, so a silently missing block is a wrong answer.
+pub const MAX_COUNTING_BLOCKS: usize = 32;
 
 /// A counting-pattern block with its color pre-reduced to 8-bit RGB. The wire
 /// carries [0,1] doubles; we convert them ONCE here (cold, at set time) so
@@ -1010,16 +1012,19 @@ impl Player {
         now_ms: i64,
     ) -> pb::ServerMessage {
         // Reduce each block's [0,1] wire color to 8-bit (read in place from the
-        // frame), then install via the shared path.
+        // frame), then install via the shared path. More than the capacity is
+        // refused before any mutation (never truncated).
         let mut reduced: micropb::heapless::Vec<(u32, u32, Rgb), MAX_COUNTING_BLOCKS> =
             micropb::heapless::Vec::new();
-        for b in m.blocks().take(MAX_COUNTING_BLOCKS) {
+        for b in m.blocks() {
             let mut rgb = [0u8; 3];
             for (c, v) in rgb.iter_mut().zip(b.rgb()) {
                 *c = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
             }
             let block = (b.start().max(0) as u32, b.count().max(0) as u32, (rgb[0], rgb[1], rgb[2]));
-            let _ = reduced.push(block);
+            if reduced.push(block).is_err() {
+                return too_many_counting_blocks();
+            }
         }
         self.set_counting_blocks(now_ms, &reduced, m.color_order(), m.channel())
     }
@@ -1044,6 +1049,9 @@ impl Player {
         if channel < 0 || channel as usize >= self.led_channels() {
             return error("bad_message", "channel out of range");
         }
+        if blocks.len() > MAX_COUNTING_BLOCKS {
+            return too_many_counting_blocks();
+        }
         let mut state = pb::CountingState::default();
         // Probe wire order (identity = raw). Validated before any mutation so a
         // bad string leaves the current pattern untouched.
@@ -1065,9 +1073,9 @@ impl Player {
             state.r#active = true;
             state.set_epoch_ms(now_ms as f64); // integer clock → wire ms double
             let mut cb = CountingBlocks::new();
-            for &(start, count, rgb) in blocks.iter().take(MAX_COUNTING_BLOCKS) {
-                // capacity == MAX_COUNTING_BLOCKS, and we cap the iterator, so
-                // push cannot fail.
+            for &(start, count, rgb) in blocks {
+                // capacity == MAX_COUNTING_BLOCKS, checked above, so push
+                // cannot fail.
                 let _ = cb.push(CountingBlock { start, count, rgb });
             }
             self.counting = Some((now_ms, cb));
@@ -2011,6 +2019,13 @@ pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64, brightness: f64) -> 
 
 fn reply(msg: SMsg) -> pb::ServerMessage {
     pb::ServerMessage { r#msg: Some(msg) }
+}
+
+/// The refusal for a set_counting_pattern with more than MAX_COUNTING_BLOCKS
+/// blocks (the phone splits nothing: a pattern replaces the previous one).
+fn too_many_counting_blocks() -> pb::ServerMessage {
+    const _: () = assert!(MAX_COUNTING_BLOCKS == 32, "update the message below");
+    error("bad_message", "too many counting blocks (max 32)")
 }
 
 fn error(code: &str, message: &str) -> pb::ServerMessage {
