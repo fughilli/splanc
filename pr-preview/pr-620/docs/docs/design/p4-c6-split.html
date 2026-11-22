@@ -233,6 +233,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
@@ -1230,8 +1231,14 @@ the same laser crossing on the P4’s clock.</p>
 </section>
 <section id="c6-firmware-the-front-end-build">
 <h3>4.3 C6 firmware: the front-end build<a class="headerlink" href="#c6-firmware-the-front-end-build" title="Link to this heading">¶</a></h3>
-<p><strong>What changes.</strong> A new <code class="docutils literal notranslate"><span class="pre">esp32c6_frontend</span></code> target. It is <code class="docutils literal notranslate"><span class="pre">player_app_netstack</span></code> with the player core
-compiled out under <code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code>. In its place go the link driver and the router of §2.2.</p>
+<p><strong>What changes.</strong> A new <code class="docutils literal notranslate"><span class="pre">esp32c6_frontend</span></code> target: a pure relay (<code class="docutils literal notranslate"><span class="pre">relay_main.cpp</span></code> +
+<code class="docutils literal notranslate"><span class="pre">relay_ffi.rs</span></code>), its own small program on the player’s netstack transport, like the OTA loader.
+It links no player core and no effects engine; in their place go the link driver and the router
+of §2.2. It answers <code class="docutils literal notranslate"><span class="pre">get_tls_info</span></code> and <code class="docutils literal notranslate"><span class="pre">set/get_wifi_policy</span></code> itself, applies a rename (BLE and
+mDNS advertise the name) before forwarding it, forwards everything else, and answers
+<code class="docutils literal notranslate"><span class="pre">error{player_unavailable}</span></code> while the P4 is down. (The first cut was <code class="docutils literal notranslate"><span class="pre">player_app_netstack</span></code> with
+<code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code>: it still linked the player core and effects engine, about 62 KB of RAM, only to
+answer while the P4 was down. <strong>Measured</strong> below.)</p>
 <p><strong>What stays exactly as it is.</strong></p>
 <ul class="simple">
 <li><p><strong>Network:</strong> the netstack, wss, TLS (<code class="docutils literal notranslate"><span class="pre">tls_region</span></code>), BLE Improv and the GATT transport, mDNS,
