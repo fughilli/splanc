@@ -163,3 +163,26 @@ second phase with anything but OK gets a catch-up too.
   gateway (unicast over the mesh).
 - **The effect load costs a frame** on every fixture, as any direct upload does (24 KB arena
   reset, JIT build); `[mesh] fx applied load_us=` reports it.
+
+## Follow-up: effect uploads reassembled in RAM (desk D-464)
+
+The sharded upload path appended every window of a kind-EFFECT upload to `/lfs/upload.tmp`
+(r4: 20 late frames on the gateway, all next to those writes). The netstack player now
+reassembles EFFECT windows in one 4.5 KiB heap block (held only while they arrive) and
+dispatches the frame from it. Runs r7 and r8 (2026-11-22, hitl-rig-1, `--ble`):
+
+| | r7 / r8 |
+| --- | --- |
+| Gateway late frames next to flash writes, whole run | **2 / 3** (r4: 20): only its membership write at the first join and the shared effect's persisted copy after a switch; none during an upload (6 RAM uploads each run) |
+| **BLE end to end** (the rig's adapter as the phone on BLE, the wss client still connected): unlock over BLE, a 2.9 KB effect as 1 KB windows | `welcome`, unlock OK, `chunk_ack` ×2, **`result_ready`**, the `mesh.result`; **all three run it**, the same grid frame, spread 0.27 / 1.06 ms |
+| Gateway heap during the BLE + wss session | lowest free **35 588 B** (r8; r7 37 384 B) with the RAM upload block in use; the since-boot minimum stays **20 832 B** (set at `MESH ON`, as before) |
+| Share rounds (8, as before) | 8/8 every member OK and running, spread 0.25–1.15 ms, submit to all 0.58–1.05 s |
+| Late joiner / reboot | caught up 5.7 s / 1.5 s (no reload) |
+
+Members show 20–24 late frames (16–25 ms intervals) whenever the harness opens a wss
+connection to them to check what they run: the TLS server handshake's ECDHE shares the CPU
+with an effect running near its frame budget. That is the app connecting to a fixture, not
+the mesh; the gate reports it (`tls`) and does not count it (desk item).
+
+Flash: the default image is 2 284 240 B (+1 184 B over #614), layout_test headroom 9 520 B;
+loopTask stack bound 9 360 B (12 020 B with margin, of 12 288 B).

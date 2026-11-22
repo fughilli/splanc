@@ -141,7 +141,7 @@ _SAVE = re.compile(
 )
 # A TLS server handshake (the harness opening a connection to check what a fixture runs):
 # its ECDHE competes with render for the CPU. Not mesh work; reported, not gated.
-_TLS = re.compile(r"TLS HANDSHAKE COMPLETE")
+_TLS = re.compile(r"TLS HANDSHAKE COMPLETE|TLS hs state ->")
 _LOAD = re.compile(
     r"\[mesh\] fx applied |\[mesh\] scene apply .*staged=0|\[mesh\] gw share apply .*local=now"
 )
