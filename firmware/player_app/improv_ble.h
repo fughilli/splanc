@@ -33,6 +33,15 @@ void improv_ble_set_name(const char *device_name);
 // latched credentials out.
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap);
 
+// True exactly once per received Improv Identify RPC (polled from the app loop,
+// next to the credentials). The player answers with player_identify_start().
+bool improv_ble_take_identify();
+
+// Defined in main.cpp: blink every output briefly so a person can see which
+// fixture they picked (D-259). Safe to call from the app loop; the render task
+// draws the blink and then restores whatever was showing.
+void player_identify_start();
+
 // True while a central (provisioner / web app) is connected over BLE. Lets the
 // app defer BLE-disrupting work (soft-AP teardown, cert re-sign) until the peer
 // has taken the provisioning result and disconnected.

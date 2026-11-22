@@ -3034,6 +3034,8 @@ void netstack_loop() {
       inited = false;
       t = 0;
     }
+    // Improv Identify (the connect picker's Blink): a brief blink on every output.
+    if (improv_ble_take_identify()) player_identify_start();
     char s[33], p[65];
     if (improv_ble_take_credentials(s, sizeof s, p, sizeof p)) {
       // The user's rule: a Wi-Fi join triggered through Improv is ALWAYS fresh — scan and

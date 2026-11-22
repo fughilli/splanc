@@ -53,6 +53,7 @@ import {
 } from "../../flash/boardMatch";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 import { appState } from "../app/state";
+import { pendingName } from "../../store/newFixture";
 import type { LedMapperClient } from "../../net/client";
 import {
   boardLabel,
@@ -838,15 +839,56 @@ function renderDone(
   pre.textContent = logText;
   details.append(sum, pre);
 
+  // Name it now (D-259): the name rides to the fixture when the app first
+  // connects to it (matched by this MAC), after Wi-Fi setup over Bluetooth.
+  const nameInput = document.createElement("input");
+  nameInput.className = "sheet-input flash-name";
+  nameInput.id = "flash-name";
+  nameInput.placeholder = "e.g. Desk lamp";
+  nameInput.maxLength = 32;
+  nameInput.autocomplete = "off";
+  nameInput.value = pendingName.get()?.name ?? "";
+  const keepName = (): void => {
+    if (nameInput.value.trim()) pendingName.set(nameInput.value, mac);
+  };
+
+  const setup = Button({
+    label: "Set up Wi-Fi",
+    icon: "bluetooth",
+    block: true,
+    onClick: () => {
+      keepName();
+      sheet.close();
+      void import("./addDevice").then((m) => m.openAddDevice("ble"));
+    },
+  });
   sheet.body.append(
     ok,
     card,
+    field("Name this fixture", nameInput),
     intro(
-      "The board reboots into the device firmware. If it was already on Wi-Fi it rejoins by itself; otherwise it advertises over Bluetooth — provision it onto Wi-Fi from “Add device”, then connect.",
+      "The board restarts into the Splanc firmware. Next, give it your Wi-Fi details over Bluetooth; it takes this name when the app connects to it. A board that was already on Wi-Fi rejoins by itself.",
     ),
+    setup,
+    Button({
+      label: "Flash another",
+      variant: "quiet",
+      block: true,
+      onClick: () => {
+        keepName();
+        renderIdle(sheet, index, entry);
+      },
+    }),
+    Button({
+      label: "Done",
+      variant: "quiet",
+      block: true,
+      onClick: () => {
+        keepName();
+        sheet.close();
+      },
+    }),
     details,
-    Button({ label: "Flash another", block: true, onClick: () => renderIdle(sheet, index, entry) }),
-    Button({ label: "Done", variant: "quiet", block: true, onClick: () => sheet.close() }),
   );
 }
 

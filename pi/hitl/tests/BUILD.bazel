@@ -45,6 +45,7 @@ py_test(
         "test_hitl_metrics.py",
         "test_hitl_select.py",
         "test_hitl_verdict.py",
+        "test_identify_blink_core.py",
         "test_improv.py",
         "test_improv_find.py",
         "test_improv_fresh_join_core.py",

@@ -39,6 +39,8 @@ static mut DEVICE_NAME: Buf<32> = Buf::new();
 static mut PENDING_SSID: Buf<MAX_SSID> = Buf::new();
 static mut PENDING_PASS: Buf<MAX_PASS> = Buf::new();
 static mut HAS_PENDING: bool = false;
+/// An Improv Identify RPC arrived; the firmware blinks its outputs (D-259).
+static mut IDENTIFY_PENDING: bool = false;
 static mut NOTIFY_Q: [u16; 4] = [0; 4];
 static mut NOTIFY_N: usize = 0;
 /// Recombines an L2CAP PDU across HCI-ACL fragments. A >MTU ATT write (e.g. the
@@ -453,14 +455,16 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
             let mut att: Buf<GATT_RSP_MAX> = Buf::new();
             let outcome = svc.handle_att(pdu.opcode, pdu.params, &mut att);
             // Stash Wi-Fi credentials for the firmware; queue notifications.
-            if let Action::Provision(creds) = outcome.action {
-                unsafe {
+            match outcome.action {
+                Action::Provision(creds) => unsafe {
                     PENDING_SSID.clear();
                     PENDING_PASS.clear();
                     let _ = PENDING_SSID.extend(creds.ssid.as_slice());
                     let _ = PENDING_PASS.extend(creds.pass.as_slice());
                     HAS_PENDING = true;
-                }
+                },
+                Action::Identify => unsafe { IDENTIFY_PENDING = true },
+                _ => {}
             }
             queue_notifications(&outcome.notify);
             if outcome.resp_len == 0 {
@@ -582,6 +586,17 @@ pub extern "C" fn ns_ble_take_wifi(ssid: *mut u8, ssid_cap: u32, pass: *mut u8, 
         let pn = copy_out(PENDING_PASS.as_slice(), pass, pass_cap.saturating_sub(1));
         *pass.add(pn as usize) = 0;
         1
+    }
+}
+
+/// Take a pending Improv Identify request (1 = one arrived since the last call).
+/// The firmware answers it with a brief blink on every output (D-259).
+#[no_mangle]
+pub extern "C" fn ns_ble_take_identify() -> u32 {
+    unsafe {
+        let pending = IDENTIFY_PENDING;
+        IDENTIFY_PENDING = false;
+        pending as u32
     }
 }
 

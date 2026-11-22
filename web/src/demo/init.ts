@@ -28,6 +28,9 @@
  *                address, so the lists show "On this network".
  *   stale      — a known "Bedroom" that was looked for and not found (a fixture
  *                moved to another Wi-Fi), so its row shows what to do about it.
+ *   newfixture — (with `device`) the controller answers the new-fixture flow's
+ *                hardware reads/writes: two outputs (GPIO 20, 21), nothing
+ *                counted, GRB, and accepts rename / probe / config nudges.
  *   nousb      — no Web Serial / WebUSB (an iPhone-like browser), so "Flash a
  *                new device" shows the plug-into-a-laptop pictogram.
  *   play / play-revert / play-nomap / play-off — Halloween play mode: a
@@ -73,6 +76,7 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("discovered")) void setupDiscovered();
   if (scenarios.has("stale")) void setupStale();
   if (scenarios.has("nousb")) setupNoUsb();
+  if (scenarios.has("newfixture")) setupNewFixture();
   const play = [...scenarios].find((s) => s === "play" || s.startsWith("play-"));
   if (play) void setupPlayDemo(play);
 }
@@ -481,4 +485,26 @@ function setupNoUsb(): void {
       // not configurable here: the shot just shows the flasher instead
     }
   }
+}
+
+/** The new-fixture flow's device calls (see the scenario list above). */
+function setupNewFixture(): void {
+  const client = appState.client;
+  if (!client) return;
+  const c = client as unknown as Record<string, unknown>;
+  const channels = [
+    { channel: 0, gpio: 20, ledType: "ws2812", colorOrder: "GRB", ledCount: 0 },
+    { channel: 1, gpio: 21, ledType: "ws2812", colorOrder: "GRB", ledCount: 0 },
+  ];
+  const board = { maxLeds: 2048, maxLedsPerChannel: 1024 };
+  const state = () => ({ type: "hardware_config_state", channels: channels.map((x) => ({ ...x })), board });
+  c["getHardwareConfig"] = async () => state();
+  c["setHardwareConfig"] = async (cfg: { channel?: number; ledCount?: number; colorOrder?: string }) => {
+    const ch = channels.find((x) => x.channel === (cfg.channel ?? 0));
+    if (ch && cfg.ledCount !== undefined) ch.ledCount = cfg.ledCount;
+    if (ch && cfg.colorOrder !== undefined) ch.colorOrder = cfg.colorOrder;
+    return state();
+  };
+  c["setCountingPattern"] = async () => ({ type: "counting_state" });
+  c["setDeviceName"] = async (name: string) => ({ type: "welcome", deviceName: name, mac: "AA:BB:CC:12:34:56" });
 }
