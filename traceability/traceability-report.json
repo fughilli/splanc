@@ -10,16 +10,16 @@
     "user_needs_validated": 0,
     "requirements": 39,
     "requirements_verified": 10,
-    "requirements_under_verified": 17,
+    "requirements_under_verified": 19,
     "requirements_partial": 0,
     "requirements_failed": 0,
-    "requirements_unverified": 12,
+    "requirements_unverified": 10,
     "risks": 12,
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 3308,
-    "gaps": 38
+    "test_cases": 3494,
+    "gaps": 36
   },
   "levels": [
     {
@@ -738,6 +738,13 @@
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "//tools/touchdesigner/stream_bench:stream_bench_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//tools/touchdesigner/stream_bench:stream_bench_test",
+          "kind": "target"
         }
       ],
       "demanded_level": "simulation",
@@ -995,6 +1002,12 @@
           "status": "passed",
           "level": "simulation",
           "target": "//pi/reconstruction:vio_test"
+        },
+        {
+          "name": "pi.server.tests.test_app_integration::test_full_capture_flow",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_integration_test"
         },
         {
           "name": "pi.server.tests.test_codebook::test_bit_period_override",
@@ -1661,6 +1674,13 @@
           "status": "passed",
           "level": "simulation",
           "target": "//shared/simulator:sim_recon_roundtrip_test"
+        },
+        {
+          "name": "//solver:solver_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//solver:solver_test",
+          "kind": "target"
         },
         {
           "name": "//web:exposure_test",
@@ -2339,6 +2359,12 @@
           "target": "//pi/hitl/tests:hitl_test"
         },
         {
+          "name": "pi.server.tests.test_app_integration::test_full_capture_flow",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_integration_test"
+        },
+        {
           "name": "pi.server.tests.test_handler::test_configure_renegotiates_mid_capture",
           "status": "passed",
           "level": "simulation",
@@ -2712,10 +2738,36 @@
     {
       "id": "PR-14",
       "title": "Consistent device-visible identity across name/AP/hostname",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "The system shall derive or maintain device-visible identity consistently across configured name, AP name, hostname, and related discovery surfaces.",
+      "evidence": [
+        {
+          "name": "device_identity_test::a_non_ascii_name_round_trips_byte_exact_through_the_rename_poll_and_set_identity",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:device_identity_test"
+        },
+        {
+          "name": "device_identity_test::a_rename_reaches_the_reply_the_next_session_and_the_firmware_poll",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:device_identity_test"
+        },
+        {
+          "name": "device_identity_test::the_last_of_several_renames_wins_in_the_reply_the_poll_and_the_next_welcome",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:device_identity_test"
+        },
+        {
+          "name": "device_identity_test::welcome_reports_the_identity_the_firmware_configured_at_boot",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:device_identity_test"
+        }
+      ],
       "demanded_level": "hil",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-5"
       ],
@@ -2930,6 +2982,31 @@
       "status": "UNDER-VERIFIED",
       "description": "The runtime shall support effect execution features needed by the documented effect system, including embedded/runtime type support and calibrated performance estimation inputs.",
       "evidence": [
+        {
+          "name": "embedded_types_test::an_all_fixed_effect_renders_on_the_device_like_its_float_twin",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:embedded_types_test"
+        },
+        {
+          "name": "embedded_types_test::integer_transcendentals_run_on_the_device_like_the_float_maths",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:embedded_types_test"
+        },
+        {
+          "name": "embedded_types_test::narrow_integer_buffers_keep_per_led_counters_across_frames",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:embedded_types_test"
+        },
+        {
+          "name": "//firmware/player_app:ffi_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:ffi_test",
+          "kind": "target"
+        },
         {
           "name": "pi.hitl.tests.test_fx_bench::test_assemble_bundle_omits_absent_optionals",
           "status": "passed",
@@ -3442,6 +3519,24 @@
       "description": "The product shall support visual output calibration features such as color correction where documented.",
       "evidence": [
         {
+          "name": "color_calibration_test::a_live_preview_is_applied_without_being_persisted_until_committed",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:color_calibration_test"
+        },
+        {
+          "name": "color_calibration_test::a_named_led_profile_becomes_its_datasheet_calibration",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:color_calibration_test"
+        },
+        {
+          "name": "color_calibration_test::per_channel_calibration_overrides_layer_over_the_datasheet_defaults",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:color_calibration_test"
+        },
+        {
           "name": "//firmware/player_app:color_correction_test",
           "status": "passed",
           "level": "simulation",
@@ -3561,6 +3656,24 @@
       "description": "The device firmware and associated protocols shall manage memory carefully enough to support intended networking, control, and effect workloads on target hardware.",
       "evidence": [
         {
+          "name": "memory_workloads_test::a_map_at_the_full_led_cap_uploads_in_small_windows_and_decodes_off_flash",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_workloads_test"
+        },
+        {
+          "name": "memory_workloads_test::a_realistic_scan_topology_is_stored_beside_its_map_and_plays",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_workloads_test"
+        },
+        {
+          "name": "memory_workloads_test::an_effect_with_per_led_state_renders_every_led_at_the_cap",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_workloads_test"
+        },
+        {
           "name": "hitl_e2e::flash_boot",
           "status": "passed",
           "level": "hitl",
@@ -3569,7 +3682,7 @@
         }
       ],
       "demanded_level": "hil",
-      "provided_level": "hitl",
+      "provided_level": "simulation",
       "satisfies": [
         "UN-7"
       ],
@@ -3579,8 +3692,6 @@
       "modules": [
         "firmware"
       ],
-      "stale": true,
-      "pyramid_violation": true,
       "implemented_in": [
         {
           "ids": [
@@ -4251,6 +4362,54 @@
       "category": "risk-control",
       "evidence": [
         {
+          "name": "memory_bounds_test::an_effect_past_the_effect_buffer_is_refused_and_the_running_one_keeps_rendering",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
+          "name": "memory_bounds_test::an_upload_past_the_storage_arena_is_refused_rolled_back_and_recoverable",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
+          "name": "memory_bounds_test::effect_buffers_past_the_fx_arena_are_clamped_never_written_out_of_bounds",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
+          "name": "memory_bounds_test::heap_figures_handed_to_the_core_are_carried_in_the_polled_and_pushed_perf_report",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
+          "name": "memory_bounds_test::map_leds_past_the_led_cap_are_validated_but_never_stored",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
+          "name": "memory_bounds_test::narrow_buffers_keep_per_led_state_in_a_quarter_of_the_memory",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
+          "name": "memory_bounds_test::uploads_decode_through_one_small_block_whatever_their_size",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
+          "name": "memory_bounds_test::video_frames_past_the_texture_buffer_are_dropped_and_frames_within_it_apply",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
           "name": "hitl_e2e::flash_boot",
           "status": "passed",
           "level": "hitl",
@@ -4259,7 +4418,7 @@
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "hitl",
+      "provided_level": "simulation",
       "satisfies": [
         "UN-7"
       ],
@@ -4271,8 +4430,6 @@
       "modules": [
         "firmware"
       ],
-      "stale": true,
-      "pyramid_violation": true,
       "implemented_in": [
         {
           "ids": [
@@ -4377,6 +4534,24 @@
       "description": "Expand coverage of modeled operations, calibrate the cost model, validate against held-out workloads, and expose budget visibility so the model does not give false confidence.",
       "category": "risk-control",
       "evidence": [
+        {
+          "name": "perf_cost_counters_test::basic_perf_reports_cycle_spans_without_paying_for_opcode_counting",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:perf_cost_counters_test"
+        },
+        {
+          "name": "perf_cost_counters_test::every_report_is_pinned_to_the_program_that_produced_it",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:perf_cost_counters_test"
+        },
+        {
+          "name": "perf_cost_counters_test::full_perf_reports_exactly_the_work_the_vm_did_each_frame",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:perf_cost_counters_test"
+        },
         {
           "name": "pi.hitl.tests.test_fx_bench::test_assemble_bundle_omits_absent_optionals",
           "status": "passed",
@@ -4730,11 +4905,43 @@
     {
       "id": "PR-28",
       "title": "Autoscale frame rate and enforce headroom",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "Autoscale frame rate, enforce headroom targets, and notify or abort when safe operation cannot be maintained, so expensive effects cannot starve the runtime.",
       "category": "risk-control",
+      "evidence": [
+        {
+          "name": "starvation_guard_test::a_non_default_instruction_budget_is_enforced_per_invocation",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:starvation_guard_test"
+        },
+        {
+          "name": "starvation_guard_test::a_runaway_update_is_cut_off_and_reported_while_the_frame_still_renders",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:starvation_guard_test"
+        },
+        {
+          "name": "starvation_guard_test::each_runaway_shade_call_is_cut_off_within_the_per_invocation_instruction_budget",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:starvation_guard_test"
+        },
+        {
+          "name": "starvation_guard_test::frames_over_the_frame_budget_are_counted_once_and_reported_to_the_app",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:starvation_guard_test"
+        },
+        {
+          "name": "starvation_guard_test::the_app_can_switch_a_runaway_effect_off",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:starvation_guard_test"
+        }
+      ],
       "demanded_level": "hil",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-6",
         "UN-7"
@@ -5298,6 +5505,36 @@
           "status": "passed",
           "level": "simulation",
           "target": "//pi/reconstruction:vio_test"
+        },
+        {
+          "name": "pi.server.tests.test_capture_recovery::test_capture_left_by_a_failed_solve_reconstructs_offline_from_its_log",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_integration_test"
+        },
+        {
+          "name": "pi.server.tests.test_capture_recovery::test_failed_host_solve_leaves_the_complete_capture_on_disk[1024-8-128]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_integration_test"
+        },
+        {
+          "name": "pi.server.tests.test_capture_recovery::test_failed_host_solve_leaves_the_complete_capture_on_disk[12-8-10]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_integration_test"
+        },
+        {
+          "name": "pi.server.tests.test_capture_recovery::test_phone_dropping_during_the_final_solve_still_gets_the_map_persisted",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_integration_test"
+        },
+        {
+          "name": "pi.server.tests.test_capture_recovery::test_phone_reconnecting_mid_capture_keeps_adding_to_the_same_capture",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_integration_test"
         }
       ],
       "demanded_level": "hitl",
@@ -6642,10 +6879,31 @@
           "kind": "target"
         },
         {
+          "name": "//firmware/loader:layout_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/loader:layout_test",
+          "kind": "target"
+        },
+        {
           "name": "//firmware/ota:ota_test",
           "status": "passed",
           "level": "simulation",
           "target": "//firmware/ota:ota_test",
+          "kind": "target"
+        },
+        {
+          "name": "//firmware/ota:sign_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/ota:sign_test",
+          "kind": "target"
+        },
+        {
+          "name": "//firmware/ota:wire_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/ota:wire_test",
           "kind": "target"
         },
         {
@@ -6735,7 +6993,7 @@
     {
       "id": "MIT-3",
       "title": "Autoscale frame rate and enforce headroom",
-      "status": "UNVERIFIED",
+      "status": "PARTIAL",
       "description": "Risk control for RISK-3 (Runtime starvation from expensive effects); FUG-88 prose mitigation, specified as PR-28.",
       "type": null,
       "mitigates": [
@@ -6917,7 +7175,7 @@
     {
       "id": "RISK-3",
       "title": "Runtime starvation from expensive effects",
-      "status": "OPEN",
+      "status": "PARTIAL",
       "description": "Expensive effects cause unstable frame rate or harm other firmware responsibilities, undermining UN-6 and UN-7.",
       "severity": "high",
       "likelihood": null,
@@ -7073,8 +7331,6 @@
     "RISK-5"
   ],
   "pyramid_violations": [
-    "PR-21",
-    "PR-26",
     "PR-35"
   ],
   "unknown_evidence": {},
@@ -7152,11 +7408,12 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-14",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
       "kind": "under-verified",
@@ -7190,20 +7447,12 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "stale",
+      "kind": "under-verified",
       "entity": "PR-21",
-      "message": "only passing evidence is against an older build",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hil",
-      "provided_level": "hitl"
-    },
-    {
-      "kind": "pyramid",
-      "entity": "PR-21",
-      "message": "demands hil but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
-      "demanded_level": "hil",
-      "provided_level": "hitl"
+      "provided_level": "simulation"
     },
     {
       "kind": "under-verified",
@@ -7222,20 +7471,12 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "stale",
+      "kind": "under-verified",
       "entity": "PR-26",
-      "message": "only passing evidence is against an older build",
+      "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hitl",
-      "provided_level": "hitl"
-    },
-    {
-      "kind": "pyramid",
-      "entity": "PR-26",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "provided_level": "simulation"
     },
     {
       "kind": "under-verified",
@@ -7246,11 +7487,12 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-28",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
       "kind": "under-verified",
@@ -7344,7 +7586,7 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-3",
-      "message": "high risk; mitigation is OPEN",
+      "message": "high risk; mitigation is PARTIAL",
       "route": "human-gate"
     },
     {
