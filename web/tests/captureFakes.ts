@@ -73,6 +73,11 @@ export class ScriptedDecoder {
   static decoded: DetectionRecord[] = [];
   lastBlobStatus: never[] = [];
   readonly stats = { uniqueIds: new Set<number>(), tracks: 0, alignShiftMs: 0, marginEma: 0.5 };
+  /** The tracker's per-frame telemetry the screen's jerky-motion hint reads
+   * (cv/motionGuide.ts): no measured spacing, so the hint stays quiet. */
+  readonly tracker = {
+    lastStats: { spacingPx: null, shiftPx: 0, live: 0, matched: 0, ambiguous: 0, inconsistent: 0 },
+  };
   private sink: ((records: DetectionRecord[]) => void) | null = null;
   constructor(private readonly params: CodeParams) {}
   onDetections(cb: (records: DetectionRecord[]) => void): void {
