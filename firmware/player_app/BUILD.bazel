@@ -138,6 +138,7 @@ rust_static_library(
     }),
     deps = [
         "//firmware/arena",
+        "//firmware/bss",
         "//firmware/fps",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
@@ -181,6 +182,7 @@ rust_library(
     rustc_env = led_cap_rustc_env(),
     deps = [
         "//firmware/arena",
+        "//firmware/bss",
         "//firmware/fps",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
@@ -2129,6 +2131,20 @@ py_test(
     main = "tests/test_tls_abi.py",
     # Linux CI, as stack_bound_test: the macOS runner's riscv objdump exits 101 in the
     # sandbox.
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["@rules_python//python/runfiles"],
+)
+
+# No big, mostly-zero static in the image's .data (flash + RAM) instead of .bss (RAM):
+# a const initializer with a single non-zero byte (an Option::None niche) puts the
+# whole static in flash (~53 KB of them until //firmware/bss).
+py_test(
+    name = "data_bss_test",
+    srcs = ["tests/test_data_bss.py"],
+    data = [":esp32c6_netstack_elf"],
+    env = {"ELF": "$(rlocationpath :esp32c6_netstack_elf)"},
+    main = "tests/test_data_bss.py",
+    # Builds the firmware image, like stack_bound_test (Linux CI).
     target_compatible_with = ["@platforms//os:linux"],
     deps = ["@rules_python//python/runfiles"],
 )

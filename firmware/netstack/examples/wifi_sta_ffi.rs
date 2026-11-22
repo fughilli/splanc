@@ -8,6 +8,7 @@
 #![no_std]
 #![allow(static_mut_refs)]
 
+use ledmapper_bss::BssOption;
 use ledmapper_netstack::lmac;
 use ledmapper_netstack::mac::{rx_frame, RxRing};
 use ledmapper_netstack::{p2p, tx};
@@ -40,13 +41,15 @@ unsafe fn stamp_tx_seq(f: &mut [u8]) {
         TX_SEQ = (TX_SEQ + 1) & 0x0fff;
     }
 }
-static mut SUP: Option<Sta> = None;
+// BssOption (not Option): its empty state is all-zero, so these statics are .bss rather
+// than .data (which the image would also carry in flash; see //firmware/bss).
+static mut SUP: BssOption<Sta> = BssOption::NONE;
 
 // Incremental PMK derivation (PBKDF2 c=4096 ~1.8s): driven in small chunks off the transport
 // hot path so the BLE link stays serviced through the join. ns_pmk_begin latches ssid+pass the
 // moment they arrive; ns_pmk_step is pumped each loop; the finished PMK is cached in PMK_READY and
 // consumed by ns_wpa_init (fast, no derivation).
-static mut PMK_DERIV: Option<PmkDeriv> = None;
+static mut PMK_DERIV: BssOption<PmkDeriv> = BssOption::NONE;
 static mut PMK_READY: Option<[u8; 32]> = None;
 
 /// Start incrementally deriving the PMK for `ssid`/`pass`. Call as soon as credentials are known.
@@ -55,7 +58,7 @@ pub extern "C" fn ns_pmk_begin(ssid: *const u8, ssid_len: u32, pass: *const u8, 
     unsafe {
         let ssid = core::slice::from_raw_parts(ssid, ssid_len as usize);
         let pass = core::slice::from_raw_parts(pass, pass_len as usize);
-        PMK_DERIV = Some(PmkDeriv::new(pass, ssid));
+        PMK_DERIV.set(PmkDeriv::new(pass, ssid));
         PMK_READY = None;
     }
 }
@@ -108,7 +111,7 @@ pub extern "C" fn ns_wpa_init(
         // Fast path: if the PMK was precomputed off the hot path (ns_pmk_begin/step), use it so we
         // don't freeze the loop deriving it here. Fall back to synchronous derivation otherwise
         // (e.g. a caller that never pumped ns_pmk_step) so the handshake still works.
-        SUP = Some(match PMK_READY {
+        SUP.set(match PMK_READY {
             Some(pmk) => Sta::from_pmk(pmk, apm, sm, sn),
             None => Sta::new(ssid, pass, apm, sm, sn),
         });
@@ -166,7 +169,7 @@ pub extern "C" fn ns_sta_decrypt(frame: *const u8, frame_len: u32, out: *mut u8,
 // --- TCP client -------------------------------------------------------------
 use ledmapper_netstack::tcp::{State, TcpConn};
 
-static mut TCP: Option<TcpConn> = None;
+static mut TCP: BssOption<TcpConn> = BssOption::NONE;
 
 /// Open a TCP connection (src/dst are 4-byte IPv4). Builds the SYN into `out`.
 #[no_mangle]
@@ -178,7 +181,7 @@ pub extern "C" fn ns_tcp_connect(src: *const u8, dst: *const u8, sport: u16, dpo
         let mut conn = TcpConn::new([s[0], s[1], s[2], s[3]], [d[0], d[1], d[2], d[3]], sport, dport, iss);
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         let n = conn.connect(o);
-        TCP = Some(conn);
+        TCP.set(conn);
         n as u32
     }
 }
@@ -213,7 +216,7 @@ pub extern "C" fn ns_tcp_seq_diag(out: *mut u32) -> u32 {
 pub extern "C" fn ns_tcp_listen(src: *const u8, sport: u16, iss: u32) {
     unsafe {
         let s = core::slice::from_raw_parts(src, 4);
-        TCP = Some(TcpConn::listen([s[0], s[1], s[2], s[3]], sport, iss));
+        TCP.set(TcpConn::listen([s[0], s[1], s[2], s[3]], sport, iss));
     }
 }
 

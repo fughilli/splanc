@@ -7,6 +7,8 @@
 #![no_std]
 #![allow(static_mut_refs)]
 
+use core::mem::MaybeUninit;
+
 use ledmapper_netstack::ble::att::AttPdu;
 use ledmapper_netstack::gatt::{GATT_RSP_MAX, GATT_VAL_MAX};
 use ledmapper_netstack::ble::{AclPacket, L2capReassembler};
@@ -15,15 +17,23 @@ use ledmapper_netstack::improv::{Action, ImprovService, IMPROV_SVC_UUID, MAX_PAS
 use ledmapper_netstack::rx::Buf;
 
 static mut HOST: BleHost = BleHost::new();
-// Statically placed (const-initialized) and rebuilt in place by `reset_improv`, never
-// assigned a fresh by-value ImprovService: that temporary is ~4 KiB of the
-// HCI handler's / setup's stack frame (loopTask). `None` until ns_ble_setup.
-static mut IMPROV_SVC: ImprovService = ImprovService::empty();
+// Statically placed and rebuilt in place by `reset_improv`, never assigned a fresh
+// by-value ImprovService: that temporary is ~4 KiB of the HCI handler's / setup's
+// stack frame (loopTask). Zeroed storage (.bss), initialized in place on first use:
+// a const `ImprovService::empty()` initializer has non-zero bytes and would put the
+// ~4 KiB in .data, which the image also carries in flash. `None` until ns_ble_setup.
+static mut IMPROV_SVC: MaybeUninit<ImprovService> = MaybeUninit::zeroed();
+static mut IMPROV_SVC_INIT: bool = false;
 static mut IMPROV: Option<&'static mut ImprovService> = None;
 
 /// (Re)build the Improv service in place and publish it.
 unsafe fn reset_improv() {
-    let svc = &mut *core::ptr::addr_of_mut!(IMPROV_SVC);
+    let p = (*core::ptr::addr_of_mut!(IMPROV_SVC)).as_mut_ptr();
+    if !IMPROV_SVC_INIT {
+        ImprovService::init_in_place(p);
+        IMPROV_SVC_INIT = true;
+    }
+    let svc = &mut *p;
     svc.reset();
     IMPROV = Some(svc);
 }

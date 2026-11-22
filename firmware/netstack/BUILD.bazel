@@ -291,7 +291,10 @@ rust_static_library(
     crate_name = "wifi_sta_ffi",
     edition = "2021",
     target_compatible_with = _C6,
-    deps = [":netstack"],
+    deps = [
+        ":netstack",
+        "//firmware/bss",
+    ],
 )
 
 cc_binary(

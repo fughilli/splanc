@@ -49,17 +49,21 @@ impl Lldesc {
     }
 }
 
-/// One RX slot: a fixed frame buffer + how many bytes the DMA delivered, plus an
-/// `owned_by_hw` flag mirroring the descriptor's OWN bit.
+/// One RX slot: a fixed frame buffer + how many bytes the DMA delivered, plus a
+/// `ready` flag: the inverse of the descriptor's OWN bit (set = a delivered frame
+/// the driver holds until [`RxRing::recycle`]; clear = handed to the hardware).
+/// Kept inverted (rather than an `owned_by_hw` that starts `true`) so a fresh ring
+/// is all-zero bytes: the ~27 KB `static mut RX` is then `.bss`, not `.data`
+/// (which the image would also carry in flash).
 struct Slot {
     buf: [u8; MAX_FRAME],
     len: usize,
-    owned_by_hw: bool,
+    ready: bool,
 }
 
 impl Slot {
     const fn new() -> Self {
-        Slot { buf: [0u8; MAX_FRAME], len: 0, owned_by_hw: true }
+        Slot { buf: [0u8; MAX_FRAME], len: 0, ready: false }
     }
 }
 
@@ -148,14 +152,14 @@ impl<const N: usize> RxRing<N> {
     pub unsafe fn reap(&mut self) -> usize {
         let mut n = 0;
         for i in 0..N {
-            if !self.slots[i].owned_by_hw {
+            if self.slots[i].ready {
                 continue;
             }
             let word0 = core::ptr::read_volatile(&self.descs[i].word0);
             if word0 & DESC_EOF != 0 {
                 let len = ((word0 >> DESC_LEN_SHIFT) & DESC_SIZE_MASK) as usize;
                 self.slots[i].len = len.min(MAX_FRAME);
-                self.slots[i].owned_by_hw = false;
+                self.slots[i].ready = true;
                 n += 1;
             }
         }
@@ -166,7 +170,7 @@ impl<const N: usize> RxRing<N> {
     /// that reaches `N` means the ring filled between polls and the MAC had nowhere to
     /// put the next frame (it was dropped after the hardware already ACKed it).
     pub fn ready_count(&self) -> usize {
-        self.slots.iter().filter(|s| !s.owned_by_hw).count()
+        self.slots.iter().filter(|s| s.ready).count()
     }
 
     // --- host-testable ring logic (no MMIO) ---------------------------------
@@ -178,7 +182,7 @@ impl<const N: usize> RxRing<N> {
             return;
         }
         self.slots[idx].len = len.min(MAX_FRAME);
-        self.slots[idx].owned_by_hw = false;
+        self.slots[idx].ready = true;
         self.descs[idx].word0 &= !DESC_OWN; // driver owns it until recycled
     }
 
@@ -188,7 +192,7 @@ impl<const N: usize> RxRing<N> {
         for _ in 0..N {
             let i = self.head;
             self.head = (self.head + 1) % N;
-            if !self.slots[i].owned_by_hw {
+            if self.slots[i].ready {
                 let len = self.slots[i].len;
                 return Some((i, &self.slots[i].buf[..len]));
             }
@@ -200,7 +204,7 @@ impl<const N: usize> RxRing<N> {
     pub fn recycle(&mut self, idx: usize) {
         if idx < N {
             self.slots[idx].len = 0;
-            self.slots[idx].owned_by_hw = true;
+            self.slots[idx].ready = false;
             // Re-arm the descriptor: OWN set, length cleared, size restored.
             self.descs[idx].word0 = DESC_OWN | (MAX_FRAME as u32 & DESC_SIZE_MASK);
         }
@@ -211,7 +215,7 @@ impl<const N: usize> RxRing<N> {
     /// (bounded back-pressure — a flood drops frames, it never allocates).
     pub fn inject(&mut self, frame: &[u8]) -> Option<usize> {
         for i in 0..N {
-            if self.slots[i].owned_by_hw && self.slots[i].len == 0 {
+            if !self.slots[i].ready && self.slots[i].len == 0 {
                 let n = frame.len().min(MAX_FRAME);
                 self.slots[i].buf[..n].copy_from_slice(&frame[..n]);
                 self.on_dma_complete(i, n);

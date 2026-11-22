@@ -30,6 +30,7 @@ use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
+use ledmapper_bss::BssOption;
 use ledmapper_fps::{FpsController, MAX_FPS};
 use ledmapper_fx_jit::{plan_blocks_into_consts, PlanOut};
 use ledmapper_fx_vm::{
@@ -99,7 +100,10 @@ static mut MAP_META: Option<(Str64, u32)> = None;
 /// The resident topology geometry (branch points + segments); the per-LED
 /// associations are folded into FX_LED_TOPO, not kept here. Borrows ARENA.
 static mut GEOM: Option<StoredTopoGeom<'static>> = None;
-static mut PLAYER: Option<Player> = None;
+// BssOption, not Option, for this and the other big Option statics/deck fields: its
+// empty state is all-zero bytes, so they live in .bss instead of .data (which the image
+// would also carry in flash; see //firmware/bss).
+static mut PLAYER: BssOption<Player> = BssOption::NONE;
 
 
 // -- effects VM (fx_vm) -------------------------------------------------------
@@ -142,7 +146,7 @@ struct DeckState {
     /// borrows `bytes` (static storage): fx_load clears it before rewriting the
     /// bytes and fx_clear drops it.
     prog: Option<Program<'static>>,
-    vm: Option<FxVm>,
+    vm: BssOption<FxVm>,
     /// ACTIVE = the render loop drives it. An upload with `activate=false` parks
     /// the effect (loaded, validated) without taking over rendering.
     active: bool,
@@ -169,7 +173,7 @@ struct DeckState {
     /// room mirrors when `uses_ctxfix` / `uses_room` say so), so it needn't
     /// re-zero the struct per LED. Reset on load so no previous effect's values
     /// leak.
-    shade_led: Option<FxLed>,
+    shade_led: BssOption<FxLed>,
 }
 
 impl DeckState {
@@ -177,7 +181,7 @@ impl DeckState {
         bytes: [0; FX_MAX_BYTES],
         len: 0,
         prog: None,
-        vm: None,
+        vm: BssOption::NONE,
         active: false,
         uses_ctxfix: false,
         uses_uv: false,
@@ -188,7 +192,7 @@ impl DeckState {
         arena_off: 0,
         arena_len: 0,
         morph: Morph::new(),
-        shade_led: None,
+        shade_led: BssOption::NONE,
     };
 
     fn loaded(&self) -> bool {
@@ -583,9 +587,9 @@ unsafe fn deck_b_claim() -> *mut DeckState {
     let p = addr_of_mut!(FX_AUX.deck_b) as *mut DeckState;
     if FX_AUX_OWNER != AuxOwner::DeckB {
         core::ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<DeckState>());
-        addr_of_mut!((*p).vm).write(None);
+        addr_of_mut!((*p).vm).write(BssOption::NONE);
         addr_of_mut!((*p).prog).write(None);
-        addr_of_mut!((*p).shade_led).write(None);
+        addr_of_mut!((*p).shade_led).write(BssOption::NONE);
         (*p).morph.clear();
         FX_AUX_OWNER = AuxOwner::DeckB;
         tex_queue_reset();
@@ -847,7 +851,7 @@ static mut FX_F_DT_FIX: i32 = 0;
 /// LED (`FxFrame { .., ..Default::default() }`) costs a ROM memset of its ~70-byte
 /// tail on every LED once the struct outgrew LLVM's inline-zeroing threshold (the
 /// room fields did it: +~230 cycles/LED on fx_bench), so shade() borrows this.
-static mut FX_SHADE_FRAME: Option<FxFrame> = None;
+static mut FX_SHADE_FRAME: BssOption<FxFrame> = BssOption::NONE;
 // The per-LED shade() scratch is per deck (DeckState::shade_led).
 /// Last update() bounded-exec outcome (0=Ok, 1=Budget, 2=Timeout) — surfaced to
 /// C++ for the rate-limited `[fx]` diagnostic log.
@@ -1433,7 +1437,7 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
         p.set_channel_cap(FX_MAX_LEDS_PER_CHANNEL as u32);
         // Boot-time sizing (lm_set_led_limits) narrows these to the store.
         p.set_features(FEATURES, ledmapper_fx_vm::FORMAT_VERSION as u32);
-        *addr_of_mut!(PLAYER) = Some(p);
+        (*addr_of_mut!(PLAYER)).set(p);
     }
 }
 
@@ -5064,12 +5068,12 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     (*p).morph.reset(prog.manifest);
     // Bind uniforms named like a pool entry (imu_quat, ...) to the live pool.
     uniform_pool::bind(d, prog.manifest);
-    (*p).shade_led = None;
-    *addr_of_mut!(FX_SHADE_FRAME) = None;
+    (*p).shade_led.clear();
+    (*addr_of_mut!(FX_SHADE_FRAME)).clear();
     (*p).prog = None;
     (*p).bytes[..src.len()].copy_from_slice(src);
     (*p).len = src.len();
-    (*p).vm = Some(FxVm::new());
+    (*p).vm.set(FxVm::new());
     // Start every uniform at its manifest default (fx-perf-study R7). Clients
     // that send set_uniforms after a deploy still override it; before this, an
     // effect nobody configured ran with every uniform at 0 (fx_bench's
@@ -5155,7 +5159,7 @@ unsafe fn fx_clear(d: usize) {
         DECK_A.prog = None;
         DECK_A.len = 0;
         DECK_A.active = false;
-        *addr_of_mut!(DECK_A.vm) = None;
+        (*addr_of_mut!(DECK_A.vm)).clear();
         DECK_A.hash = 0;
         DECK_A.id_len = 0;
         (*addr_of_mut!(DECK_A)).morph.clear();
@@ -5165,7 +5169,7 @@ unsafe fn fx_clear(d: usize) {
         FX_JIT_N = 0;
         perf_reset_ring();
     } else if let Some(p) = deck(DECK_B_IDX) {
-        (*p).vm = None;
+        (*p).vm.clear();
         (*p).prog = None;
         (*p).len = 0;
         FX_AUX_OWNER = AuxOwner::Free;
@@ -5511,7 +5515,7 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     // an all-float shader pays nothing at all (FUG-122).
     FX_F_TIME_FIX = q16_16(time_s);
     FX_F_DT_FIX = q16_16(dt_s);
-    *addr_of_mut!(FX_SHADE_FRAME) = Some(f);
+    (*addr_of_mut!(FX_SHADE_FRAME)).set(f);
     // Refresh the per-LED topology cache if a map/topology upload invalidated it,
     // so the coming shade() sweep sees current led.seg / led.s / led.branch.
     if !FX_TOPO_READY {
