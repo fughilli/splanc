@@ -26,6 +26,15 @@
  * clamped coordinates, CLAMP_TO_EDGE for the bilinear upsample), like the
  * reference. Needs EXT_color_buffer_float (render to / read back half floats);
  * {@link AdaptiveDiffuseGL.supported} says whether this context has it.
+ *
+ * Cost (D-177, web/tests/tools/detect_bench): the stats target packs four
+ * samples per texel, so its readback is a quarter of the bytes. (Merging the
+ * gaussian's adjacent taps into bilinear fetches was tried and dropped: at the
+ * GPU's 8-bit filter-weight precision it flips a borderline spot on the
+ * diffuse_rope suite, 464 -> 463 of 689.) {@link render} only queues GPU work; the caller reads the output (and, when
+ * {@link wantsStats} says so, the stats target) back however it likes — a
+ * synchronous readPixels ({@link run}) or a pixel-pack buffer behind a fence
+ * (detect.ts's pipelined path), handing the stats to {@link acceptStats}.
  */
 
 import { DEFAULT_ADAPTIVE_DIFFUSE, gaussTaps, noiseFloor, type AdaptiveDiffuseParams, type NoiseFloor } from "./diffuseDetect";
@@ -42,13 +51,35 @@ void main() {
   gl_Position = vec4(pos, 0.0, 1.0);
 }`;
 
+// k x k box reduce of the camera texture. k = 2: one LINEAR sample at the
+// fragment centre (the 2x2 box). Other k: exact k x k box from LINEAR samples,
+// each covering an adjacent pair of camera texels (sampled on the pair's shared
+// edge) or, for odd k, the last single texel (sampled at its centre).
 const REDUCE_FS = `#version 300 es
 precision highp float;
 uniform sampler2D cam;
 uniform vec2 size;
+uniform int k;
 out vec4 o;
 void main() {
-  vec3 c = texture(cam, gl_FragCoord.xy / size).rgb;
+  vec3 c;
+  if (k == 2) {
+    c = texture(cam, gl_FragCoord.xy / size).rgb;
+  } else {
+    vec2 camSize = vec2(textureSize(cam, 0));
+    vec2 base = floor(gl_FragCoord.xy) * float(k);
+    c = vec3(0.0);
+    for (int j = 0; j < k; j += 2) {
+      float wy = j + 1 < k ? 2.0 : 1.0;
+      float oy = j + 1 < k ? float(j) + 1.0 : float(j) + 0.5;
+      for (int i = 0; i < k; i += 2) {
+        float wx = i + 1 < k ? 2.0 : 1.0;
+        float ox = i + 1 < k ? float(i) + 1.0 : float(i) + 0.5;
+        c += wx * wy * texture(cam, (base + vec2(ox, oy)) / camSize).rgb;
+      }
+    }
+    c /= float(k * k);
+  }
   o = vec4(c, max(c.r, max(c.g, c.b)));
 }`;
 
@@ -125,6 +156,8 @@ void main() {
   resp = r;
 }`;
 
+// Four horizontally consecutive stats samples per texel (sample sx = 4 x + c).
+// Samples past the last column repeat the clamped edge; the reader skips them.
 const STATS_FS = `#version 300 es
 precision highp float;
 uniform highp sampler2D sd;
@@ -132,8 +165,11 @@ uniform int stride;
 out vec4 o;
 void main() {
   ivec2 size = textureSize(sd, 0);
-  ivec2 p = min(ivec2(gl_FragCoord.xy) * stride, size - 1);
-  o = vec4(texelFetch(sd, p, 0).a);
+  ivec2 q = ivec2(gl_FragCoord.xy);
+  int y = min(q.y * stride, size.y - 1);
+  vec4 v;
+  for (int c = 0; c < 4; c++) v[c] = texelFetch(sd, ivec2(min((4 * q.x + c) * stride, size.x - 1), y), 0).a;
+  o = v;
 }`;
 
 const MAX_H_FS = `#version 300 es
@@ -213,19 +249,24 @@ export class AdaptiveDiffuseGL {
   private bgq: Target | null = null;
   private stats: Target | null = null;
   private out: Target | null = null;
+  /** Stats samples per row / rows, and the packed target's width (4 per texel). */
   private statsW = 0;
   private statsH = 0;
+  private statsTexW = 0;
   private statsBuf = new Float32Array(0);
+  private sample = new Float32Array(0);
   private readback = new Uint8Array(0);
   /** The noise floor the last frame was thresholded with (diagnostics / trace). */
   lastNoise: NoiseFloor | null = null;
-  /** The floor measured on the last frame — the next frame's threshold. */
+  /** The floor measured on a recent frame — the next frame's threshold. */
   private nextNoise: NoiseFloor | null = null;
   private frame = 0;
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
     readonly params: AdaptiveDiffuseParams = DEFAULT_ADAPTIVE_DIFFUSE,
+    /** Camera px per detection px (the reduce pass's box size). */
+    readonly downscale = 2,
   ) {
     const taps = gaussTaps(params.spotSigma);
     if (taps.length > MAX_TAPS) throw new Error(`adaptive diffuse: spotSigma ${params.spotSigma} needs ${taps.length} taps (max ${MAX_TAPS})`);
@@ -258,17 +299,47 @@ export class AdaptiveDiffuseGL {
     return this.u.get(key)!;
   }
 
+  /** The RGBA8 detect buffer's framebuffer after {@link render} (w x h). */
+  get outFbo(): WebGLFramebuffer {
+    return this.out!.fbo;
+  }
+
+  /** The packed stats target after {@link render}: RGBA32F, `w` x `h` texels. */
+  get statsTarget(): { fbo: WebGLFramebuffer; w: number; h: number } {
+    return { fbo: this.stats!.fbo, w: this.statsTexW, h: this.statsH };
+  }
+
   /**
    * Run the detector on a camera texture; returns the RGBA8 detect buffer at
    * w x h (row 0 = the texture's v=0 row, as detect.ts's own readback).
+   * Synchronous: render + readPixels (+ the stats read on refresh frames).
    */
   run(camera: WebGLTexture, w: number, h: number): Uint8Array {
     const gl = this.gl;
-    const p = this.params;
-    const r = this.tapRadius;
-    this.ensure(w, h);
     const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
     const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
+    const refresh = this.render(camera, w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.out!.fbo);
+    if (this.readback.length !== w * h * 4) this.readback = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.readback);
+    // The GPU has finished this frame (the readback synced it): the stats target
+    // is ready, so reading it now costs a copy, not a stall.
+    if (refresh) this.nextNoise = this.readNoise();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
+    return this.readback;
+  }
+
+  /**
+   * Queue every pass for one frame; the detect buffer is then in {@link outFbo}.
+   * Returns whether this frame's stats should be read back and handed to
+   * {@link acceptStats} (every STATS_EVERY frames: the floor moves at scene speed).
+   * Leaves the framebuffer binding and viewport changed (callers restore).
+   */
+  render(camera: WebGLTexture, w: number, h: number): boolean {
+    const gl = this.gl;
+    const p = this.params;
+    this.ensure(w, h);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
     gl.bindVertexArray(this.vao);
@@ -276,11 +347,11 @@ export class AdaptiveDiffuseGL {
     this.draw(this.raw!, w, h, "reduce", () => {
       this.bindTex(0, camera, "reduce", "cam", true);
       gl.uniform2f(this.loc("reduce", "size"), w, h);
+      gl.uniform1i(this.loc("reduce", "k"), this.downscale);
     });
     this.draw(this.t!, w, h, "gaussH", () => {
       this.bindTex(0, this.raw!.tex, "gaussH", "src");
-      gl.uniform1fv(this.loc("gaussH", "taps"), this.taps);
-      gl.uniform1i(this.loc("gaussH", "radius"), r);
+      this.setTaps("gaussH");
     });
     // Background at 1/bgScale: downsample, then 3 x (H,V) box passes.
     this.draw(this.q!, this.qw, this.qh, "down", () => {
@@ -305,10 +376,9 @@ export class AdaptiveDiffuseGL {
     this.draw(this.sd!, w, h, "gaussVDog", () => {
       this.bindTex(0, this.t!.tex, "gaussVDog", "src");
       this.bindTex(1, this.bgq!.tex, "gaussVDog", "bg", true);
-      gl.uniform1fv(this.loc("gaussVDog", "taps"), this.taps);
-      gl.uniform1i(this.loc("gaussVDog", "radius"), r);
+      this.setTaps("gaussVDog");
     });
-    this.draw(this.stats!, this.statsW, this.statsH, "stats", () => {
+    this.draw(this.stats!, this.statsTexW, this.statsH, "stats", () => {
       this.bindTex(0, this.sd!.tex, "stats", "sd");
       gl.uniform1i(this.loc("stats", "stride"), p.statStride);
     });
@@ -328,27 +398,40 @@ export class AdaptiveDiffuseGL {
       gl.uniform1f(this.loc("final", "floorT"), noise.floor);
       gl.uniform1f(this.loc("final", "peakFrac"), p.peakFrac);
     });
-    if (this.readback.length !== w * h * 4) this.readback = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.readback);
-    // The GPU has finished this frame (the readback synced it): the stats target
-    // is ready, so reading it now costs a copy, not a stall. The floor moves at
-    // scene speed, so refresh it every STATS_EVERY frames (~1.5 ms each time).
-    if (++this.frame % STATS_EVERY === 0) this.nextNoise = this.readNoise();
-
     gl.bindVertexArray(null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
-    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
-    return this.readback;
+    return ++this.frame % STATS_EVERY === 0;
+  }
+
+  /** The stats target's RGBA32F texels (as read back from {@link statsTarget})
+   * become the noise floor of the frames that follow. */
+  acceptStats(texels: Float32Array): void {
+    this.nextNoise = this.noiseFrom(texels);
+  }
+
+  private setTaps(prog: "gaussH" | "gaussVDog"): void {
+    const gl = this.gl;
+    gl.uniform1fv(this.loc(prog, "taps"), this.taps);
+    gl.uniform1i(this.loc(prog, "radius"), this.tapRadius);
   }
 
   /** Read the stats target and turn it into a noise floor. */
   private readNoise(): NoiseFloor {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.stats!.fbo);
-    gl.readPixels(0, 0, this.statsW, this.statsH, gl.RGBA, gl.FLOAT, this.statsBuf);
-    const sample = new Float32Array(this.statsW * this.statsH);
-    for (let i = 0; i < sample.length; i++) sample[i] = this.statsBuf[i * 4]!;
-    return noiseFloor(sample, this.params.kSigma);
+    gl.readPixels(0, 0, this.statsTexW, this.statsH, gl.RGBA, gl.FLOAT, this.statsBuf);
+    return this.noiseFrom(this.statsBuf);
+  }
+
+  /** Unpack the packed stats texels (4 samples each, padding skipped). */
+  private noiseFrom(texels: Float32Array): NoiseFloor {
+    const sw = this.statsW;
+    const rowTexels = this.statsTexW * 4;
+    let n = 0;
+    for (let y = 0; y < this.statsH; y++) {
+      const row = y * rowTexels;
+      for (let x = 0; x < sw; x++) this.sample[n++] = texels[row + x]!;
+    }
+    return noiseFloor(this.sample, this.params.kSigma);
   }
 
   private draw(t: Target, w: number, h: number, prog: Prog, setup: () => void): void {
@@ -378,12 +461,14 @@ export class AdaptiveDiffuseGL {
     const gl = this.gl;
     this.w = w;
     this.h = h;
-    const tex = (tw: number, th: number, internal: number, format: number, type: number): WebGLTexture => {
+    const tex = (tw: number, th: number, internal: number, format: number, type: number, filter: number = gl.NEAREST): WebGLTexture => {
       const t = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, t);
       gl.texImage2D(gl.TEXTURE_2D, 0, internal, tw, th, 0, format, type, null);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       return t;
     };
     const fbo = (attach: WebGLTexture[]): WebGLFramebuffer => {
@@ -396,8 +481,8 @@ export class AdaptiveDiffuseGL {
       if (st !== gl.FRAMEBUFFER_COMPLETE) throw new Error(`adaptive diffuse: framebuffer incomplete (0x${st.toString(16)})`);
       return f;
     };
-    const mk = (tw: number, th: number, internal: number, type: number): Target => {
-      const t = tex(tw, th, internal, gl.RGBA, type);
+    const mk = (tw: number, th: number, internal: number, type: number, filter?: number): Target => {
+      const t = tex(tw, th, internal, gl.RGBA, type, filter);
       return { tex: t, fbo: fbo([t]) };
     };
     for (const t of [this.raw, this.t, this.sd, this.mh, this.q, this.qPing, this.qPong, this.bgq, this.stats, this.out]) {
@@ -407,7 +492,7 @@ export class AdaptiveDiffuseGL {
         gl.deleteFramebuffer(t.fbo);
       }
     }
-    const half = (tw: number, th: number): Target => mk(tw, th, gl.RGBA16F, gl.HALF_FLOAT);
+    const half = (tw: number, th: number, filter?: number): Target => mk(tw, th, gl.RGBA16F, gl.HALF_FLOAT, filter);
     this.raw = half(w, h);
     this.t = half(w, h);
     // SD: spot colour + response (RGBA16F) and the response alone (R16F), one pass.
@@ -424,10 +509,12 @@ export class AdaptiveDiffuseGL {
     this.bgq = half(this.qw, this.qh);
     this.statsW = Math.ceil(w / this.params.statStride);
     this.statsH = Math.ceil(h / this.params.statStride);
+    this.statsTexW = Math.ceil(this.statsW / 4);
     // Float32 so the stats readback is RGBA/FLOAT, the one float read format
     // EXT_color_buffer_float guarantees.
-    this.stats = mk(this.statsW, this.statsH, gl.RGBA32F, gl.FLOAT);
-    this.statsBuf = new Float32Array(this.statsW * this.statsH * 4);
+    this.stats = mk(this.statsTexW, this.statsH, gl.RGBA32F, gl.FLOAT);
+    this.statsBuf = new Float32Array(this.statsTexW * this.statsH * 4);
+    this.sample = new Float32Array(this.statsW * this.statsH);
     this.out = mk(w, h, gl.RGBA8, gl.UNSIGNED_BYTE);
     this.nextNoise = null;
   }
