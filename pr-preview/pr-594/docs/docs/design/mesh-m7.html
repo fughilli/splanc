@@ -473,10 +473,28 @@ groups; erased on leave or eject. The dev key (<code class="docutils literal not
 <li><p><strong>On at boot.</strong> A fixture whose state is stored turns its mesh on as soon as its device
 key is installed (<code class="docutils literal notranslate"><span class="pre">lm_mesh::boot</span></code> from <code class="docutils literal notranslate"><span class="pre">tls_install_identity</span></code>); every other fixture keeps
 it off and allocates nothing (D-68/D-86).</p></li>
-<li><p><strong>Session crypto off the render path.</strong> A grant’s ECDSA verify plus its ECDH (member) and
-an Ack’s ECDH (gateway) are queued by the stack and run one job per loop pass from the
-transport (<code class="docutils literal notranslate"><span class="pre">ns_mesh_crypto</span></code>), on the tick’s stack, on loopTask: never on the render task,
-never per command.</p></li>
+<li><p><strong>Crypto never delays a frame (PR-40, desk D-323).</strong> A grant’s ECDSA verify plus its ECDH
+(member) and an Ack’s ECDH (gateway) are queued by the stack and run one job per loop pass
+from the transport (<code class="docutils literal notranslate"><span class="pre">ns_mesh_crypto</span></code>), on the tick’s stack, on loopTask: never on the
+render task, never per command. loopTask is not always below render, though: while a
+client is on a settled link it shares render’s priority (#371), and a 10-55 ms ECDSA or
+ECDH there round-robins with frames. So every mesh pass (tick: joins’ ECDH, rotation
+orders’ ECDSA; the crypto job; persistence), every <code class="docutils literal notranslate"><span class="pre">mesh_admin</span></code> (the gateway’s grant and
+rotation-order verifies) and building the mesh run strictly below render
+(<code class="docutils literal notranslate"><span class="pre">lm_prio_below_render</span></code> / <code class="docutils literal notranslate"><span class="pre">lm_prio_restore</span></code>, main.cpp): render preempts them the moment a
+frame is due. None of them holds a lock render takes. The firmware reports every late
+frame (<code class="docutils literal notranslate"><span class="pre">[late]</span> <span class="pre">n=</span> <span class="pre">max=</span> <span class="pre">ago_ms=</span></code>: a render-start interval over 1.5 periods), and the HITL
+gate fails on any outside the effect’s start and the reboot.</p></li>
+<li><p><strong>Provisioner token (D-324).</strong> <code class="docutils literal notranslate"><span class="pre">provision</span></code> answers with a 16-byte token
+(<code class="docutils literal notranslate"><span class="pre">MeshAdminResult.provisioner_token</span></code>), to that connection only; it is persisted after the
+state in <code class="docutils literal notranslate"><span class="pre">/lfs/mesh.bin</span></code> and erased with it. Presenting it (<code class="docutils literal notranslate"><span class="pre">provision.provisioner_token</span></code>,
+<code class="docutils literal notranslate"><span class="pre">leave.provisioner_token</span></code>) lets the user who provisioned the fixture leave or re-provision
+it without an admin grant, even when it holds an admin key: device-local admin rights.
+Mesh-wide commands (admit, revoke, eject, groups, control) still need the admin key’s
+signed session, since members verify those themselves. A re-provision with the token keeps
+it; any other provision issues a new one.</p></li>
+<li><p><strong>Grant lifetime (D-328).</strong> A gateway refuses grants that run more than 12 h (+5 min of
+slack) past its mesh time (<code class="docutils literal notranslate"><span class="pre">admin::MAX_GRANT_S</span></code>); the app renews in the background (M8).</p></li>
 <li><p><strong>Signed epochs (desk #79 bound to the session).</strong> On a mesh with an admin key the show
 epoch is the admin session’s: only a connection holding a grant may start one (the
 console too needs a session), the gateway sends it as the session’s <code class="docutils literal notranslate"><span class="pre">TIME_BASE</span></code> command
@@ -553,9 +571,9 @@ should get it pushed (a <code class="docutils literal notranslate"><span class="
 <section id="open">
 <h2>Open<a class="headerlink" href="#open" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p><strong>The dev key</strong> (<code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">KEY</span></code>, desk #67) is still in <code class="docutils literal notranslate"><span class="pre">_meshdev</span></code> for the older HITLs (smoke,
-apply_at_skew, gateway). <code class="docutils literal notranslate"><span class="pre">mesh_join_admin</span></code> provisions through <code class="docutils literal notranslate"><span class="pre">mesh_admin</span></code>; moving the
-others over lets <code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">KEY</span></code> go (the <code class="docutils literal notranslate"><span class="pre">_meshdev</span></code> image then only adds <code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">FORGE</span></code> / <code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">CTL</span></code> for insider tests).</p></li>
+<li><p><strong>The dev key</strong> (<code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">KEY</span></code>, desk #67) is still in <code class="docutils literal notranslate"><span class="pre">_meshdev</span></code> (never in the shipping image)
+for the older HITLs (smoke, apply_at_skew, gateway). D-327: retire it; a follow-up PR moves
+them to <code class="docutils literal notranslate"><span class="pre">mesh_admin</span></code> provisioning and deletes <code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">KEY</span></code>.</p></li>
 <li><p><strong>Late members and the show epoch</strong> get it only while an admin session is open (it is
 re-sent with each grant broadcast). With no session, a rebooted member renders on its own
 clock until the next unlock.</p></li>

@@ -92,10 +92,28 @@ access (`MESH LEAVE` on the USB console) is the recovery when the admin secret i
 - **On at boot.** A fixture whose state is stored turns its mesh on as soon as its device
   key is installed (`lm_mesh::boot` from `tls_install_identity`); every other fixture keeps
   it off and allocates nothing (D-68/D-86).
-- **Session crypto off the render path.** A grant's ECDSA verify plus its ECDH (member) and
-  an Ack's ECDH (gateway) are queued by the stack and run one job per loop pass from the
-  transport (`ns_mesh_crypto`), on the tick's stack, on loopTask: never on the render task,
-  never per command.
+- **Crypto never delays a frame (PR-40, desk D-323).** A grant's ECDSA verify plus its ECDH
+  (member) and an Ack's ECDH (gateway) are queued by the stack and run one job per loop pass
+  from the transport (`ns_mesh_crypto`), on the tick's stack, on loopTask: never on the
+  render task, never per command. loopTask is not always below render, though: while a
+  client is on a settled link it shares render's priority (#371), and a 10-55 ms ECDSA or
+  ECDH there round-robins with frames. So every mesh pass (tick: joins' ECDH, rotation
+  orders' ECDSA; the crypto job; persistence), every `mesh_admin` (the gateway's grant and
+  rotation-order verifies) and building the mesh run strictly below render
+  (`lm_prio_below_render` / `lm_prio_restore`, main.cpp): render preempts them the moment a
+  frame is due. None of them holds a lock render takes. The firmware reports every late
+  frame (`[late] n= max= ago_ms=`: a render-start interval over 1.5 periods), and the HITL
+  gate fails on any outside the effect's start and the reboot.
+- **Provisioner token (D-324).** `provision` answers with a 16-byte token
+  (`MeshAdminResult.provisioner_token`), to that connection only; it is persisted after the
+  state in `/lfs/mesh.bin` and erased with it. Presenting it (`provision.provisioner_token`,
+  `leave.provisioner_token`) lets the user who provisioned the fixture leave or re-provision
+  it without an admin grant, even when it holds an admin key: device-local admin rights.
+  Mesh-wide commands (admit, revoke, eject, groups, control) still need the admin key's
+  signed session, since members verify those themselves. A re-provision with the token keeps
+  it; any other provision issues a new one.
+- **Grant lifetime (D-328).** A gateway refuses grants that run more than 12 h (+5 min of
+  slack) past its mesh time (`admin::MAX_GRANT_S`); the app renews in the background (M8).
 - **Signed epochs (desk #79 bound to the session).** On a mesh with an admin key the show
   epoch is the admin session's: only a connection holding a grant may start one (the
   console too needs a session), the gateway sends it as the session's `TIME_BASE` command
@@ -166,10 +184,9 @@ scene only from the session, never from gossip.
 
 ## Open
 
-- **The dev key** (`MESH KEY`, desk #67) is still in `_meshdev` for the older HITLs (smoke,
-  apply_at_skew, gateway). `mesh_join_admin` provisions through `mesh_admin`; moving the
-  others over lets `MESH KEY` go (the `_meshdev` image then only adds `MESH FORGE` / `MESH
-  CTL` for insider tests).
+- **The dev key** (`MESH KEY`, desk #67) is still in `_meshdev` (never in the shipping image)
+  for the older HITLs (smoke, apply_at_skew, gateway). D-327: retire it; a follow-up PR moves
+  them to `mesh_admin` provisioning and deletes `MESH KEY`.
 - **Late members and the show epoch** get it only while an admin session is open (it is
   re-sent with each grant broadcast). With no session, a rebooted member renders on its own
   clock until the next unlock.
