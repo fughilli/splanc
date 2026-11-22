@@ -126,8 +126,14 @@ void recover_bus(int sda, int scl) {
   gpio_set_level((gpio_num_t)scl, 1);
   delayMicroseconds(5);
   gpio_set_level((gpio_num_t)sda, 1);
-  Log().printf("[sensor] bus clear: %d SCL pulses, sda=%d\n", pulses,
-               gpio_get_level((gpio_num_t)sda));
+  // No printf here: this runs under the FX VM's I2C reads (render and loopTask stacks), and
+  // ROM vsnprintf alone costs ~1.5 KB of stack (//firmware/player_app:stack_bound_test).
+  Print &log = Log();
+  log.print("[sensor] bus clear: ");
+  log.print(pulses);
+  log.print(" SCL pulses, sda=");
+  log.print(gpio_get_level((gpio_num_t)sda));
+  log.print('\n');
 }
 
 void free_bus() {
