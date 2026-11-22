@@ -427,14 +427,27 @@ static uint8_t *rx_stage_get(size_t) { return rx; }
 static void rx_stage_put(uint8_t *) {}
 #endif
 static size_t rx_len = 0;
-// Encoded reply frames are control-sized. The 16 bytes in front are headroom for a WS
-// frame header, written in place by the netstack transport (kWsSendHeadroom) so it needn't
-// stage every reply in a separate copy buffer.
-static struct {
+// Encoded reply frames. The 16 bytes in front are headroom for a WS frame header, written
+// in place by the netstack transport (kWsSendHeadroom) so it needn't stage every reply in
+// a separate copy buffer. Most replies are control-sized, but get_effect_uniforms carries
+// the effect's whole uniform manifest (write_arm caps an arm at 16 KiB) and list_effects
+// the library: on the P4 a manifest past 2 KiB wasn't answered at all, so the fx panel
+// and every client reading the live values got nothing (2026-11-18). The P4 holds the
+// full 16 KiB, in PSRAM (EXT_RAM_BSS_ATTR: firmware/p4/sdkconfig_overrides.h); its C6 front
+// end (relay_main.cpp) relays the P4's replies and holds half; a standalone C6 keeps
+// 2 KiB of its scarce internal RAM (the boot heap sizes the LED buffers).
+#if defined(LM_LINK)
+static constexpr size_t kTxCap = 16384;
+#define LM_TX_ATTR EXT_RAM_BSS_ATTR
+#else
+static constexpr size_t kTxCap = 2048;
+#define LM_TX_ATTR
+#endif
+static LM_TX_ATTR struct {
   uint8_t ws_headroom[16];
-  uint8_t data[2048];
+  uint8_t data[kTxCap];
 } g_tx;
-static uint8_t (&tx)[2048] = g_tx.data;
+static uint8_t (&tx)[kTxCap] = g_tx.data;
 #if defined(LM_NETSTACK)
 static_assert(sizeof g_tx.ws_headroom >= kWsSendHeadroom, "tx needs WS header headroom");
 #endif

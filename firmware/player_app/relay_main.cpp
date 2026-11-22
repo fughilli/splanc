@@ -46,6 +46,7 @@
 extern "C" {
 int32_t lm_relay_device_name(const uint8_t *frame, size_t len, uint8_t *out, size_t cap);
 int32_t lm_relay_local(const uint8_t *frame, size_t len, uint8_t *out, size_t cap);
+bool lm_is_live_move(const uint8_t *data, size_t len);
 void lm_relay_set_identity(const char *mac, const char *name, const char *fw, const char *tls_state);
 }
 
@@ -78,13 +79,18 @@ char g_mac[18] = "";
 char g_name[33] = "Led Widget";
 
 // One reply buffer for wss and BLE, with the WS header headroom the transport writes in
-// place (kWsSendHeadroom). The P4's replies land here too (frontend_forward).
+// place (kWsSendHeadroom). The P4's replies land here too (frontend_forward): 8 KiB, half
+// the P4's (get_effect_uniforms for a big effect is ~3 KiB, list_effects grows with the
+// library); a bigger one is answered reply_too_large.
+constexpr size_t kTxCap = 8192;
 struct {
   uint8_t headroom[16];
-  uint8_t data[2048];
+  uint8_t data[kTxCap];
 } g_tx;
 static_assert(sizeof g_tx.headroom >= kWsSendHeadroom, "tx needs WS header headroom");
-uint8_t (&tx)[2048] = g_tx.data;
+uint8_t (&tx)[kTxCap] = g_tx.data;
+// The reply in tx is a live move's ControlAck: best-effort (lm_ws_reply_droppable).
+bool g_reply_droppable = false;
 
 char g_tls_state[16] = "";
 char g_cert_sha[65] = "";
@@ -355,11 +361,14 @@ void log_status() {
 
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   *reply = tx;
-  return handle(netstack_ws_session(), in, len);
+  const int n = handle(netstack_ws_session(), in, len);
+  // The P4's ControlAck for a live move: best-effort here too (held, never blocked on).
+  // Everything else is the P4's reply or a must-deliver of ours.
+  g_reply_droppable = n > 0 && lm_is_live_move(in, len);
+  return n;
 }
 
-// Every reply is the P4's or a must-deliver of ours: none may be dropped on a full window.
-bool lm_ws_reply_droppable() { return false; }
+bool lm_ws_reply_droppable() { return g_reply_droppable; }
 // A newcomer may take the session over (#444): the uploads and updates that make a session
 // busy are the P4's, and it refuses a second client's window itself (link_transport.cpp).
 bool lm_ws_session_busy() { return false; }
