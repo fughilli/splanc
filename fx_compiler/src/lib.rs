@@ -324,6 +324,10 @@ impl Default for CompileOptions {
 enum Tok {
     Ident(String),
     Num(f32, bool), // value, is_int
+    /// A numeric literal with a fixed-point suffix: `0.6fx` (fixed, Q16.16),
+    /// `0.6fx16` (fixed16, Q1.14), `0.6fx8` (fixed8, Q1.6) — sugar for
+    /// `fixed(0.6)` / `fixed16(0.6)` / `fixed8(0.6)`, folded to the same constant.
+    FixNum(f32, bool, Ty), // value, is_int, target type
     Str(String),
     Sym(char),
     Sym2([char; 2]), // == <= >= != && ||
@@ -414,6 +418,41 @@ impl<'a> Lexer<'a> {
                 col,
                 msg: format!("bad number '{num}'"),
             })?;
+            // Fixed-point suffix: `fx`, `fx16` or `fx8`, ending the literal.
+            if self.peek(0) == b'f' && self.peek(1) == b'x' {
+                let mut j = self.i + 2;
+                while j < self.s.len() && ((self.s[j] as char).is_ascii_alphanumeric() || self.s[j] == b'_') {
+                    j += 1;
+                }
+                let suffix = std::str::from_utf8(&self.s[self.i..j]).unwrap_or("");
+                let ty = match suffix {
+                    "fx" => Ty::Fixed,
+                    "fx16" => Ty::Fixed16,
+                    "fx8" => Ty::Fixed8,
+                    _ => {
+                        return Err(Diagnostic {
+                            line,
+                            col,
+                            msg: format!(
+                                "unknown fixed-point suffix '{suffix}' on '{num}': use fx (fixed), fx16 (fixed16) or fx8 (fixed8)"
+                            ),
+                        })
+                    }
+                };
+                // The narrow types hold [-2, 2): a literal at or past 2 would wrap.
+                if matches!(ty, Ty::Fixed8 | Ty::Fixed16) && v >= 2.0 {
+                    let name = if ty == Ty::Fixed8 { "fixed8" } else { "fixed16" };
+                    return Err(Diagnostic {
+                        line,
+                        col,
+                        msg: format!("'{num}{suffix}' is out of range: {name} holds [-2, 2)"),
+                    });
+                }
+                while self.i < j {
+                    self.bump();
+                }
+                return Ok((Tok::FixNum(v, is_int, ty), line, col));
+            }
             return Ok((Tok::Num(v, is_int), line, col));
         }
         if c == b'"' {
@@ -2066,19 +2105,25 @@ impl Compiler {
             .map(|(t, _)| *t);
         let lit = args.iter().find_map(|(t, l)| if *t == Ty::Float { *l } else { None });
         if let (Some(ft), Some(v)) = (fixed, lit) {
-            let fname = match ft {
-                Ty::Fixed8 => "fixed8",
-                Ty::Fixed16 => "fixed16",
-                _ => "fixed",
+            let (fname, sfx) = match ft {
+                Ty::Fixed8 => ("fixed8", "fx8"),
+                Ty::Fixed16 => ("fixed16", "fx16"),
+                _ => ("fixed", "fx"),
             };
             let shown = fmt_lit(v);
+            // The suffix form only where it is valid: fixed8/fixed16 literals hold [-2, 2).
+            let fix = if ft == Ty::Fixed || v.abs() < 2.0 {
+                format!("{shown}{sfx} (or {fname}({shown}))")
+            } else {
+                format!("{fname}({shown})")
+            };
             self.warn_at(
                 line,
                 col,
                 format!(
                     "{PERF_WARNING_PREFIX}`{what}` mixes a {fname} value with the float literal {shown}, so it runs in \
                      soft-float (~3x the cycles, with fixed<->float conversions) on every LED; write \
-                     {fname}({shown}) to keep it integer"
+                     {fix} to keep it integer"
                 ),
             );
         }
@@ -2711,7 +2756,7 @@ impl Compiler {
                 }
                 _ => lint::Taint::default(),
             }),
-            Tok::Num(..) => Some(lint::Taint::default()),
+            Tok::Num(..) | Tok::FixNum(..) => Some(lint::Taint::default()),
             _ => None,
         };
         let ty = self.primary_expr()?;
@@ -2731,6 +2776,17 @@ impl Compiler {
                 // Record for the constant-cast fold (FUG-122).
                 self.last_const = Some(ConstProv { pos, bits, is_int });
                 Ok(if is_int { Ty::Int } else { Ty::Float })
+            }
+            Tok::FixNum(v, is_int, ty) => {
+                // Exactly `fixed8(v)` & co.: push the literal, then the cast, which
+                // the constant-cast fold rewrites into the fixed constant.
+                self.advance();
+                let pos = self.code.len();
+                let bits = if is_int { v as i32 as u32 } else { v.to_bits() };
+                self.push_const(bits);
+                self.last_const = Some(ConstProv { pos, bits, is_int });
+                self.coerce(if is_int { Ty::Int } else { Ty::Float }, ty)?;
+                Ok(ty)
             }
             Tok::Ident(id) if id == "true" || id == "false" => {
                 self.advance();

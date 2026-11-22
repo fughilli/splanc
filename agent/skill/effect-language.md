@@ -83,6 +83,8 @@ too (see Performance below).
 the fast type for per-LED work), `fixed16` (Q1.14) and `fixed8` (Q1.6) (range
 ±2; mostly for compact buffer storage), float matrices `mat3 mat4`, `struct`s
 and fixed-size arrays (`Type name[N]`). Casts: `fixed(x)`, `float(x)`, `int(x)`.
+Fixed-point literals: `0.6fx` (= `fixed(0.6)`), `0.6fx16` (= `fixed16(0.6)`),
+`0.6fx8` (= `fixed8(0.6)`); `fx16`/`fx8` literals must be below 2.
 A vector can be indexed like an array: `v[1]` is `v.y`.
 
 ### Matrices (`mat3`, `mat4`)
@@ -158,7 +160,7 @@ effect cheap (the fixed-point examples show each technique —
 - **Per-LED maths in `fixed`** (Q16.16; `int` for indices). Read LED inputs as
   fixed — `fixed(led.uv.x)`, `fixed(led.s)`, `fixed(led.pos.y)` load directly
   (the first one costs ~1,200 cycles per LED once, covering all of them) — and
-  wrap every literal: `x * fixed(0.6)`. One float operand turns the expression
+  make every literal fixed: `x * 0.6fx` (or `x * fixed(0.6)`). One float operand turns the expression
   back into soft-float plus two 320-cycle conversions; `compile_effect` warns
   about it (a `warning: perf: …`).
 - **Phases in turns.** Keep `state fixed` phases advanced in `update()`

@@ -87,6 +87,9 @@ export function highlight(src: string): string {
         if (src[j] === "." && src[j + 1] === ".") break;
         j++;
       }
+      // fixed-point suffix (`0.6fx`, `0.6fx16`, `0.6fx8`) is part of the literal
+      const sfx = /^fx(16|8)?(?![A-Za-z0-9_])/.exec(src.slice(j, j + 5));
+      if (sfx) j += sfx[0].length;
       out += span("num", src.slice(i, j));
       i = j;
       continue;
