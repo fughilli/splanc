@@ -844,6 +844,8 @@ _MESH_FFI_SYMS = [
     "ns_mesh_leave",
     # Effect sharing (mesh M6, mesh_blob.rs).
     "ns_mesh_scenes",
+    "ns_mesh_take_dispatch",
+    "ns_mesh_dispatch_done",
 ]
 
 # The mesh (docs/design/mesh.md M3): MeshStack over the 802.11 backhaul

@@ -1946,29 +1946,52 @@ static int load_stored_effect(const uint8_t *in, size_t len) {
 // out-of-order upload window → the transport should drop the connection). Shared verbatim by
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
-static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
+// The arms answered ahead of the player core (OTA, network outputs): true with the reply
+// length in *out when handled.
+static bool ws_reply_pre(const uint8_t *msg, size_t len, int *out) {
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
-  if (ota != 0) return ota;
+  if (ota != 0) return *out = ota, true;
 #if defined(LM_NETOUT)
   // Ethernet + network outputs (arms 95-98): answered here, never by the core.
   {
     const int n = netout_app_dispatch(msg, len, tx, sizeof tx, g_hw_gpio0, g_hw_gpio1);
-    if (n > 0) return n;
+    if (n > 0) return *out = n, true;
   }
 #endif
-  // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
-  // and handles the final-decode + persist).
-  LmUploadChunk ch;
-  if (lm_parse_upload_chunk(msg, len, &ch) == 1) {
-    return (int)process_upload_chunk(&ch, msg + ch.payload_off);
-  }
+  return false;
+}
+
+static int ws_reply_tail(const uint8_t *msg, size_t len) {
   if (lm_envelope_arm(msg, len) == kArmLoadStoredEffect) {
     int n = load_stored_effect(msg, len);
     if (n != kNotStaged) return n;
   }
   return dispatch_plain(msg, len);
 }
+
+static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
+  int n = 0;
+  if (ws_reply_pre(msg, len, &n)) return n;
+  // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
+  // and handles the final-decode + persist).
+  LmUploadChunk ch;
+  if (lm_parse_upload_chunk(msg, len, &ch) == 1) {
+    return (int)process_upload_chunk(&ch, msg + ch.payload_off);
+  }
+  return ws_reply_tail(msg, len);
+}
+
+#if defined(LM_NETSTACK)
+// A frame relayed over the mesh (mesh M5/M6): as ws_compute_reply_body but never a sharded
+// upload (members dispatch allow-listed arms only), so the member path stays off the
+// upload/gateway frames (the stack bound) and cannot recurse into dispatch_mesh_upload.
+static int ws_reply_relayed(const uint8_t *msg, size_t len) {
+  int n = 0;
+  if (ws_reply_pre(msg, len, &n)) return n;
+  return ws_reply_tail(msg, len);
+}
+#endif
 
 // The kiosk lock gate (kiosk_ffi.rs), ahead of EVERY handler (OTA and sharded uploads
 // included): 0 = handle the message, >0 = a kiosk_locked error reply is in tx.
@@ -2012,6 +2035,7 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // compute the reply into the shared tx, and hand back a pointer to it.
 static bool live_post(const uint8_t *in, size_t len);  // the live-move mailbox (below)
 static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply);
+static int dispatch_relayed(const uint8_t *in, size_t len, const uint8_t **reply);
 // The mesh gateway (netstack_transport.cpp, mesh M5).
 extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uint8_t *out, size_t cap,
                                const uint8_t **inner, uint32_t *inner_len);
@@ -2082,7 +2106,7 @@ static int dispatch_mesh_upload(const uint8_t *msg, size_t len) {
   if (r >= 0) return r;
   if (r == -3) {
     const uint8_t *reply = nullptr;
-    int n = dispatch_gated(inner, inner_len, &reply);
+    int n = dispatch_relayed(inner, inner_len, &reply);
     lm_mesh_app_done(n < 0 || (n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmErrorReply) ? 1 : 0);
     return n;
   }
@@ -2090,9 +2114,9 @@ static int dispatch_mesh_upload(const uint8_t *msg, size_t len) {
 }
 
 // Everything after the kiosk gate (and the mesh arms): the live mailbox, or the shared handler.
-static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) {
-  // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
-  // now — never wait behind a render frame for the player mutex (lm_live_post).
+// A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack now —
+// never wait behind a render frame for the player mutex (lm_live_post). True if it was one.
+static bool live_gated(const uint8_t *in, size_t len, const uint8_t **reply, int *out) {
   if (live_post(in, len)) {
     fx_live_at = millis();
     int a = lm_take_control_ack(tx, sizeof tx);
@@ -2102,14 +2126,31 @@ static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) 
       g_tr_cur->flags |= 1;
     }
 #endif
+    *out = 0;
     if (a > 0) {
       g_reply_droppable = true;
       *reply = tx;
-      return a;
+      *out = a;
     }
-    return 0;
+    return true;
   }
-  int n = ws_compute_reply_body(in, len);
+  return false;
+}
+
+static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) {
+  int n = 0;
+  if (live_gated(in, len, reply, &n)) return n;
+  n = ws_compute_reply_body(in, len);
+  *reply = tx;
+  return n;
+}
+
+// dispatch_gated for a frame relayed over the mesh (or a reassembled mesh_send's inner):
+// never a sharded upload (ws_reply_relayed).
+static int dispatch_relayed(const uint8_t *in, size_t len, const uint8_t **reply) {
+  int n = 0;
+  if (live_gated(in, len, reply, &n)) return n;
+  n = ws_reply_relayed(in, len);
   *reply = tx;
   return n;
 }
@@ -2124,7 +2165,7 @@ extern "C" int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint
   *code = 0;
   const uint8_t *reply = nullptr;
   g_kiosk_src = LM_KIOSK_SRC_INTERNAL;
-  int n = dispatch_gated(in, len, &reply);
+  int n = dispatch_relayed(in, len, &reply);
   g_kiosk_src = LM_KIOSK_SRC_WSS;
   g_reply_droppable = false;
   if (n < 0) {

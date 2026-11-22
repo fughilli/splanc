@@ -1377,10 +1377,6 @@ mod stubs {
         -1
     }
     #[no_mangle]
-    extern "C" fn lm_mesh_member_dispatch(_: *const u8, _: u32, _: *mut u32) -> i32 {
-        0
-    }
-    #[no_mangle]
     extern "C" fn lm_fx_check_effect(_: *const u8, _: usize) -> u32 {
         1
     }

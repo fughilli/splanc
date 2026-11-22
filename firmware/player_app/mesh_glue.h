@@ -116,6 +116,8 @@ void lm_prio_restore(uint32_t prio) __attribute__((weak));
 uint8_t *ns_mesh_xfer(void *m, uint32_t *cap) __attribute__((weak));
 // Effect sharing (M6, mesh_blob.rs): scenes applied after the tick, on loopTask's stack.
 void ns_mesh_scenes(void *m, int64_t now_us) __attribute__((weak));
+uint32_t ns_mesh_take_dispatch(void *m, const uint8_t **frame, uint32_t *len) __attribute__((weak));
+void ns_mesh_dispatch_done(void *m, uint32_t status, uint32_t code) __attribute__((weak));
 // main.cpp: a staged shared effect forgotten before the mesh frees it.
 void lm_mesh_staged_cancel() __attribute__((weak));
 uint32_t ns_mesh_status_due(void *m, int64_t now_us) __attribute__((weak));
@@ -415,6 +417,17 @@ void service(bool assoc) {
   // Effect sharing (M6): a scene's blobs applied (staged for the render task, or loaded),
   // the gateway's second phase and catch-ups; on loopTask's stack, like relayed control.
   if (ns_mesh_scenes) ns_mesh_scenes(g_mesh, esp_timer_get_time());
+  // ... and the frames a scene dispatches (its effect if loaded now, its state frames).
+  if (ns_mesh_take_dispatch && lm_mesh_member_dispatch) {
+    for (int i = 0; i < 8; i++) {
+      const uint8_t *f = nullptr;
+      uint32_t fl = 0;
+      if (!ns_mesh_take_dispatch(g_mesh, &f, &fl)) break;
+      uint32_t code = 0;
+      int32_t st = lm_mesh_member_dispatch(f, fl, &code);
+      ns_mesh_dispatch_done(g_mesh, st == 0 ? 0 : 1, code);
+    }
+  }
   // Finished mesh_send results (want_reply): pushed to the connection that sent them.
   {
     uint32_t conn = 0;

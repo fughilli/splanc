@@ -45,8 +45,6 @@ extern "C" {
     fn lm_mesh_staged_take(frame: *mut *const u8) -> u32;
     // main.cpp: this fixture's look as a state blob (lm_fx_scene_frames, under the mutex).
     fn lm_mesh_scene_frames(out: *mut u8, cap: u32) -> i32;
-    // main.cpp: dispatch a relayed frame as if the app sent it (0 ok, else *code).
-    fn lm_mesh_member_dispatch(frame: *const u8, len: u32, code: *mut u32) -> i32;
 }
 
 /// Blobs a fixture holds at once (receiving + complete + staged).
@@ -318,8 +316,34 @@ pub struct Share {
     pub local: bool,
 }
 
+/// Frames a scene dispatches (an effect and a state blob's few frames).
+pub const DQ: usize = 6;
+
+/// How a scene's dispatches end: its log line and its answer to the gateway.
+#[derive(Clone, Copy)]
+pub struct DqEnd {
+    pub origin: NodeId,
+    pub op: u32,
+    pub reply: bool,
+    pub staged: bool,
+    pub late: bool,
+    pub catch_up: bool,
+    pub skipped: u8,
+    pub fetch_ms: i64,
+    pub heap_min: u32,
+    pub status: Status,
+    pub code: u16,
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct BlobState {
+    /// Frames to dispatch, taken by the transport on loopTask's stack (`ns_mesh_take_dispatch`:
+    /// the same path as relayed control, so the dispatch never runs under these frames),
+    /// and what to do when the last one is done.
+    pub dq: [(usize, u32); DQ],
+    pub dq_n: u8,
+    pub dq_i: u8,
+    pub dq_end: Option<DqEnd>,
     pub work: Work,
     pub share: Option<Share>,
     /// The op ids of shares' second phases (their results queue catch-ups for failures).
@@ -345,6 +369,8 @@ fn reply(m: &mut Mesh, origin: NodeId, op: u32, status: Status, code: u16) {
 }
 
 /// A scene whose blobs are all held (member): apply it.
+// Out of line: its frame is not on the dispatch path's stack (loopTask's bound).
+#[inline(never)]
 fn apply_scene(m: &mut Mesh, origin: NodeId, msg: &SceneMsg, now_us: i64) {
     m.blobs.now_us = now_us;
     let fetch_ms = m.bs.fetch_since.take().map_or(0, |t| (now_us - t) / 1000);
@@ -366,7 +392,7 @@ fn apply_scene(m: &mut Mesh, origin: NodeId, msg: &SceneMsg, now_us: i64) {
     let catch_up = msg.flags & SceneMsg::CATCH_UP != 0;
     let now = msg.flags & SceneMsg::NOW != 0;
     let (mut status, mut code) = (Status::Ok, 0u16);
-    let (mut staged, mut late, mut skipped, mut frames) = (false, false, 0, 0);
+    let (mut staged, mut late, mut skipped, mut frames) = (false, false, 0u8, 0);
     for (h, _) in msg.blobs() {
         let Some(i) = m.blobs.held(h) else {
             status = Status::Failed;
@@ -402,39 +428,84 @@ fn apply_scene(m: &mut Mesh, origin: NodeId, msg: &SceneMsg, now_us: i64) {
                     }
                 }
             }
-            let mut c = 0u32;
-            if unsafe { lm_mesh_member_dispatch(ptr, len as u32, &mut c) } != 0 {
-                status = Status::Failed;
-                code = c.min(0xffff) as u16;
-            }
+            dq_push(m, ptr as *const u8, len);
         } else {
             // A state blob: its frames in order, each on the allow-list.
             for f in blob::frames(bytes) {
-                if relay_arm(f).is_err() {
-                    continue;
-                }
-                frames += 1;
-                let mut c = 0u32;
-                if unsafe { lm_mesh_member_dispatch(f.as_ptr(), f.len() as u32, &mut c) } != 0 {
-                    status = Status::Failed;
-                    code = c.min(0xffff) as u16;
+                if relay_arm(f).is_ok() {
+                    frames += 1;
+                    dq_push(m, f.as_ptr(), f.len());
                 }
             }
         }
     }
     m.bs.applied += 1;
     let _ = (frames, heap);
-    let ok = (status == Status::Ok) as u8;
+    m.bs.dq_end = Some(DqEnd { origin, op: msg.op_id, reply: msg.want_reply(), staged, late, catch_up, skipped, fetch_ms, heap_min, status, code });
+    if m.bs.dq_i >= m.bs.dq_n {
+        dq_finish(m);
+    }
+}
+
+fn dq_push(m: &mut Mesh, p: *const u8, len: usize) {
+    let n = m.bs.dq_n as usize;
+    if n < DQ {
+        m.bs.dq[n] = (p as usize, len as u32);
+        m.bs.dq_n += 1;
+    }
+}
+
+/// The scene's last dispatch is done: log it and answer the gateway.
+fn dq_finish(m: &mut Mesh) {
+    m.bs.dq_n = 0;
+    m.bs.dq_i = 0;
+    let Some(e) = m.bs.dq_end.take() else { return };
+    if e.op == 0 {
+        return;
+    }
+    let ok = (e.status == Status::Ok) as u8;
     m.log(format_args!(
-        "[mesh] scene apply op={:x} staged={} late={} catch_up={} skipped={skipped} ok={ok} code={code:x} fetch_ms={fetch_ms} heap_min={heap_min}",
-        msg.op_id, staged as u8, late as u8, catch_up as u8
+        "[mesh] scene apply op={:x} staged={} late={} catch_up={} skipped={} ok={ok} code={:x} fetch_ms={} heap_min={}",
+        e.op, e.staged as u8, e.late as u8, e.catch_up as u8, e.skipped, e.code, e.fetch_ms, e.heap_min
     ));
-    if msg.want_reply() {
-        reply(m, origin, msg.op_id, status, code);
+    if e.reply {
+        reply(m, e.origin, e.op, e.status, e.code);
+    }
+}
+
+/// The next frame a scene dispatches (the transport, on loopTask's stack): its bytes in
+/// `*frame` / `*len`; 0 if none. Then [`ns_mesh_dispatch_done`].
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_take_dispatch(m: *mut Mesh, frame: *mut *const u8, len: *mut u32) -> u32 {
+    let m = &mut *m;
+    if m.bs.dq_i >= m.bs.dq_n {
+        return 0;
+    }
+    let (p, n) = m.bs.dq[m.bs.dq_i as usize];
+    *frame = p as *const u8;
+    *len = n;
+    1
+}
+
+/// The frame [`ns_mesh_take_dispatch`] handed out was dispatched (`status` 0 ok, else `code`).
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_dispatch_done(m: *mut Mesh, status: u32, code: u32) {
+    let m = &mut *m;
+    m.bs.dq_i += 1;
+    if status != 0 {
+        if let Some(e) = m.bs.dq_end.as_mut() {
+            e.status = Status::Failed;
+            e.code = code.min(0xffff) as u16;
+        }
+    }
+    if m.bs.dq_i >= m.bs.dq_n {
+        dq_finish(m);
     }
 }
 
 /// The gateway's second phase: every target has the blob (or the time ran out).
+// Out of line: its frame is not on the dispatch path's stack (loopTask's bound).
+#[inline(never)]
 fn share_apply(m: &mut Mesh, op: u32, have: usize, of: usize, now_us: i64) {
     let Some(sh) = m.bs.share.take() else { return };
     let at = crate::mesh_gw::local_epoch_ms(m).map(|ep| (now_us / 1000 - ep + i64::from(sh.lead_ms)).clamp(0, u32::MAX as i64) as u32);
@@ -458,8 +529,10 @@ fn share_apply(m: &mut Mesh, op: u32, have: usize, of: usize, now_us: i64) {
             m.bs.staged += 1;
             local = "staged";
         } else {
-            let mut c = 0u32;
-            local = if unsafe { lm_mesh_member_dispatch(ptr, len as u32, &mut c) } == 0 { "now" } else { "failed" };
+            // Loaded now (no show clock): through the dispatch queue, no answer to send.
+            m.bs.dq_end = Some(DqEnd { origin: 0, op: 0, reply: false, staged: false, late: true, catch_up: false, skipped: 0, fetch_ms: 0, heap_min: 0, status: Status::Ok, code: 0 });
+            dq_push(m, ptr as *const u8, len);
+            local = "now";
         }
     }
     let ms = (now_us - sh.started_us) / 1000;
@@ -468,6 +541,8 @@ fn share_apply(m: &mut Mesh, op: u32, have: usize, of: usize, now_us: i64) {
 }
 
 /// A member synced with the session after the look changed: send it the current scene.
+// Out of line: its frame is not on the dispatch path's stack (loopTask's bound).
+#[inline(never)]
 fn catch_up(m: &mut Mesh, node: NodeId, now_us: i64) {
     let Some(conn) = m.stack.signing_conn() else { return };
     m.blobs.now_us = now_us;
@@ -503,7 +578,29 @@ pub const CATCH_UP_OP: u32 = 0x0c00_0000;
 /// gateway's second phase and catch-ups, idle blobs freed.
 pub unsafe fn after_tick(m: &mut Mesh, now_us: i64) {
     m.blobs.now_us = now_us;
-    // The render task applied our staged frame: it is a plain held blob again.
+    staged_poll(m, now_us);
+    if m.stack.blobs.fetching().is_some() {
+        m.bs.fetch_since.get_or_insert(now_us);
+        m.bs.heap_min = m.bs.heap_min.min(esp_get_free_heap_size());
+    }
+    // Each step out of line: this frame stays small (the dispatch below them is deep:
+    // loopTask's stack bound).
+    if let Some((op, have, of)) = m.bs.work.fetched.take() {
+        share_apply(m, op, have, of, now_us);
+    }
+    if m.bs.work.scene.is_some() {
+        scene_work(m, now_us);
+    }
+    if let Some(node) = m.bs.work.catch_up.take() {
+        catch_up(m, node, now_us);
+    }
+    let serving = m.stack.blobs.serving();
+    m.blobs.sweep(now_us, serving);
+}
+
+/// The render task applied our staged frame: it is a plain held blob again.
+#[inline(never)]
+unsafe fn staged_poll(m: &mut Mesh, now_us: i64) {
     if m.blobs.s.iter().any(|s| s.state == SlotState::Staged) {
         let mut f: *const u8 = core::ptr::null();
         let r = lm_mesh_staged_take(&mut f);
@@ -520,22 +617,13 @@ pub unsafe fn after_tick(m: &mut Mesh, now_us: i64) {
             m.log(format_args!("[mesh] staged effect r={r}"));
         }
     }
-    if m.stack.blobs.fetching().is_some() {
-        m.bs.fetch_since.get_or_insert(now_us);
-        m.bs.heap_min = m.bs.heap_min.min(esp_get_free_heap_size());
-    }
-    let w = core::mem::take(&mut m.bs.work);
-    if let Some((origin, msg)) = w.scene {
+}
+
+#[inline(never)]
+fn scene_work(m: &mut Mesh, now_us: i64) {
+    if let Some((origin, msg)) = m.bs.work.scene.take() {
         apply_scene(m, origin, &msg, now_us);
     }
-    if let Some((op, have, of)) = w.fetched {
-        share_apply(m, op, have, of, now_us);
-    }
-    if let Some(node) = w.catch_up {
-        catch_up(m, node, now_us);
-    }
-    let serving = m.stack.blobs.serving();
-    m.blobs.sweep(now_us, serving);
 }
 
 /// The gateway's `mesh_send{inner: submit_effect}`: check it, keep a copy, start the share.
