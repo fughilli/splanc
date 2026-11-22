@@ -114,6 +114,10 @@ uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) __attribute__((we
 uint32_t lm_prio_below_render() __attribute__((weak));
 void lm_prio_restore(uint32_t prio) __attribute__((weak));
 uint8_t *ns_mesh_xfer(void *m, uint32_t *cap) __attribute__((weak));
+// Effect sharing (M6, mesh_blob.rs): scenes applied after the tick, on loopTask's stack.
+void ns_mesh_scenes(void *m, int64_t now_us) __attribute__((weak));
+// main.cpp: a staged shared effect forgotten before the mesh frees it.
+void lm_mesh_staged_cancel() __attribute__((weak));
 uint32_t ns_mesh_status_due(void *m, int64_t now_us) __attribute__((weak));
 void ns_mesh_conns(void *m, uint32_t ws, uint32_t ble) __attribute__((weak));
 // main.cpp (the player; absent from the OTA loader): dispatch a relayed control as if the
@@ -316,6 +320,7 @@ void off() {
   }
   void *m = g_mesh;
   SemaphoreHandle_t lock = tick_lock();
+  if (lm_mesh_staged_cancel) lm_mesh_staged_cancel();  // the render task drops our frame first (M6)
   g_mesh = nullptr;
   free(ns_mesh_destroy(m));
   vSemaphoreDelete(lock);
@@ -362,6 +367,13 @@ void report(uint32_t what) {
   }
 }
 
+// The render task's staged effect load (mesh M6) on the tick stack: a load (parse, arena,
+// the JIT build) is deeper than the render task's stack. Under the tick stack's lock: a tick
+// in progress finishes first (it never waits on the player mutex the caller holds).
+uint32_t (*g_stack_fn)(void) = nullptr;
+uint32_t g_stack_ret = 0;
+void stack_fn_trampoline() { g_stack_ret = g_stack_fn(); }
+
 // One loop pass while the mesh is on. `assoc`: associated to the AP (the join is DONE).
 void service(bool assoc) {
   BelowRender below;  // the whole pass: tick (joins, rotation orders), crypto job, persist
@@ -400,6 +412,9 @@ void service(bool assoc) {
       ns_mesh_control_done(g_mesh, st == 0 ? 0 : 1, code);
     }
   }
+  // Effect sharing (M6): a scene's blobs applied (staged for the render task, or loaded),
+  // the gateway's second phase and catch-ups; on loopTask's stack, like relayed control.
+  if (ns_mesh_scenes) ns_mesh_scenes(g_mesh, esp_timer_get_time());
   // Finished mesh_send results (want_reply): pushed to the connection that sent them.
   {
     uint32_t conn = 0;
@@ -423,6 +438,18 @@ void service(bool assoc) {
   persist();
   if (ns_mesh_get(g_mesh, 7)) off();  // left the mesh (app, console or the admin's eject)
 }
+
+}  // namespace lm_mesh
+
+extern "C" uint32_t lm_mesh_on_tick_stack(uint32_t (*fn)(void)) {
+  if (!g_mesh) return fn();  // no mesh, no staged share: nothing deep to run
+  lm_mesh::g_stack_fn = fn;
+  esp_execute_shared_stack_function(lm_mesh::tick_lock(), lm_mesh::tick_stack(), lm_mesh::kTickStack,
+                                    lm_mesh::stack_fn_trampoline);
+  return lm_mesh::g_stack_ret;
+}
+
+namespace lm_mesh {
 
 // The device key is installed (boot, or a regenerated identity): a fixture that is in a mesh
 // (its state persisted) turns the mesh back on. Nothing at all otherwise (off by default).

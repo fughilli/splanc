@@ -848,3 +848,67 @@ fn join_admin_closed_mesh() {
         w.nodes[2].stack.time.stats.unsigned
     );
 }
+
+/// Bytes that look like an effect program (deterministic per seed).
+fn effect_bytes(n: usize, seed: u8) -> Vec<u8> {
+    (0..n).map(|i| ((i * 31 + i / 97) as u8) ^ seed).collect()
+}
+
+/// Mesh M6: a 3.5 KB effect (with a state blob for catch-ups) shared through the gateway
+/// reaches every member, which all apply it on one show-clock instant; with 10 % loss too; a
+/// fixture that joins later and one that reboots catch up with the current scene (the reboot
+/// does not reload what it already shows).
+#[test]
+fn effect_share_and_late_joiner() {
+    let mut w = room(4, 21);
+    let c = creds(&w);
+    form(&mut w, &[0, 1, 2], &c, 300, 15_000);
+    w.unlock_and_sync(GW, SESSION, &[1, 2], 10_000).expect("b, c sync");
+    w.run_until(10_000, |w| (0..3).all(|i| w.nodes[i].stack.time.synced())).expect("mesh time");
+
+    let mut summary = Vec::new();
+    for (round, (op, size, loss)) in [(100u32, 3_500usize, 0.0), (101, 4_400, 0.1)].into_iter().enumerate() {
+        w.air.set_loss(loss);
+        let effect = effect_bytes(size, round as u8);
+        let state = effect_bytes(180, 0x55 ^ round as u8);
+        let t0 = w.now();
+        w.share_effect(GW, op, &effect, Some(&state)).expect("share");
+        let ms = w.run_until(15_000, |w| (0..3).all(|i| w.nodes[i].applied.iter().any(|a| a.op_id == op))).unwrap_or_else(|| {
+            let st: Vec<_> = (0..3).map(|i| (w.nodes[i].stack.blobs.fetching(), w.nodes[i].stack.blobs.stats)).collect();
+            panic!("round {round}: not applied everywhere: {st:?}")
+        });
+        let apps: Vec<&Applied> = (0..3).map(|i| w.nodes[i].applied.iter().rev().find(|a| a.op_id == op).unwrap()).collect();
+        let at = apps[0].mesh_ms;
+        for (i, a) in apps.iter().enumerate() {
+            assert_eq!(a.mesh_ms, at, "round {round} node {i}: the same show-clock instant");
+            assert!(!a.late, "round {round} node {i}: had it in time");
+        }
+        let h = sha256(&effect);
+        for i in 0..3 {
+            assert_eq!(w.nodes[i].blobs.get(&h), Some(effect.as_slice()), "round {round} node {i}: the bytes");
+            assert!(w.nodes[i].blobs.peak <= 2 * 4_608 + 400, "round {round} node {i}: blob RAM {}", w.nodes[i].blobs.peak);
+        }
+        let chunks: u32 = (0..3).map(|i| w.nodes[i].stack.blobs.stats.chunks_out).sum();
+        summary.push(format!("round {round} ({size} B, loss {loss}): applied on all 3 at one instant {ms} ms after the share, {chunks} chunks sent"));
+        let _ = t0;
+    }
+    w.air.set_loss(0.0);
+
+    // A fixture powered on after the show started: it joins, syncs, and gets the scene.
+    form(&mut w, &[3], &c, 0, 15_000);
+    let ms = w.run_until(20_000, |w| w.nodes[3].applied.iter().any(|a| a.blobs.len() == 2)).expect("late joiner caught up");
+    let a = w.nodes[3].applied.last().unwrap().clone();
+    let scene = w.nodes[GW].scene.clone();
+    assert_eq!(a.blobs, scene.iter().map(|b| b.0).collect::<Vec<_>>(), "effect and state");
+    assert_eq!(a.skipped, 0);
+    assert_eq!(w.nodes[3].blobs.get(&scene[0].0).map(|b| b.len()), Some(scene[0].1 as usize));
+
+    // A member reboots: it rejoins and is caught up, without reloading the effect it shows.
+    w.reboot(1);
+    let before = w.nodes[1].applied.len();
+    let rb = w.run_until(25_000, |w| w.nodes[1].applied.len() > before).expect("rebooted member caught up");
+    let a = w.nodes[1].applied.last().unwrap();
+    assert_eq!(a.skipped, 1, "the effect it already shows is not reloaded");
+    assert_eq!(w.nodes[GW].stack.scenes_failed + w.nodes[1].stack.scenes_failed + w.nodes[3].stack.scenes_failed, 0);
+    eprintln!("effect_share: {}; late joiner caught up {ms} ms after joining; rebooted member {rb} ms after its reboot (effect kept)", summary.join("; "));
+}

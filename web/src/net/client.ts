@@ -87,6 +87,8 @@ import {
   type MeshResultInfo,
   type MeshStateInfo,
 } from "./mesh";
+import { meshEffectMessage, meshShareMessage, type MeshShareOptions } from "./meshEffect";
+export type { MeshShareOptions } from "./meshEffect";
 export { applyAt } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
@@ -888,6 +890,8 @@ export class LedMapperClient {
     // Sharded like submit_map: a compiled effect can exceed one window, and on
     // the BLE transport a whole-frame send would blow the small per-frame cap.
     // Small effects still take the single-window fast path inside sendChunked.
+    // Whole-mesh control (mesh M6): every member loads it, all on one frame.
+    if (this.meshAll_) return this.meshShareEffect(effectId, fxb, { activate, deck });
     this.live.resetDeck(deck);
     // A sharded upload goes out as upload_chunk frames: count it as activity here.
     for (const fn of this.activitySubs) fn();
@@ -898,6 +902,19 @@ export class LedMapperClient {
       activate,
       deck,
     } as unknown as ClientMessage);
+  }
+
+  /** Share a compiled effect with the whole mesh through this fixture (mesh M6;
+   * net/meshEffect.ts): any size up to the player's effect limit. This fixture answers as
+   * a load would (result_ready{effectId}, or the error); it and every member then load it
+   * on one show-clock frame once all of them hold it (members joining later catch up).
+   * With `wantReply` (the default) the per-member outcome is pushed to
+   * {@link onMeshResult} subscribers. Only for players in a mesh (see {@link getMesh}). */
+  async meshShareEffect(effectId: string, fxb: Uint8Array, opts: MeshShareOptions = {}): Promise<ResultReadyMessage> {
+    this.live.resetDeck(opts.deck ?? 0);
+    for (const fn of this.activitySubs) fn();
+    const inner = encodeClient(meshEffectMessage(effectId, fxb, opts));
+    return this.sendChunked("EFFECT", meshShareMessage(inner, opts));
   }
 
   /** Select the active effect by id ("" or "off" clears it). `deck` (FUG-110)

@@ -1308,10 +1308,16 @@ message MeshSend {
   // The app's id for this message (echoed in mesh.result); 0 = the gateway picks one.
   uint32 op_id = 1;
   MeshTargets targets = 2;
-  // One encoded ClientMessage (at most ~170 bytes: one mesh packet).
+  // One encoded ClientMessage (at most ~170 bytes: one mesh packet), or a submit_effect
+  // of any size up to the player's effect limit (mesh M6): the gateway checks it, answers
+  // as the load would (result_ready / error), shares it as a content-addressed blob, and
+  // once every target holds it, all of them (and the gateway, unless skip_gateway) load it
+  // on one show-clock frame `lead_ms` (0 = 250 ms) later. Too big for one transport window,
+  // the whole mesh_send goes as UploadChunk windows of kind EFFECT.
   bytes inner = 3;
   bool want_reply = 4;
-  // How long to wait for member answers (0 = 2000 ms).
+  // How long to wait for member answers (0 = 2000 ms; for an effect share, how long the
+  // targets may take to fetch it before the switch: 0 = 12 s).
   uint32 timeout_ms = 5;
   // Schedule `inner` on the mesh's show clock this far ahead (its apply_at_ms, unless it
   // carries one): the gateway and every member apply it on the same frame. 0 = on arrival.

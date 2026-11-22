@@ -649,6 +649,10 @@ static const int32_t kArmEffectUniforms = 16;
 static const int32_t kArmWelcome = 1;
 static const int32_t kArmSetFixturePose = 37;
 static const int32_t kArmSetTimeBase = 38;
+static const int32_t kArmMeshSend = 99;
+#if defined(LM_NETSTACK)
+static int dispatch_mesh_upload(const uint8_t *msg, size_t len);  // a sharded mesh_send (M6)
+#endif
 static const int32_t kArmErrorReply = 9;  // ServerMessage.error
 static const int32_t kArmBlendKeypoints = 44;
 static const int32_t kArmLoadStoredEffect = 141;
@@ -868,6 +872,76 @@ extern "C" uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) {
     return 0;
   }
   return fs_write_file(kMeshStatePath, buf, len) ? 1 : 0;
+}
+
+// Effect sharing (mesh M6, mesh_blob.rs): the persisted deck-A frame is a blob a member may
+// already hold (and what a gateway's catch-up sends), a shared effect is staged for the
+// render task, and the loaded one is persisted here (loopTask) like a deck-A upload.
+extern "C" uint32_t lm_mesh_effect_file(uint8_t *buf, uint32_t cap) {
+  if (!fs_ok) return 0;
+  FILE *f = fs_open(kEffectPath, "rb");
+  if (f == nullptr) return 0;
+  uint32_t n = 0;
+  if (buf == nullptr) {
+    if (fseek(f, 0, SEEK_END) == 0) {
+      long e = ftell(f);
+      n = e > 0 ? (uint32_t)e : 0;
+    }
+  } else {
+    n = (uint32_t)fread(buf, 1, cap, f);
+  }
+  fclose(f);
+  return n;
+}
+
+extern "C" int32_t lm_mesh_stage(const uint8_t *frame, uint32_t len, uint32_t apply_at_ms, const uint8_t **replaced) {
+  *replaced = nullptr;
+  if (player_mutex == nullptr) return -1;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t r = lm_fx_stage(frame, len, apply_at_ms, (int64_t)millis(), replaced);
+  xSemaphoreGive(player_mutex);
+  return r;
+}
+
+// The staged frame the render task applied (try-lock: the mesh asks again next pass).
+extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame) {
+  *frame = nullptr;
+  if (player_mutex == nullptr || xSemaphoreTake(player_mutex, 0) != pdTRUE) return 0;
+  size_t len = 0;
+  uint32_t deck = 0;
+  uint32_t r = lm_fx_staged_take(frame, &len, &deck);
+  xSemaphoreGive(player_mutex);
+  if (r == 1 && deck == 0 && fs_ok && !lm_kiosk_msg_locked()) {
+    // As a deck-A upload (persist_if_upload): it resumes at boot; the old selection goes.
+    const int64_t t0 = esp_timer_get_time();
+    bool ok = fs_write_file(kEffectPath, *frame, len);
+    remove(kEffectSelPath);
+    Log().printf("[mesh] shared effect persisted %s %u B us=%lu\n", ok ? "ok" : "FAILED", (unsigned)len,
+                 (unsigned long)(esp_timer_get_time() - t0));
+  }
+  return r;
+}
+
+// mesh_glue.h: run `fn` on the mesh's tick stack (14 KB, idle between ticks), under its lock.
+extern "C" uint32_t lm_mesh_on_tick_stack(uint32_t (*fn)(void)) __attribute__((weak));
+
+extern "C" void lm_mesh_staged_cancel() {
+  if (player_mutex == nullptr) return;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  (void)lm_fx_stage_cancel();
+  const uint8_t *f = nullptr;
+  size_t len = 0;
+  uint32_t deck = 0;
+  (void)lm_fx_staged_take(&f, &len, &deck);
+  xSemaphoreGive(player_mutex);
+}
+
+extern "C" int32_t lm_mesh_scene_frames(uint8_t *out, uint32_t cap) {
+  if (player_mutex == nullptr) return -1;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_fx_scene_frames(out, cap);
+  xSemaphoreGive(player_mutex);
+  return n;
 }
 
 // Mesh time (docs/design/mesh.md §6.3, mesh M4): mesh_ffi.rs maps the mesh's show epoch
@@ -1768,8 +1842,15 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     fclose(ef);
     remove(kUploadTmp);
     // dispatch_plain persists the frame (persist_if_upload) before returning,
-    // so the stage is free to go after it.
-    int32_t r = rn == upload_total ? dispatch_plain(buf, rn) : -1;
+    // so the stage is free to go after it. A sharded mesh_send (mesh M6: an effect shared
+    // with the whole mesh, too big for one window) goes to the mesh gateway instead.
+    int32_t r = -1;
+#if defined(LM_NETSTACK)
+    if (rn == upload_total && lm_envelope_arm(buf, rn) == kArmMeshSend) {
+      r = dispatch_mesh_upload(buf, rn);
+    } else
+#endif
+      r = rn == upload_total ? dispatch_plain(buf, rn) : -1;
     if (buf == nullptr) Log().printf("[upload] no heap to stage the %u B effect\n", (unsigned)upload_total);
     rx_stage_put(buf);
     return r;
@@ -1988,6 +2069,24 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   // desk #79: the app's set_time_base starts a show epoch only through the gateway's session.
   if (lm_envelope_arm(in, len) == kArmSetTimeBase) lm_mesh_note_time_base(g_kiosk_src);
   return n;
+}
+
+// A mesh_send reassembled from UploadChunk windows (mesh M6: an effect for the whole mesh,
+// sharded like any big effect upload): the kiosk gate, then the gateway, as lm_ws_dispatch.
+static int dispatch_mesh_upload(const uint8_t *msg, size_t len) {
+  int g = kiosk_gate(msg, len);
+  if (g > 0) return g;
+  const uint8_t *inner = nullptr;
+  uint32_t inner_len = 0;
+  int32_t r = lm_mesh_app(g_kiosk_src, msg, len, tx, sizeof tx, &inner, &inner_len);
+  if (r >= 0) return r;
+  if (r == -3) {
+    const uint8_t *reply = nullptr;
+    int n = dispatch_gated(inner, inner_len, &reply);
+    lm_mesh_app_done(n < 0 || (n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmErrorReply) ? 1 : 0);
+    return n;
+  }
+  return dispatch_plain(msg, len);
 }
 
 // Everything after the kiosk gate (and the mesh arms): the live mailbox, or the shared handler.
@@ -2499,7 +2598,14 @@ static uint32_t render_once() {
     int64_t sched_k;
     int64_t sched_us = esp_timer_get_time();
     uint32_t sched_bits = lm_sched_apply(grid_sched_ms(sched_us, &sched_k));
+    // A shared effect due on this frame (mesh M6): loaded here, on the mesh's tick stack.
+    if ((sched_bits & 8) && lm_mesh_on_tick_stack) sched_bits |= lm_mesh_on_tick_stack(lm_fx_staged_apply);
     if (sched_bits & 2) poll_brightness();
+    // A shared effect (mesh M6) loaded on this frame: the mesh_effect HITL's observable
+    // (every member logs the same grid frame k) and the load's cost on this frame.
+    if (sched_bits & 4)
+      Log().printf("[mesh] fx applied us=%lld k=%lld ms=%lld load_us=%lld\n", (long long)sched_us, (long long)sched_k,
+                   (long long)millis(), (long long)(esp_timer_get_time() - sched_us));
 #if defined(LM_MESH_DEVKEY)
     // The mesh_apply_at_skew HITL's observable: when this frame applied a scheduled change.
     if (sched_bits & 1)

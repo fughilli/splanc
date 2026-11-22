@@ -83,6 +83,12 @@ shim (UWB radio, TDMA, DS-TWR, fusion).
    (`bulk_relay_bias`, 0 by default). `Updater::set_preferred` makes page requests prefer
    custodians among equally advanced neighbours. Peak occupancy is recorded (`peak_relays`,
    `peak_outbox`).
+10. **The firmware image updater and settings bundles are host-only (mesh M6).** `net.rs`
+    drives `update::Updater` only with feature `fw_update`, and swarm settings bundles only
+    with feature `swarm_settings` (both on in `:swarm_net`: tests, meshsim, Pi nodes; off in
+    `:swarm_net_fw`). The C6 image links neither (~12 KB): its updater had no flash (OTA
+    over the mesh is Phase 2; effects travel as Splanc blobs, `firmware/mesh/src/blob.rs`)
+    and Splanc firmware passes no bundle key, so it could accept no bundle.
 
 The Splanc layer on top (backhaul trait, link frame codec, node driver, loopback backhaul)
 is `//firmware/mesh`, outside this directory.

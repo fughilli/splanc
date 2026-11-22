@@ -512,6 +512,13 @@ impl<const N: usize> Fanout<N> {
         self.done[i].take()
     }
 
+    /// Finished operation `op_id`, taken out of the queue (an operation the device consumes
+    /// itself: the first phase of an effect share, M6).
+    pub fn take_done_op(&mut self, op_id: u32) -> Option<OpResult<N>> {
+        let i = self.done.iter().position(|d| d.is_some_and(|d| d.op_id == op_id))?;
+        self.done[i].take()
+    }
+
     pub fn pending(&self) -> usize {
         self.ops.iter().flatten().count()
     }

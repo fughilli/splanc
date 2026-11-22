@@ -348,7 +348,7 @@ pub mod err {
     pub const BAD_REQUEST: u32 = 6;
 }
 
-fn send_err(e: SendError) -> u32 {
+pub(crate) fn send_err(e: SendError) -> u32 {
     match e {
         SendError::Locked => err::LOCKED,
         SendError::NotMember | SendError::NoRecipients => err::NO_MESH,
@@ -492,7 +492,7 @@ fn phase_code(p: Phase) -> u8 {
 }
 
 /// The player's local epoch (ms, esp_timer domain) as the mesh last mapped it.
-fn local_epoch_ms(m: &Mesh) -> Option<i64> {
+pub(crate) fn local_epoch_ms(m: &Mesh) -> Option<i64> {
     m.tb_mine.flatten()
 }
 
@@ -535,6 +535,23 @@ pub unsafe extern "C" fn ns_mesh_app(m: *mut Mesh, conn: u32, frame: *const u8, 
                 m.gw.next_op = m.gw.next_op.wrapping_add(1) | 0x4000_0000;
                 m.gw.next_op
             };
+            // An effect program (mesh M6): any size, shared as a blob and switched on one
+            // frame everywhere; the app's direct reply is what the load answers.
+            if client_arm(s.inner).is_some_and(|(a, _)| a == gateway::arm::SUBMIT_EFFECT) {
+                let r = gate(m, conn).and_then(|_| crate::mesh_blob::share(m, conn, op, &s, now_us, out));
+                return match r {
+                    Ok(n) => {
+                        m.gw.stats.sends += 1;
+                        m.gw.note_local(op, 0, None);
+                        n as i32
+                    }
+                    Err(e) => {
+                        m.gw.stats.send_failed += 1;
+                        m.log(format_args!("[mesh] gw share op={op} refused err={e}"));
+                        encode_result::<16>(out, op, e, None, None, 0) as i32
+                    }
+                };
+            }
             match gateway_send(m, conn, op, &s, now_us) {
                 Err(e) => {
                     m.gw.stats.send_refused += (e == err::NOT_ALLOWED) as u32;
@@ -907,16 +924,22 @@ fn admin(m: &mut Mesh, conn: usize, a: &Admin<'_>, now_us: i64) -> (u32, u32) {
 
 /// Check, schedule and send one `mesh_send`. Ok: (the rescheduled inner's length in
 /// `m.gw.out`, if it was rescheduled; its apply_at_ms).
-fn gateway_send(m: &mut Mesh, conn: usize, op: u32, s: &Send<'_>, now_us: i64) -> Result<(Option<usize>, Option<u32>), u32> {
+/// A mesh arm may command the mesh from connection `conn`: a member, and the connection
+/// unlocked (on a dev mesh, the first mesh arm opens the session: envelope trust).
+fn gate(m: &mut Mesh, conn: usize) -> Result<(), u32> {
     if !m.stack.membership.is_member() {
         return Err(err::NO_MESH);
     }
     if !m.stack.gate.is_unlocked(conn) {
-        // The first mesh arm on a connection opens the session (envelope trust).
         m.stack.open_gateway(conn).map_err(|_| err::LOCKED)?;
         m.gw.stats.opened += 1;
         m.log(format_args!("[mesh] gateway session open conn={conn}"));
     }
+    Ok(())
+}
+
+fn gateway_send(m: &mut Mesh, conn: usize, op: u32, s: &Send<'_>, now_us: i64) -> Result<(Option<usize>, Option<u32>), u32> {
+    gate(m, conn)?;
     let a = relay_arm(s.inner).map_err(|_| err::NOT_ALLOWED)?;
     // Schedule it on the show clock (the mesh's epoch, mapped onto our time base), if asked.
     let mut resched = None;
@@ -958,6 +981,8 @@ fn gateway_send(m: &mut Mesh, conn: usize, op: u32, s: &Send<'_>, now_us: i64) -
         m.stack.send_control(now_us, conn, op, targets, body).map(|_| ())
     };
     r.map_err(send_err)?;
+    // The look changed through this session: members that sync from now on catch up (M6).
+    m.stack.scene_changed();
     Ok((resched, apply_at))
 }
 
@@ -1034,6 +1059,19 @@ pub unsafe extern "C" fn ns_mesh_take_result(m: *mut Mesh, out: *mut u8, cap: u3
     let m = &mut *m;
     let Some(r) = m.stack.fanout.take_done() else { return 0 };
     m.gw.stats.results += 1;
+    // A share's second phase (M6): a member that did not switch gets a catch-up.
+    if m.bs.share_ops.contains(&r.op_id) {
+        for k in 0..r.n {
+            if r.status[k] != Status::Ok {
+                m.stack.queue_catch_up(r.nodes[k]);
+            }
+        }
+    }
+    if r.op_id & 0xff00_0000 == crate::mesh_blob::CATCH_UP_OP {
+        let ok = r.status[..r.n].iter().filter(|s| **s == Status::Ok).count();
+        m.log(format_args!("[mesh] gw catch-up result ok={ok}/{}", r.n));
+        return 0;
+    }
     let (gs, at) = m.gw.local_of(r.op_id);
     let ok = r.status[..r.n].iter().filter(|s| **s == Status::Ok).count();
     m.log(format_args!(

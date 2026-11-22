@@ -64,6 +64,7 @@ py_test(
         "test_mapping_trigger.py",
         "test_max_ota_core.py",
         "test_mesh_apply_at_skew_core.py",
+        "test_mesh_effect_core.py",
         "test_mesh_gateway_core.py",
         "test_mesh_join_admin_core.py",
         "test_mesh_smoke_core.py",
