@@ -2198,7 +2198,11 @@ static void osc_drain_frame();  // native OSC on the netstack build (below)
 struct CadenceWin {
   uint32_t n, min_us, max_us;
   uint64_t sum_us;
-  void add(uint32_t us) {
+  // An interval read across a device-clock step back (see wall_span_us) is not an
+  // interval: skip it rather than log a wrapped 4.29e9 us.
+  void add(int64_t span_us) {
+    if (span_us < 0) return;
+    uint32_t us = span_us > 0xffffffffLL ? 0xffffffffu : (uint32_t)span_us;
     if (n == 0 || us < min_us) min_us = us;
     if (us > max_us) max_us = us;
     sum_us += us;
@@ -2208,6 +2212,17 @@ struct CadenceWin {
   uint32_t mean() const { return n ? (uint32_t)(sum_us / n) : 0; }
 };
 static CadenceWin g_cad_render, g_cad_wire;
+// A wall-clock span in us from two esp_timer reads, never negative. esp_timer (and
+// millis()) on the c6 has been seen to step BACK by whole multiples of 2^24 systimer
+// ticks (1.048576 s; 1..82 of them in CI logs, root cause in the clock itself), and a
+// span read across such a step wrapped to ~4.29e9 us when narrowed to u32. The
+// pacer then slept 25% of that — 18 minutes with the LEDs frozen (live_latency,
+// c6-2ce684, 2026-11-08). A negative span reads as 0 ("unknown, no cost").
+static inline uint32_t wall_span_us(int64_t from_us, int64_t to_us) {
+  int64_t d = to_us - from_us;
+  if (d <= 0) return 0;
+  return d > 0xffffffffLL ? 0xffffffffu : (uint32_t)d;
+}
 static int64_t g_wire_last_us = 0;   // last effect-frame transmit start (xmit task)
 static uint32_t g_fx_dt_max_ms = 0;  // largest effect time step this window
 static uint32_t g_fx_delay_min = 0xffffffffu, g_fx_delay_max = 0;  // render sleeps this window
@@ -2480,8 +2495,13 @@ static uint32_t render_once() {
     // substitute 33 ms for any gap over 200 ms, which slowed a < 5 fps effect's
     // animation and made a stalled frame lose time. Only a fresh entry (the
     // previous frame wasn't an effect frame) starts with a nominal 33 ms step.
+    // A step back of the device clock (see wall_span_us) is not elapsed time: take
+    // the frame's step as the last good one instead of a wrapped ~49-day dt.
+    static uint32_t s_fx_good_dt_ms = 33;
     uint32_t dt_ms = s_fx_last_ms == 0 ? 33 : now - s_fx_last_ms;
-    if (s_fx_last_ms != 0 && fx_last_us != 0) g_cad_render.add((uint32_t)(now_us - fx_last_us));
+    if (s_fx_last_ms != 0 && (int32_t)(now - s_fx_last_ms) < 0) dt_ms = s_fx_good_dt_ms;
+    else if (s_fx_last_ms != 0) s_fx_good_dt_ms = dt_ms;
+    if (s_fx_last_ms != 0 && fx_last_us != 0) g_cad_render.add(now_us - fx_last_us);
     s_fx_last_ms = now == 0 ? 1 : now;
     fx_last_us = now_us;
     s_fx_frame_start_us = now_us;
@@ -2702,7 +2722,8 @@ static uint32_t render_once() {
     // miss the waits, so frame starts drifted with background load.)
     int64_t fx_elapsed_us = esp_timer_get_time() - s_fx_frame_start_us;
     uint32_t show_us = g_show_us;
-    uint32_t cost_us = fx_elapsed_us > (int64_t)show_us ? (uint32_t)fx_elapsed_us : show_us;
+    uint32_t elapsed_us = wall_span_us(s_fx_frame_start_us, s_fx_frame_start_us + fx_elapsed_us);
+    uint32_t cost_us = elapsed_us > show_us ? elapsed_us : show_us;
     xSemaphoreTake(player_mutex, portMAX_DELAY);
     // Sleep = target period − work (≥ the controller's minimum yield), so frame
     // starts land one period apart. An effect that can't hold the floor / pinned
@@ -2908,7 +2929,7 @@ static void xmit_task(void *) {
     int64_t t0 = g_show_timed ? esp_timer_get_time() : 0;
     if (g_show_timed) {  // an effect frame: its wire-out start feeds the cadence stats
       int64_t w = esp_timer_get_time();
-      if (g_wire_last_us != 0) g_cad_wire.add((uint32_t)(w - g_wire_last_us));
+      if (g_wire_last_us != 0) g_cad_wire.add(w - g_wire_last_us);
       g_wire_last_us = w;
     } else {
       g_wire_last_us = 0;
@@ -2919,7 +2940,7 @@ static void xmit_task(void *) {
 #endif
     const int64_t staged_start_us = g_staged_start_us;
     ws2812_send();
-    if (g_show_timed) g_show_us = (uint32_t)(esp_timer_get_time() - t0);
+    if (g_show_timed) g_show_us = wall_span_us(t0, esp_timer_get_time());
     if (g_show_timed && staged_start_us != 0) {
       // The frame's last bit is out; it shows once the line has been low for the latch.
       const int64_t lit = esp_timer_get_time() + kLatchUs;

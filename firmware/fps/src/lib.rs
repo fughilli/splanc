@@ -140,6 +140,13 @@ pub const RENDER_DUTY_PCT: u32 = 80;
 /// long enough for the lower/equal-priority tasks to run a full pass (the
 /// netstack RX drain + TLS pump, an I2C FIFO read) whatever the frame cost.
 pub const MIN_SLICE_MS: u32 = 4;
+/// The longest sleep after any one frame, in ms. A real frame never costs more
+/// than a few hundred ms (the bounded-execution deadline cancels a runaway
+/// shade), so this only bites on a bogus cost: a wall-clock span read across a
+/// step back of the device clock wraps to ~4.29e9 us, and 25% of that is an
+/// 18-minute sleep — the effect froze mid-show (live_latency on c6-2ce684,
+/// 2026-11-08). One second still covers the duty rule for frames up to 4 s.
+pub const MAX_SLICE_MS: u32 = 1000;
 
 /// Frames per evaluation window. ~1 s at 30 fps: long enough that one stray
 /// WiFi/BLE IRQ stealing a frame doesn't trigger a step, short enough to react
@@ -549,7 +556,7 @@ pub fn min_yield_ms(cost_us: u32) -> u32 {
 pub fn overrun_yield_ms(cost_us: u32) -> u32 {
     let free_us =
         (cost_us as u64 * (100 - RENDER_DUTY_PCT) as u64).div_ceil(RENDER_DUTY_PCT as u64);
-    (free_us.div_ceil(1000) as u32).max(MIN_SLICE_MS)
+    (free_us.div_ceil(1000) as u32).clamp(MIN_SLICE_MS, MAX_SLICE_MS)
 }
 
 /// The sleep a frame owes the rest of the device after `cpu_us` of render
@@ -689,6 +696,18 @@ mod tests {
             c.on_frame(cost);
         }
         assert_eq!(c.current_fps(), 30);
+    }
+
+    #[test]
+    fn a_bogus_wrapped_cost_never_parks_the_effect() {
+        // A wall span read across a device-clock step back wraps to ~u32::MAX us;
+        // the pacer must still come back within a second, not sleep 18 minutes.
+        assert_eq!(overrun_yield_ms(u32::MAX), MAX_SLICE_MS);
+        assert_eq!(overrun_yield_ms(4_000_000), MAX_SLICE_MS);
+        assert_eq!(overrun_yield_ms(183_000), 46);
+        let mut c = FpsController::new();
+        assert!(c.on_frame(u32::MAX).delay_ms <= MAX_SLICE_MS);
+        assert!(c.on_frame_cpu(u32::MAX, 0).delay_ms <= MAX_SLICE_MS);
     }
 
     #[test]
