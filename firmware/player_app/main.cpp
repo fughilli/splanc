@@ -1457,7 +1457,9 @@ static void mdns_begin_or_update() {
   }
 }
 #else
-static void mdns_begin_or_update() {}  // no mDNS on the heapless stack (harness reaches the DUT by IP)
+// The netstack's own responder (firmware/mdns) answers with the live name already; a
+// rename still has to withdraw the old name and announce the new one.
+static void mdns_begin_or_update() { netstack_mdns_renamed(); }
 #endif
 
 // After handling a message, pick up a set_device_name rename: read the player's
@@ -2039,6 +2041,13 @@ int lm_mdns_reply(const uint8_t *query, size_t qlen, uint16_t src_port, const ui
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = query ? lm_mdns_respond(query, qlen, src_port, ip, out, cap, unicast)
                     : lm_mdns_announce(ip, out, cap);
+  xSemaphoreGive(player_mutex);
+  return (int)n;
+}
+
+int lm_mdns_goodbye_reply(const uint8_t *ip, uint8_t *out, size_t cap) {
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_mdns_goodbye(ip, out, cap);
   xSemaphoreGive(player_mutex);
   return (int)n;
 }

@@ -1,6 +1,6 @@
 //! The responder against hand-built queries, decoded back with a small DNS reader.
 
-use ledmapper_mdns::{announce, host_label, igmp_v2_report, inet_checksum, name_label, respond, Dest, Service};
+use ledmapper_mdns::{announce, goodbye, host_label, igmp_v2_report, inet_checksum, name_label, respond, Dest, Service};
 
 const TXT: &[(&str, &str)] = &[
     ("id", "AA:BB:CC:DD:EE:FF"),
@@ -224,6 +224,24 @@ fn the_announcement_carries_every_record() {
     assert_eq!(m.answers.iter().map(|r| r.rtype).collect::<Vec<_>>(), vec![12, 12, 33, 16, 1, 1]);
     let a: Vec<&str> = m.answers.iter().filter(|r| r.rtype == 1).map(|r| r.name.as_str()).collect();
     assert_eq!(a, vec!["splanc-ddeeff.local", "Kitchen.local"]);
+}
+
+#[test]
+fn a_goodbye_withdraws_the_old_names_with_ttl_zero() {
+    let mut out = [0u8; 1024];
+    let n = goodbye(&svc(), &mut out).unwrap();
+    let m = decode(&out[..n]);
+    assert_eq!(m.flags, 0x8400);
+    // PTR, SRV, TXT and the display-name host; not the enumeration PTR or the MAC host.
+    assert_eq!(m.answers.iter().map(|r| r.rtype).collect::<Vec<_>>(), vec![12, 33, 16, 1]);
+    assert!(m.answers.iter().all(|r| r.ttl == 0), "every record is a goodbye");
+    assert!(m.answers.iter().all(|r| r.class == 1), "no cache-flush bit");
+    assert_eq!(name_at(&out[..n], m.answers[0].rdata_off).0, "Kitchen._splanc._tcp.local");
+    assert_eq!(m.answers[3].name, "Kitchen.local");
+    // No alias: nothing for it.
+    let n = goodbye(&Service { alias: "", ..svc() }, &mut out).unwrap();
+    assert_eq!(decode(&out[..n]).answers.iter().map(|r| r.rtype).collect::<Vec<_>>(), vec![12, 33, 16]);
+    assert!(goodbye(&svc(), &mut [0u8; 20]).is_none());
 }
 
 #[test]

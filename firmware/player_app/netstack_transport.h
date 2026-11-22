@@ -125,6 +125,14 @@ void lm_publish_tls_info(const char *state, const char *cert_sha256, bool persis
 // Writes the DNS message into `out`; returns its length, 0 = nothing to send, <0 = error.
 int lm_mdns_reply(const uint8_t *query, size_t qlen, uint16_t src_port, const uint8_t *ip,
                   uint8_t *out, size_t cap, bool *unicast);
+// PROVIDED BY main.cpp. The goodbye (TTL 0) for the name last announced, when the device
+// has been renamed since (lm_mdns_goodbye); 0 = nothing to withdraw.
+int lm_mdns_goodbye_reply(const uint8_t *ip, uint8_t *out, size_t cap);
+// The device was renamed (poll_device_rename): on the next idle tick, withdraw the old
+// name (goodbye) and restart the 3-announcement burst under the new one, so browsers
+// show the rename at once instead of at the next 60 s refresh, with the old name
+// lingering for its 4500 s TTL. Any task.
+void netstack_mdns_renamed(void);
 
 // --- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) -------------------------
 // mode: 0 auto (5 s -> scan_cap_s backoff; opt-in decay to sparse_interval_s after

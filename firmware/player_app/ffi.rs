@@ -1575,21 +1575,26 @@ pub unsafe extern "C" fn lm_set_tls_info(
 /// identity's state, once published) — from the player's live identity, so a
 /// rename is advertised on the next reply.
 unsafe fn with_mdns_service<R>(ip: [u8; 4], f: impl FnOnce(&ledmapper_mdns::Service) -> R) -> R {
+    with_mdns_service_named(ip, player().device_name(), f)
+}
+
+/// [`with_mdns_service`] under the display name `name` (a goodbye's old name).
+unsafe fn with_mdns_service_named<R>(ip: [u8; 4], name: &str, f: impl FnOnce(&ledmapper_mdns::Service) -> R) -> R {
     let p = player();
     let mut hb = [0u8; 13];
     let host = ledmapper_mdns::host_label(p.mac(), &mut hb);
     let mut ab = [0u8; 63];
-    let alias = ledmapper_mdns::name_label(p.device_name(), &mut ab);
+    let alias = ledmapper_mdns::name_label(name, &mut ab);
     let tls = tls_state();
     let txt = [
         ("id", p.mac()),
-        ("name", p.device_name()),
+        ("name", name),
         ("fw", p.fw_version()),
         ("path", "/.well-known/splanc.json"),
         ("tls", tls),
     ];
     let txt: &[(&str, &str)] = if tls.is_empty() { &txt[..4] } else { &txt };
-    let svc = ledmapper_mdns::Service { host, instance: p.device_name(), alias, port: 443, ip, txt };
+    let svc = ledmapper_mdns::Service { host, instance: name, alias, port: 443, ip, txt };
     f(&svc)
 }
 
@@ -1638,6 +1643,48 @@ pub unsafe extern "C" fn lm_mdns_announce(ip: *const u8, out: *mut u8, cap: usiz
     let ip = [*ip, *ip.add(1), *ip.add(2), *ip.add(3)];
     let o = core::slice::from_raw_parts_mut(out, cap);
     match with_mdns_service(ip, |s| ledmapper_mdns::announce(s, o)) {
+        Some(n) => {
+            let a = &mut *addr_of_mut!(MDNS_ANNOUNCED);
+            let name = player().device_name().as_bytes();
+            a.len = name.len().min(a.name.len());
+            a.name[..a.len].copy_from_slice(&name[..a.len]);
+            n as i32
+        }
+        None => -2,
+    }
+}
+
+/// The display name the last announcement carried (lm_mdns_announce): what browsers
+/// have cached, so a rename knows which names to withdraw (lm_mdns_goodbye). Only an
+/// announcement sets it, not a reply: a query answered between a rename and its
+/// goodbye must not make the old name look already withdrawn.
+struct MdnsAnnounced {
+    name: [u8; 64],
+    len: usize,
+}
+static mut MDNS_ANNOUNCED: MdnsAnnounced = MdnsAnnounced { name: [0; 64], len: 0 };
+
+/// After a rename: a goodbye (TTL 0) for the service under the name last announced,
+/// for 224.0.0.251:5353, so browsers drop the old name now instead of in up to 75
+/// minutes. Returns its length, 0 when there is nothing to withdraw (never announced,
+/// or the name is unchanged since), or -2 when it doesn't fit. Follow it with
+/// lm_mdns_announce.
+///
+/// # Safety
+/// `ip` points to 4 readable bytes, `out` to `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mdns_goodbye(ip: *const u8, out: *mut u8, cap: usize) -> i32 {
+    if ip.is_null() || out.is_null() {
+        return -1;
+    }
+    let a = &*addr_of!(MDNS_ANNOUNCED);
+    let old = core::str::from_utf8(&a.name[..a.len]).unwrap_or("");
+    if old.is_empty() || old == player().device_name() {
+        return 0;
+    }
+    let ip = [*ip, *ip.add(1), *ip.add(2), *ip.add(3)];
+    let o = core::slice::from_raw_parts_mut(out, cap);
+    match with_mdns_service_named(ip, old, |s| ledmapper_mdns::goodbye(s, o)) {
         Some(n) => n as i32,
         None => -2,
     }

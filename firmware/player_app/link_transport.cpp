@@ -528,6 +528,7 @@ int netstack_net_stats(char *buf, size_t cap) {
 
 void netstack_set_wifi_policy(const NetstackWifiPolicy *) {}
 void netstack_wifi_rejoin(void) {}
+void netstack_mdns_renamed(void) {}  // the C6 front end advertises the name
 bool netstack_take_policy_change(NetstackWifiPolicy *) { return false; }
 bool netstack_wifi_wants_network(void) { return false; }
 // Live sessions get the loop at render's priority, as on the C6 (main.cpp loop()).
