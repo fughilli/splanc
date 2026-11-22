@@ -272,6 +272,13 @@
       "demanded_level": "hitl"
     },
     {
+      "kind": "unverified",
+      "entity": "PR-40",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hitl"
+    },
+    {
       "kind": "high-risk-open",
       "entity": "RISK-2",
       "message": "high risk; mitigation is OPEN",
