@@ -64,7 +64,8 @@ impl I2cBus for FfiBus {
 /// SensorStatus.SENSOR_STATUS_DISABLED (hub states 1..=5 match the enum).
 const STATUS_DISABLED: u8 = 6;
 
-static mut HUB: Option<Hub> = None;
+// BssOption: all-zero when empty, so .bss not .data (see //firmware/bss).
+static mut HUB: ledmapper_bss::BssOption<Hub> = ledmapper_bss::BssOption::NONE;
 static mut OPS: LmI2cOps = LmI2cOps { ctx: core::ptr::null_mut(), write_read: None, write: None, cycles: None };
 /// SDA, SCL, INT (-1 = none).
 static mut PINS: [i32; 3] = [-1, -1, -1];
