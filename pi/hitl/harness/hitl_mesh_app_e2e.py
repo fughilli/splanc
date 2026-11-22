@@ -16,7 +16,8 @@ wss client).
   effect       a new effect with uniforms (~2 KB fxb) typed into the editor and pushed:
                every DUT loads it on one frame (AP-beacon clock); the Mesh section's
                "Last change sent to the mesh" lists all three as reached
-  slider       a uniform slider move (a live move: relayed on arrival, not scheduled)
+  slider       a uniform slider dragged: live moves go on arrival; the value let go is
+               committed and lands on one frame on every DUT
   brightness   Color correction ▸ Output level: every DUT applies it on one frame
   eject        member c ▸ Remove from mesh; c leaves
   readd        "Add a fixture to this mesh" ▸ c: provisioned again, joins, catches up
@@ -216,13 +217,14 @@ class App:
         self.page.locator(".mesh-section").first.scroll_into_view_if_needed(timeout=3000)
         self.page.wait_for_timeout(800)
 
-    def set_range(self, sel: str, value: float) -> None:
-        """Drag a range input to `value` (input then change, as a finger does)."""
+    def set_range(self, sel: str, value: float, release: bool = True) -> None:
+        """Move a range input to `value` (an input event, as a drag does; with `release`
+        also the change event of letting go)."""
         self.page.locator(sel).first.evaluate(
-            "(el, v) => { el.value = String(v);"
+            "(el, [v, up]) => { el.value = String(v);"
             " el.dispatchEvent(new Event('input', {bubbles: true}));"
-            " el.dispatchEvent(new Event('change', {bubbles: true})); }",
-            value,
+            " if (up) el.dispatchEvent(new Event('change', {bubbles: true})); }",
+            [value, release],
         )
 
     def last_change(self) -> dict:
@@ -658,18 +660,28 @@ def run(args: argparse.Namespace) -> int:
                 if not app.visible("input[type=range]"):
                     raise RuntimeError("the editor's uniform sliders are not shown")
                 marks = {d.label: d.mark() for d in duts}
-                for v in (0.8, 1.2, 1.6):
-                    app.set_range("input[type=range]", v)
-                    page.wait_for_timeout(250)
+                # A drag: live moves go on arrival; the value let go is committed (the
+                # editor commits 600 ms after the last move) and scheduled on the mesh
+                # clock, so every fixture settles on one frame.
+                for v in (0.6, 0.8, 1.0, 1.2, 1.4, 1.6):
+                    app.set_range("input[type=range]", v, release=False)
+                    page.wait_for_timeout(60)
+                got = {d.label: wait_line(d, r"\[mt\] apply ", marks[d.label], 6.0) for d in duts}
                 page.wait_for_timeout(1500)
+                s["got"] = {k: bool(v) for k, v in got.items()}
+                s["frame"] = mt_same_frame(mesh_lines(marks), args.max_skew_us)
                 app.shot("editor-slider-moved")
                 check_last_change(s, 3)
                 app.shot("device-sheet-last-change-slider")
-                s["ok"] = len(s["last_change"]["rows"]) >= 3 and all(
+                fails = []
+                if not s["frame"]["ok"]:
+                    fails.append(f"commit frame {s['frame']}")
+                if len(s["last_change"]["rows"]) < 3 or not all(
                     r["ok"] for r in s["last_change"]["rows"]
-                )
-                if not s["ok"]:
-                    s["fail"] = f"last change {s['last_change']}"
+                ):
+                    fails.append(f"last change {s['last_change']}")
+                s["fail"] = "; ".join(fails) or None
+                s["ok"] = not fails
 
             def brightness(s: dict, value: float, tag: str) -> None:
                 app.close_sheets()
