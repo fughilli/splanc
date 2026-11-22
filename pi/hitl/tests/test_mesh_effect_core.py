@@ -55,7 +55,8 @@ def test_late_frames_attributed():
     ]
     lf = late_frames(lines)
     assert [x["effect_load"] for x in lf] == [True, False, False]
-    assert [x["save_us"] for x in lf] == [None, None, 0]
+    # The write logged after the second [late] line ended in that window: attributed too.
+    assert [x["save_us"] for x in lf] == [None, 0, 0]
 
 
 def _round(**kw):
@@ -111,3 +112,15 @@ def test_skew_on_the_ap_clock():
     per = {"a": [{"us": 150000}], "b": [{"us": 950700}]}
     assert apply_skew(per, {"a": ra, "b": rb}) == 700
     assert apply_skew({"a": [{"us": 1}], "b": []}, {"a": ra, "b": rb}) is None
+
+
+def test_save_logged_after_its_late_line():
+    lines = [
+        FT,
+        "[mesh] joined epoch=1",
+        FT,
+        "[late] n=1 max=34362 ago_ms=35",
+        "[mesh] state saved ok us=126133",
+        FT,
+    ]
+    assert late_frames(lines)[0]["save_us"] == 0

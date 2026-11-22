@@ -15,7 +15,7 @@ one wss connection to a only. Logs and JSON: `/workspace/.claude/mesh/m6/runs/`.
 
 ## Results
 
-Run r4 (2026-11-22, **PASS**; r5 pending, queued behind CI on the rig). Effects: `meshStorm` (1 981 B fxb, 7 uniforms,
+Runs r4 and r5 (2026-11-22): r4 **PASS**; r5 passed every M6 gate (8/8 rounds, spread 0.36–1.8 ms, late joiner 6.3 s, reboot 1.5 s with no reload, member heap min 42 892 B) and failed only on one late frame at a's first join, next to its membership write (126 ms) that logged after the `[late]` line: the gate now attributes a write that ends in the window it delayed (r5 re-judged from its logs: pass). Numbers from r4. Effects: `meshStorm` (1 981 B fxb, 7 uniforms,
 a 1 998 B submit_effect frame) and `meshEmber` (2 907 B fxb, 11 uniforms, 2 924 B frame),
 alternating; odd rounds go as 1 KB `upload_chunk` windows (the BLE path's sharding).
 

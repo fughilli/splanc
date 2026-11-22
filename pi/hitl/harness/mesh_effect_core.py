@@ -155,6 +155,16 @@ def late_frames(lines: list[str]) -> list[dict]:
             cur["save"] = True
         if _FT_LINE.search(t):
             prev, cur = cur, {"load": False, "save": False}
+        elif _SAVE.search(t) or _LOAD.search(t):
+            # A write (or load) logged after the [late] line of its window, before the
+            # next [ft]: it ended there (its log line comes when it is done).
+            for x in reversed(out):
+                if x.get("_win") != id(prev):
+                    break
+                if _SAVE.search(t):
+                    x["save_us"] = 0
+                else:
+                    x["effect_load"] = True
         elif m := _LATE.search(t):
             out.append(
                 {
@@ -163,8 +173,11 @@ def late_frames(lines: list[str]) -> list[dict]:
                     "ago_ms": int(m.group(3)),
                     "effect_load": prev["load"] or cur["load"],
                     "save_us": 0 if (prev["save"] or cur["save"]) else None,
+                    "_win": id(prev),
                 }
             )
+    for x in out:
+        x.pop("_win", None)
     return out
 
 
