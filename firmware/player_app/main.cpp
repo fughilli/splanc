@@ -1397,15 +1397,16 @@ static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, siz
 // Flash writes the store hooks ask for while lm_player_handle holds the player mutex
 // (PR-41): queued, then done right after the mutex is released, before the reply goes out.
 static bool g_fs_defer = false;
-static void fs_deferred_flush();
+__attribute__((noinline)) static void fs_deferred_flush();
 // ...and the files they READ under it are read before it is taken (fs_prefetch).
-static void fs_prefetch(const uint8_t *msg, size_t len);
-static void fs_prefetch_drop();
+// Out of line (noinline): their frames stay off the dispatch path loopTask's stack bound sums.
+__attribute__((noinline)) static void fs_prefetch(const uint8_t *msg, size_t len);
+__attribute__((noinline)) static void fs_prefetch_drop();
 // littlefs usage for the effect store's space check, measured outside the player mutex
 // (esp_littlefs_info walks the filesystem: ~50 ms of flash reads, which under the mutex held
 // the render task off). Refreshed after each message that wrote, below render (PR-41).
 static size_t g_fs_total = 0, g_fs_used = 0;
-static void fs_usage_refresh();
+__attribute__((noinline)) static void fs_usage_refresh();
 static void kp_fs_remove(const uint8_t *name, size_t len);
 static int32_t fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
                             size_t b_len);
@@ -1816,9 +1817,10 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
 // kNotStaged: not in the store (or no fs) — the player core answers not_found.
 static const int kNotStaged = -100;
 static int load_stored_effect(const uint8_t *in, size_t len) {
-  // The request is tiny; copy it out first, since on the vendor build the stage is the
-  // rx buffer the request may be sitting in.
-  uint8_t msg[160];
+  // The request is tiny (an effect id of <= 64 bytes, a deck, a flag); copy it out first,
+  // since on the vendor build the stage is the rx buffer the request may be sitting in.
+  // 128 B: this frame is on the relayed-upload path loopTask's stack bound sums (mesh M6).
+  uint8_t msg[128];
   if (!fs_ok || len > sizeof msg) return kNotStaged;
   memcpy(msg, in, len);
   fs_prefetch(msg, len);  // the record headers lm_fxs_find / lm_fxs_load look through
