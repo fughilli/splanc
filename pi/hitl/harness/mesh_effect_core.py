@@ -115,6 +115,9 @@ def verdict(
         why.append(f"late joiner did not catch up: {lj.get('fail')}")
     if not lj.get("uniforms_match"):
         why.append(f"late joiner's uniforms differ: {lj.get('uniforms')}")
+    bl = phases.get("ble")
+    if bl is not None and not bl.get("pass"):
+        why.append(f"BLE round: {bl}")
     rb = phases.get("reboot", {})
     if not rb.get("caught_up"):
         why.append(f"rebooted member did not catch up: {rb.get('fail')}")
@@ -133,7 +136,9 @@ def verdict(
 
 _LATE = re.compile(r"\[late\] n=(\d+) max=(\d+) ago_ms=(\d+)")
 _FT_LINE = re.compile(r"\[ft\] r\d+:")
-_SAVE = re.compile(r"\[mesh\] state (?:saved|erased) |\[mesh\] shared effect persisted |\[upload\]")
+_SAVE = re.compile(
+    r"\[mesh\] state (?:saved|erased) |\[mesh\] shared effect persisted |\[upload\](?!.*\(ram\))"
+)
 _LOAD = re.compile(
     r"\[mesh\] fx applied |\[mesh\] scene apply .*staged=0|\[mesh\] gw share apply .*local=now"
 )
@@ -157,8 +162,8 @@ def late_frames(lines: list[str]) -> list[dict]:
             cur["load"] = True
         if _SAVE.search(t):
             cur["save"] = True
-        if "[upload] " in t and "first window" in t:
-            uploading = True
+        if "[upload] " in t and "first window" in t and "(ram)" not in t:
+            uploading = True  # (an EFFECT upload reassembled in RAM writes no flash)
         if uploading:
             cur["save"] = True
             if "[mesh] gw share " in t or "[upload] " in t and ("decoded" in t or "NOT" in t):

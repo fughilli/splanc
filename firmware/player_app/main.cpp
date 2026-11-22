@@ -590,6 +590,18 @@ static uint32_t upload_next_seq = 0;  // expected seq of the next window
 static int upload_kind = 0;           // 0 = map (submit_map), 1 = topology
 static size_t upload_total = 0;       // bytes written to the temp file so far
 static bool upload_active = false;    // a window sequence is in progress
+#if defined(LM_NETSTACK)
+// EFFECT uploads (kind 2) reassemble in RAM instead (owner rule: no blipping): a flash
+// write stalls the whole chip, so appending each window to upload.tmp dropped frames on the
+// connected fixture. An effect frame is at most kRxCap (4.5 KiB): one heap block of that,
+// held only while its windows arrive (freed at the last one, on a reset, or when idle).
+static uint8_t *upload_ram = nullptr;
+static int64_t upload_ram_ms = 0;
+static void upload_ram_free() {
+  if (upload_ram) rx_stage_put(upload_ram);
+  upload_ram = nullptr;
+}
+#endif
 #if !defined(LM_NETSTACK)
 static uint8_t hs[1024];        // handshake request accumulator
 static size_t hs_len = 0;
@@ -1804,7 +1816,66 @@ static int dispatch_plain(const uint8_t *msg, size_t len) {
 // off flash and, on success, renamed into place (persistence is free — the file
 // IS the frame). Fills `tx` with the reply to send and returns its length, or
 // -1 to drop the socket (fs error / out-of-order window / decode failure).
+#if defined(LM_NETSTACK)
+static int dispatch_effect_frame(uint8_t *buf, size_t n);
+
+// An EFFECT upload window, reassembled in RAM (no flash write while it arrives).
+static int32_t process_effect_chunk_ram(const LmUploadChunk *ch, const uint8_t *payload) {
+  if (ch->seq == 0) {
+    Log().printf("[upload] kind 2 id %u: first window %u B%s (ram)\n", (unsigned)ch->upload_id,
+                 (unsigned)ch->payload_len, ch->last ? " (the only one)" : "");
+    upload_ram_free();
+    upload_active = false;
+    upload_ram = rx_stage_get(kRxCap);
+    if (upload_ram == nullptr) {
+      Log().printf("[upload] no heap for a %u B effect upload\n", (unsigned)kRxCap);
+      return -1;
+    }
+    upload_total = 0;
+    upload_next_seq = 0;
+    upload_kind = 2;
+    upload_active = true;
+  } else if (!upload_active || upload_ram == nullptr || ch->seq != upload_next_seq) {
+    Log().printf("[upload] window %u out of order (expected %u, active %d): dropped\n", (unsigned)ch->seq,
+                 (unsigned)upload_next_seq, (int)upload_active);
+    upload_active = false;
+    upload_ram_free();
+    return -1;
+  }
+  if (upload_total + ch->payload_len > kRxCap) {
+    Log().printf("[upload] effect over %u B: dropped\n", (unsigned)kRxCap);
+    upload_active = false;
+    upload_ram_free();
+    return -1;
+  }
+  memcpy(upload_ram + upload_total, payload, ch->payload_len);
+  upload_total += ch->payload_len;
+  upload_next_seq = ch->seq + 1;
+  upload_ram_ms = (int64_t)millis();
+  if (!ch->last) return lm_encode_chunk_ack(ch->upload_id, ch->seq, tx, sizeof tx);
+  upload_active = false;
+  uint8_t *buf = upload_ram;
+  upload_ram = nullptr;
+  int32_t r = dispatch_effect_frame(buf, upload_total);
+  rx_stage_put(buf);
+  return r;
+}
+
+// Each loop pass: an EFFECT upload abandoned mid-way (the client went away) gives its
+// buffer back after 15 s.
+static void upload_ram_gc() {
+  if (upload_ram && (int64_t)millis() - upload_ram_ms > 15000) {
+    Log().printf("[upload] effect upload idle: buffer freed\n");
+    upload_active = false;
+    upload_ram_free();
+  }
+}
+#endif
+
 static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payload) {
+#if defined(LM_NETSTACK)
+  if (ch->kind == 2) return process_effect_chunk_ram(ch, payload);
+#endif
   if (!fs_ok) return -1;  // uploads need the fs (stream-decode + persistence)
 
   if (ch->seq == 0) {
@@ -1867,15 +1938,8 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     fclose(ef);
     remove(kUploadTmp);
     // dispatch_plain persists the frame (persist_if_upload) before returning,
-    // so the stage is free to go after it. A sharded mesh_send (mesh M6: an effect shared
-    // with the whole mesh, too big for one window) goes to the mesh gateway instead.
-    int32_t r = -1;
-#if defined(LM_NETSTACK)
-    if (rn == upload_total && lm_envelope_arm(buf, rn) == kArmMeshSend) {
-      r = dispatch_mesh_upload(buf, rn);
-    } else
-#endif
-      r = rn == upload_total ? dispatch_plain(buf, rn) : -1;
+    // so the stage is free to go after it.
+    int32_t r = rn == upload_total ? dispatch_plain(buf, rn) : -1;
     if (buf == nullptr) Log().printf("[upload] no heap to stage the %u B effect\n", (unsigned)upload_total);
     rx_stage_put(buf);
     return r;
@@ -2015,6 +2079,15 @@ static int ws_reply_relayed(const uint8_t *msg, size_t len) {
   int n = 0;
   if (ws_reply_pre(msg, len, &n)) return n;
   return ws_reply_tail(msg, len);
+}
+#endif
+
+#if defined(LM_NETSTACK)
+// A reassembled EFFECT upload: a submit_effect (dispatch_plain persists it), or a mesh_send
+// (mesh M6: an effect shared with the whole mesh) for the mesh gateway.
+static int dispatch_effect_frame(uint8_t *buf, size_t n) {
+  if (lm_envelope_arm(buf, n) == kArmMeshSend) return dispatch_mesh_upload(buf, n);
+  return dispatch_plain(buf, n);
 }
 #endif
 
@@ -4807,6 +4880,7 @@ void loop() {
   poll_kiosk();
 #if defined(LM_NETSTACK)
   poll_mesh_sessions();
+  upload_ram_gc();
 #endif
 
   static uint32_t last_report = 0;

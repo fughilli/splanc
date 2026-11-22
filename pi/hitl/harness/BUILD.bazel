@@ -1970,6 +1970,10 @@ py_binary(
         "hitl_mesh_spike.py",
     ],
     data = [
+        "hitl_ble_player.py",
+        "hitl_improv.py",
+        "improv.py",
+        "mesh_ble_gateway.py",
         "mesh_serial_bridge.py",
         ":mesh_gateway_fxbs",
         "//firmware/mesh:mesh_admin_tool",

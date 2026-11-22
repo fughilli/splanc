@@ -33,6 +33,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import secrets
 import sys
 import threading
@@ -41,10 +42,10 @@ from contextlib import ExitStack, contextmanager
 
 from hitl_client import Reservation
 from hitl_mesh_apply_at_skew import TimeDut, _hello, _rpc
-from hitl_mesh_gateway import Gw, _enc, mesh_send
+from hitl_mesh_gateway import Gw, _dec, _enc, mesh_send
 from hitl_mesh_join_admin import Tool, _b64, _unb64, admin_msg
 from hitl_mesh_smoke import _load_effect, _wait_lease
-from hitl_mesh_spike import _flash, _runfile
+from hitl_mesh_spike import _BLE_MAC_RE, _flash, _runfile
 from mesh_effect_core import (
     ap_refs,
     applied,
@@ -140,7 +141,16 @@ def run(args: argparse.Namespace) -> int:
         storm = fh.read()
     with open(_runfile(args.ember), "rb") as fh:
         ember = fh.read()
-    shipped = [os.path.join(_HERE, "mesh_serial_bridge.py")]
+    shipped = [
+        os.path.join(_HERE, f)
+        for f in (
+            "mesh_serial_bridge.py",
+            "mesh_ble_gateway.py",
+            "hitl_ble_player.py",
+            "hitl_improv.py",
+            "improv.py",
+        )
+    ]
     record: dict = {"args": dict(vars(args)), "units": {}, "fxb": [len(storm), len(ember)]}
     _log(f"fxb: storm {len(storm)} B, ember {len(ember)} B")
     phases: dict[str, dict] = {}
@@ -237,6 +247,8 @@ def run(args: argparse.Namespace) -> int:
                 f.write(boot[d.label])
             if not ble_advertising(boot[d.label]):
                 raise SystemExit(f"[mesh_effect] {d.label}: app never came up")
+            mm = _BLE_MAC_RE.search(boot[d.label])
+            d.ble_mac = mm.group(1).lower() if mm else ""
             d.res.scp_to(shipped, "/tmp/")
             d.proc = None
             d.start(args.bridge_seconds)
@@ -368,6 +380,94 @@ def run(args: argparse.Namespace) -> int:
             _log(f"share round {r}: {json.dumps(out, default=str)[:1500]}")
             return out
 
+        async def ble_round(gw: Gw, r: int, fxb: bytes) -> dict:
+            """One share with the phone on BLE (the rig's adapter, in a's container) while the
+            wss client stays connected (a new wss client would drop BLE, not the reverse):
+            unlock the BLE connection with a grant, then the mesh_send as 1 KB upload
+            windows (the app's BLE_UPLOAD_CHUNK_BYTES)."""
+            s = await get_state(gw)
+            g = tool.grant(
+                st["session"],
+                int(s["node"]),
+                _unb64(s.get("deviceKey")),
+                int(s.get("meshS", 0)) + args.grant_ttl_s,
+            )
+            eid = f"storm{r}"
+            op = 0x600 + r
+            frame = _enc(mesh_send(submit(eid, fxb), op, timeout_ms=12000))
+            frames = [
+                _enc({"type": "hello", "client": "mesh_effect_ble", "app_version": "1"}),
+                _enc(admin_msg("unlock", grant=base64.b64encode(g).decode())),
+            ]
+            for seq, off in enumerate(range(0, len(frame), 1024)):
+                frames.append(
+                    _enc(
+                        {
+                            "type": "upload_chunk",
+                            "upload_id": 0x6B00 + r,
+                            "seq": seq,
+                            "last": off + 1024 >= len(frame),
+                            "kind": "EFFECT",
+                            "payload": base64.b64encode(frame[off : off + 1024]).decode("ascii"),
+                        }
+                    )
+                )
+            marks = {d.label: d.mark() for d in duts}
+            b64 = ",".join(base64.b64encode(f).decode() for f in frames)
+            cmd = (
+                f"cd /tmp && python3 -u mesh_ble_gateway.py --address {a.ble_mac} "
+                f"--gap-ms 700 --tail-s 8 --frames-b64 {b64}"
+            )
+            pr = await asyncio.to_thread(a.res.ssh, cmd, capture=True, timeout=240)
+            out = (pr.stdout or "").strip().splitlines()
+            res = (
+                json.loads(out[-1])
+                if out and out[-1].startswith("{")
+                else {"ok": False, "error": (pr.stdout or "")[-400:]}
+            )
+            got = []
+            for _, b64r in res.get("got", []):
+                try:
+                    got.append(_dec(base64.b64decode(b64r)))
+                except Exception:  # noqa: BLE001
+                    pass
+            per = {}
+            for d in duts:
+                wait_line(d, r"\[mesh\] fx applied", marks[d.label], 15.0)
+                per[d.label] = applied(d.since(marks[d.label]))
+            refs = {d.label: ap_refs(d.since(max(0, marks[d.label] - 400))) for d in duts}
+            skew = apply_skew(per, refs)
+            run_ids = {d.label: (await running(d, gw if d is a else None))[0] for d in duts}
+            heap = [
+                int(m.group(1))
+                for t in a.since(marks["a"])
+                if (m := re.search(r"\[player-netstack\].* heap=(\d+)", t))
+            ]
+            mins = [
+                int(m.group(1))
+                for t in a.since(marks["a"])
+                if (m := re.search(r"\[player-netstack\].* min=(\d+)", t))
+            ]
+            types = [m.get("type") for m in got]
+            ok = (
+                res.get("ok") is not False
+                and "result_ready" in types
+                and all(v == eid for v in run_ids.values())
+                and skew is not None
+                and skew <= args.max_skew_us
+            )
+            return {
+                "ble_ok": res.get("ok"),
+                "ble_error": res.get("error"),
+                "replies": types,
+                "running": run_ids,
+                "skew_us": skew,
+                "k": {k: (v[-1]["k"] if v else None) for k, v in per.items()},
+                "heap_free_min_a": min(heap) if heap else None,
+                "heap_min_watermark_a": min(mins) if mins else None,
+                "pass": ok,
+            }
+
         try:
             with phase("baseline"):
                 time.sleep(args.render_seconds)
@@ -448,6 +548,9 @@ def run(args: argparse.Namespace) -> int:
                         )
                         await asyncio.sleep(args.round_gap)
                     p["blobs"] = {d.label: info(d).get("blobs") for d in duts}
+                if args.ble and a.ble_mac:
+                    with phase("ble") as p:
+                        p.update(await ble_round(gw, 80, ember))
                 with phase("late_joiner") as p:
                     c.cmd("MESH OFF", "ok", 8.0)
                     await asyncio.sleep(3.0)
@@ -592,6 +695,7 @@ def main() -> int:
     )
     ap.add_argument("--leds", type=int, default=60)
     ap.add_argument("--rounds", type=int, default=8)
+    ap.add_argument("--ble", action="store_true", help="one share round with the phone on BLE")
     # Past the fps autoscaler's restart after each load (~6 s), so every DUT is on the same
     # frame period when the next switch comes.
     ap.add_argument("--round-gap", type=float, default=8.0)
