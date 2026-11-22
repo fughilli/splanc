@@ -82,9 +82,6 @@
 // Ethernet + network LED outputs on the P4 (docs/design/p4-ethernet-ddp.md).
 #include "firmware/player_app/netout_app.h"
 #endif
-#if defined(LM_FRONTEND)
-#include "frontend_link.h"  // the C6 front end: player messages go to the P4 over SDIO
-#endif
 
 // FUG-125: executable-memory primitives for the on-device JIT. The Rust FFI
 // (ffi.rs::fx_build_jit) compiles hot fx_vm blocks to RV32 PIC segments and asks
@@ -226,9 +223,6 @@ static const uint16_t kWsPort = 81;
 // persisted custom name, or a "Led Widget <6-hex>" default derived from the MAC.
 // Reflected to BLE + persisted whenever the app sends set_device_name.
 static char g_device_name[33] = "Led Widget";
-#if defined(LM_FRONTEND)
-static char g_macstr[18] = "";  // what the front end advertises; pushed to the P4 with the name
-#endif
 // The soft-AP SSID and mDNS/DHCP hostname, both derived from g_device_name
 // (see names_from_identity): SSID is "<name>-AP"; the hostname is a DNS-label-
 // safe slug of the name so that <hostname>.local resolves over mDNS. Recomputed
@@ -1480,9 +1474,6 @@ static void poll_device_rename() {
   g_device_name[sizeof g_device_name - 1] = 0;
   prefs.putString("name", g_device_name);
   improv_ble_set_name(g_device_name);
-#if defined(LM_FRONTEND)
-  frontend_link_set_identity(g_macstr, g_device_name);
-#endif
   Log().printf("[player] renamed to \"%s\"\n", g_device_name);
   // Track the new name across the AP SSID, the STA/AP + mDNS hostnames, and the
   // BLE advertisement. The soft-AP is reconfigured live only while it's still up
@@ -1788,23 +1779,6 @@ static int load_stored_effect(const uint8_t *in, size_t len) {
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
 static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
-#if defined(LM_FRONTEND)
-  // Firmware updates are the P4's (ota_p4.cpp, docs/design/p4-c6-split.md §5.1): its
-  // package carries this front end's images too, and it reflashes this C6 at its next
-  // boot. Writing a sector and the final read-back verify take a moment, hence the
-  // longer wait. While the P4 is down the status is answered here (a client watching an
-  // update sees the P4 come back); the other arms get no reply, so the client's resume
-  // retries them once it is up.
-  {
-    const int32_t arm = lm_envelope_arm(msg, len);
-    if (arm >= 70 && arm <= 75) {  // ota_begin .. ota_reboot
-      const int n = frontend_forward(1, msg, len, tx, sizeof tx, 10000);
-      if (n > 0) return n;
-      if (n == -2) return -1;  // undelivered: drop the session, the client resumes
-      if (n == 0 || arm != 74) return 0;  // 74: get_ota_status
-    }
-  }
-#endif
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
   if (ota != 0) return ota;
@@ -1813,22 +1787,6 @@ static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
   {
     const int n = netout_app_dispatch(msg, len, tx, sizeof tx, g_hw_gpio0, g_hw_gpio1);
     if (n > 0) return n;
-  }
-#endif
-#if defined(LM_FRONTEND)
-  // The C6 front end (docs/design/p4-c6-split.md §2.2): the arms it owns are answered
-  // here; everything else is the P4's. A rename is applied here too (BLE and mDNS
-  // advertise the name), then forwarded. While the P4 is down this C6's own player core
-  // answers, so the app still reaches the device.
-  {
-    const int32_t arm = lm_envelope_arm(msg, len);
-    const bool local = arm == 45 || arm == 90 || arm == 91;
-    if (arm == 27) dispatch_plain(msg, len);
-    if (!local) {
-      const int n = frontend_forward(1, msg, len, tx, sizeof tx, 1000);
-      if (n >= 0) return n;
-      if (n == -2) return -1;  // the P4's, undelivered: drop the session, the client retries
-    }
   }
 #endif
   // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
@@ -2859,10 +2817,6 @@ static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
   if (len == 0 || len > kOscRxCap) return;
-#if defined(LM_FRONTEND)
-  frontend_link_osc(data, len);  // the P4 owns the uniforms (and any module's addresses)
-  return;
-#endif
   for (int i = 0; i < g_n_modules; i++) {
     if (g_modules[i]->osc && g_modules[i]->osc(data, len)) return;  // a module's own address
   }
@@ -3862,10 +3816,6 @@ void setup() {
   // serial is disconnected.
   Serial.setTxTimeoutMs(100);
   log_drain_start();
-#if defined(LM_FRONTEND)
-  // The SDIO slave first: the P4 probes for this front end as soon as it boots.
-  frontend_link_begin();
-#endif
   // Self-report WHY we last reset, first thing each boot. A clean power-on/USB reset is
   // expected; a PANIC/INT_WDT/TASK_WDT/BROWNOUT means the firmware actually crashed. This
   // one line disambiguates "device rebooted" from "device merely went unreachable" without
@@ -4018,10 +3968,6 @@ void setup() {
 
   lm_player_set_identity(reinterpret_cast<const uint8_t *>(macstr), strlen(macstr),
                          reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
-#if defined(LM_FRONTEND)
-  frontend_link_set_identity(macstr, g_device_name);
-  strncpy(g_macstr, macstr, sizeof g_macstr - 1);
-#endif
   // Build info stamped in at build time (FUG-126): the full git commit + dirty
   // flag + release version, echoed in every welcome so the app can show + link
   // the device's build.
@@ -4117,10 +4063,6 @@ void setup() {
 #if LM_OTA_FAULT == 2
   // Fault-injection build (HITL OTA gate): never render, so the health check fails.
   Log().printf("[ota] LM_OTA_FAULT=2: render task not started (fault-injection build)\n");
-  (void)render_stack;
-  (void)render_tcb;
-#elif defined(LM_FRONTEND)
-  // The front end renders nothing (the P4 does): no render task.
   (void)render_stack;
   (void)render_tcb;
 #else
@@ -4385,9 +4327,6 @@ void loop() {
     return;
   }
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
-#if defined(LM_FRONTEND)
-  frontend_link_poll();
-#endif
   modules_publish();
   for (int i = 0; i < g_n_modules; i++) {
     if (g_modules[i]->poll) g_modules[i]->poll();
@@ -4413,12 +4352,7 @@ void loop() {
       seen_ticks = t;
       seen_at = now_ms;
     }
-#if defined(LM_FRONTEND)
-    bool render_alive = true;  // the front end renders nothing; the P4 does
-    (void)seen_at;
-#else
     bool render_alive = seen_at != 0 && now_ms - seen_at < 2000;
-#endif
 #if defined(LM_NETSTACK)
     // Offline / manual (outside a join window): the board isn't supposed to reach a
     // network, so a fresh update's health is judged on rendering alone — it must never
@@ -4479,13 +4413,6 @@ void loop() {
                  (unsigned)LM_MODE.unmodeled);
     char net[200];
     netstack_net_stats(net, sizeof net);
-#if defined(LM_FRONTEND)
-    {
-      char ln[120];
-      frontend_link_stats(ln, sizeof ln);
-      Log().printf("[link] %s\n", ln);
-    }
-#endif
     Log().printf("[net] t=%lu %s mtx_wait_max=%uus handle_max=%uus\n", (unsigned long)millis(),
                  net, (unsigned)g_mtx_wait_max_us, (unsigned)g_handle_max_us);
     g_mtx_wait_max_us = 0;
