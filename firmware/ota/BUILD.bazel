@@ -13,6 +13,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
 load(":ring.bzl", "RELEASE_RING", "TEST_RING", "ring_cmd")
 
 package(default_visibility = ["//visibility:public"])
@@ -22,6 +23,8 @@ rust_library(
     srcs = glob(["src/*.rs"]),
     crate_name = "splanc_ota",
     edition = "2021",
+    # Not on the render path: built for size on the ESP32 images (//firmware:rust_size.bzl).
+    rustc_flags = COLD_CRATE_RUSTC_FLAGS,
 )
 
 cc_library(
