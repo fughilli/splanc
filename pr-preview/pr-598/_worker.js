@@ -485,6 +485,10 @@ export const RELAY_PATHS = new Set([
   "/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance",
   "/billing/checkout", "/billing/consent", "/billing/pricing", "/billing/statement",
   "/billing/purchase/apple",
+  // Sign in with Apple / Google (billing/signin.ts). Apple's server
+  // notifications use the workers.dev address directly.
+  "/billing/signin", "/billing/signin/config", "/billing/signin/nonce",
+  "/billing/signin/switch", "/billing/signin/unlink",
 ]);
 
 export function relayRoute(request, url, env) {

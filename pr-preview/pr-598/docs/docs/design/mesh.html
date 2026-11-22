@@ -255,6 +255,7 @@
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -1701,6 +1702,10 @@ hardware exposes a TX timestamp (M3a looks for one). Expect tens of µs per hop.
 <li><p><strong>AP-anchored bonus</strong>: members associated to one AP all hear its beacons, whose TSF is a
 common clock (reference-broadcast sync). The fit can use AP beacons as extra observations.</p></li>
 </ul>
+<p><strong>M4 on hardware</strong> (<a class="reference internal" href="mesh-m4.html"><span class="std std-doc">mesh-m4.md</span></a>): two-step completion stamps (no hardware TX
+timestamp), two-way over the beacons, RX stamps on the MAC’s µs counter (<code class="docutils literal notranslate"><span class="pre">0x600AD000</span></code>):
+three C6s agree within 47 µs; a scheduled change lands within 0.76 ms (2 ms under BLE coex),
+always on the same frame. The show epoch rides in the time beacon (outside the admin port).</p>
 </section>
 <section id="mapping-the-show-clock">
 <h3>6.3 Mapping the show clock<a class="headerlink" href="#mapping-the-show-clock" title="Link to this heading">¶</a></h3>

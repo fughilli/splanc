@@ -147,7 +147,8 @@ The budget per pair (N = 4, 2.44 GHz). The 30 dB column is the recommendation:
 - **The monitor tap** sits on the node splitter, after the unit, so the sniffer sees each DUT
   through its own attenuator plus 30 dB. The fifth unit (`attx`, header U6) is a calibrated spare.
   It can also go in the monitor path if the HackRF needs level control.
-- **N = 6** needs six units: one more than owned with no spare, two with a spare (§11.2 Q12).
+- **N = 6** needs six units: one more than owned with no spare, two with a spare. Owner decision
+  (§11.2 Q12, D-335): buy them at the N = 6 build, not now.
 
 ## 3. Wiring and GPIO maps
 
@@ -862,8 +863,8 @@ genuinely missing HITL features:
 
 | Item | Delta | Why |
 | --- | --- | --- |
-| Step attenuators | **no PE4302** (D-241 overridden). 5 owned Jeanoko units, one per DUT + 1 spare; **+1–2 for N = 6** (B0FHSZ6N8G, $42.29, in stock 2026-11-20) | §2.1, Q12 |
-| Pair pads | 30 dB per pair = the bought 10 dB + a 20 dB: **+3 BECEN 20 dB 2-packs** for N = 4 (to-buy line 4: 2 → 5 packs, +$60) | §2.1, Q13 |
+| Step attenuators | **no PE4302** (D-241 overridden). 5 owned Jeanoko units, one per DUT + 1 spare; +1–2 for N = 6 (B0FHSZ6N8G, $42.29), **bought at the N = 6 build** | §2.1, Q12 |
+| Pair pads | 30 dB per pair = the bought 10 dB + a 20 dB: **+3 BECEN 20 dB 2-packs** for N = 4 (to-buy line 4: 2 → 5 packs, +$60; owner TODO) | §2.1, Q13 |
 | Controller | the rfctl-host PCB (bare RP2350A, 6 × 74HC595 for 48 bits, pulls, 7 UART attenuator headers, 7 power-only USB-A ports); see the follow-up to the atopile prompt | §3.3, Q11 |
 | 74AHCT125 | 1 per DUT board (6) | 3.3 → 5 V strip data |
 | WS2812B/SK6812 strips | 6 × (2 × 3 LEDs) C6 + 2 × (16 × 3) P4 = 132 LEDs, one reel | strips on every drive pin |
@@ -877,7 +878,8 @@ genuinely missing HITL features:
 
 ### 11.2 Questions for the owner
 
-Each is one decision with options; ★ marks the recommendation.
+Each is one decision with options; ★ marks the recommendation. Q11–Q13 are answered (desk
+D-334–D-336); the answer is marked **[chosen]**.
 
 - **Q1 — Host.**
   - A: one of the NanoPi boards in a metal case (which model?). This needs a new sbc-deploy board
@@ -919,18 +921,18 @@ Each is one decision with options; ★ marks the recommendation.
 - **Q10 — Gate integration.**
   - ★ A: after M3–M5 merge, a follow-up PR adds `--bench` to the mesh gates (§9.4).
   - B: keep the bench standalone with `--gate-cmd`.
-- **Q11 — How the controller reaches the attenuators.**
-  - ★ A: 3.3 V UART headers on the rfctl-host, from PIO TX pins, with a shared acknowledge line
+- **Q11 — How the controller reaches the attenuators.** Answered: A.
+  - ★ **[chosen]** A: 3.3 V UART headers on the rfctl-host, from PIO TX pins, with a shared acknowledge line
     (§3.3), plus power-only USB-A ports. The changes stay on the controller clock and under its
     lease. USB (§5.7) remains a fallback with no board change.
   - B: a USB hub to the units' micro-USB ports, timed by the host (no board change, ms jitter, no
     lease, 5–7 more USB cables into the enclosure).
-- **Q12 — More units for N = 6** (B0FHSZ6N8G, $42.29 each).
+- **Q12 — More units for N = 6** (B0FHSZ6N8G, $42.29 each). Answered: C.
   - ★ A: buy 2 now: 7 = 6 DUTs + 1 spare, all calibrated in one VNA session.
   - B: buy 1 now: 6, no spare.
-  - C: buy at the N = 6 build.
-- **Q13 — Pair pad.**
-  - ★ A: 30 dB per pair (the bought 10 dB + a 20 dB): cut margin 52.5 dB, and every link edge is
+  - **[chosen]** C: buy at the N = 6 build. The new units get their own VNA session then (§5.8).
+- **Q13 — Pair pad.** Answered: A (3 more BECEN 20 dB 2-packs, ~$60, on the owner's to-buy list).
+  - ★ **[chosen]** A: 30 dB per pair (the bought 10 dB + a 20 dB): cut margin 52.5 dB, and every link edge is
     reachable at full TX power.
   - B: 20 dB: margin 42.5 dB; `link_flap` cuts at ~L + 39 dB.
   - C: 10 dB as bought: margin 32.5 dB. Cuts in a full mesh stay audible at TX ≥ 0 dBm.

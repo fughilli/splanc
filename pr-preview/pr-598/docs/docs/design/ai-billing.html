@@ -255,6 +255,7 @@
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -870,6 +871,164 @@ token, so a receipt can’t be credited to another account. The code has this
 check in <code class="docutils literal notranslate"><span class="pre">applyPurchase</span></code> (<code class="docutils literal notranslate"><span class="pre">wrong_account</span></code>).</p></li>
 </ul>
 </section>
+<section id="sign-in-with-apple-and-google-signin-ts-jwt-ts">
+<h3>Sign in with Apple and Google (<code class="docutils literal notranslate"><span class="pre">signin.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">jwt.ts</span></code>)<a class="headerlink" href="#sign-in-with-apple-and-google-signin-ts-jwt-ts" title="Link to this heading">¶</a></h3>
+<p>Built (sandbox, off until configured). Owner decision: Apple + Google +
+anonymous; credits follow the person, never merged between accounts.</p>
+<p><strong>Routes.</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Route</p></th>
+<th class="head"><p>Auth</p></th>
+<th class="head"><p>What it does</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/signin/config</span></code></p></td>
+<td><p>none</p></td>
+<td><p>Which providers are on, plus the PUBLIC client ids the app needs</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/signin/nonce</span></code></p></td>
+<td><p>none</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{nonce,</span> <span class="pre">provider_nonce,</span> <span class="pre">expires_at}</span></code>: a relay-signed nonce (10 min); the app hands <code class="docutils literal notranslate"><span class="pre">provider_nonce</span></code> (its SHA-256) to Apple / Google</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/signin</span></code></p></td>
+<td><p>session optional (IP-limited)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{provider,</span> <span class="pre">client:</span> <span class="pre">ios|web,</span> <span class="pre">nonce,</span> <span class="pre">id_token?,</span> <span class="pre">code?,</span> <span class="pre">code_verifier?,</span> <span class="pre">create?}</span></code> → <code class="docutils literal notranslate"><span class="pre">linked</span></code> / <code class="docutils literal notranslate"><span class="pre">already_linked</span></code> (with a session), <code class="docutils literal notranslate"><span class="pre">signed_in</span></code> / <code class="docutils literal notranslate"><span class="pre">created</span></code> (without: a new session), <code class="docutils literal notranslate"><span class="pre">409</span> <span class="pre">identity_in_use</span></code> (a conflict), <code class="docutils literal notranslate"><span class="pre">404</span> <span class="pre">no_account</span></code> (<code class="docutils literal notranslate"><span class="pre">create:</span> <span class="pre">false</span></code>, restore)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/signin/switch</span></code></p></td>
+<td><p>switch ticket</p></td>
+<td><p>After a conflict, the user chose the other account → its session</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/signin/unlink</span></code></p></td>
+<td><p>session</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{provider,</span> <span class="pre">confirm_unrecoverable?}</span></code>; Apple: revokes the token. <code class="docutils literal notranslate"><span class="pre">409</span> <span class="pre">unrecoverable</span></code> when it’s the last way back to a balance</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/signin/apple/notify</span></code></p></td>
+<td><p>Apple’s signature</p></td>
+<td><p>Apple’s server-to-server events: <code class="docutils literal notranslate"><span class="pre">consent-revoked</span></code> / <code class="docutils literal notranslate"><span class="pre">account-delete</span></code> unlink Apple (the credits stay)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Checks.</strong> Apple and Google ID tokens: RS256 against the provider’s JWKS
+(cached per isolate, refetched hourly or on an unknown <code class="docutils literal notranslate"><span class="pre">kid</span></code> at most once a
+minute), the issuer, OUR client id as audience (per client: the bundle id for
+the iOS app, the Services ID for the web; Google’s web or iOS client id),
+<code class="docutils literal notranslate"><span class="pre">exp</span></code>, and the nonce (our MAC + expiry, the token carries its hash, accepted
+once: <code class="docutils literal notranslate"><span class="pre">once:</span></code> keys in the Directory). Apple sign-ins also exchange the
+authorization code (client secret = an ES256 JWT signed with the .p8 key) and
+the exchange’s ID token must name the same user; the refresh token is kept
+AES-GCM encrypted, only to revoke it. Google on iOS: the app opens Google’s
+page in <code class="docutils literal notranslate"><span class="pre">ASWebAuthenticationSession</span></code> (code + PKCE, <code class="docutils literal notranslate"><span class="pre">openid</span></code> only), the relay
+exchanges the code with the iOS client id (no secret).</p>
+<p><strong>Account model.</strong></p>
+<ul class="simple">
+<li><p>With a session and an identity nobody has: <strong>link</strong> (the balance stays).</p></li>
+<li><p>Without a session: an identity already linked <strong>signs in</strong> to its account
+(recovery on a new device); an unknown one <strong>opens</strong> a new linked account
+(or answers <code class="docutils literal notranslate"><span class="pre">no_account</span></code> for restore).</p></li>
+<li><p>With a session and an identity linked to ANOTHER account: <strong>conflict</strong>. The
+answer shows both balances and linked providers and carries a 10-minute
+switch ticket. The app asks: “Switch to that account” or “Keep this
+device’s account”. Balances are never merged. When this device’s account
+is empty and has no sign-in or email, the app switches without asking
+(nothing can be lost); when it has credits and nothing leads back to it,
+switching needs an explicit “I understand … stay behind” tick.</p></li>
+<li><p>One identity per provider per account (<code class="docutils literal notranslate"><span class="pre">provider_linked</span></code>), one account per
+identity (<code class="docutils literal notranslate"><span class="pre">link:&lt;provider&gt;:&lt;sub&gt;</span></code>, first claim wins).</p></li>
+<li><p><strong>Sign out</strong> is local (the device forgets its session); offered only when a
+sign-in or email leads back to the account.</p></li>
+<li><p><strong>Deletion</strong> revokes the Apple token first (Apple’s rule; one retry; if Apple
+can’t be reached the deletion answers 503 and nothing changed), then
+unlinks everything and closes the account (credit forfeited, as decided).</p></li>
+<li><p>Stored: <code class="docutils literal notranslate"><span class="pre">sub</span></code>, <code class="docutils literal notranslate"><span class="pre">aud</span></code>, <code class="docutils literal notranslate"><span class="pre">linked_at</span></code> and (Apple) the encrypted refresh token.
+No name, no email, no hashed email: Apple is asked for no scopes, Google for
+<code class="docutils literal notranslate"><span class="pre">openid</span></code>; the email claim in Google’s token is never read.</p></li>
+<li><p><strong>With #557 (email recovery):</strong> email is one more way back. Unlink and sign
+out count a verified email as a way back; the conflict auto-switch doesn’t
+fire when this device’s account has one. When #557’s session generations
+land, <code class="docutils literal notranslate"><span class="pre">SigninHost.session</span></code> in <code class="docutils literal notranslate"><span class="pre">endpoint.ts</span></code> is the one place to add the
+generation check.</p></li>
+</ul>
+<p><strong>App.</strong> <code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/providers/creditsSignin.ts</span></code> (provider legs and
+relay calls), the credits flow’s <code class="docutils literal notranslate"><span class="pre">signInChoice</span></code> / <code class="docutils literal notranslate"><span class="pre">signInConflict</span></code> /
+<code class="docutils literal notranslate"><span class="pre">signInDone</span></code> / <code class="docutils literal notranslate"><span class="pre">signInNoAccount</span></code> / <code class="docutils literal notranslate"><span class="pre">signOutConfirm</span></code> / <code class="docutils literal notranslate"><span class="pre">unlinkConfirm</span></code> steps,
+and Settings ▸ AI ▸ Sign-in. The buy flow’s “Keep credits safe” phase offers
+Apple and Google first, a recovery email second, “Continue without signing
+in” last. Restore offers the same. iOS: native Sign in with Apple via the
+WebAuth plugin’s <code class="docutils literal notranslate"><span class="pre">appleSignIn</span></code> (AuthenticationServices, no scopes); the
+entitlement is added by <code class="docutils literal notranslate"><span class="pre">web/ios-config/apply.sh</span></code> with
+<code class="docutils literal notranslate"><span class="pre">SPLANC_IOS_SIGN_IN_WITH_APPLE=1</span></code> once the provisioning profile has the
+capability. Browser / Android: Sign in with Apple JS (popup) and Google
+Identity Services’ own button; the scripts load only on the sign-in screen.</p>
+<p><strong>Owner console checklist.</strong></p>
+<p>Apple Developer (the owner’s LLC team), Certificates, Identifiers &amp; Profiles:</p>
+<ol class="arabic simple">
+<li><p>Identifiers ▸ App IDs ▸ <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code> ▸ enable <strong>Sign In with Apple</strong>
+(“Enable as a primary App ID”). Under its Configure, set the <strong>Server-to-
+Server Notification Endpoint</strong> to
+<code class="docutils literal notranslate"><span class="pre">https://splanc-relay.&lt;subdomain&gt;.workers.dev/billing/signin/apple/notify</span></code>.</p></li>
+<li><p>Identifiers ▸ <strong>+</strong> ▸ <strong>Services IDs</strong>: description “Splanc web sign-in”,
+identifier <code class="docutils literal notranslate"><span class="pre">dev.splanc.app.signin</span></code> (any id, but NOT the bundle id). Enable
+Sign In with Apple ▸ Configure: Primary App ID <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code> (grouping
+it there gives web and app the same user id), <strong>Domains</strong> <code class="docutils literal notranslate"><span class="pre">splanc.io</span></code>,
+<strong>Return URLs</strong> <code class="docutils literal notranslate"><span class="pre">https://splanc.io/app/</span></code> (exactly; Apple refuses
+<code class="docutils literal notranslate"><span class="pre">localhost</span></code>, so web Apple sign-in is tested on splanc.io).</p></li>
+<li><p>Keys ▸ <strong>+</strong>: name “Splanc Sign in with Apple”, enable <strong>Sign in with
+Apple</strong> ▸ Configure ▸ primary App ID <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code>. Register, <strong>download
+the .p8 once</strong>, note the Key ID.</p></li>
+<li><p>Profiles: regenerate the App Store distribution profile for
+<code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code> (it must include the new capability) and update the iOS
+signing secrets; then build with <code class="docutils literal notranslate"><span class="pre">SPLANC_IOS_SIGN_IN_WITH_APPLE=1</span></code>.</p></li>
+</ol>
+<p>Google Cloud console (a project for Splanc), Google Auth Platform:</p>
+<ol class="arabic simple">
+<li><p><strong>Branding</strong>: app name “Splanc”, support email, home page
+<code class="docutils literal notranslate"><span class="pre">https://splanc.io</span></code>, privacy policy and terms URLs, authorized domain
+<code class="docutils literal notranslate"><span class="pre">splanc.io</span></code>. <strong>Audience</strong>: External, then <strong>Publish app</strong> (In production).
+<strong>Data access</strong>: no scopes beyond <code class="docutils literal notranslate"><span class="pre">openid</span></code> (no verification needed).</p></li>
+<li><p><strong>Clients ▸ Create ▸ Web application</strong> “Splanc web”: Authorized JavaScript
+origins <code class="docutils literal notranslate"><span class="pre">https://splanc.io</span></code> (add <code class="docutils literal notranslate"><span class="pre">http://localhost</span></code> and
+<code class="docutils literal notranslate"><span class="pre">http://localhost:5173</span></code> for local testing). No redirect URIs.</p></li>
+<li><p><strong>Clients ▸ Create ▸ iOS</strong> “Splanc iOS”: bundle id <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code>, team
+id; under Advanced settings <strong>enable custom URI scheme</strong> (the app returns
+through <code class="docutils literal notranslate"><span class="pre">com.googleusercontent.apps.&lt;id&gt;:/oauth2redirect</span></code>). No secret.</p></li>
+</ol>
+<p>Credential files (<code class="docutils literal notranslate"><span class="pre">/workspace/credentials/</span></code>, never in the repo):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">apple_signin_key.p8</span></code> — the downloaded key (secret);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">apple_signin.env</span></code> — <code class="docutils literal notranslate"><span class="pre">APPLE_SIGNIN_TEAM_ID=…</span></code>, <code class="docutils literal notranslate"><span class="pre">APPLE_SIGNIN_KEY_ID=…</span></code>,
+<code class="docutils literal notranslate"><span class="pre">APPLE_SIGNIN_BUNDLE_ID=dev.splanc.app</span></code>,
+<code class="docutils literal notranslate"><span class="pre">APPLE_SIGNIN_SERVICES_ID=dev.splanc.app.signin</span></code>,
+<code class="docutils literal notranslate"><span class="pre">APPLE_SIGNIN_REDIRECT_URI=https://splanc.io/app/</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">apple_signin_token_key.txt</span></code> — 32 random bytes, base64url (generated by the
+runbook below; encrypts the stored Apple refresh tokens; rotating it makes
+stored tokens unrevocable, so set it once);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">google_signin.env</span></code> — <code class="docutils literal notranslate"><span class="pre">GOOGLE_SIGNIN_WEB_CLIENT_ID=…apps.googleusercontent.com</span></code>,
+<code class="docutils literal notranslate"><span class="pre">GOOGLE_SIGNIN_IOS_CLIENT_ID=…apps.googleusercontent.com</span></code>.</p></li>
+</ul>
+<p><strong>Runbook (owner approval; after the PR merges and the relay is deployed).</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>agent/relay
+<span class="nv">W</span><span class="o">=</span><span class="s2">&quot;pnpm dlx wrangler@4&quot;</span>
+<span class="nv">C</span><span class="o">=</span>../../credentials
+put<span class="o">()</span><span class="w"> </span><span class="o">{</span><span class="w"> </span><span class="nb">printf</span><span class="w"> </span>%s<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$2</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span>--config<span class="w"> </span>wrangler.toml<span class="p">;</span><span class="w"> </span><span class="o">}</span>
+<span class="c1"># Apple: the key + the token key (generated once), then the ids.</span>
+<span class="o">[</span><span class="w"> </span>-f<span class="w"> </span><span class="nv">$C</span>/apple_signin_token_key.txt<span class="w"> </span><span class="o">]</span><span class="w"> </span><span class="o">||</span><span class="w"> </span>node<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;process.stdout.write(require(&quot;crypto&quot;).randomBytes(32).toString(&quot;base64url&quot;))&#39;</span><span class="w"> </span>&gt;<span class="w"> </span><span class="nv">$C</span>/apple_signin_token_key.txt
+<span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>APPLE_SIGNIN_PRIVATE_KEY<span class="w"> </span>--config<span class="w"> </span>wrangler.toml<span class="w"> </span>&lt;<span class="w"> </span><span class="nv">$C</span>/apple_signin_key.p8
+tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;\n&#39;</span><span class="w"> </span>&lt;<span class="w"> </span><span class="nv">$C</span>/apple_signin_token_key.txt<span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>APPLE_SIGNIN_TOKEN_KEY<span class="w"> </span>--config<span class="w"> </span>wrangler.toml
+<span class="nb">set</span><span class="w"> </span>-a<span class="p">;</span><span class="w"> </span>.<span class="w"> </span><span class="nv">$C</span>/apple_signin.env<span class="p">;</span><span class="w"> </span>.<span class="w"> </span><span class="nv">$C</span>/google_signin.env<span class="p">;</span><span class="w"> </span><span class="nb">set</span><span class="w"> </span>+a
+<span class="k">for</span><span class="w"> </span>v<span class="w"> </span><span class="k">in</span><span class="w"> </span>APPLE_SIGNIN_TEAM_ID<span class="w"> </span>APPLE_SIGNIN_KEY_ID<span class="w"> </span>APPLE_SIGNIN_BUNDLE_ID<span class="w"> </span>APPLE_SIGNIN_SERVICES_ID<span class="w"> </span>APPLE_SIGNIN_REDIRECT_URI<span class="w"> </span><span class="se">\</span>
+<span class="w">         </span>GOOGLE_SIGNIN_WEB_CLIENT_ID<span class="w"> </span>GOOGLE_SIGNIN_IOS_CLIENT_ID<span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span>put<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$v</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="p">!v</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">done</span>
+<span class="c1"># Check: both providers on, client ids only.</span>
+curl<span class="w"> </span>-fsS<span class="w"> </span>https://splanc-relay.&lt;subdomain&gt;.workers.dev/billing/signin/config
+</pre></div>
+</div>
+<p>The app reaches the routes through <code class="docutils literal notranslate"><span class="pre">splanc.pages.dev</span></code> (<code class="docutils literal notranslate"><span class="pre">web/_worker.js</span></code>
+RELAY_PATHS), which ships with the web app deploy; Apple’s notifications call
+the workers.dev address directly.</p>
+</section>
 <section id="purchases-purchases-ts-apple-ts-stripe-ts">
 <h3>Purchases (<code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">apple.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">stripe.ts</span></code>)<a class="headerlink" href="#purchases-purchases-ts-apple-ts-stripe-ts" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code> holds the interfaces (<code class="docutils literal notranslate"><span class="pre">PurchaseVerifier</span></code>, <code class="docutils literal notranslate"><span class="pre">NotificationVerifier</span></code>,
@@ -1251,7 +1410,11 @@ only, so it never learns that web packs exist.</p>
 <td><p>admin token (<code class="docutils literal notranslate"><span class="pre">BILLING_ADMIN_TOKEN</span></code>)</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{account,</span> <span class="pre">status:</span> <span class="pre">active|suspended,</span> <span class="pre">reason?}</span></code>: abuse suspension / reinstatement</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/ai/v1/messages</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/signin/config</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/signin[/nonce|/switch|/unlink|/apple/notify]</span></code></p></td>
+<td><p>see §Sign in with Apple and Google</p></td>
+<td><p>Link, sign in, conflicts, unlink, Apple notifications</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/ai/v1/messages</span></code></p></td>
 <td><p>session</p></td>
 <td><p>The metered proxy (SSE)</p></td>
 </tr>
@@ -1309,7 +1472,8 @@ warning with Buy. If a request doesn’t fit, the proxy first trims
 and a Buy button, never an error dump.</p></li>
 <li><p><strong>Refund.</strong> Apple or Stripe notifies → claw back (once) → a negative balance
 blocks spending until it is topped up.</p></li>
-<li><p><strong>Restore.</strong> Sign in on the new device. The balance is on the account.</p></li>
+<li><p><strong>Restore.</strong> Sign in on the new device (Apple / Google, or the recovery
+email). The balance is on the account.</p></li>
 <li><p><strong>BYO key.</strong> Untouched. “Cloud ▸ Anthropic” + key calls Anthropic directly
 with the user’s key. Splanc’s server is never involved, and the “Splanc AI
 credits” option doesn’t change that path.</p></li>
@@ -2118,6 +2282,7 @@ without the bridge and wasm);</p></li>
 <li><a class="reference internal" href="#the-ai-proxy-agent-relay-src-billing-proxy-ts">The AI proxy (<code class="docutils literal notranslate"><span class="pre">agent/relay/src/billing/proxy.ts</span></code>)</a></li>
 <li><a class="reference internal" href="#ledger-ledger-ts-account-ts">Ledger (<code class="docutils literal notranslate"><span class="pre">ledger.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">account.ts</span></code>)</a></li>
 <li><a class="reference internal" href="#accounts-and-identity">Accounts and identity</a></li>
+<li><a class="reference internal" href="#sign-in-with-apple-and-google-signin-ts-jwt-ts">Sign in with Apple and Google (<code class="docutils literal notranslate"><span class="pre">signin.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">jwt.ts</span></code>)</a></li>
 <li><a class="reference internal" href="#purchases-purchases-ts-apple-ts-stripe-ts">Purchases (<code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">apple.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">stripe.ts</span></code>)</a></li>
 <li><a class="reference internal" href="#apple-in-app-purchase">Apple In-App Purchase</a></li>
 <li><a class="reference internal" href="#web-checkout-stripe">Web checkout (Stripe)</a></li>

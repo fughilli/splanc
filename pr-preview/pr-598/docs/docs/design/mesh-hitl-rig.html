@@ -255,6 +255,7 @@
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -640,7 +641,8 @@ TX_bench ≤ L_leak − 109 dBm, measured in assembly step 14.</p></li>
 <li><p><strong>The monitor tap</strong> sits on the node splitter, after the unit, so the sniffer sees each DUT
 through its own attenuator plus 30 dB. The fifth unit (<code class="docutils literal notranslate"><span class="pre">attx</span></code>, header U6) is a calibrated spare.
 It can also go in the monitor path if the HackRF needs level control.</p></li>
-<li><p><strong>N = 6</strong> needs six units: one more than owned with no spare, two with a spare (§11.2 Q12).</p></li>
+<li><p><strong>N = 6</strong> needs six units: one more than owned with no spare, two with a spare. Owner decision
+(§11.2 Q12, D-335): buy them at the N = 6 build, not now.</p></li>
 </ul>
 </section>
 </section>
@@ -1882,11 +1884,11 @@ mesh frames for an Espressif OUI.</p></li>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>Step attenuators</p></td>
-<td><p><strong>no PE4302</strong> (D-241 overridden). 5 owned Jeanoko units, one per DUT + 1 spare; <strong>+1–2 for N = 6</strong> (B0FHSZ6N8G, $42.29, in stock 2026-11-20)</p></td>
+<td><p><strong>no PE4302</strong> (D-241 overridden). 5 owned Jeanoko units, one per DUT + 1 spare; +1–2 for N = 6 (B0FHSZ6N8G, $42.29), <strong>bought at the N = 6 build</strong></p></td>
 <td><p>§2.1, Q12</p></td>
 </tr>
 <tr class="row-odd"><td><p>Pair pads</p></td>
-<td><p>30 dB per pair = the bought 10 dB + a 20 dB: <strong>+3 BECEN 20 dB 2-packs</strong> for N = 4 (to-buy line 4: 2 → 5 packs, +$60)</p></td>
+<td><p>30 dB per pair = the bought 10 dB + a 20 dB: <strong>+3 BECEN 20 dB 2-packs</strong> for N = 4 (to-buy line 4: 2 → 5 packs, +$60; owner TODO)</p></td>
 <td><p>§2.1, Q13</p></td>
 </tr>
 <tr class="row-even"><td><p>Controller</p></td>
@@ -1935,7 +1937,8 @@ mesh frames for an Espressif OUI.</p></li>
 </section>
 <section id="questions-for-the-owner">
 <h3>11.2 Questions for the owner<a class="headerlink" href="#questions-for-the-owner" title="Link to this heading">¶</a></h3>
-<p>Each is one decision with options; ★ marks the recommendation.</p>
+<p>Each is one decision with options; ★ marks the recommendation. Q11–Q13 are answered (desk
+D-334–D-336); the answer is marked <strong>[chosen]</strong>.</p>
 <ul class="simple">
 <li><p><strong>Q1 — Host.</strong></p>
 <ul>
@@ -2007,25 +2010,25 @@ whether <code class="docutils literal notranslate"><span class="pre">wv01000</sp
 <li><p>B: keep the bench standalone with <code class="docutils literal notranslate"><span class="pre">--gate-cmd</span></code>.</p></li>
 </ul>
 </li>
-<li><p><strong>Q11 — How the controller reaches the attenuators.</strong></p>
+<li><p><strong>Q11 — How the controller reaches the attenuators.</strong> Answered: A.</p>
 <ul>
-<li><p>★ A: 3.3 V UART headers on the rfctl-host, from PIO TX pins, with a shared acknowledge line
+<li><p>★ <strong>[chosen]</strong> A: 3.3 V UART headers on the rfctl-host, from PIO TX pins, with a shared acknowledge line
 (§3.3), plus power-only USB-A ports. The changes stay on the controller clock and under its
 lease. USB (§5.7) remains a fallback with no board change.</p></li>
 <li><p>B: a USB hub to the units’ micro-USB ports, timed by the host (no board change, ms jitter, no
 lease, 5–7 more USB cables into the enclosure).</p></li>
 </ul>
 </li>
-<li><p><strong>Q12 — More units for N = 6</strong> (B0FHSZ6N8G, $42.29 each).</p>
+<li><p><strong>Q12 — More units for N = 6</strong> (B0FHSZ6N8G, $42.29 each). Answered: C.</p>
 <ul>
 <li><p>★ A: buy 2 now: 7 = 6 DUTs + 1 spare, all calibrated in one VNA session.</p></li>
 <li><p>B: buy 1 now: 6, no spare.</p></li>
-<li><p>C: buy at the N = 6 build.</p></li>
+<li><p><strong>[chosen]</strong> C: buy at the N = 6 build. The new units get their own VNA session then (§5.8).</p></li>
 </ul>
 </li>
-<li><p><strong>Q13 — Pair pad.</strong></p>
+<li><p><strong>Q13 — Pair pad.</strong> Answered: A (3 more BECEN 20 dB 2-packs, ~$60, on the owner’s to-buy list).</p>
 <ul>
-<li><p>★ A: 30 dB per pair (the bought 10 dB + a 20 dB): cut margin 52.5 dB, and every link edge is
+<li><p>★ <strong>[chosen]</strong> A: 30 dB per pair (the bought 10 dB + a 20 dB): cut margin 52.5 dB, and every link edge is
 reachable at full TX power.</p></li>
 <li><p>B: 20 dB: margin 42.5 dB; <code class="docutils literal notranslate"><span class="pre">link_flap</span></code> cuts at ~L + 39 dB.</p></li>
 <li><p>C: 10 dB as bought: margin 32.5 dB. Cuts in a full mesh stay audible at TX ≥ 0 dBm.</p></li>

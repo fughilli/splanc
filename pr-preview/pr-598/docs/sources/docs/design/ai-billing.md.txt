@@ -388,6 +388,140 @@ credits exactly one account, ever.
   token, so a receipt can't be credited to another account. The code has this
   check in `applyPurchase` (`wrong_account`).
 
+### Sign in with Apple and Google (`signin.ts`, `jwt.ts`)
+
+Built (sandbox, off until configured). Owner decision: Apple + Google +
+anonymous; credits follow the person, never merged between accounts.
+
+**Routes.**
+
+| Route | Auth | What it does |
+| --- | --- | --- |
+| `GET /billing/signin/config` | none | Which providers are on, plus the PUBLIC client ids the app needs |
+| `POST /billing/signin/nonce` | none | `{nonce, provider_nonce, expires_at}`: a relay-signed nonce (10 min); the app hands `provider_nonce` (its SHA-256) to Apple / Google |
+| `POST /billing/signin` | session optional (IP-limited) | `{provider, client: ios\|web, nonce, id_token?, code?, code_verifier?, create?}` → `linked` / `already_linked` (with a session), `signed_in` / `created` (without: a new session), `409 identity_in_use` (a conflict), `404 no_account` (`create: false`, restore) |
+| `POST /billing/signin/switch` | switch ticket | After a conflict, the user chose the other account → its session |
+| `POST /billing/signin/unlink` | session | `{provider, confirm_unrecoverable?}`; Apple: revokes the token. `409 unrecoverable` when it's the last way back to a balance |
+| `POST /billing/signin/apple/notify` | Apple's signature | Apple's server-to-server events: `consent-revoked` / `account-delete` unlink Apple (the credits stay) |
+
+**Checks.** Apple and Google ID tokens: RS256 against the provider's JWKS
+(cached per isolate, refetched hourly or on an unknown `kid` at most once a
+minute), the issuer, OUR client id as audience (per client: the bundle id for
+the iOS app, the Services ID for the web; Google's web or iOS client id),
+`exp`, and the nonce (our MAC + expiry, the token carries its hash, accepted
+once: `once:` keys in the Directory). Apple sign-ins also exchange the
+authorization code (client secret = an ES256 JWT signed with the .p8 key) and
+the exchange's ID token must name the same user; the refresh token is kept
+AES-GCM encrypted, only to revoke it. Google on iOS: the app opens Google's
+page in `ASWebAuthenticationSession` (code + PKCE, `openid` only), the relay
+exchanges the code with the iOS client id (no secret).
+
+**Account model.**
+- With a session and an identity nobody has: **link** (the balance stays).
+- Without a session: an identity already linked **signs in** to its account
+  (recovery on a new device); an unknown one **opens** a new linked account
+  (or answers `no_account` for restore).
+- With a session and an identity linked to ANOTHER account: **conflict**. The
+  answer shows both balances and linked providers and carries a 10-minute
+  switch ticket. The app asks: "Switch to that account" or "Keep this
+  device's account". Balances are never merged. When this device's account
+  is empty and has no sign-in or email, the app switches without asking
+  (nothing can be lost); when it has credits and nothing leads back to it,
+  switching needs an explicit "I understand … stay behind" tick.
+- One identity per provider per account (`provider_linked`), one account per
+  identity (`link:<provider>:<sub>`, first claim wins).
+- **Sign out** is local (the device forgets its session); offered only when a
+  sign-in or email leads back to the account.
+- **Deletion** revokes the Apple token first (Apple's rule; one retry; if Apple
+  can't be reached the deletion answers 503 and nothing changed), then
+  unlinks everything and closes the account (credit forfeited, as decided).
+- Stored: `sub`, `aud`, `linked_at` and (Apple) the encrypted refresh token.
+  No name, no email, no hashed email: Apple is asked for no scopes, Google for
+  `openid`; the email claim in Google's token is never read.
+- **With #557 (email recovery):** email is one more way back. Unlink and sign
+  out count a verified email as a way back; the conflict auto-switch doesn't
+  fire when this device's account has one. When #557's session generations
+  land, `SigninHost.session` in `endpoint.ts` is the one place to add the
+  generation check.
+
+**App.** `web/src/effects/ai/providers/creditsSignin.ts` (provider legs and
+relay calls), the credits flow's `signInChoice` / `signInConflict` /
+`signInDone` / `signInNoAccount` / `signOutConfirm` / `unlinkConfirm` steps,
+and Settings ▸ AI ▸ Sign-in. The buy flow's "Keep credits safe" phase offers
+Apple and Google first, a recovery email second, "Continue without signing
+in" last. Restore offers the same. iOS: native Sign in with Apple via the
+WebAuth plugin's `appleSignIn` (AuthenticationServices, no scopes); the
+entitlement is added by `web/ios-config/apply.sh` with
+`SPLANC_IOS_SIGN_IN_WITH_APPLE=1` once the provisioning profile has the
+capability. Browser / Android: Sign in with Apple JS (popup) and Google
+Identity Services' own button; the scripts load only on the sign-in screen.
+
+**Owner console checklist.**
+
+Apple Developer (the owner's LLC team), Certificates, Identifiers & Profiles:
+1. Identifiers ▸ App IDs ▸ `dev.splanc.app` ▸ enable **Sign In with Apple**
+   ("Enable as a primary App ID"). Under its Configure, set the **Server-to-
+   Server Notification Endpoint** to
+   `https://splanc-relay.<subdomain>.workers.dev/billing/signin/apple/notify`.
+2. Identifiers ▸ **+** ▸ **Services IDs**: description "Splanc web sign-in",
+   identifier `dev.splanc.app.signin` (any id, but NOT the bundle id). Enable
+   Sign In with Apple ▸ Configure: Primary App ID `dev.splanc.app` (grouping
+   it there gives web and app the same user id), **Domains** `splanc.io`,
+   **Return URLs** `https://splanc.io/app/` (exactly; Apple refuses
+   `localhost`, so web Apple sign-in is tested on splanc.io).
+3. Keys ▸ **+**: name "Splanc Sign in with Apple", enable **Sign in with
+   Apple** ▸ Configure ▸ primary App ID `dev.splanc.app`. Register, **download
+   the .p8 once**, note the Key ID.
+4. Profiles: regenerate the App Store distribution profile for
+   `dev.splanc.app` (it must include the new capability) and update the iOS
+   signing secrets; then build with `SPLANC_IOS_SIGN_IN_WITH_APPLE=1`.
+
+Google Cloud console (a project for Splanc), Google Auth Platform:
+1. **Branding**: app name "Splanc", support email, home page
+   `https://splanc.io`, privacy policy and terms URLs, authorized domain
+   `splanc.io`. **Audience**: External, then **Publish app** (In production).
+   **Data access**: no scopes beyond `openid` (no verification needed).
+2. **Clients ▸ Create ▸ Web application** "Splanc web": Authorized JavaScript
+   origins `https://splanc.io` (add `http://localhost` and
+   `http://localhost:5173` for local testing). No redirect URIs.
+3. **Clients ▸ Create ▸ iOS** "Splanc iOS": bundle id `dev.splanc.app`, team
+   id; under Advanced settings **enable custom URI scheme** (the app returns
+   through `com.googleusercontent.apps.<id>:/oauth2redirect`). No secret.
+
+Credential files (`/workspace/credentials/`, never in the repo):
+- `apple_signin_key.p8` — the downloaded key (secret);
+- `apple_signin.env` — `APPLE_SIGNIN_TEAM_ID=…`, `APPLE_SIGNIN_KEY_ID=…`,
+  `APPLE_SIGNIN_BUNDLE_ID=dev.splanc.app`,
+  `APPLE_SIGNIN_SERVICES_ID=dev.splanc.app.signin`,
+  `APPLE_SIGNIN_REDIRECT_URI=https://splanc.io/app/`;
+- `apple_signin_token_key.txt` — 32 random bytes, base64url (generated by the
+  runbook below; encrypts the stored Apple refresh tokens; rotating it makes
+  stored tokens unrevocable, so set it once);
+- `google_signin.env` — `GOOGLE_SIGNIN_WEB_CLIENT_ID=…apps.googleusercontent.com`,
+  `GOOGLE_SIGNIN_IOS_CLIENT_ID=…apps.googleusercontent.com`.
+
+**Runbook (owner approval; after the PR merges and the relay is deployed).**
+
+```bash
+cd agent/relay
+W="pnpm dlx wrangler@4"
+C=../../credentials
+put() { printf %s "$2" | $W secret put "$1" --config wrangler.toml; }
+# Apple: the key + the token key (generated once), then the ids.
+[ -f $C/apple_signin_token_key.txt ] || node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64url"))' > $C/apple_signin_token_key.txt
+$W secret put APPLE_SIGNIN_PRIVATE_KEY --config wrangler.toml < $C/apple_signin_key.p8
+tr -d '\n' < $C/apple_signin_token_key.txt | $W secret put APPLE_SIGNIN_TOKEN_KEY --config wrangler.toml
+set -a; . $C/apple_signin.env; . $C/google_signin.env; set +a
+for v in APPLE_SIGNIN_TEAM_ID APPLE_SIGNIN_KEY_ID APPLE_SIGNIN_BUNDLE_ID APPLE_SIGNIN_SERVICES_ID APPLE_SIGNIN_REDIRECT_URI \
+         GOOGLE_SIGNIN_WEB_CLIENT_ID GOOGLE_SIGNIN_IOS_CLIENT_ID; do put "$v" "${!v}"; done
+# Check: both providers on, client ids only.
+curl -fsS https://splanc-relay.<subdomain>.workers.dev/billing/signin/config
+```
+
+The app reaches the routes through `splanc.pages.dev` (`web/_worker.js`
+RELAY_PATHS), which ships with the web app deploy; Apple's notifications call
+the workers.dev address directly.
+
 ### Purchases (`purchases.ts`, `apple.ts`, `stripe.ts`)
 
 `purchases.ts` holds the interfaces (`PurchaseVerifier`, `NotificationVerifier`,
@@ -707,6 +841,7 @@ only, so it never learns that web packs exist.
 | `POST /billing/consent` | session | `{apple_consumption: bool}`: the opt-in to answer Apple's refund consumption requests |
 | `POST /billing/notify/<apple\|web>` | store signature | Refunds / revocations → claw back; Apple CONSUMPTION_REQUEST → consumption answer (with consent). Apple: App Store Server Notifications v2 `{signedPayload}` |
 | `POST /billing/admin/status` | admin token (`BILLING_ADMIN_TOKEN`) | `{account, status: active\|suspended, reason?}`: abuse suspension / reinstatement |
+| `GET /billing/signin/config`, `POST /billing/signin[/nonce\|/switch\|/unlink\|/apple/notify]` | see §Sign in with Apple and Google | Link, sign in, conflicts, unlink, Apple notifications |
 | `POST /ai/v1/messages` | session | The metered proxy (SSE) |
 
 Error shape: `{error, message}`. The errors are:
@@ -739,7 +874,8 @@ Error shape: `{error, message}`. The errors are:
   and a Buy button, never an error dump.
 - **Refund.** Apple or Stripe notifies → claw back (once) → a negative balance
   blocks spending until it is topped up.
-- **Restore.** Sign in on the new device. The balance is on the account.
+- **Restore.** Sign in on the new device (Apple / Google, or the recovery
+  email). The balance is on the account.
 - **BYO key.** Untouched. "Cloud ▸ Anthropic" + key calls Anthropic directly
   with the user's key. Splanc's server is never involved, and the "Splanc AI
   credits" option doesn't change that path.
