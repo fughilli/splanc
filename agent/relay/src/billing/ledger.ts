@@ -91,6 +91,15 @@ export interface Account {
   /** Linked sign-ins (billing/signin.ts), at most one per provider: the
    * provider's stable subject id, never a name or an email. */
   identities?: Partial<Record<IdentityProvider, LinkedIdentity>> | undefined;
+  /** The verified email (billing/email.ts): its keyed hash (the recovery
+   * lookup), a display hint, and when it was verified. Never the address. */
+  email?: { hash: string; hint: string; verified_at: number } | undefined;
+  /** When the user acknowledged staying anonymous: "without a verified email,
+   * losing this device's data loses the credits" (owner decision: optional email). */
+  anonymous_ack_at?: number | undefined;
+  /** Session generation: tokens minted before the current one are refused
+   * (recovery on a new device signs the others out). */
+  session_gen?: number | undefined;
 }
 
 /** Sign-in providers an account can link (owner decision: Apple + Google). */
@@ -416,6 +425,43 @@ export class Ledger {
     });
   }
 
+  /** Set (or clear, with null) the verified email. Returns the previous one. */
+  setEmail(email: { hash: string; hint: string } | null): Promise<{ account: Account; previous: Account["email"] }> {
+    return this.locked(async () => {
+      const a = await this.acct();
+      if (!a) throw new Error("no account");
+      if (a.status === "closed" && email) throw new Error("account closed");
+      const next: Account = { ...a };
+      if (email) next.email = { ...email, verified_at: this.now() };
+      else delete next.email;
+      await this.s.put({ acct: next });
+      return { account: next, previous: a.email };
+    });
+  }
+
+  /** Record that the user chose to stay anonymous (first time kept). */
+  ackAnonymous(): Promise<Account> {
+    return this.locked(async () => {
+      const a = await this.acct();
+      if (!a) throw new Error("no account");
+      if (a.anonymous_ack_at !== undefined) return a;
+      const next = { ...a, anonymous_ack_at: this.now() };
+      await this.s.put({ acct: next });
+      return next;
+    });
+  }
+
+  /** Start a new session generation (older tokens stop working). */
+  bumpSessionGen(): Promise<number> {
+    return this.locked(async () => {
+      const a = await this.acct();
+      if (!a) throw new Error("no account");
+      const gen = (a.session_gen ?? 0) + 1;
+      await this.s.put({ acct: { ...a, session_gen: gen } });
+      return gen;
+    });
+  }
+
   /** Record (or withdraw) the Apple consumption-data consent. */
   setAppleConsumptionConsent(consented: boolean): Promise<Account> {
     return this.locked(async () => {
@@ -490,7 +536,10 @@ export class Ledger {
       if (a.status === "closed") return a;
       const holds = [...(await this.s.list<Hold>({ prefix: "hold:" })).keys()];
       if (holds.length) await this.s.delete(holds);
-      a = { ...a, held: 0, status: "closed" };
+      // Erase the email with the account (the caller also drops the
+      // email -> account map), and sign every device out.
+      a = { ...a, held: 0, status: "closed", session_gen: (a.session_gen ?? 0) + 1 };
+      delete a.email;
       if (a.balance > 0) await this.append(a, { kind: "forfeit", ref: "close", amount: -a.balance });
       else await this.s.put({ acct: a });
       return (await this.acct())!;
