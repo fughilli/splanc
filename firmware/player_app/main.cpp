@@ -2360,7 +2360,11 @@ static __attribute__((noinline)) void identify_blink_frame() {
   if (ph == lm_identify::Phase::kClear) {
     g_identify_start_ms = 0;
     f.done = true;
-    Log().printf("[identify] blink done (%u LEDs x %u ports)\n", (unsigned)f.len, (unsigned)f.np);
+    // ms= is the device-measured blink (request -> this clear frame): the HITL gate
+    // grades it, not the gap between the two lines' host stamps (the serial capture
+    // stamps lines per 200 ms read, so that gap is the blink +-200 ms).
+    Log().printf("[identify] blink done (%u LEDs x %u ports) ms=%u\n", (unsigned)f.len,
+                 (unsigned)f.np, (unsigned)elapsed);
   } else {
     f.wake_ms = lm_identify::ms_to_next_edge(elapsed);
   }

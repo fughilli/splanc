@@ -73,3 +73,50 @@ def test_too_long_fails():
 
 def test_dut_not_found_is_a_skip():
     assert core.grade({"found": False}, "", 539, 2)["verdict"] == "SKIP"
+
+
+# Firmware with the device-measured blink (ms=): graded on it, not on host stamps.
+def _with_ms(ms, req="10:00:12.500Z", done="10:00:13.420Z"):
+    return (
+        fx(10, 600, 3)
+        + f"{req} [identify] blink requested\n"
+        + f"{done} [identify] blink done (539 LEDs x 2 ports) ms={ms}\n"
+        + fx(14, 840, 3)
+    )
+
+
+def test_device_ms_is_parsed():
+    p = core.parse(_with_ms(903))
+    assert (p["len"], p["ports"], p["ms"]) == (539, 2, 903)
+    assert core.parse(GOOD)["ms"] is None  # old line: still matches, no ms
+
+
+def test_device_ms_passes_despite_quantised_host_stamps():
+    # main 1412e9fad CI: the capture stamps per 0.2 s read, so the 0.9 s blink's lines
+    # landed 0.8 s apart (0.79999 in float). The device's own ms= is what is graded.
+    g = core.grade(BLE, _with_ms(903, "10:00:12.489Z", "10:00:13.289Z"), 539, 2)
+    assert g["verdict"] == "PASS", g
+
+
+def test_device_ms_short_fails():
+    # The clear frame only comes once 900 ms have elapsed: below that is a firmware bug,
+    # even when the host stamps look fine.
+    g = core.grade(BLE, _with_ms(450), 539, 2)
+    assert g["verdict"] == "FAIL" and any("450 ms on the device" in p for p in g["problems"])
+
+
+def test_device_ms_long_fails():
+    g = core.grade(BLE, _with_ms(2400), 539, 2)
+    assert g["verdict"] == "FAIL" and any("2400 ms on the device" in p for p in g["problems"])
+
+
+def test_old_firmware_host_gap_allows_one_capture_read():
+    # No ms=: the host gap is the blink +- one 0.2 s capture read; 0.8 s (stored as
+    # 0.79999) is a 0.9 s blink, not a short one.
+    quantised = GOOD.replace("10:00:12.500Z", "10:00:12.489Z").replace(
+        "10:00:13.420Z", "10:00:13.289Z"
+    )
+    assert core.grade(BLE, quantised, 539, 2)["verdict"] == "PASS"
+    short = GOOD.replace("10:00:13.420Z", "10:00:12.900Z")  # 0.4 s
+    g = core.grade(BLE, short, 539, 2)
+    assert g["verdict"] == "FAIL" and any("by host stamps" in p for p in g["problems"])

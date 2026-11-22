@@ -124,7 +124,11 @@ def run(args) -> int:
         if not creds:
             raise HarnessError("rig serves no AP")
         ssid, password = creds
-        res.scp_to([args.bundle, os.path.join(_HERE, "ble_identify.py")], f"{REMOTE}/")
+        res.scp_to(
+            [args.bundle]
+            + [os.path.join(_HERE, n) for n in ("ble_identify.py", "hitl_improv.py", "improv.py")],
+            f"{REMOTE}/",
+        )
         _log("[setup] flash --erase-fs")
         proc = res.ssh_serialized(
             f"hitl-flash {REMOTE}/{os.path.basename(args.bundle)} --erase-fs --monitor --monitor-seconds 10",
@@ -152,7 +156,9 @@ def run(args) -> int:
         _log("[blink] Improv Identify over BLE")
         try:
             p = res.ssh(
-                f"python3 {REMOTE}/ble_identify.py --address {address}", capture=True, timeout=180
+                f"PYTHONPATH={REMOTE} python3 {REMOTE}/ble_identify.py --address {address}",
+                capture=True,
+                timeout=240,
             )
             for line in reversed((p.stdout or "").splitlines()):
                 if line.strip().startswith("{"):
