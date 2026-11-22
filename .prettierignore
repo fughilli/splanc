@@ -18,6 +18,10 @@ pi/hitl/internal/skus/skus.json
 # re-packs to fit printWidth, so a fresh cron commit would perpetually re-fail lint.
 pi/hitl/observability/fxbench/data/
 
+# The HITL metrics run-id ledger, written by ingest_hitl_metrics.py (json.dump,
+# indent=0) and committed by the same cron: same reason as the fxbench ledger.
+pi/hitl/observability/metrics/data/
+
 # HITL capacity-model backfill (hourly aggregates from the rig journals), written
 # minified by run_capacity.py backfill. Data, not source: pretty-printing it would
 # push it past the 600 KB large-file gate.
