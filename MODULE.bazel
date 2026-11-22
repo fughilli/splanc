@@ -542,6 +542,11 @@ archive_override(
         # them -Os, as IDF (CONFIG_COMPILER_OPTIMIZATION_SIZE) and Arduino's platform.txt
         # do: ~240 KB less flash in the C6 player. Splanc's own C/C++ is unchanged.
         "//patches:embedded-firmware-os.patch",
+        # toolchain-os: the same for everything else the esp32c6/esp32c3 cc toolchain
+        # compiles (Splanc's own main.cpp, netstack_transport, ws2812_parlio, ...,
+        # the loader): -Os in the toolchain's compile flags. -O0 also kept vendor
+        # lwip/esp_netif code alive through dead branches; ~180 KB less flash.
+        "//patches:embedded-toolchain-os.patch",
     ],
     strip_prefix = "embedded-0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d",
     urls = ["https://github.com/fughilli/embedded/archive/0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d.tar.gz"],
