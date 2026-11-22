@@ -26,6 +26,7 @@ PHASES = {
     "map": (T0 + 36019, T0 + 36022),
     "settings": (T0 + 36029, T0 + 36032),
     "keypoints": (T0 + 36025, T0 + 36028),
+    "app_reads": (T0 + 36040, T0 + 36045),
 }
 
 
@@ -52,6 +53,10 @@ class FlashRenderTest(unittest.TestCase):
         self.assertTrue(any(w.startswith("map: 1 late frame") for w in why), why)
         clean = LOG.replace("[late] n=1 max=30000", "[x]")
         self.assertEqual(core.verdict(core.report(clean, PHASES)), ("PASS", []))
+        # The app's reads: gated on late frames, no write expected.
+        reads = clean + "10:00:44.000Z [late] n=1 max=21000 ago_ms=100\n"
+        v, why = core.verdict(core.report(reads, PHASES))
+        self.assertEqual((v, why), ("FAIL", ["app_reads: 1 late frame(s), worst 21000 us"]))
         off = clean.replace("auto-suspend on", "auto-suspend off (flash not supported) ")
         v, why = core.verdict(core.report(off, PHASES))
         self.assertEqual(v, "FAIL")

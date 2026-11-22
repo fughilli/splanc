@@ -21,6 +21,8 @@ _SUSPEND = re.compile(r"\[flash\] auto-suspend (on|off[^j]*?)\s*jedec=([0-9a-f]+
 
 # Phases whose flash writes (and the handlers around them) must not delay a frame.
 GATED = ("effect_store", "map", "keypoints", "settings")
+# Phases that only read (the app's own traffic): no late frame either, no write expected.
+READ_GATED = ("app_reads",)
 
 
 def stamped(text: str) -> list[tuple[float, str]]:
@@ -111,6 +113,13 @@ def verdict(rep: Report, require_suspend: bool = True) -> tuple[str, list[str]]:
     why = []
     if require_suspend and rep.suspend != "on":
         why.append(f"flash auto-suspend is {rep.suspend!r} (jedec {rep.jedec})")
+    for name in READ_GATED:
+        p = rep.per_phase.get(name)
+        if p is None:
+            why.append(f"{name}: not run")
+        elif rep.late_in(name):
+            worst = max(x["max_us"] for x in p["late"])
+            why.append(f"{name}: {rep.late_in(name)} late frame(s), worst {worst} us")
     for name in GATED:
         p = rep.per_phase.get(name)
         if p is None:
