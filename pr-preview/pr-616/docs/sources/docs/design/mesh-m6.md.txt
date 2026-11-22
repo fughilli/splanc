@@ -1,0 +1,187 @@
+# Mesh M6: effect sharing, scenes and catch-up
+
+M6 of [mesh.md](mesh.md) §15: the blob kind on the page protocol (§5.5), effect
+distribution, scenes and catch-up for late joiners (§5.6), and the `mesh_effect` HITL.
+Stacked on [M7](mesh-m7.md) (#594). Before M6 only a message that fits one mesh packet
+(~160 B) was relayed, so an effect with any uniform (its manifest alone is ~250 B) reached
+only the connected fixture. Now an effect of any size up to the player's effect limit
+(4 KiB of `.fxb` on a C6) reaches every member, and they all switch to it on the same frame.
+Maps stay per fixture.
+
+Measured with `//pi/hitl/harness:mesh_effect` on hitl-rig-1: three C6 players (c6-123170 =
+a, the gateway; c6-711130 = b; c6-711f48 = c) on the rig AP, `:esp32c6_netstack_meshdev`,
+membership and grants as in M7 (`mesh_admin_tool` stands in for the app). The client holds
+one wss connection to a only. Logs and JSON: `/workspace/.claude/mesh/m6/runs/`.
+
+## Results
+
+Runs r4, r5 and r6 (2026-11-22), all passing every M6 gate; r6 is the final code (scene
+dispatches moved onto the relayed-control path for the loopTask stack bound): 8/8 rounds,
+spread 0.23–1.33 ms, submit to all 0.59–1.31 s, late joiner 5.7 s, reboot 1.5 s with no
+reload, member heap min 42 896 B. r5 and r6 first reported late frames the gate could not
+attribute: on r5 a's membership write at its first join (logged after its `[late]` line),
+on r6 the gateway's sharded-upload windows to `/lfs/upload.tmp` (only the first window is
+logged). Both are flash writes; the gate now attributes them, and r4–r6 re-judged from
+their logs have no late frame outside effect loads and flash writes. Numbers below from r4. Effects: `meshStorm` (1 981 B fxb, 7 uniforms,
+a 1 998 B submit_effect frame) and `meshEmber` (2 907 B fxb, 11 uniforms, 2 924 B frame),
+alternating; odd rounds go as 1 KB `upload_chunk` windows (the BLE path's sharding).
+
+| | Result (r4) |
+| --- | --- |
+| **Every member runs it**: 8 rounds of `mesh_send{submit_effect}` to a | **8/8**: a answers `result_ready`, b and c answer OK, all three run the new effect (`get_effect_uniforms`) |
+| **Same frame**: the load's instant on the AP clock (the rig AP's beacons, as M4/M5) | spread **0.4–1.9 ms** (one frame is 12.5 ms); the same time-base grid frame `k` on all three in 8/8 |
+| Submit → every fixture switched | **0.58–0.86 s** (one wss frame), **0.83–1.26 s** (1 KB windows) |
+| Members' fetch (2 KB / 3 KB, from the gateway) | 269–362 ms / 479–548 ms (13 / 19 chunks at the 20 ms bulk pace) |
+| Pushed `MeshResult` | 0.35–1.10 s after the submit |
+| The load itself (render task, at its frame, on the tick stack) | 2.8–3.4 ms |
+| **Render during transfers**: members | **no late frame on b or c in any round**; 80 fps (the autoscaler restarts after each load, as for any load: 30 → 80 over ~6 s) |
+| Render on the gateway | late frames only next to its flash writes: the sharded upload's `/lfs/upload.tmp` windows (an existing path: any sharded upload does it) and the persisted effect (20–160 ms littlefs writes) — desk item |
+| **Heap**: lowest free on a member while a blob is in flight | **42 992 B** (2.9 KB blob held), 45 932 B for 2 KB; the gateway 38 020–39 108 B at the share |
+| **Late joiner**: c's mesh off, a new effect and a committed uniform (cloud_speed 1.25) shared, c's mesh on | c rejoined, synced and was **caught up 5.7 s** after `MESH ON`: runs the new effect, cloud_speed 1.25 = a's |
+| **Reboot**: b reset | caught up **1.4 s** after its bridge came back: its persisted effect was the blob (found by hash, `skipped=1`: **not reloaded**), the state blob (54 ms) applied |
+| Resets | none outside the reboot |
+
+r1 found the render task's stack too small for a load (the load now runs on the tick stack);
+r2/r3 found harness issues (a second wss to the gateway ended the app's session; the
+reboot's catch-up landed in the reset capture; the grid index `k` differs when fps differ,
+so alignment is judged on the AP clock). meshsim `effect_share_and_late_joiner`: 3.5 KB to
+three members applied at one instant 460 ms after the share, 4.4 KB at 10 % loss in 930 ms,
+a late joiner caught up 620 ms after joining, a rebooted member without a reload.
+
+
+## How the app uses it
+
+Nothing changes for the app's code paths: with whole-mesh control on (`client.meshAll`),
+`client.submitEffect(id, fxb, activate, deck)` shares the effect with the whole mesh
+instead of loading it on the connected fixture alone. The explicit call is
+`client.meshShareEffect(effectId, fxb, {deck, activate, nodes, group, leadMs, wantReply,
+timeoutMs, skipGateway})` (web/src/net/meshEffect.ts):
+
+- the direct reply is the connected fixture's `result_ready{effectId}` (or the error a load
+  would give: `bad_fxb`, `effect_too_large`), as before;
+- with `wantReply` (the default) the per-member outcome is pushed as `mesh.result` (op id)
+  to `client.onMeshResult` subscribers;
+- `meshLargeShare(client, msg)` is the hook for the app-UI's `setMeshLargeSender` (#613): it
+  shares an effect the app already loaded on the connected fixture with the other members
+  (`skipGateway`; they switch together, the connected one switched on arrival).
+
+On the wire it is the M5 arm: `mesh_send{inner: submit_effect}`, now of any size. Bigger
+than one transport window (BLE, or over 4 KiB on wss) the whole `mesh_send` goes as
+`upload_chunk` windows of kind EFFECT, which the firmware reassembles and hands to the mesh
+gateway (after the kiosk gate) instead of the player core.
+
+## Design
+
+### Blobs (firmware/mesh/src/blob.rs)
+
+A blob is an encoded `ClientMessage` (a `submit_effect` frame, or a state blob of small
+frames), named by its SHA-256 (8-byte id on the wire). It travels on `BULK` (non-admin,
+lowest relay priority, inside the mesh envelope), one hop at a time, pulled like the swarm's
+page protocol with one page per blob:
+
+- a node that wants blob H sends `REQ{id, size, 64-bit missing bitmap}` to a holder (one
+  that announced it with `HAVE`, or the scene's origin) when nothing came for 120 ms;
+- a holder answers with the missing 160-byte chunks, one `DATA` per paced bulk slot
+  (`send_bulk`'s 20 ms gap and credit gate, §10.6); to a neighbour that is a one-hop
+  broadcast, so every node fetching the same blob takes it too;
+- complete, the receiver checks the SHA-256 against the scene's hash and only then keeps it,
+  announces `HAVE` and serves it in turn. A mismatch is dropped and counted (`bad_hash`); a
+  fetch without progress for 15 s is given up (`stalled`).
+
+Largest blob: 64 chunks × 160 B = 10 KiB.
+
+### Scenes (SCENE port, admin-class)
+
+`SceneMsg{op, flags, apply_at, targets, ≤ 2 × (sha256, size)}` goes through the admin
+session (`send_admin`: per-receiver MACs, M7), so members take blob names only from the
+session, never from gossip, and a blob is authorised by the admin's unlocked connection and
+content-addressed. Flags: `APPLY` (at `apply_at` on the show clock), `NOW` (as soon as
+held), `WANT_REPLY`, `CATCH_UP` (an effect equal to what the member shows is not reloaded).
+
+### Sharing an effect (`MeshStack::distribute`)
+
+1. The gateway checks the frame as a load would (`lm_fx_check_effect`: parses, fits, not a
+   driver, not a store write), answers the app, keeps a copy (heap, only while in use) and
+   sends `Scene{hold, want_reply}`. No show clock yet: the session starts one (desk #79).
+2. Members fetch it and answer "have"; the gateway collects the answers (`Fanout`, 12 s).
+3. Then (`Event::Fetched`) the gateway picks `apply_at = now + lead_ms` (default 250 ms) on
+   the show clock, sends `Scene{apply, apply_at}` and stages its own copy for that time.
+4. Each member hands the frame to the render task (`lm_fx_stage`), which loads it at the
+   first grid frame at/after `apply_at` (inside `lm_sched_apply`, like a scheduled
+   `set_effect`): everyone switches on the same frame. A member that got the blob after the
+   time loads it at once (late) and says so. The loaded deck-A effect is persisted on
+   loopTask like a deck-A upload (it resumes at boot).
+
+### Catch-up (members that join or reboot later)
+
+The gateway counts scene changes made through its session (shares, relayed control). A
+member that syncs with the session after one (its Ack: it joined, or rebooted) gets a
+catch-up scene: the gateway's persisted effect frame (`/lfs/fx.pb`) and a state blob of its
+current look (deck A's uniform values, brightness, crossfade: `lm_fx_scene_frames`), applied
+at once. A member whose persisted effect is that blob (the rebooted one) finds it there by
+hash: no fetch and no reload; the state frames still apply. A member that answered a share's
+second phase with anything but OK gets a catch-up too.
+
+### Firmware (firmware/player_app/mesh_blob.rs)
+
+- **Store**: three slots (receiving, complete, staged), heap buffers only while a blob is in
+  use, freed after 20 s idle; `/lfs/fx.pb` is found by hash. Zeroed before free.
+- **Where the work runs**: fetching, serving and hashing in the mesh tick (below the render
+  task, PR-40); applying scenes (staging, dispatching state frames, the catch-up's reads) in
+  `ns_mesh_scenes` on loopTask's stack after the tick; the effect load itself on the render
+  task at its frame (the only way to switch on one frame).
+
+## Cost
+
+- **Flash** (default image, both built here from the same base): M7 tip (fc7177a01) 2 275 104 B →
+  **M6 2 283 056 B (+7 952 B)**; `//firmware/loader:layout_test` passes with **10 704 B**
+  of its headroom left. M6's own code is ~+19 KB (the crate's blob/scene/share 7 KB, the
+  firmware store and scene glue 7 KB, the player's staged load, check and scene frames
+  2.5 KB, the gateway arm 1.5 KB); the swarm's firmware image updater and settings
+  bundles, linked but dead on the C6 (no flash, no bundle key), are now host-only
+  (features `fw_update`, `swarm_settings`): −12.5 KB.
+- **RAM, default image**: `.dram0.data` identical, `.dram0.bss` **+56 B** (the staged
+  load's slot in the player, the tick-stack trampoline). Mesh off: nothing else.
+- **Heap while on**: the mesh block grows by the blob slots' bookkeeping (~200 B); blob
+  bytes are heap only while a blob is in use (≤ 3 slots, freed 20 s after last use).
+- **Stack**: fetching, serving and hashing on the tick stack (painted high water as M7);
+  the staged load on the tick stack from the render task (render keeps its 5 KB); a
+  scene's dispatches go through the transport like relayed control (`ns_mesh_take_dispatch`),
+  so `//firmware/player_app:stack_bound_test` holds: loopTask bound 9 280 B (11 920 B with
+  margin of 12 288 B).
+
+
+## Open
+
+- **Catch-up needs the session.** As for the show epoch (M7), a member that rejoins while no
+  app holds a grant renders what it persisted until the next unlock (desk item).
+- **Deck B** is not part of a catch-up (it is never persisted on the C6); a share to deck B
+  works.
+- **Multi-hop**: every holder serves its neighbours (Deluge), but a member keeps a blob only
+  20 s after it applied it; a far member that starts fetching later than that asks the
+  gateway (unicast over the mesh).
+- **The effect load costs a frame** on every fixture, as any direct upload does (24 KB arena
+  reset, JIT build); `[mesh] fx applied load_us=` reports it.
+
+## Follow-up: effect uploads reassembled in RAM (desk D-464)
+
+The sharded upload path appended every window of a kind-EFFECT upload to `/lfs/upload.tmp`
+(r4: 20 late frames on the gateway, all next to those writes). The netstack player now
+reassembles EFFECT windows in one 4.5 KiB heap block (held only while they arrive) and
+dispatches the frame from it. Runs r7 and r8 (2026-11-22, hitl-rig-1, `--ble`):
+
+| | r7 / r8 |
+| --- | --- |
+| Gateway late frames next to flash writes, whole run | **2 / 3** (r4: 20): only its membership write at the first join and the shared effect's persisted copy after a switch; none during an upload (6 RAM uploads each run) |
+| **BLE end to end** (the rig's adapter as the phone on BLE, the wss client still connected): unlock over BLE, a 2.9 KB effect as 1 KB windows | `welcome`, unlock OK, `chunk_ack` ×2, **`result_ready`**, the `mesh.result`; **all three run it**, the same grid frame, spread 0.27 / 1.06 ms |
+| Gateway heap during the BLE + wss session | lowest free **35 588 B** (r8; r7 37 384 B) with the RAM upload block in use; the since-boot minimum stays **20 832 B** (set at `MESH ON`, as before) |
+| Share rounds (8, as before) | 8/8 every member OK and running, spread 0.25–1.15 ms, submit to all 0.58–1.05 s |
+| Late joiner / reboot | caught up 5.7 s / 1.5 s (no reload) |
+
+Members show 20–24 late frames (16–25 ms intervals) whenever the harness opens a wss
+connection to them to check what they run: the TLS server handshake's ECDHE shares the CPU
+with an effect running near its frame budget. That is the app connecting to a fixture, not
+the mesh; the gate reports it (`tls`) and does not count it (desk item).
+
+Flash: the default image is 2 284 240 B (+1 184 B over #614), layout_test headroom 9 520 B;
+loopTask stack bound 9 360 B (12 020 B with margin, of 12 288 B).
