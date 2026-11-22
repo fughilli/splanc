@@ -18,8 +18,8 @@
     "risks_mitigated": 6,
     "mitigations": 12,
     "mitigations_verified": 6,
-    "test_cases": 3539,
-    "gaps": 30
+    "test_cases": 3541,
+    "gaps": 29
   },
   "levels": [
     {
@@ -7519,12 +7519,6 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:identify_blink",
-      "message": "//pi/hitl/harness:identify_blink pi/hitl/harness/identify_blink error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
