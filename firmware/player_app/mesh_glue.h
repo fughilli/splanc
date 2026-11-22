@@ -12,7 +12,10 @@
 // AP-anchored (desk #66): mesh frames go out on the channel the radio is on while
 // associated; the Rust channel rule follows the AP and pauses mesh TX during a background
 // sweep. Keys (desk #67): `MESH KEY` (the dev-only site key) exists only in the
-// LM_MESH_DEVKEY image; never in a release before M7.
+// LM_MESH_DEVKEY image and is never persisted. Membership (M7): the app's mesh_admin
+// provisions the fixture (mesh_gw.rs); the state lives in /lfs/mesh.bin (main.cpp, power-loss
+// safe) and a fixture that holds one turns the mesh on at boot, as soon as its device key
+// (the TLS identity) is installed. The device key's ECDH runs here, on MbedTLS (g_pk).
 //
 // Console (one line each; replies start "[mesh] "):
 //   MESH ON | MESH OFF            allocate + start / stop + free (reports the heap both ways)
@@ -32,6 +35,12 @@
 //   MESH CTL <hex>                (dev image) relay one encoded ClientMessage to every member
 //                                 WITHOUT the gateway's allow-list check, collecting answers
 //                                 (the HITL's proof that members refuse what it leaves out)
+//   MESH LEAVE                    leave the mesh: erase its state (and admin key), mesh off
+//                                 (physical access: the recovery when the admin secret is lost)
+//   MESH FORGE CTL <hex> | MESH FORGE EPOCH <ms>
+//                                 (dev image) what an insider could send: envelope-trust control
+//                                 (no grant) / a show epoch in our beacons; members of a mesh
+//                                 with an admin key must refuse both (M7)
 //
 // The gateway (M5, mesh_gw.rs): the app's mesh_send / get_mesh reach lm_mesh_app (below,
 // from main.cpp's lm_ws_dispatch, after the kiosk gate); relayed control for this member is
@@ -41,6 +50,8 @@
 #pragma once
 
 #include <esp_expression_with_stack.h>  // the tick runs on its own stack (in the mesh block)
+#include <mbedtls/ecdh.h>                // the device key's ECDH (M7)
+#include <mbedtls/ecp.h>
 
 extern "C" {
 // mesh_ffi.rs (weak: absent from the OTA loader).
@@ -85,6 +96,23 @@ void ns_mesh_control_done(void *m, uint32_t status, uint32_t code) __attribute__
 void ns_mesh_status(void *m, uint32_t fps, uint32_t heap_free, uint32_t heap_min, uint32_t brightness,
                     uint32_t uptime_s, uint32_t firmware) __attribute__((weak));
 uint32_t ns_mesh_dev_ctl(void *m, const uint8_t *inner, uint32_t len, int64_t now_us) __attribute__((weak));
+// Membership (M7, mesh_ffi.rs / mesh_gw.rs).
+uint32_t ns_mesh_restore(void *m, const uint8_t *state, uint32_t len, int64_t now_us) __attribute__((weak));
+int32_t ns_mesh_persist(void *m, uint8_t *out, uint32_t cap) __attribute__((weak));
+uint32_t ns_mesh_state_len() __attribute__((weak));
+void ns_mesh_crypto_staged(void *m) __attribute__((weak));
+void ns_mesh_leave(void *m) __attribute__((weak));
+uint32_t ns_mesh_dev_forge(void *m, uint32_t kind, const uint8_t *data, uint32_t len, int64_t now_us)
+    __attribute__((weak));
+// main.cpp: the persisted membership (/lfs/mesh.bin); store(nullptr, 0) erases it.
+uint32_t lm_mesh_state_load(uint8_t *buf, uint32_t cap) __attribute__((weak));
+uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) __attribute__((weak));
+// main.cpp: drop the calling task (loopTask) strictly below the render task for a span of
+// mesh work, returning its priority for lm_prio_restore. Crypto never blocks render (PR-40):
+// loopTask shares render's priority while a client is on a settled link (#371), and a
+// 10-55 ms ECDSA/ECDH there would round-robin with frames.
+uint32_t lm_prio_below_render() __attribute__((weak));
+void lm_prio_restore(uint32_t prio) __attribute__((weak));
 uint8_t *ns_mesh_xfer(void *m, uint32_t *cap) __attribute__((weak));
 uint32_t ns_mesh_status_due(void *m, int64_t now_us) __attribute__((weak));
 void ns_mesh_conns(void *m, uint32_t ws, uint32_t ble) __attribute__((weak));
@@ -99,7 +127,48 @@ uint32_t ns_mac_recv_rxv(uint8_t *out, uint32_t cap, uint8_t *rxv);
 uint32_t ns_mac_tsf(uint32_t latch);
 }
 
+// The mesh's device key (M7): this device's TLS key, already parsed into MbedTLS (g_pk, the
+// TLS server's). mesh_ffi.rs's DevKey holds only the public half; ECDH runs here, on
+// loopTask (the TLS handshake's task, so the ECC peripheral is never shared concurrently).
+extern "C" uint32_t lm_mesh_device_key(uint8_t *out) {
+  if (!g_identity_installed || !mbedtls_pk_can_do(&g_pk, MBEDTLS_PK_ECKEY)) return 0;
+  mbedtls_ecp_keypair *k = mbedtls_pk_ec(g_pk);
+  size_t olen = 0;
+  int r = mbedtls_ecp_point_write_binary(&k->MBEDTLS_PRIVATE(grp), &k->MBEDTLS_PRIVATE(Q),
+                                         MBEDTLS_ECP_PF_UNCOMPRESSED, &olen, out, 65);
+  return r == 0 && olen == 65 ? 1 : 0;
+}
+
+extern "C" uint32_t lm_mesh_ecdh(const uint8_t *peer, uint8_t *out) {
+  if (!g_identity_installed || !mbedtls_pk_can_do(&g_pk, MBEDTLS_PK_ECKEY)) return 0;
+  mbedtls_ecp_keypair *k = mbedtls_pk_ec(g_pk);
+  mbedtls_ecp_point q;
+  mbedtls_mpi z;
+  mbedtls_ecp_point_init(&q);
+  mbedtls_mpi_init(&z);
+  int r = mbedtls_ecp_point_read_binary(&k->MBEDTLS_PRIVATE(grp), &q, peer, 65);
+  if (r == 0) r = mbedtls_ecp_check_pubkey(&k->MBEDTLS_PRIVATE(grp), &q);
+  if (r == 0) r = mbedtls_ecdh_compute_shared(&k->MBEDTLS_PRIVATE(grp), &z, &q, &k->MBEDTLS_PRIVATE(d), tls_rng, nullptr);
+  if (r == 0) r = mbedtls_mpi_write_binary(&z, out, 32);
+  mbedtls_mpi_free(&z);
+  mbedtls_ecp_point_free(&q);
+  return r == 0 ? 1 : 0;
+}
+
 namespace lm_mesh {
+
+// Mesh work (the tick, session crypto, joins, the app's mesh arms: grant and rotation-order
+// verifies) runs below the render task, whatever loopTask's priority is (PR-40).
+struct BelowRender {
+  uint32_t prio;
+  bool on;
+  BelowRender() : prio(0), on(lm_prio_below_render != nullptr) {
+    if (on) prio = lm_prio_below_render();
+  }
+  ~BelowRender() {
+    if (on) lm_prio_restore(prio);
+  }
+};
 
 // Stack for building the MeshStack in place: ns_mesh_create's worst path is 19.6 KB (the
 // ELF call graph, long calls included; MeshStack::init_in 11.3 KB + NetOf::new 4 KB + ...),
@@ -217,7 +286,23 @@ bool on() {
   }
   g_mesh = j.result;
   ns_mesh_aux(g_mesh)[0] = reinterpret_cast<uintptr_t>(lock);
+  memset(tick_stack(), 0xA5, kTickStack);  // painted: MESH INFO reports its high water
   ns_mesh_set(g_mesh, 5, probe_tsf(true));
+  // The persisted membership (M7): this fixture rejoins its mesh.
+  if (lm_mesh_state_load && ns_mesh_restore && ns_mesh_state_len) {
+    uint32_t cap = ns_mesh_state_len();
+    uint8_t *st = static_cast<uint8_t *>(malloc(cap));
+    if (st) {
+      uint32_t n = lm_mesh_state_load(st, cap);
+      bool bad = n && !ns_mesh_restore(g_mesh, st, n, esp_timer_get_time());
+      memset(st, 0, cap);  // the state holds the mesh key and site secret
+      free(st);
+      if (bad && lm_mesh_state_store) {
+        // Unusable (another version, torn): forget it rather than mesh on every boot.
+        Serial.printf("[mesh] stored state unusable: erased %s\n", lm_mesh_state_store(nullptr, 0) ? "ok" : "FAILED");
+      }
+    }
+  }
   Serial.printf("[mesh] ok on block=%lu counter_mark=%llu create_stack_used=%lu ch=%u\n", (unsigned long)len,
                 (unsigned long long)mark, (unsigned long)(kCreateStack - j.stack_hwm), g_chan);
   print_heap("after_on");
@@ -238,6 +323,35 @@ void off() {
   print_heap("after_off");
 }
 
+// After a pass: persist the membership if it changed (heap scratch, freed at once: the
+// transport keeps no buffer for it), and turn the mesh off if it left its mesh.
+void persist() {
+  if (!ns_mesh_persist || !ns_mesh_get(g_mesh, 9)) return;
+  const int64_t t0 = esp_timer_get_time();
+  uint32_t cap = ns_mesh_state_len();
+  uint8_t *b = static_cast<uint8_t *>(malloc(cap));
+  if (!b) return;  // retried next pass (dirty stays set only if persist was not called)
+  int32_t r = ns_mesh_persist(g_mesh, b, cap);
+  if (r != 0 && lm_mesh_state_store) {
+    uint32_t ok = lm_mesh_state_store(r > 0 ? b : nullptr, r > 0 ? (uint32_t)r : 0);
+    Serial.printf("[mesh] state %s %s us=%lu\n", r > 0 ? "saved" : "erased", ok ? "ok" : "FAILED",
+                  (unsigned long)(esp_timer_get_time() - t0));
+  }
+  memset(b, 0, cap);
+  free(b);
+}
+
+void crypto_on_stack() { ns_mesh_crypto_staged(g_mesh); }
+
+// The tick stack's high water (tick, session crypto and joins, MbedTLS's ROM frames
+// included): the painted bytes the deepest pass never touched.
+uint32_t tick_stack_used() {
+  const uint8_t *s = tick_stack();
+  uint32_t i = 0;
+  while (i < kTickStack && s[i] == 0xA5) i++;
+  return kTickStack - i;
+}
+
 void report(uint32_t what) {
   char line[640];
   int64_t now = esp_timer_get_time();
@@ -250,6 +364,7 @@ void report(uint32_t what) {
 
 // One loop pass while the mesh is on. `assoc`: associated to the AP (the join is DONE).
 void service(bool assoc) {
+  BelowRender below;  // the whole pass: tick (joins, rotation orders), crypto job, persist
   // The TSF next to esp_timer (mesh time's RX-stamp mapping; a wide bracket is skipped).
   if (uint32_t mode = ns_mesh_get(g_mesh, 5)) {
     int64_t e0 = esp_timer_get_time();
@@ -263,6 +378,10 @@ void service(bool assoc) {
   uint8_t radio = g_hop.active() ? 0 : g_chan;  // a background sweep has the radio elsewhere
   ns_mesh_stage(g_mesh, now, radio, assoc ? g_chan : 0);
   esp_execute_shared_stack_function(tick_lock(), tick_stack(), kTickStack, tick_on_stack);
+  // Session crypto (M7: a grant's ECDSA verify, an ECDH), one job per pass, on the tick's
+  // stack, on loopTask: below the render task, never per command (design §7.9).
+  if (ns_mesh_crypto_staged && ns_mesh_get(g_mesh, 8))
+    esp_execute_shared_stack_function(tick_lock(), tick_stack(), kTickStack, crypto_on_stack);
   const int64_t t0 = esp_timer_get_time();
   while (ns_mesh_pump(g_mesh, esp_timer_get_time()) && esp_timer_get_time() - t0 < kPumpBudgetUs) {
   }
@@ -301,6 +420,20 @@ void service(bool assoc) {
     buf[n] = 0;
     Serial.print(buf);
   }
+  persist();
+  if (ns_mesh_get(g_mesh, 7)) off();  // left the mesh (app, console or the admin's eject)
+}
+
+// The device key is installed (boot, or a regenerated identity): a fixture that is in a mesh
+// (its state persisted) turns the mesh back on. Nothing at all otherwise (off by default).
+void boot() {
+  if (g_mesh || !ns_mesh_size || !lm_mesh_state_load || !ns_mesh_state_len) return;
+  uint8_t probe[8];
+  if (lm_mesh_state_load(probe, sizeof probe) == 0) return;
+  memset(probe, 0, sizeof probe);
+  Serial.printf("[mesh] boot: this fixture is in a mesh; turning it on\n");
+  if (on() && lm_mesh_state_load(probe, sizeof probe) == 0) off();  // its state was unusable
+  memset(probe, 0, sizeof probe);
 }
 
 bool parse_hex(const char *h, uint8_t *out, int n) {
@@ -334,6 +467,15 @@ bool console(const char *line) {
     off();
     return true;
   }
+  if (!strcmp(a, "LEAVE")) {
+    if (g_mesh && ns_mesh_leave) {
+      ns_mesh_leave(g_mesh);  // the next pass erases the state and turns the mesh off
+    } else if (lm_mesh_state_store) {
+      Serial.printf("[mesh] state erased %s\n", lm_mesh_state_store(nullptr, 0) ? "ok" : "FAILED");
+    }
+    Serial.printf("[mesh] ok leave\n");
+    return true;
+  }
   if (!g_mesh) {
     Serial.printf("[mesh] off (MESH ON first): %s\n", a);
     return true;
@@ -342,6 +484,8 @@ bool console(const char *line) {
   if (!strcmp(a, "INFO")) {
     report(0);
     print_heap("now");
+    Serial.printf("[mesh] stack tick_used=%lu of=%lu\n", (unsigned long)tick_stack_used(), (unsigned long)kTickStack);
+    Serial.printf("[mesh] infoend\n");
   } else if (!strcmp(a, "NB")) {
     report(1);
     Serial.printf("[mesh] nbend\n");
@@ -439,6 +583,22 @@ bool console(const char *line) {
     }
 #endif
 #if defined(LM_MESH_DEVKEY)
+  } else if (!strncmp(a, "FORGE CTL ", 10) || !strncmp(a, "FORGE EPOCH ", 12)) {
+    // Dev: an insider's traffic (M7): members of a mesh with an admin key refuse it.
+    uint32_t xcap = 0;
+    uint8_t *d = ns_mesh_xfer(g_mesh, &xcap);
+    uint32_t ok = 0;
+    if (a[6] == 'C') {
+      const char *h = a + 10;
+      size_t hl = strlen(h);
+      uint32_t n = (uint32_t)(hl / 2);
+      if (!(hl % 2) && n && n <= 160 && n <= xcap && parse_hex(h, d, (int)n)) ok = ns_mesh_dev_forge(g_mesh, 0, d, n, now);
+    } else {
+      int64_t ms = strtoll(a + 12, nullptr, 0);
+      memcpy(d, &ms, 8);
+      ok = ns_mesh_dev_forge(g_mesh, 1, d, 8, now);
+    }
+    Serial.printf("[mesh] %s forge\n", ok ? "ok" : "fail");
   } else if (!strncmp(a, "CTL ", 4)) {
     // Dev: relay raw ClientMessage bytes (hex) to every member, bypassing the gateway's
     // allow-list (members must refuse what it leaves out).

@@ -168,6 +168,7 @@ py_library(
         "mapping_trigger_core.py",
         "mesh_apply_at_skew_core.py",
         "mesh_gateway_core.py",
+        "mesh_join_admin_core.py",
         "mesh_smoke_core.py",
         "mesh_spike_core.py",
         "no_reboot_no_park_core.py",
@@ -1859,6 +1860,45 @@ py_binary(
     },
     imports = ["."],
     main = "hitl_mesh_gateway.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Mesh M7 (docs/design/mesh.md §7, §15 M7): real membership and signed admin sessions on
+# hitl-rig-1: a closed mesh from the site secret, an approval join, the admin's grant,
+# insider refusals (envelope control, beacon epochs), a revocation that survives a reboot.
+# The admin side is //firmware/mesh:mesh_admin_tool. Pure logic: mesh_join_admin_core.
+py_binary(
+    name = "mesh_join_admin",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_apply_at_skew.py",
+        "hitl_mesh_gateway.py",
+        "hitl_mesh_join_admin.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "mesh_serial_bridge.py",
+        ":mesh_gateway_fxbs",
+        "//firmware/mesh:mesh_admin_tool",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+    ],
+    env = {
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "MESH_ADMIN_TOOL_RUNFILE": "_main/firmware/mesh/mesh_admin_tool",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/meshTint.fxb",
+    },
+    imports = ["."],
+    main = "hitl_mesh_join_admin.py",
     tags = ["manual"],
     deps = [
         ":harness",

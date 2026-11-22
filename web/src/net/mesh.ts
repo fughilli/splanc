@@ -76,13 +76,86 @@ export interface MeshStateInfo {
   epochGen?: number;
   members?: MeshMemberInfo[];
   lastResult?: MeshResultInfo;
+  // Membership (mesh M7).
+  mode?: string | number;
+  /** 0 unprovisioned, 1 searching, 2 waiting for approval, 3 member. */
+  phase?: number;
+  keyEpoch?: number;
+  adminKey?: boolean;
+  siteSecret?: boolean;
+  /** This fixture's device key (what a grant names). */
+  deviceKey?: Uint8Array;
+  /** The admin session this connection unlocked (0: none) and its roster. */
+  session?: number;
+  roster?: number;
+  pending?: MeshPendingInfo[];
+  revoked?: number;
+  groups?: number[];
+  sessionsSynced?: number;
+  /** Mesh time in seconds: what a grant's expiry is in. */
+  meshS?: number;
 }
 
-/** A `mesh` server message (MeshInfo oneof): a result or a state. */
+/** A fixture waiting to join (approval: `admit`). */
+export interface MeshPendingInfo {
+  node?: number;
+  keyHash?: Uint8Array;
+  firmware?: number;
+  heardBy?: number;
+}
+
+/** The answer to a `mesh_admin`. */
+export interface MeshAdminResultInfo {
+  op?: number;
+  error?: string | number;
+  value?: number;
+  /** provision: the provisioner token (16 bytes, desk D-324). Keep it per fixture: it lets
+   * this user leave or re-provision the fixture without an admin grant. */
+  provisionerToken?: Uint8Array;
+}
+
+/** A `mesh` server message (MeshInfo oneof): a result, a state or an admin answer. */
 export interface MeshInfoMessage {
   type: "mesh";
   result?: MeshResultInfo;
   state?: MeshStateInfo;
+  admin?: MeshAdminResultInfo;
+}
+
+/** One `mesh_admin` operation (ledmapper.proto MeshAdmin, mesh M7). The app signs grants
+ * and rotation orders with the admin secret (M8); this is the wire. */
+export type MeshAdminOp =
+  | { provision: { meshId: number; siteSecret?: Uint8Array; adminKey?: Uint8Array; mode?: number; channel?: number; groups?: number[]; provisionerToken?: Uint8Array } }
+  | { unlock: { grant: Uint8Array } }
+  | { admit: { node: number; keyHash: Uint8Array } }
+  | { revoke: { order: Uint8Array; meshKey: Uint8Array; siteSecret: Uint8Array; exclude?: number[] } }
+  | { leave: { provisionerToken?: Uint8Array } }
+  | { groups: { node: number; groups: number[] } }
+  | { eject: { node: number; keyHash: Uint8Array } };
+
+const ADMIN_ERRORS: Record<string, string> = {
+  MESH_ADMIN_BAD_REQUEST: "the fixture did not understand the request",
+  MESH_ADMIN_LOCKED: "unlock the mesh with the admin secret first",
+  MESH_ADMIN_LOCKED_OUT: "a wrong admin grant was just tried; wait 2 s",
+  MESH_ADMIN_BAD_GRANT: "the admin grant was refused (another mesh's admin, or expired)",
+  MESH_ADMIN_NO_MESH: "this fixture is not in a mesh",
+  MESH_ADMIN_NO_MEMBERS: "no fixture has joined the admin session yet",
+  MESH_ADMIN_BUSY: "the mesh is busy, try again",
+  MESH_ADMIN_BAD_ORDER: "the key rotation was refused",
+  MESH_ADMIN_UNSUPPORTED: "this fixture cannot do that",
+};
+const ADMIN_ERROR_NUM = ["", ...Object.keys(ADMIN_ERRORS)];
+
+/** A `mesh_admin` answer's error as a sentence, or null when it was done. */
+export function meshAdminError(r: MeshAdminResultInfo | undefined): string | null {
+  if (!r || r.error === undefined || r.error === 0 || r.error === "MESH_ADMIN_OK") return null;
+  const name = typeof r.error === "number" ? ADMIN_ERROR_NUM[r.error] ?? String(r.error) : r.error;
+  return ADMIN_ERRORS[name] ?? name;
+}
+
+/** The `mesh_admin` client message for `op`. */
+export function meshAdminMessage(op: MeshAdminOp): ClientMessage {
+  return { type: "mesh_admin", ...op } as unknown as ClientMessage;
 }
 
 /** Live moves (seq'd, or any uniform write) go on arrival; discrete changes are scheduled. */

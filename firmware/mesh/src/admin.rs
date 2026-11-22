@@ -54,6 +54,9 @@ pub const FRESH_WINDOW: u64 = 64;
 pub const SESSIONS: usize = 2;
 /// A member re-sends its Ack this often until confirmed.
 pub const ACK_RETRY_US: i64 = 1_000_000;
+/// The longest admin grant a gateway accepts, from its own mesh time (desk D-328: 12 h, the
+/// app renews in the background in M8; 5 min of slack for the app's view of mesh time).
+pub const MAX_GRANT_S: u32 = 12 * 3600 + 300;
 
 /// "Gateway G may issue commands for session S until T", signed by the admin key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -338,6 +341,11 @@ impl Sessions {
         }
     }
 
+    /// Sessions whose gateway confirmed our freshness (their commands are accepted).
+    pub fn synced(&self) -> usize {
+        self.s.iter().flatten().filter(|s| s.floor.is_some()).count()
+    }
+
     pub fn get(&self, session: u32) -> Option<&MemberSession> {
         self.s.iter().flatten().find(|s| s.session == session)
     }
@@ -551,6 +559,15 @@ impl<const N: usize> GatewaySession<N> {
         Some((node, SessionMsg::Confirm { session, node, nonce, counter, mac: confirm_mac(&k, session, node, nonce, counter) }))
     }
 
+    /// A member removed by a rotation (M7): no more per-receiver MACs for it.
+    pub fn remove(&mut self, node: NodeId) {
+        for e in self.roster.iter_mut() {
+            if e.is_some_and(|e| e.node == node) {
+                *e = None;
+            }
+        }
+    }
+
     pub fn roster(&self) -> impl Iterator<Item = &RosterEntry> {
         self.roster.iter().flatten()
     }
@@ -614,7 +631,9 @@ impl AdminGate {
             self.lockout_until_us = None;
         }
         let Some(ak) = admin_key else { return Err(UnlockError::NoAdminKey) };
-        let ok = g.mesh_id == mesh_id && g.gateway == me && g.gateway_key == *my_key && g.not_after >= mesh_time_s && g.verify(ak);
+        let ok = g.mesh_id == mesh_id && g.gateway == me && g.gateway_key == *my_key && g.not_after >= mesh_time_s
+            && g.not_after - mesh_time_s <= MAX_GRANT_S
+            && g.verify(ak);
         if !ok {
             self.lockout_until_us = Some(now_us + UNLOCK_LOCKOUT_US);
             return Err(UnlockError::BadGrant);
@@ -796,5 +815,17 @@ mod tests {
         }
         assert_eq!(recipients_per_packet(192, 20), 19);
         assert_eq!(recipients_per_packet(192, 150), 3);
+    }
+    /// D-328: a gateway takes grants of at most 12 h (plus slack) from its own mesh time.
+    #[test]
+    fn gateway_refuses_grants_longer_than_12_hours() {
+        let admin = AdminSigner::from_secret(b"0123456789abcdef", MESH);
+        let gw = HostKey::from_seed(1);
+        let now_s = 5_000;
+        let mut gate = AdminGate::new();
+        let long = grant(&admin, &gw, 7, now_s + MAX_GRANT_S + 1);
+        assert_eq!(gate.unlock(0, now_s, 0, &long, Some(&admin.public()), MESH, 1, &gw.public_key()), Err(UnlockError::BadGrant));
+        let ok = grant(&admin, &gw, 7, now_s + 12 * 3600);
+        assert_eq!(gate.unlock(3_000_000, now_s, 0, &ok, Some(&admin.public()), MESH, 1, &gw.public_key()), Ok(()));
     }
 }

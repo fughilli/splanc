@@ -86,3 +86,39 @@ test("the mesh UI is for players that advertise the mesh variant", async () => {
   assert.equal(deviceHasMesh({ features: ["effects", "ota"] }), false);
   assert.equal(deviceHasMesh(null), false);
 });
+
+test("mesh_admin (M7): the wire both ways, and the firmware's answer", async () => {
+  const { meshAdminMessage, meshAdminError } = await import("../src/net/mesh");
+  const site = new Uint8Array(32).fill(7);
+  const key = new Uint8Array(65).fill(4);
+  const wire = encodeClient(meshAdminMessage({ provision: { meshId: 0x1234, siteSecret: site, adminKey: key, groups: [3] } }));
+  const back = decodeClient(wire) as unknown as { type: string; provision: Record<string, unknown> };
+  assert.equal(back.type, "mesh_admin");
+  assert.equal(back.provision["meshId"], 0x1234);
+  assert.deepEqual(back.provision["groups"], [3]);
+  // ServerMessage{mesh{admin{op: UNLOCK, error: BAD_GRANT}}} as mesh_gw.rs encode_admin writes it.
+  const m = decodeServer(unhex("ba03061a0408021004")) as unknown as MeshInfoMessage;
+  assert.equal(m.type, "mesh");
+  assert.equal(m.admin?.op, 2);
+  assert.equal(m.admin?.error, "MESH_ADMIN_BAD_GRANT");
+  assert.match(meshAdminError(m.admin) ?? "", /grant was refused/);
+  assert.equal(meshAdminError({ op: 1, error: "MESH_ADMIN_OK" }), null);
+});
+
+test("mesh_admin provisioner token (D-324): issued on provision, presented on leave", async () => {
+  const { meshAdminMessage } = await import("../src/net/mesh");
+  const tok = new Uint8Array(16).fill(9);
+  // proto3 JSON: bytes come back base64.
+  const bytes = (v: unknown): number[] =>
+    typeof v === "string" ? Array.from(Buffer.from(v, "base64")) : Array.from((v as Uint8Array | undefined) ?? []);
+  const back = decodeClient(encodeClient(meshAdminMessage({ leave: { provisionerToken: tok } }))) as unknown as {
+    leave: { provisionerToken?: Uint8Array };
+  };
+  assert.deepEqual(bytes(back.leave.provisionerToken), Array.from(tok));
+  // A bare leave still encodes (the old shape).
+  assert.ok(encodeClient(meshAdminMessage({ leave: {} })).length > 0);
+  // ServerMessage{mesh{admin{op: PROVISION, value: 0, provisioner_token}}} as encode_admin writes it.
+  const ans = "ba031a" + "1a18" + "0801" + "1000" + "1800" + "2210" + "09".repeat(16);
+  const m = decodeServer(unhex(ans)) as unknown as MeshInfoMessage;
+  assert.deepEqual(bytes(m.admin?.provisionerToken), Array.from(tok));
+});

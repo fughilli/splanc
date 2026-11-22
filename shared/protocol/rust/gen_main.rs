@@ -391,6 +391,22 @@ fn main() -> std::io::Result<()> {
         (".ledmapper.v1.MeshSend.inner", 200, true),
         (".ledmapper.v1.MeshResult.members", 16, false),
         (".ledmapper.v1.MeshState.members", 16, false),
+        // Mesh M7: membership and administration (mesh_gw.rs parses and encodes them).
+        (".ledmapper.v1.MeshProvision.site_secret", 32, true),
+        (".ledmapper.v1.MeshProvision.admin_key", 65, true),
+        (".ledmapper.v1.MeshProvision.groups", 8, false),
+        (".ledmapper.v1.MeshUnlock.grant", 144, true),
+        (".ledmapper.v1.MeshAdmit.key_hash", 8, true),
+        (".ledmapper.v1.MeshRevoke.order", 128, true),
+        (".ledmapper.v1.MeshRevoke.mesh_key", 16, true),
+        (".ledmapper.v1.MeshRevoke.site_secret", 32, true),
+        (".ledmapper.v1.MeshRevoke.exclude", 8, false),
+        (".ledmapper.v1.MeshAssignGroups.groups", 8, false),
+        (".ledmapper.v1.MeshEject.key_hash", 8, true),
+        (".ledmapper.v1.MeshPending.key_hash", 8, true),
+        (".ledmapper.v1.MeshState.device_key", 65, true),
+        (".ledmapper.v1.MeshState.pending", 8, false),
+        (".ledmapper.v1.MeshState.groups", 8, false),
     ] {
         if firmware {
             g.configure(field, Config::new().skip(true));
@@ -403,6 +419,7 @@ fn main() -> std::io::Result<()> {
     if firmware {
         g.configure(".ledmapper.v1.MeshInfo.result", Config::new().skip(true));
         g.configure(".ledmapper.v1.MeshInfo.state", Config::new().skip(true));
+        g.configure(".ledmapper.v1.MeshInfo.admin", Config::new().skip(true));
     }
 
     g.compile_fdset_file(&args[1], &args[2])

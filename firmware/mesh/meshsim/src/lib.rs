@@ -771,6 +771,7 @@ pub enum Ev {
     SessionSynced { session: u32, gateway: NodeId },
     GrantRenewalDue { session: u32, not_after: u32 },
     ShowEpoch(splanc_mesh::meshtime::ShowEpoch),
+    Ejected,
 }
 
 impl From<Event<'_>> for Ev {
@@ -786,6 +787,7 @@ impl From<Event<'_>> for Ev {
             Event::SessionSynced { session, gateway } => Ev::SessionSynced { session, gateway },
             Event::GrantRenewalDue { session, not_after } => Ev::GrantRenewalDue { session, not_after },
             Event::ShowEpoch(e) => Ev::ShowEpoch(e),
+            Event::Ejected => Ev::Ejected,
             #[allow(unreachable_patterns)]
             _ => Ev::StateChanged,
         }
@@ -950,11 +952,12 @@ impl World {
     pub fn reboot(&mut self, i: usize) {
         self.power_off(i);
         let (id, class, mark) = (self.nodes[i].id, self.nodes[i].class(), self.nodes[i].counter_mark);
-        let saved = self.nodes[i].stack.membership.state;
+        // Through the bytes the firmware writes to littlefs (mesh M7), not the struct.
+        let saved = self.nodes[i].stack.membership.state.and_then(|s| MeshState::decode(&s.encode()));
         let mut stack = self.make_stack(i, id, class, mark);
         let local = self.local(i);
         if let Some(s) = saved {
-            stack.membership.restore(s, local);
+            stack.restore(local, s);
         }
         self.nodes[i].stack = stack;
         self.nodes[i].saved = saved;
