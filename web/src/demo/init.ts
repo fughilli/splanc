@@ -12,6 +12,8 @@
  *   bluetooth  — a Web Bluetooth seam so the add-device BLE button appears
  *                (instead of the "not available in this browser" note).
  *   camera     — a simulated camera frame for the mapping/capture screen.
+ *   fxstub     — effect compiles answered from the declared uniforms (no
+ *                compiler wasm on a static screenshot server).
  *   devmap-none / devmap-saved / devmap-unsaved — `device`, plus a stored map
  *                on it (none; one this phone already has; one it doesn't) and a
  *                running IMU, for the Maps tab's "On <device>" card.
@@ -50,6 +52,17 @@ type CaptureCanvas = HTMLCanvasElement & { captureStream(fps?: number): MediaStr
 export function initDemoMode(scenarios: Set<string>): void {
   const devmap = [...scenarios].find((s) => s.startsWith("devmap-"))?.slice("devmap-".length);
   if (scenarios.has("device") || devmap) setupConnectedDevice();
+  // `fxstub`: answer effect compiles from the declared uniforms (the static
+  // screenshot server has no compiler wasm), e.g. for the Effects tab's tune sheet.
+  if (scenarios.has("fxstub")) {
+    stubPresetCompiler();
+    // ...and the demo controller takes the upload (no socket behind it).
+    const c = appState.client as unknown as Record<string, unknown> | null;
+    if (c) {
+      c["submitEffect"] = async (effectId: string) => ({ type: "result_ready", id: effectId });
+      c["setUniforms"] = () => true;
+    }
+  }
   if (devmap) setupDeviceMap(devmap);
   if (scenarios.has("bluetooth")) setupWebBluetooth();
   if (scenarios.has("camera")) setupFakeCamera();
@@ -71,15 +84,28 @@ function stubPresetCompiler(): void {
   const Orig = globalThis.Worker;
   if (!Orig) return;
   const compile = (src: string): unknown => {
-    const uniforms = [...src.matchAll(/uniform\s+float\s+(\w+)\s*:\s*([-\d.]+)\s*\.\.\s*([-\d.]+)\s*=\s*([-\d.]+)/g)].map(
-      (m, i) => ({
+    const sliders = [...src.matchAll(/uniform\s+(?:float|int)\s+(\w+)\s*:\s*([-\d.]+)\s*\.\.\s*([-\d.]+)\s*=\s*([-\d.]+)/g)].map(
+      (m) => ({
+        at: m.index ?? 0,
         name: m[1],
-        slot: i,
         width: 1,
         ui: { kind: "slider", min: Number(m[2]), max: Number(m[3]), step: 0.01 },
         default: [Number(m[4])],
       }),
     );
+    // `uniform vec3 tint : color = r, g, b;` (the tune sheet's colour rows).
+    const colors = [...src.matchAll(/uniform\s+vec3\s+(\w+)\s*:\s*color\s*=\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)/g)].map(
+      (m) => ({
+        at: m.index ?? 0,
+        name: m[1],
+        width: 3,
+        ui: { kind: "color" },
+        default: [Number(m[2]), Number(m[3]), Number(m[4])],
+      }),
+    );
+    const uniforms = [...sliders, ...colors]
+      .sort((a, b) => a.at - b.at)
+      .map(({ at: _at, ...u }, i) => ({ ...u, slot: i }));
     return { ok: true, bytecode: new Uint8Array([0x46, 0x58, 0x42, 0x31]), uniforms, diagnostics: [] };
   };
   globalThis.Worker = function (this: unknown, url: string | URL, opts?: WorkerOptions): Worker {

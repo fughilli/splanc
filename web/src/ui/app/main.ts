@@ -30,6 +30,8 @@ import { MapDetailScreen } from "../screens/mapDetail";
 import { EffectsBrowserScreen } from "../screens/effectsBrowser";
 import { EffectDemoScreen } from "../screens/effectDemo";
 import { EffectEditorScreen } from "../screens/effectEditor";
+import { setTuneCompiler } from "../screens/effectTune";
+import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { ShowModeScreen } from "../screens/showMode";
 import { BridgeLiveScreen } from "../screens/bridgeLive";
 import { CaptureScreen } from "../screens/capture";
@@ -104,6 +106,11 @@ async function main(): Promise<void> {
   if (!demoParam && !driverParam) deviceProber.start();
 
   const router = new Router(shell.outlet);
+
+  // The Effects tab's tune sheet compiles on tap: one lazily-made worker for the
+  // app's lifetime (the compiler download is the slow part).
+  let tuneWorker: FxCompilerWorker | null = null;
+  setTuneCompiler((src) => (tuneWorker ??= new FxCompilerWorker()).compile(src));
   shell.attach(router);
 
   // Ask for persistent storage so the library isn't evicted (design doc §9.6).
@@ -255,11 +262,12 @@ async function main(): Promise<void> {
       return AcidModeScreen(router, { play: m.query.get("play") === "1" });
     })
     .setFallback(() => {
-      // First run with no device and no maps → onboarding; else → maps.
+      // First run with no device → onboarding; else → home (Effects: see the
+      // fixture, pick an effect, tune it — docs/ux/oobe-review.md).
       const hasDevices = deviceStore.list().length > 0;
       if (hasDevices || urlOverride) {
-        shell.setChrome({ title: "Maps", tabs: true });
-        return MapBrowserScreen(router);
+        shell.setChrome({ title: "Effects", tabs: true });
+        return EffectsBrowserScreen(router);
       }
       shell.setChrome({ title: "Set up", tabs: false });
       return OnboardingScreen(router);
