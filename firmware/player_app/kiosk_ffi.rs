@@ -96,8 +96,9 @@ pub fn classify(arm: u32, frame: &[u8]) -> Class {
         21 if submit_stores(frame) => Class::Refuse,
         // set_playback, submit_effect, set_effect, set_uniforms (live too),
         // set_texture, set_brightness (no cap), set_crossfade, blend_keypoints,
-        // load_stored_effect (play one of the owner's stored effects).
-        17 | 21 | 22 | 23 | 28 | 31 | 39 | 44 | super::effect_store::ARM_LOAD_STORED_EFFECT => Class::Play,
+        // load_stored_effect (play one of the owner's stored effects), and osc (what
+        // udp/9000 takes on the LAN unlocked: uniforms, a module's addresses).
+        17 | 21 | 22 | 23 | 28 | 31 | 39 | 44 | super::effect_store::ARM_LOAD_STORED_EFFECT | crate::ARM_OSC => Class::Play,
         // upload_chunk: only a sharded effect upload (the BLE path for a big .fxb).
         29 => match parse_upload_chunk(frame) {
             Ok(Some(c)) if c.kind == UPLOAD_KIND_EFFECT => Class::Play,
