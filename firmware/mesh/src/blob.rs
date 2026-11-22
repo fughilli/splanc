@@ -442,8 +442,9 @@ impl Blobs {
 
 /// `SCENE` port tag of a [`SceneMsg`].
 pub const T_SCENE: u8 = b'S';
-/// Blobs one scene names (an effect and its state frames).
-pub const SCENE_BLOBS: usize = 2;
+/// Blobs one scene names (deck A's effect, deck B's effect, the state frames: a catch-up,
+/// desk D-465).
+pub const SCENE_BLOBS: usize = 3;
 
 /// An admin's instruction about blobs: fetch these, and apply them (or only hold them).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

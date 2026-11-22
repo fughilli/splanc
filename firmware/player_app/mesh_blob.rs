@@ -45,10 +45,12 @@ extern "C" {
     fn lm_mesh_staged_take(frame: *mut *const u8) -> u32;
     // main.cpp: this fixture's look as a state blob (lm_fx_scene_frames, under the mutex).
     fn lm_mesh_scene_frames(out: *mut u8, cap: u32) -> i32;
+    // main.cpp: deck B's loaded effect frame (null: none), D-465.
+    fn lm_mesh_deckb_frame(len: *mut u32) -> *const u8;
 }
 
 /// Blobs a fixture holds at once (receiving + complete + staged).
-pub const SLOTS: usize = 3;
+pub const SLOTS: usize = 4;
 /// A complete blob nobody asked for in this long is freed.
 pub const IDLE_US: i64 = 20_000_000;
 /// The state blob's buffer (uniform values of a rich effect, brightness, crossfade).
@@ -552,6 +554,17 @@ fn catch_up(m: &mut Mesh, node: NodeId, now_us: i64) {
     if let Some(i) = effect {
         blobs[n] = (m.blobs.s[i].hash, m.blobs.s[i].len as u16);
         n += 1;
+    }
+    // Deck B's effect (D-465), before the state blob that sets its uniforms and the crossfade.
+    let mut bl = 0u32;
+    let b = unsafe { lm_mesh_deckb_frame(&mut bl) };
+    if !b.is_null() && bl > 0 {
+        // SAFETY: main.cpp's copy, valid until the next handled message (this is loopTask).
+        let frame = unsafe { core::slice::from_raw_parts(b, bl as usize) };
+        if let Some(i) = m.blobs.put(frame, false) {
+            blobs[n] = (m.blobs.s[i].hash, m.blobs.s[i].len as u16);
+            n += 1;
+        }
     }
     let mut st = [0u8; STATE_MAX];
     let k = unsafe { lm_mesh_scene_frames(st.as_mut_ptr(), STATE_MAX as u32) };

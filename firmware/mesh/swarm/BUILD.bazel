@@ -48,10 +48,8 @@ SRCS = glob(["src/*.rs"])
 rust_library(
     name = "swarm_net",
     srcs = SRCS,
-    # Host builds (tests, meshsim, Pi nodes) carry the custodian spill, the firmware image
-    # updater (OTA over the mesh is Phase 2) and swarm settings bundles; the C6 firmware
-    # carries none of them (mesh M6: effects travel as Splanc blobs,
-    # firmware/mesh/src/blob.rs; Splanc firmware has no swarm bundle key).
+    # Host builds (tests, meshsim, Pi nodes) carry the custodian spill (firmware does not), the
+    # firmware image updater and swarm settings bundles (both on the C6 too, desk D-463).
     crate_features = [
         "custodian_spill",
         "fw_update",
@@ -85,7 +83,13 @@ rust_test(
 rust_library(
     name = "swarm_net_fw",
     srcs = SRCS,
-    crate_features = ["mbedtls"],
+    # The C6 keeps the firmware image updater and settings bundles (desk D-463: OTA over the
+    # mesh comes back on them).
+    crate_features = [
+        "fw_update",
+        "mbedtls",
+        "swarm_settings",
+    ],
     crate_name = "swarm_net",
     crate_root = "src/lib.rs",
     edition = "2021",

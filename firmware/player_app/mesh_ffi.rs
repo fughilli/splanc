@@ -1377,6 +1377,11 @@ mod stubs {
         -1
     }
     #[no_mangle]
+    extern "C" fn lm_mesh_deckb_frame(len: *mut u32) -> *const u8 {
+        unsafe { *len = 0 };
+        core::ptr::null()
+    }
+    #[no_mangle]
     extern "C" fn lm_fx_check_effect(_: *const u8, _: usize) -> u32 {
         1
     }

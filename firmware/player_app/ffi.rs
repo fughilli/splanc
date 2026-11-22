@@ -2445,6 +2445,18 @@ pub unsafe extern "C" fn lm_fx_scene_frames(out: *mut u8, cap: usize) -> i32 {
             }
         }
     }
+    // Deck B's uniform values too (deck = 3: 1), when it renders (D-465: a catch-up carries
+    // deck B's effect).
+    if let Some(p) = deck(DECK_B_IDX).filter(|p| (**p).renders()) {
+        let ok = put(&mut o, 23, &mut |w: &mut PbOut| {
+            write_current(w, 1, DECK_B_IDX, p);
+            w.uint(2, 1);
+            w.uint(3, 1);
+        });
+        if !ok {
+            return -1;
+        }
+    }
     // set_brightness = 31 {brightness = 1 (double)}; set_crossfade = 39 {position = 1}.
     let b = player().output_brightness() as f64;
     let x = player().crossfade() as f64;

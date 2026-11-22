@@ -936,6 +936,28 @@ extern "C" void lm_mesh_staged_cancel() {
   xSemaphoreGive(player_mutex);
 }
 
+// Deck B's effect frame, kept while it is loaded (desk D-465): deck B is never persisted
+// (uniform-keypoints design), so this is what a gateway's catch-up hands a member that joins
+// or reboots later. Heap (<= the effect cap), replaced by the next deck-B load.
+static uint8_t *g_deckb_frame = nullptr;
+static size_t g_deckb_len = 0;
+
+static void keep_deckb_frame(const uint8_t *req, size_t len) {
+  uint8_t *c = static_cast<uint8_t *>(malloc(len));
+  if (c == nullptr) return;  // keep the old one: a catch-up without deck B is the old behaviour
+  memcpy(c, req, len);
+  free(g_deckb_frame);
+  g_deckb_frame = c;
+  g_deckb_len = len;
+}
+
+// mesh_blob.rs: deck B's frame for a catch-up (nullptr: none). Valid until the next
+// handled message (loopTask only).
+extern "C" const uint8_t *lm_mesh_deckb_frame(uint32_t *len) {
+  *len = (uint32_t)g_deckb_len;
+  return g_deckb_frame;
+}
+
 extern "C" int32_t lm_mesh_scene_frames(uint8_t *out, uint32_t cap) {
   if (player_mutex == nullptr) return -1;
   xSemaphoreTake(player_mutex, portMAX_DELAY);
@@ -1392,6 +1414,9 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     // (docs/design/uniform-keypoints.md): a show re-cues it.
     fs_write_file(kEffectPath, req, req_len);
     remove(kEffectSelPath);
+  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect && lm_fx_last_deck() == 1 &&
+             !lm_fxs_last_was_store()) {
+    keep_deckb_frame(req, req_len);  // deck B: RAM only, for a mesh catch-up (D-465)
   } else if (reply_arm == kArmWelcome && req_arm == kArmSetFixturePose) {
     // A validated room pose (or a clear): persist the frame unless commit=false.
     if (lm_fixture_pose_commit()) fs_write_file(kPosePath, req, req_len);
