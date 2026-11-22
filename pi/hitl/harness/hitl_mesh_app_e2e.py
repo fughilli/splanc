@@ -425,7 +425,12 @@ def run(args: argparse.Namespace) -> int:
         httpd, hport = lg.serve(web)
         stack.callback(httpd.shutdown)
         origin = f"http://127.0.0.1:{hport}"
-        dev_ids = {d.label: f"dev-hitl-{d.label}" for d in duts}
+        # The app's own record ids (store/deviceStore.ts idForUrl): a seeded record under
+        # another id is a second record for the same address, and the app treats it so.
+        dev_ids = {
+            d.label: "dev-" + re.sub(r"[^a-z0-9]+", "-", app_url(d), flags=re.IGNORECASE)
+            for d in duts
+        }
         seed = {
             "ledmapper.devices": json.dumps(
                 [
@@ -452,6 +457,13 @@ def run(args: argparse.Namespace) -> int:
         stack.callback(browser.close)
         ctx = browser.new_context(viewport=DESKTOP, device_scale_factor=2, ignore_https_errors=True)
         ctx.add_init_script(lg.seed_js(seed, "light"))
+        # Diagnostics: who opens each wss (the stack, in the browser console log).
+        ctx.add_init_script(
+            "(() => { const W = window.WebSocket; window.WebSocket = new Proxy(W, {"
+            " construct(t, a) { console.log('WSNEW ' + a[0] + ' ' +"
+            " (new Error().stack || '').split('\\n').slice(2, 9).join(' | '));"
+            " return Reflect.construct(t, a); } }); })();"
+        )
         # Diagnostics: count per-member mesh results the app stored (store/meshSession.ts keeps
         # the last one per connection in a WeakMap) and read back.
         ctx.add_init_script(
