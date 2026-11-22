@@ -72,7 +72,9 @@ async def drive(url: str, fx: dict[str, bytes], leds: int, phases: dict) -> None
 
     try:
         t0 = time.time()
-        await hello(c)
+        w = await hello(c)
+        flash = [f for f in (w.get("features") or []) if f.startswith("flash_")]
+        _log(f"[flr] welcome flash feature: {flash}")
         await c.call(line_map(leds), "result_ready")
         await c.call({"type": "set_led_count", "led_count": leds}, "led_count_state")
         await c.call(

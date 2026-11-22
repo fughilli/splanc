@@ -54,22 +54,27 @@ and done right after the mutex is released, before the reply goes out. The store
 check reads littlefs usage measured after the last write (below render), not a filesystem
 walk under the mutex.
 
-## Still late (follow-up)
+## Nothing read from flash under the lock
 
-On hitl-rig-1 the effect-store and keypoint handlers still hold the mutex for 30-70 ms
-(`handle_max` in the `[net]` line): the keypoint save looks for its slot and lists them by
-opening every `kp_<effect>.<n>` file (`kp_find`, `kp_list_reply`), and the store does
-similar record bookkeeping. These are littlefs reads, not flash stalls. The fix is an
-in-RAM index of those files, kept up to date by the hooks. Until then `flash_render`
-reports those phases and gates them only with `--strict`.
+The keypoint save looks for its slot and lists the slots by opening every
+`kp_<effect>.<n>` file (`kp_find`, `kp_list_reply`), and the store reads all 8 record
+headers for a listing or a lookup: 30-70 ms of littlefs reads with the mutex held
+(`handle_max` in the `[net]` line). Those files are now read before the mutex is taken
+(`fs_prefetch`: the effect's key needs the mutex only for a moment, `lm_kp_key`, no flash),
+onto the heap for that message, and the read hook serves them from there. Littlefs writes,
+the deferred flush and the read-ahead run below the render task: a write is mostly CPU around
+the flash operations (up to ~200 ms with a compaction), which at render's priority took turns
+with frames. `handle_max` is now ~4 ms.
+
+The flash's JEDEC id and whether auto-suspend is on are in welcome.features and the agent
+manifest: `flash_464016_suspend_on`.
 
 ## Verification
 
 - `//pi/hitl/harness:flash_render_netstack` (tagged `hitl`): stores and deletes effects,
   uploads a 512-LED map and back, commits uniforms, saves keypoints, changes color
   correction and renames the device while an effect renders. It fails on any late frame
-  in the map and settings phases (the effect-store and keypoint ones with `--strict`), and
-  SKIPs on a flash without suspend support. `--allow-no-suspend` runs
+  in any of those phases, and SKIPs on a flash without suspend support. `--allow-no-suspend` runs
   it against an image without auto-suspend (the A/B baseline).
 - `mesh_join_admin` is strict again: late frames next to a membership write fail
   (`--allow-flash-late` relaxes it).
@@ -81,8 +86,8 @@ reports those phases and gates them only with `--strict`.
 | `mesh_join_admin`, late frames at a fixture's first membership write (116-129 ms) | 1 per fixture, 21-37 ms intervals (#594 r4-r8: 5/5 runs) | 0 (3 runs, strict gate: PASS) |
 | `flash_render` map phase (2 writes, 35-46 ms) | 0 | 0 (3 runs) |
 | `flash_render` settings phase (5 writes, 17-50 ms) | 0 | 0 (3 runs) |
-| `flash_render` effect store (4 stores + 1 delete) | 8 late, worst 43 ms | 5 late, worst 44-49 ms (lock, below) |
-| `flash_render` keypoints (3 saves) | 4 late, worst 77 ms | 3 late, worst 73-81 ms (lock, below) |
+| `flash_render` effect store (4 stores + 1 delete) | 8 late, worst 43 ms | 0 (3 runs, with the read-ahead below) |
+| `flash_render` keypoints (3 saves) | 4 late, worst 77 ms | 0 (3 runs, with the read-ahead below) |
 
 Short writes are a string of short cache-disabled operations, each shorter than the slack in
 a frame, so the map and settings writers did not drop frames before either; what auto-suspend
