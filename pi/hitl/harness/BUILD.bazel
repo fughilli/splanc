@@ -890,8 +890,11 @@ py_test(
         "hitl_map_upload.py",
     ],
     data = [
-        # Shipped into the rig container (scp) and run there.
+        # Shipped into the rig container (scp) and run there; ble_identify.py imports
+        # the shared scan/connect/adapter path from hitl_improv.py (+ its improv.py codec).
         "ble_identify.py",
+        "hitl_improv.py",
+        "improv.py",
         ":plasma_hue_fixed_fxb",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "@hitl_reserve//cmd/hitl",
