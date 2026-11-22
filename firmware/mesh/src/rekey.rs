@@ -28,6 +28,8 @@ use crate::codec::{R, W};
 
 /// Revoked device keys a member keeps (the latest list; older entries rotate out).
 pub const REVOKED_MAX: usize = 8;
+/// In a [`RekeyOrder`]'s `rev_version`: the order's list replaces the members' (D-443).
+pub const REV_REPLACE: u16 = 0x8000;
 /// Revocations one order carries.
 pub const ORDER_REVOKED: usize = 4;
 /// Wraps per packet (7 × 26 B + 7 B header fit a 192-byte payload).
@@ -55,11 +57,17 @@ impl Revocations {
     }
 
     /// Apply a newer signed list: its entries go in first, older ones are kept while room.
+    /// With [`REV_REPLACE`] in `version` the list becomes exactly `hashes` (desk D-443: when
+    /// the list nears capacity the app rolls the mesh key to the current members and starts
+    /// a fresh list, so blocked fixtures hold only a dead key and the list never fills).
+    /// Versions compare without the flag.
     pub fn apply(&mut self, version: u16, hashes: &[KeyHash]) {
+        let replace = version & REV_REPLACE != 0;
+        let version = version & !REV_REPLACE;
         if version <= self.version && self.n > 0 {
             return;
         }
-        let old = *self;
+        let old = if replace { Revocations::default() } else { *self };
         *self = Revocations { version, n: 0, h: [[0; 8]; REVOKED_MAX] };
         for h in hashes.iter().chain(old.h[..old.n as usize].iter()) {
             if !self.contains(h) && (self.n as usize) < REVOKED_MAX {
@@ -623,5 +631,22 @@ mod tests {
         assert!(d.verify(&admin.public()));
         assert_eq!(RekeyOrder::decode(&b[..n - 1]), None);
         assert_eq!(RekeyOrder::decode(&b[..n + 1]), None);
+    }
+    /// D-443: a replacing order empties the list down to its own entries.
+    #[test]
+    fn a_replacing_order_starts_a_fresh_list() {
+        let mut r = Revocations::default();
+        for v in 1..=REVOKED_MAX as u16 {
+            r.apply(v, &[[v as u8; 8]]);
+        }
+        assert_eq!(r.len(), REVOKED_MAX);
+        r.apply(9 | REV_REPLACE, &[[0xaa; 8]]);
+        assert_eq!((r.version, r.len()), (9, 1));
+        assert!(r.contains(&[0xaa; 8]) && !r.contains(&[1; 8]));
+        // Versions compare without the flag: an older replacing order is ignored.
+        r.apply(5 | REV_REPLACE, &[]);
+        assert_eq!((r.version, r.len()), (9, 1));
+        r.apply(10, &[[0xbb; 8]]);
+        assert_eq!(r.len(), 2);
     }
 }
