@@ -106,7 +106,7 @@ test("pressing the eye keeps focus and the caret in the input", () => {
 test("add-device Wi-Fi password has the eye toggle, and picking a saved network keeps visibility", () => {
   prefs.addWifi({ ssid: "Attic", password: "upstairs1" });
   prefs.addWifi({ ssid: "HomeNet", password: "hunter22" });
-  openAddDevice("manual");
+  openAddDevice("ble");
 
   const [ssid, pass] = all(".wifi-sheet .sheet-input");
   assert.ok(ssid && pass);

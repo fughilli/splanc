@@ -32,11 +32,42 @@ public class WssBridge: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "connect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "send", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "httpRequest", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "httpRequest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startDiscovery", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopDiscovery", returnType: CAPPluginReturnPromise)
     ]
 
     private var conns: [String: WssConnection] = [:]
     private let lock = NSLock()
+    /// The running Bonjour browse for `_splanc._tcp` (main thread only).
+    private var browser: SplancServiceBrowser?
+
+    /// Start finding Splanc fixtures on the LAN by their mDNS adverts (D-72).
+    /// Each resolved advert is pushed as a `mdnsService` event
+    /// `{ name, host, port, addresses: [ipv4], txt: {id,name,fw,…}, lost: false }`;
+    /// a vanished one as `{ name, lost: true }`. Idempotent. Needs
+    /// `NSBonjourServices = [_splanc._tcp]` in Info.plist (ios-config/apply.sh).
+    @objc func startDiscovery(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            if self.browser == nil {
+                let b = SplancServiceBrowser { [weak self] payload in
+                    self?.notifyListeners("mdnsService", data: payload)
+                }
+                self.browser = b
+                b.start()
+                wlog("discovery: browsing _splanc._tcp")
+            }
+            call.resolve()
+        }
+    }
+
+    @objc func stopDiscovery(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.browser?.stop()
+            self.browser = nil
+            call.resolve()
+        }
+    }
 
     @objc func connect(_ call: CAPPluginCall) {
         guard let urlStr = call.getString("url"), let url = URL(string: urlStr) else {
@@ -265,5 +296,84 @@ private class WssConnection: NSObject, URLSessionWebSocketDelegate {
             return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+}
+
+/// Bonjour browse + resolve for `_splanc._tcp` (firmware/mdns). NetServiceBrowser
+/// rather than NWBrowser: it resolves to addresses + TXT in one step, which is all
+/// the connect list needs. Scheduled on the main run loop (created on main).
+private final class SplancServiceBrowser: NSObject, NetServiceBrowserDelegate, NetServiceDelegate {
+    private let browser = NetServiceBrowser()
+    /// Services must be retained while they resolve.
+    private var services: [NetService] = []
+    private let emit: ([String: Any]) -> Void
+
+    init(emit: @escaping ([String: Any]) -> Void) {
+        self.emit = emit
+        super.init()
+        browser.delegate = self
+    }
+
+    func start() {
+        browser.searchForServices(ofType: "_splanc._tcp.", inDomain: "local.")
+    }
+
+    func stop() {
+        browser.stop()
+        for s in services { s.stop() }
+        services.removeAll()
+    }
+
+    func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+        services.append(service)
+        service.delegate = self
+        service.resolve(withTimeout: 5)
+    }
+
+    func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
+        services.removeAll { $0 == service }
+        emit(["name": service.name, "lost": true])
+    }
+
+    func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
+        wlog("discovery: browse failed \(errorDict)")
+        emit(["error": "\(errorDict)"])
+    }
+
+    func netServiceDidResolveAddress(_ sender: NetService) {
+        var txt: [String: String] = [:]
+        if let data = sender.txtRecordData() {
+            for (k, v) in NetService.dictionary(fromTXTRecord: data) {
+                txt[k] = String(data: v, encoding: .utf8) ?? ""
+            }
+        }
+        let addrs = (sender.addresses ?? []).compactMap(ipv4String)
+        emit([
+            "name": sender.name,
+            "host": sender.hostName ?? "",
+            "port": sender.port,
+            "addresses": addrs,
+            "txt": txt,
+            "lost": false
+        ])
+    }
+
+    func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+        wlog("discovery: could not resolve \(sender.name): \(errorDict)")
+    }
+}
+
+/// Dotted-quad text of an IPv4 sockaddr (nil for IPv6 and anything else: the
+/// player is IPv4-only).
+private func ipv4String(_ data: Data) -> String? {
+    return data.withUnsafeBytes { raw -> String? in
+        guard raw.count >= MemoryLayout<sockaddr_in>.size,
+              let base = raw.baseAddress else { return nil }
+        let family = base.assumingMemoryBound(to: sockaddr.self).pointee.sa_family
+        guard family == sa_family_t(AF_INET) else { return nil }
+        var addr = base.assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr
+        var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        guard inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN)) != nil else { return nil }
+        return String(cString: buf)
     }
 }

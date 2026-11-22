@@ -96,6 +96,10 @@ type IdleWindow = Window & {
 
 class DeviceProber {
   private reachable = new Map<string, ProbeInfo>();
+  // Devices looked for at least once since boot: until then "not reachable" only
+  // means "not asked yet", so the device sheet says "Looking for it…" rather than
+  // "Can't reach it".
+  private probed = new Set<string>();
   private interval = MIN_INTERVAL;
   private timer: number | null = null;
   private idx = 0;
@@ -104,6 +108,16 @@ class DeviceProber {
 
   isReachable(id: string): boolean {
     return this.reachable.has(id);
+  }
+  /** Has this device been looked for at least once (since boot)? */
+  hasProbed(id: string): boolean {
+    return this.probed.has(id) || this.reachable.has(id);
+  }
+  /** Demo seam: record a device as looked for and not found. */
+  noteUnreachable(id: string): void {
+    this.probed.add(id);
+    this.reachable.delete(id);
+    this.emit();
   }
   info(id: string): ProbeInfo | undefined {
     return this.reachable.get(id);
@@ -145,12 +159,15 @@ class DeviceProber {
     this.emit();
   }
 
-  /** One-shot poll of every known non-active device (pull-to-refresh). */
+  /** One-shot poll of every known non-active device (the device sheet opening). */
   async probeAllNow(): Promise<void> {
     const activeId = deviceStore.activeId();
     const devices = deviceStore.list().filter((d) => d.id !== activeId);
     await Promise.all(devices.map((d) => this.probeOne(d)));
+    // Then carry on with the background loop, brisk again (this replaces the
+    // next round-robin tick rather than doubling up on a device just probed).
     this.interval = MIN_INTERVAL;
+    this.schedule(this.interval);
     this.emit();
   }
 
@@ -176,6 +193,7 @@ class DeviceProber {
   private async probeOne(dev: KnownDevice): Promise<boolean> {
     const was = this.reachable.get(dev.id);
     const info = await probeDevice(dev.wssUrl);
+    this.probed.add(dev.id);
     if (info) {
       const changed = !was || was.mac !== info.mac || was.deviceName !== info.deviceName;
       this.reachable.set(dev.id, info);
