@@ -128,7 +128,7 @@ def verdict(
             for x in lates:
                 if x.get("save_us") is not None and allow_save_late:
                     continue
-                if x.get("effect_load"):
+                if x.get("effect_load") or x.get("tls"):
                     continue
                 why.append(f"{name}: {d} late frame(s) {x}")
     return (not why), why
@@ -139,6 +139,9 @@ _FT_LINE = re.compile(r"\[ft\] r\d+:")
 _SAVE = re.compile(
     r"\[mesh\] state (?:saved|erased) |\[mesh\] shared effect persisted |\[upload\](?!.*\(ram\))"
 )
+# A TLS server handshake (the harness opening a connection to check what a fixture runs):
+# its ECDHE competes with render for the CPU. Not mesh work; reported, not gated.
+_TLS = re.compile(r"TLS HANDSHAKE COMPLETE")
 _LOAD = re.compile(
     r"\[mesh\] fx applied |\[mesh\] scene apply .*staged=0|\[mesh\] gw share apply .*local=now"
 )
@@ -151,7 +154,7 @@ def late_frames(lines: list[str]) -> list[dict]:
     a flash write was (a littlefs write stalls the whole chip). Unattributed ones are what
     effect sharing must never cause (transfers, hashing, scenes)."""
     out: list[dict] = []
-    cur = {"load": False, "save": False}
+    cur = {"load": False, "save": False, "tls": False}
     prev = dict(cur)
     # A sharded upload logs only its first window; it writes /lfs/upload.tmp until the
     # reassembled frame is handed on (the gateway's `gw share` line), so the windows in
@@ -162,6 +165,8 @@ def late_frames(lines: list[str]) -> list[dict]:
             cur["load"] = True
         if _SAVE.search(t):
             cur["save"] = True
+        if _TLS.search(t):
+            cur["tls"] = True
         if "[upload] " in t and "first window" in t and "(ram)" not in t:
             uploading = True  # (an EFFECT upload reassembled in RAM writes no flash)
         if uploading:
@@ -169,7 +174,7 @@ def late_frames(lines: list[str]) -> list[dict]:
             if "[mesh] gw share " in t or "[upload] " in t and ("decoded" in t or "NOT" in t):
                 uploading = False
         if _FT_LINE.search(t):
-            prev, cur = cur, {"load": False, "save": False}
+            prev, cur = cur, {"load": False, "save": False, "tls": False}
         elif _SAVE.search(t) or _LOAD.search(t):
             # A write (or load) logged after the [late] line of its window, before the
             # next [ft]: it ended there (its log line comes when it is done).
@@ -188,6 +193,7 @@ def late_frames(lines: list[str]) -> list[dict]:
                     "ago_ms": int(m.group(3)),
                     "effect_load": prev["load"] or cur["load"],
                     "save_us": 0 if (prev["save"] or cur["save"]) else None,
+                    "tls": prev["tls"] or cur["tls"],
                     "_win": id(prev),
                 }
             )
