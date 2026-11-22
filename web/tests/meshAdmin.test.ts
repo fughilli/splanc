@@ -330,3 +330,43 @@ test("whole-mesh control: small changes wrap, effect programs go to the effect s
   assert.equal(big.kind, "large");
   assert.ok(big.kind === "large" && big.inner.length > 400);
 });
+
+test("per-member results: which fixtures got a whole-mesh change", async () => {
+  const { meshResultSummary } = await import("../src/ui/screens/meshModel");
+  const names: Record<number, string> = { 2: "Desk Lamp", 3: "Hall Lamp" };
+  const all = meshResultSummary(
+    { complete: true, gatewayStatus: 0, members: [{ node: 2, status: "MESH_MEMBER_OK", latencyMs: 41 }, { node: 3, status: 0 }] },
+    (n) => names[n] ?? nodeLabel(n),
+    { node: 1, name: "Living Room" },
+  );
+  assert.equal(all.line, "Reached all 3 fixtures");
+  assert.ok(all.allOk);
+  assert.deepEqual(all.rows.map((r) => [r.name, r.text]), [["Living Room", "Got it"], ["Desk Lamp", "Got it in 41 ms"], ["Hall Lamp", "Got it"]]);
+  const some = meshResultSummary(
+    { complete: true, members: [{ node: 2, status: "MESH_MEMBER_MISSING" }, { node: 3, status: 3 }, { node: 9, status: "MESH_MEMBER_OK" }] },
+    (n) => names[n] ?? nodeLabel(n),
+  );
+  assert.equal(some.line, "Reached 1 of 3 fixtures");
+  assert.deepEqual(some.rows.filter((r) => !r.ok).map((r) => [r.name, r.text]), [["Desk Lamp", "Didn't answer in time"], ["Hall Lamp", "Couldn't apply it"]]);
+  assert.equal(some.rows[2]!.name, nodeLabel(9));
+  assert.equal(meshResultSummary({ complete: false, members: [{ node: 2 }] }, () => "x").partial, true);
+});
+
+test("a large relayed effect is shared with the other members (M6, skipGateway)", async () => {
+  await import("../src/store/meshSession"); // registers the sharer
+  const { meshLargeSender, meshRoute } = await import("../src/net/mesh");
+  const sharer = meshLargeSender();
+  assert.ok(sharer, "the app registers the M6 sharer");
+  const calls: { id: string; n: number; opts: Record<string, unknown> }[] = [];
+  const client = {
+    async meshShareEffect(id: string, fxb: Uint8Array, opts: Record<string, unknown>) {
+      calls.push({ id, n: fxb.length, opts });
+      return {};
+    },
+  };
+  const msg = { type: "submit_effect", effectId: "big", fxb: new Uint8Array(3000).fill(2), activate: true, deck: 1 } as unknown as import("@ledmapper/protocol").ClientMessage;
+  const route = meshRoute(msg, encodeClient);
+  assert.equal(route.kind, "large");
+  sharer!.share(client, msg, route.kind === "large" ? route.inner : new Uint8Array());
+  assert.deepEqual(calls, [{ id: "big", n: 3000, opts: { activate: true, deck: 1, skipGateway: true } }]);
+});

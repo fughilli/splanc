@@ -38,6 +38,15 @@ const CSS = `
 .mesh-member-chev { color: var(--text-dim); transform: rotate(-90deg); }
 .mesh-member-chev svg { width: 16px; height: 16px; }
 
+.mesh-member-dot--bad { background: var(--err); }
+.mesh-last { display: flex; flex-direction: column; gap: 8px; }
+.mesh-last-line { font-weight: 600; }
+.mesh-last-line--warn { color: var(--warn); }
+.mesh-last-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mesh-last-row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 12px; align-items: center; font-size: 0.875rem; }
+.mesh-last-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mesh-last-row--bad .mesh-member-detail { color: var(--err); }
+
 .mesh-pending {
   display: flex; flex-direction: column; gap: 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));

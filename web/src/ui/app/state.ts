@@ -46,7 +46,8 @@ import type { FpsStateMessage } from "../../net/proto";
 import { inLoader } from "../../net/otaUpdate";
 import { pushPendingOnConnect } from "../../capture/imuCalReconnect";
 import { deviceHasMesh } from "../../net/mesh";
-import { unlockMeshOnConnect } from "../../store/meshSession";
+import { meshMemberName, onMeshResults, unlockMeshOnConnect } from "../../store/meshSession";
+import { meshResultSummary, nodeLabel } from "../screens/meshModel";
 
 export interface ConnStatus {
   state: PillState;
@@ -549,3 +550,13 @@ export function fpsAbortMessage(s: FpsStateMessage): string {
 }
 
 export const appState = new AppState();
+
+// A whole-mesh change (an effect shared with every member, mesh M6) that some fixtures
+// missed: say which, wherever the user is. The Mesh section lists every fixture's answer.
+onMeshResults((c, r) => {
+  if (c !== appState.client) return;
+  const sum = meshResultSummary(r, (n) => meshMemberName(appState.client!, n) ?? nodeLabel(n));
+  if (sum.allOk || sum.partial) return;
+  const missed = sum.rows.filter((x) => !x.ok).map((x) => `${x.name} (${x.text.toLowerCase()})`);
+  toast(`${sum.line}. Missed: ${missed.join(", ")}`, { error: true });
+});

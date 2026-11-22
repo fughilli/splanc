@@ -17,8 +17,8 @@ import { Button, Sheet, Switch, confirmDialog, icon, toast } from "../kit";
 import type { MeshAdminOp, MeshAdminResultInfo, MeshStateInfo } from "../../net/mesh";
 import { admitPending, ejectMember, ensureUnlocked, leaveMesh, revokeMembers, MeshAdminFailure } from "../../net/meshAdmin";
 import { meshStore, type MeshRecord } from "../../store/meshStore";
-import { meshSignerLookup } from "../../store/meshSession";
-import { meshSectionModel, nodeLabel, type MeshMemberRow, type MeshSectionModel } from "./meshModel";
+import { lastMeshResult, meshSignerLookup, onMeshResults } from "../../store/meshSession";
+import { meshResultSummary, meshSectionModel, nodeLabel, type MeshMemberRow, type MeshResultSummary, type MeshSectionModel } from "./meshModel";
 import { installMeshStyles } from "./meshUi.css";
 import { toHex } from "../../net/meshKeys";
 
@@ -57,9 +57,9 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
   let lastKey = "";
   let busy = false;
 
-  const render = (m: MeshSectionModel, rec: MeshRecord | undefined, meshes: MeshRecord[]): void => {
+  const render = (m: MeshSectionModel, rec: MeshRecord | undefined, meshes: MeshRecord[], last: MeshResultSummary | null): void => {
     // Re-render only on a visible change (the poll must not reset a focused button).
-    const key = JSON.stringify([m, meshes.map((x) => [x.meshId, x.name])]);
+    const key = JSON.stringify([m, meshes.map((x) => [x.meshId, x.name]), last]);
     if (key === lastKey) return;
     lastKey = key;
     el.replaceChildren();
@@ -93,6 +93,8 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
     const list = h("ul", "mesh-members");
     for (const row of m.members) list.append(memberItem(row, m, rec));
     el.append(list);
+
+    if (last && (m.kind === "admin" || m.kind === "dev")) el.append(lastChange(last));
 
     if (m.pending.length) {
       const box = h("div", "mesh-pending");
@@ -138,6 +140,22 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
       );
       el.append(actions);
     }
+  };
+
+  /** Which fixtures got the last whole-mesh change (an effect, a slider, brightness). */
+  const lastChange = (sum: MeshResultSummary): HTMLElement => {
+    const box = h("div", "mesh-last");
+    box.setAttribute("aria-live", "polite");
+    box.append(h("div", "mesh-sub", "Last change sent to the mesh"), h("div", sum.allOk ? "mesh-last-line" : "mesh-last-line mesh-last-line--warn", sum.partial ? `${sum.line} so far` : sum.line));
+    const ul = h("ul", "mesh-last-rows");
+    for (const r of sum.rows) {
+      const li = h("li", r.ok ? "mesh-last-row" : "mesh-last-row mesh-last-row--bad");
+      const dot = h("span", r.ok ? "mesh-member-dot mesh-member-dot--ok" : "mesh-member-dot mesh-member-dot--bad");
+      li.append(dot, h("span", "mesh-last-name", r.name), h("span", "mesh-member-detail", r.text));
+      ul.append(li);
+    }
+    box.append(ul);
+    return box;
   };
 
   const controlRow = (others: number): HTMLElement => {
@@ -298,7 +316,9 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
         s = await client.getMesh();
       }
     }
-    render(meshSectionModel(s, rec, opts.deviceName), rec, s.on ? [] : meshes);
+    const lr = lastMeshResult(client);
+    const last = lr ? meshResultSummary(lr, (n) => rec?.members.find((x) => x.node === n)?.label ?? nodeLabel(n), s.node ? { node: s.node, name: opts.deviceName } : undefined) : null;
+    render(meshSectionModel(s, rec, opts.deviceName), rec, s.on ? [] : meshes, last);
   };
 
   const tick = (): void => {
@@ -306,6 +326,11 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
     if (!busy) void refresh().catch(() => (lastKey === "" ? hide() : undefined));
     setTimeout(tick, POLL_MS);
   };
+  // A new per-member result: show it without waiting for the poll.
+  const unsub = onMeshResults((c) => {
+    if (!el.isConnected && lastKey !== "") return unsub();
+    if (c === client && !busy) void refresh().catch(() => undefined);
+  });
   try {
     void refresh()
       .then(() => setTimeout(tick, POLL_MS))

@@ -102,3 +102,60 @@ export function meshSectionModel(s: MeshStateInfo | null, rec: MeshRecord | unde
     canControl: n > 1 && (kind === "dev" || (kind === "admin" && !!s.session)),
   };
 }
+
+/** One member's outcome in a whole-mesh change. */
+export interface MeshResultRow {
+  node: number;
+  name: string;
+  ok: boolean;
+  text: string;
+}
+
+export interface MeshResultSummary {
+  /** "Reached all 4 fixtures" / "Reached 3 of 4 fixtures". */
+  line: string;
+  rows: MeshResultRow[];
+  allOk: boolean;
+  /** Still waiting for some members (the firmware's timeout hasn't run out). */
+  partial: boolean;
+}
+
+const MEMBER_STATUS = ["MESH_MEMBER_OK", "MESH_MEMBER_MISSING", "MESH_MEMBER_REFUSED", "MESH_MEMBER_FAILED"];
+
+/** A pushed `mesh.result` (per-member answers to a whole-mesh change, e.g. an effect share)
+ * as what the user needs: which fixtures got it and which didn't, and why. The connected
+ * fixture's own answer (`gatewayStatus`) counts as one more row. */
+export function meshResultSummary(
+  r: { members?: { node: number; status?: string | number; latencyMs?: number }[]; complete?: boolean; gatewayStatus?: number },
+  name: (node: number) => string,
+  self?: { node: number; name: string },
+): MeshResultSummary {
+  const rows: MeshResultRow[] = [];
+  if (self) {
+    const ok = !r.gatewayStatus;
+    rows.push({ node: self.node, name: self.name, ok, text: ok ? "Got it" : "Refused it" });
+  }
+  for (const m of r.members ?? []) {
+    const st = typeof m.status === "number" ? (MEMBER_STATUS[m.status] ?? String(m.status)) : (m.status ?? "MESH_MEMBER_OK");
+    const ok = st === "MESH_MEMBER_OK";
+    const text = ok
+      ? m.latencyMs
+        ? `Got it in ${m.latencyMs} ms`
+        : "Got it"
+      : st === "MESH_MEMBER_MISSING"
+        ? "Didn't answer in time"
+        : st === "MESH_MEMBER_REFUSED"
+          ? "Refused it"
+          : "Couldn't apply it";
+    rows.push({ node: m.node, name: name(m.node), ok, text });
+  }
+  const good = rows.filter((x) => x.ok).length;
+  const n = rows.length;
+  const allOk = n > 0 && good === n;
+  return {
+    line: n === 0 ? "No fixture answered" : allOk ? `Reached all ${n} fixtures` : `Reached ${good} of ${n} fixtures`,
+    rows,
+    allOk,
+    partial: r.complete === false,
+  };
+}
