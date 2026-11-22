@@ -37,6 +37,7 @@ py_test(
         "test_device_cert_core.py",
         "test_e2e_phases.py",
         "test_effect_store_core.py",
+        "test_flash_render_core.py",
         "test_frontend_relay_core.py",
         "test_fx_bench.py",
         "test_fx_debug_core.py",
