@@ -27,3 +27,7 @@ pi/hitl/observability/capacity/data/
 # dataset above, one id per line by json.dump: prettier re-packs it, so every cron commit
 # re-failed lint on every PR.
 pi/hitl/observability/metrics/data/
+
+# lhd's poses on a recorded Vive session (web/tests/lhReplay.test.ts), minified: data,
+# not source; pretty-printed it'd pass the 600 KB large-file gate.
+web/tests/testdata/lh/
