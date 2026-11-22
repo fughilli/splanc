@@ -255,6 +255,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Blob-detection playbook</a></li>
@@ -332,7 +333,11 @@ to watch so a change can be judged, not guessed.</p>
 <h2>Baseline (where we are)<a class="headerlink" href="#baseline-where-we-are" title="Link to this heading">¶</a></h2>
 <p>Locking the camera exposure to the Nyquist-capped sweet spot
 (<code class="docutils literal notranslate"><span class="pre">?exposure=servo</span></code>, capped at <code class="docutils literal notranslate"><span class="pre">bitPeriodMs/2</span></code>, see <code class="docutils literal notranslate"><span class="pre">cv/exposure.ts</span></code>
-<code class="docutils literal notranslate"><span class="pre">planExposureServo</span></code> + <code class="docutils literal notranslate"><span class="pre">xr/exposureControl.ts</span></code>) transformed detection:</p>
+<code class="docutils literal notranslate"><span class="pre">planExposureServo</span></code> + <code class="docutils literal notranslate"><span class="pre">xr/exposureControl.ts</span></code>) transformed detection.
+Since 2026-11 this is the DEFAULT wherever the camera takes a manual exposure
+lock, run by the exposure-first light servo (<code class="docutils literal notranslate"><span class="pre">cv/lightServo.ts</span></code>: exposure
+before LED brightness, a measured exposure floor, no brightness ratchet);
+<code class="docutils literal notranslate"><span class="pre">?exposure=auto</span></code> restores camera auto-exposure + the legacy brightness servo:</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>

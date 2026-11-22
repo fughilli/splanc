@@ -255,6 +255,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -466,6 +467,77 @@ the in-app flasher. The splanc.io site (Studio-Fug/splanc.io,
 <code class="docutils literal notranslate"><span class="pre">scripts/stage-app.mjs</span></code>) stages the newest <code class="docutils literal notranslate"><span class="pre">app-v*</span></code> asset, sha256-checked, at
 <a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a>. It re-checks on a schedule, so a new app release
 reaches splanc.io without a manual pin bump.</p>
+</section>
+<section id="release-notes-and-what-s-new">
+<h2>Release notes and “What’s new”<a class="headerlink" href="#release-notes-and-what-s-new" title="Link to this heading">¶</a></h2>
+<p>The app shows release notes in a <strong>What’s new</strong> card. After an update, a
+sparkle bubble appears in the lower-left corner on the first launch of the new
+version, including a PWA pull-to-refresh that loaded a new deploy. The bubble
+sits where the tour hint sits; a fresh install gets the tour hint instead. The
+card is always available from <strong>About → Version → What’s new</strong>.</p>
+<p>The card has a product dropdown (Splanc app, Firmware, Bridge) and a
+<strong>Jump to…</strong> version picker, pinned at the top. Below them is one long scroll
+with every release of that product, newest first, each under a version and
+date heading. Jump to… lists the same versions, latest on top, and scrolls to
+the one picked. The sparkle opens the card on the Splanc app at the top, with
+every version since the one last run marked <strong>New</strong>. About opens it on the
+product picked last time.</p>
+<p>The notes are the <strong>GitHub releases</strong>. A product is a tag prefix: <code class="docutils literal notranslate"><span class="pre">app-vX.Y.Z</span></code>
+is the Splanc app, <code class="docutils literal notranslate"><span class="pre">firmware-vX.Y.Z</span></code> the firmware, and <code class="docutils literal notranslate"><span class="pre">pi-bridge-vX.Y.Z</span></code> the
+bridge. Other tags (<code class="docutils literal notranslate"><span class="pre">pi-bridge-ota-*</span></code>, data, scaffold and stage tags) are not
+shown. To add a product, add one line to <code class="docutils literal notranslate"><span class="pre">PRODUCTS</span></code> in
+<code class="docutils literal notranslate"><span class="pre">tools/whatsnew/whatsnew_mirror.py</span></code>. The app never calls GitHub. The mirror
+writes, next to the app:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">whatsnew/index.json</span></code>: the product list, with each product’s release count
+and newest version, and the notes <code class="docutils literal notranslate"><span class="pre">digest</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">whatsnew/&lt;product&gt;.json</span></code>: that product’s full history (the app fetches a
+product’s file the first time it is picked);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">whatsnew/media/</span></code>: every image or video the notes show, named by content hash
+so a file shared by several releases is stored once.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">--limit</span> <span class="pre">N</span></code> caps each product at N releases (default: all). The mirror runs in
+three places:</p>
+<ul class="simple">
+<li><p>the <code class="docutils literal notranslate"><span class="pre">app-v*</span></code> Release workflow, after it creates the release with generated
+notes (for Pages and Cloudflare, and in the webapp tarball). Other products’
+releases published after that app release are left out of that build;</p></li>
+<li><p>the Test workflow’s site build (main and PR previews);</p></li>
+<li><p>every splanc.io deploy (Studio-Fug/splanc.io <code class="docutils literal notranslate"><span class="pre">scripts/stage-app.mjs</span></code>), which
+re-mirrors at the staged tag. Its scheduled check also redeploys when the
+notes changed, by comparing the live index’s <code class="docutils literal notranslate"><span class="pre">digest</span></code>.</p></li>
+</ul>
+<p>To write notes:</p>
+<ol class="arabic simple">
+<li><p>Edit the release on GitHub (Releases → <code class="docutils literal notranslate"><span class="pre">app-vX.Y.Z</span></code>, <code class="docutils literal notranslate"><span class="pre">firmware-vX.Y.Z</span></code> or
+<code class="docutils literal notranslate"><span class="pre">pi-bridge-vX.Y.Z</span></code> → Edit). The generated PR list is a starting point;
+rewrite it for users. Markdown is fine.</p></li>
+<li><p>For images or short videos, drag them into the editor. GitHub uploads them
+as <code class="docutils literal notranslate"><span class="pre">github.com/user-attachments/...</span></code> links, and the mirror downloads them.
+You can also attach PNG/JPEG/GIF/WebP/MP4/WebM files as release assets;
+any that the text doesn’t reference appear under the notes. Keep each file
+under 25 MB.</p></li>
+<li><p>Save. splanc.io picks up the change on its next scheduled check (about every
+30 minutes). To publish it right away, run splanc.io’s <strong>Deploy GitHub
+Pages</strong> workflow (Actions → Run workflow), or push an empty commit there.
+Pages and Cloudflare get the edit with the next app release.</p></li>
+</ol>
+<p>To have the notes in place from the first deploy, write them before tagging:
+Releases → Draft a new release, type the new tag name (<code class="docutils literal notranslate"><span class="pre">app-vX.Y.Z</span></code>; a draft
+does not create the tag), write the notes and <strong>Save draft</strong>. Then push the tag. The
+Release workflow finds the draft, keeps its notes, mirrors them, attaches the
+webapp tarball and publishes it. Without a draft, the workflow creates the
+release with generated notes, and you edit them afterwards (step 3 above).</p>
+<p>What survives: headings, paragraphs, lists, links (http, https and mailto),
+bold, italic, code, quotes, tables, <code class="docutils literal notranslate"><span class="pre">&lt;details&gt;</span></code>, images and videos. Scripts,
+styles, iframes, forms and inline event handlers are removed. Media are always
+served from the local copy.</p>
+<p>To preview offline:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>tools/whatsnew/whatsnew_mirror.py<span class="w"> </span>--out<span class="w"> </span>/tmp/whatsnew<span class="w">           </span><span class="c1"># live releases</span>
+python3<span class="w"> </span>tools/whatsnew/whatsnew_mirror.py<span class="w"> </span>--print-digest<span class="w">                </span><span class="c1"># fingerprint only</span>
+<span class="nv">LEDMAPPER_WHATSNEW_DIR</span><span class="o">=</span>/tmp/whatsnew<span class="w"> </span>bazel<span class="w"> </span>run<span class="w"> </span>//web:stage_site<span class="w"> </span>--<span class="w"> </span>/tmp/site
+</pre></div>
+</div>
 </section>
 <section id="deploying-to-github-pages-ci-fug-26">
 <h2>Deploying to GitHub Pages (CI, FUG-26)<a class="headerlink" href="#deploying-to-github-pages-ci-fug-26" title="Link to this heading">¶</a></h2>
@@ -724,6 +796,7 @@ PnP follow-up.</p>
 <li><a class="reference internal" href="#build-test">Build / test</a></li>
 <li><a class="reference internal" href="#hosting-the-static-app-on-cloudflare-pages-the-esp32-flow">Hosting the static app on Cloudflare Pages (the ESP32 flow)</a></li>
 <li><a class="reference internal" href="#splanc-io-app-follows-app-releases">splanc.io/app (follows app releases)</a></li>
+<li><a class="reference internal" href="#release-notes-and-what-s-new">Release notes and “What’s new”</a></li>
 <li><a class="reference internal" href="#deploying-to-github-pages-ci-fug-26">Deploying to GitHub Pages (CI, FUG-26)</a></li>
 <li><a class="reference internal" href="#testing-with-a-phone-against-the-virtual-wall-no-led-hardware">Testing with a phone against the virtual wall (no LED hardware)</a><ul>
 <li><a class="reference internal" href="#testing-hue-code-v2-staggered-pilot-against-the-wall">Testing hue code v2 (staggered pilot) against the wall</a></li>

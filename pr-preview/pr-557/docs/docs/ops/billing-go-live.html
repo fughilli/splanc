@@ -255,6 +255,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -368,8 +369,8 @@ relay never mixes the two (<code class="docutils literal notranslate"><span clas
 <td><p>never used, even if set. <code class="docutils literal notranslate"><span class="pre">--apply</span></code> deletes it.</p></td>
 </tr>
 <tr class="row-even"><td><p>Apple In-App Purchase</p></td>
-<td><p>fake store only</p></td>
-<td><p>not yet: waits for the StoreKit verifier (D-142). Apple packs are disabled in the production pricing.</p></td>
+<td><p>StoreKit 2 (App Store Sandbox transactions) or the fake store</p></td>
+<td><p>App Store Production transactions only (StoreKit 2 verifier, D-142). Apple packs stay disabled in the production pricing until the App Store setup is done.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">BILLING_ADMIN_TOKEN</span></code></p></td>
 <td><p>optional</p></td>
@@ -432,8 +433,12 @@ Play data-safety form applies.</p></li>
 </ul>
 <p>These affect iOS only and don’t block web or Android:</p>
 <ul class="simple">
-<li><p><strong>D-142 (Apple IAP).</strong> iOS can’t sell credits until it lands. Re-enable the
-Apple packs with <code class="docutils literal notranslate"><span class="pre">--apple-packs</span> <span class="pre">on</span></code> in the same release.</p></li>
+<li><p><strong>D-142 (Apple IAP).</strong> The relay verifies StoreKit 2 transactions and App
+Store Server Notifications v2 in both modes (Production ones only in
+production). iOS can’t sell credits until the App Store side is set up
+(<code class="docutils literal notranslate"><span class="pre">APPLE_APP_ID</span></code>, the In-App Purchase key, the notification URL) and an app
+with the StoreKit flow is released; re-enable the Apple packs with
+<code class="docutils literal notranslate"><span class="pre">--apple-packs</span> <span class="pre">on</span></code> in that release.</p></li>
 <li><p><strong>D-143 (Sign in with Apple and Google).</strong> Anonymous accounts work on every
 platform. Sign-in adds cross-device recovery, and it must refuse to link an
 account whose <code class="docutils literal notranslate"><span class="pre">environment</span></code> tag differs from the relay’s mode.</p></li>

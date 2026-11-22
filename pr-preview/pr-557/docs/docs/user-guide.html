@@ -255,6 +255,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -515,7 +516,10 @@ refine and use the map.</p>
 <li><p><strong>Inspect the solve</strong> in 3D: orbit, zoom, and auto-scale/recenter the view.</p></li>
 <li><p><strong>Edit topology</strong> — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob
 handles most fixtures; a Fine-tune disclosure exposes the full extraction options.</p></li>
-<li><p><strong>Send to / pull from a device</strong> so the fixture and the app agree on the map.</p></li>
+<li><p><strong>Push to a device</strong> so the fixture gets this map and its topology. To copy a device’s map into
+your library, use <strong>Save to this phone</strong> on the device card at the top of the Maps tab.</p></li>
+<li><p><strong>Digital twin</strong> imports an OBJ or STL mesh of the fixture so you can align it with the LEDs as a
+gray overlay. It never moves the LEDs.</p></li>
 <li><p><strong>Supplement</strong> re-scans part of the fixture and merges the new scan into the map, to fill gaps or
 improve weak LEDs. If the map kept its raw capture data, weak LEDs are re-solved from both
 captures. A map without that data (copied from a device, imported, or captured before it was kept)

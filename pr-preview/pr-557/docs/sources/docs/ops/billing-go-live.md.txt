@@ -20,19 +20,19 @@ tested through the flag, before anyone else sees it.
 One relay, one set of Durable Objects. `AI_BILLING` selects the mode, and the
 relay never mixes the two (`billingReady` in `agent/relay/src/billing/endpoint.ts`):
 
-|                                          | `AI_BILLING=sandbox` (today)                                | `AI_BILLING=production`                                                                                        |
-| ---------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Stripe secret key                        | `sk_test_` / `rk_test_` only. A live key turns billing off. | `sk_live_` / `rk_live_` only, **required**. A test key, or no key, turns billing off.                          |
-| Webhook secret                           | the test endpoint's                                         | the live endpoint's, **required**                                                                              |
-| Events that credit or claw back          | `livemode: false` only                                      | `livemode: true` only. Anything else logs `ai_purchase_rejected` (code `wrong_environment`, alerts).           |
-| Fake store (`AI_BILLING_FAKE_STORE_KEY`) | allowed (fake Apple purchases)                              | never used, even if set. `--apply` deletes it.                                                                 |
-| Apple In-App Purchase                    | fake store only                                             | not yet: waits for the StoreKit verifier (D-142). Apple packs are disabled in the production pricing.          |
-| `BILLING_ADMIN_TOKEN`                    | optional                                                    | **required** (suspensions)                                                                                     |
-| Session tokens                           | sandbox-scoped                                              | production-scoped. A sandbox token gets a 401 in production, and a production token gets a 401 in the sandbox. |
-| Accounts                                 | tagged `environment: sandbox` (untagged = sandbox)          | tagged `environment: production`                                                                               |
-| Credit liability counter                 | `org:liability`                                             | `org:liability:production` (starts at 0)                                                                       |
-| Grafana `env` label                      | `sandbox`                                                   | `production`                                                                                                   |
-| `GET /billing/pricing`                   | `"environment": "sandbox"`                                  | `"environment": "production"`                                                                                  |
+|                                          | `AI_BILLING=sandbox` (today)                                  | `AI_BILLING=production`                                                                                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stripe secret key                        | `sk_test_` / `rk_test_` only. A live key turns billing off.   | `sk_live_` / `rk_live_` only, **required**. A test key, or no key, turns billing off.                                                                       |
+| Webhook secret                           | the test endpoint's                                           | the live endpoint's, **required**                                                                                                                           |
+| Events that credit or claw back          | `livemode: false` only                                        | `livemode: true` only. Anything else logs `ai_purchase_rejected` (code `wrong_environment`, alerts).                                                        |
+| Fake store (`AI_BILLING_FAKE_STORE_KEY`) | allowed (fake Apple purchases)                                | never used, even if set. `--apply` deletes it.                                                                                                              |
+| Apple In-App Purchase                    | StoreKit 2 (App Store Sandbox transactions) or the fake store | App Store Production transactions only (StoreKit 2 verifier, D-142). Apple packs stay disabled in the production pricing until the App Store setup is done. |
+| `BILLING_ADMIN_TOKEN`                    | optional                                                      | **required** (suspensions)                                                                                                                                  |
+| Session tokens                           | sandbox-scoped                                                | production-scoped. A sandbox token gets a 401 in production, and a production token gets a 401 in the sandbox.                                              |
+| Accounts                                 | tagged `environment: sandbox` (untagged = sandbox)            | tagged `environment: production`                                                                                                                            |
+| Credit liability counter                 | `org:liability`                                               | `org:liability:production` (starts at 0)                                                                                                                    |
+| Grafana `env` label                      | `sandbox`                                                     | `production`                                                                                                                                                |
+| `GET /billing/pricing`                   | `"environment": "sandbox"`                                    | `"environment": "production"`                                                                                                                               |
 
 Test-money credits left in sandbox accounts therefore can't be spent in
 production: their tokens don't open anything there. The org month-to-date
@@ -68,8 +68,12 @@ For turning credits on for users (D-149) on the web and Android, add:
 
 These affect iOS only and don't block web or Android:
 
-- **D-142 (Apple IAP).** iOS can't sell credits until it lands. Re-enable the
-  Apple packs with `--apple-packs on` in the same release.
+- **D-142 (Apple IAP).** The relay verifies StoreKit 2 transactions and App
+  Store Server Notifications v2 in both modes (Production ones only in
+  production). iOS can't sell credits until the App Store side is set up
+  (`APPLE_APP_ID`, the In-App Purchase key, the notification URL) and an app
+  with the StoreKit flow is released; re-enable the Apple packs with
+  `--apple-packs on` in that release.
 - **D-143 (Sign in with Apple and Google).** Anonymous accounts work on every
   platform. Sign-in adds cross-device recovery, and it must refuse to link an
   account whose `environment` tag differs from the relay's mode.
