@@ -74,9 +74,36 @@ export function webHidUnavailable(hid: unknown = (globalThis as { navigator?: { 
   }
   return (
     "WebHID is not available in this browser. Desktop Chrome/Edge have it; on Android " +
-    "Chrome it's a developer trial: enable chrome://flags/#enable-experimental-web-platform-features " +
-    "(or the WebHID flag) and reload"
+    "Chrome (154+, Android 17+) it's a developer trial: enable chrome://flags/#web-hid-on-android and relaunch"
   );
+}
+
+/** The status for a device picker that came back empty. On Android, Chrome asks for
+ * the system's HID access itself ("Human interface device access required"), so a
+ * picker that says "No compatible devices found" means the dongle isn't enumerating as
+ * a HID device, or this Chrome build has no HID backend yet (Android 17+, Chrome 158). */
+export function noDeviceChosenDetail(
+  userAgent: string = (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent ?? "",
+): string {
+  if (!/Android/i.test(userAgent)) return "no Vive device chosen";
+  return (
+    "no Vive device chosen. If the picker found nothing: replug the dongle, check Settings > Apps > " +
+    "Special app access for Chrome's HID access, and try ?hidall=1 to list every HID device"
+  );
+}
+
+/** Why open() failed, plus the usual cause: a HID device opens for one program at a time. */
+export function openFailedDetail(name: string | undefined, e: unknown): string {
+  return (
+    `opening ${name || "device"}: ${e instanceof Error ? e.message : String(e)} ` +
+    "Another program may have it open (SteamVR, a desktop tracking app): quit it, replug, and try again"
+  );
+}
+
+/** "Name (28de:2101)" for a status line. */
+export function describeHidDevice(d: { vendorId: number; productId: number; productName?: string }): string {
+  const hex = (n: number) => n.toString(16).padStart(4, "0");
+  return `${d.productName || "unnamed"} (${hex(d.vendorId)}:${hex(d.productId)})`;
 }
 
 // --------------------------------------------------------------- options
@@ -97,6 +124,9 @@ export interface WebHidTrackingDeps {
   batchReports?: boolean;
   /** Engine options (default: host clock + streamed sweeps, as the P4 player). */
   engine?: EngineOptions;
+  /** Diagnostic: ask the picker for every HID device (no filters) and report what
+   * was picked that isn't a Vive device. Tells "nothing enumerates" from "wrong ids". */
+  anyDevice?: boolean;
 }
 
 interface Group {
@@ -135,6 +165,7 @@ class WebHidTracking implements LhTracking {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly tickMs: number;
+  private readonly anyDevice: boolean;
   private readonly batch: boolean;
   private readonly engineOpts: EngineOptions;
   private readonly loadEngine: (opts: EngineOptions) => Promise<LhEngine>;
@@ -157,6 +188,7 @@ class WebHidTracking implements LhTracking {
   private readonly poseCbs = new Set<(p: LhPose) => void>();
   private readonly stationCbs = new Set<(s: LhStation[]) => void>();
   private readonly statusCbs = new Set<(s: LhStatus) => void>();
+  private readonly buttonCbs = new Set<(serial: string, mask: number) => void>();
 
   private readonly onDisconnect = (ev: { device: HidDeviceLike }) => {
     const g = this.groups.find((x) => x.devices.includes(ev.device));
@@ -170,6 +202,7 @@ class WebHidTracking implements LhTracking {
     this.now = deps.now ?? (() => performance.now());
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.tickMs = deps.tickMs ?? 100;
+    this.anyDevice = deps.anyDevice ?? false;
     this.batch = deps.batchReports ?? true;
     this.engineOpts = deps.engine ?? {};
     this.loadEngine = deps.loadEngine ?? ((o) => loadBrowserEngine(o));
@@ -190,15 +223,22 @@ class WebHidTracking implements LhTracking {
     // it (loading the wasm) could outlive.
     let picked: HidDeviceLike[];
     try {
-      picked = await this.hid.requestDevice({ filters: VIVE_PIDS.map((productId) => ({ vendorId: VALVE_VID, productId })) });
+      picked = await this.hid.requestDevice({
+        filters: this.anyDevice ? [] : VIVE_PIDS.map((productId) => ({ vendorId: VALVE_VID, productId })),
+      });
     } catch (e) {
       this.setStatus({ state: "disconnected", detail: `device picker: ${e instanceof Error ? e.message : String(e)}` });
       throw e;
     }
-    picked = picked.filter((d) => d.vendorId === VALVE_VID && (VIVE_PIDS as readonly number[]).includes(d.productId));
+    const others = picked.filter((d) => !(d.vendorId === VALVE_VID && (VIVE_PIDS as readonly number[]).includes(d.productId)));
+    picked = picked.filter((d) => !others.includes(d));
+    if (picked.length === 0 && others.length > 0) {
+      this.setStatus({ state: "disconnected", detail: `not a Vive device: ${others.map(describeHidDevice).join(", ")}` });
+      return;
+    }
     picked = picked.filter((d) => !this.groups.some((g) => g.devices.includes(d)));
     if (picked.length === 0) {
-      if (this.groups.length === 0) this.setStatus({ state: "disconnected", detail: "no Vive device chosen" });
+      if (this.groups.length === 0) this.setStatus({ state: "disconnected", detail: noDeviceChosenDetail() });
       return;
     }
     this.setStatus({ state: "connecting", detail: "loading the tracker" });
@@ -218,7 +258,7 @@ class WebHidTracking implements LhTracking {
       try {
         for (const d of devices) if (!d.opened) await d.open();
       } catch (e) {
-        this.setStatus({ state: "disconnected", detail: `opening ${first.productName ?? "device"}: ${e instanceof Error ? e.message : String(e)}` });
+        this.setStatus({ state: "disconnected", detail: openFailedDetail(first.productName, e) });
         continue;
       }
       const pid = first.productId;
@@ -272,6 +312,11 @@ class WebHidTracking implements LhTracking {
     this.statusCbs.add(cb);
     cb(this.status);
     return () => this.statusCbs.delete(cb);
+  }
+
+  onButtons(cb: (serial: string, mask: number) => void): () => void {
+    this.buttonCbs.add(cb);
+    return () => this.buttonCbs.delete(cb);
   }
 
   stations(): LhStation[] {
@@ -502,6 +547,9 @@ class WebHidTracking implements LhTracking {
           for (const cb of this.poseCbs) cb(pose);
           break;
         }
+        case "buttons":
+          for (const cb of this.buttonCbs) cb(e.serial as string, Number(e.buttons) >>> 0);
+          break;
         case "health":
           this.health.set(e.serial as string, e.state as number);
           break;

@@ -46,6 +46,7 @@ def _family_for(chip: str) -> str:
 # Prettier display names for known chips (else the raw id, upper-cased).
 _CHIP_NAMES = {
     "esp32c6": "ESP32-C6",
+    "esp32p4": "ESP32-P4",
     "esp32c3": "ESP32-C3",
     "esp32s3": "ESP32-S3",
     "esp32s2": "ESP32-S2",
