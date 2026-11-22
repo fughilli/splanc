@@ -2615,7 +2615,9 @@ static uint32_t render_once() {
       g_cad_render.add(now_us - fx_last_us);
       const uint32_t iv = (uint32_t)(now_us - fx_last_us);
       const uint32_t period_us = lm_fps_budget_cycles() / (kCpuHz / 1000000u);
-      if (period_us != 0 && iv > period_us + period_us / 2) {
+      // A clock step (mesh time's `[clock] millis() stepped`) makes one interval negative:
+      // not a late frame.
+      if (period_us != 0 && now_us > fx_last_us && iv > period_us + period_us / 2) {
         g_late_n++;
         if (iv > g_late_max_us) g_late_max_us = iv, g_late_at_us = fx_last_us;
       }

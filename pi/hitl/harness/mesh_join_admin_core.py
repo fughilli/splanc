@@ -62,24 +62,26 @@ def late_frames(lines: list[str]) -> list[dict]:
     i.e. a dropped frame): {n, max_us, ago_ms, save_us}. `save_us` is the membership write
     (a littlefs flash write, which stalls the whole chip) in the same [ft] window or the one
     before, if any: those are told apart from CPU work (crypto) that must never delay one."""
-    out: list[dict] = []
-    cur: int | None = None  # a save in the window being collected (µs; 0 if not timed)
-    prev: int | None = None
+    # Windows: the lines up to and including each [ft]. A save is printed when it ENDS, so one
+    # that straddles a window's end shows up in the next: a late frame is a save's if the save
+    # line is in its window, the one before, or the one after.
+    wins: list[dict] = [{"save": None, "late": []}]
     for t in lines:
         if m := _SAVE.search(t):
-            cur = int(m.group(1) or 0)
+            wins[-1]["save"] = int(m.group(1) or 0)
         elif _FT_LINE.search(t):
-            prev, cur = cur, None
+            wins.append({"save": None, "late": []})
         elif m := _LATE.search(t):
-            save = prev if prev is not None else cur
-            out.append(
-                {
-                    "n": int(m.group(1)),
-                    "max_us": int(m.group(2)),
-                    "ago_ms": int(m.group(3)),
-                    "save_us": save,
-                }
-            )
+            n, mx, ago = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if mx >= 1 << 31 or ago >= 1 << 31:
+                continue  # a clock step's negative interval (older firmware), not a late frame
+            # The [late] line follows its [ft]: its window is the one that [ft] closed.
+            wins[-2 if len(wins) > 1 else -1]["late"].append({"n": n, "max_us": mx, "ago_ms": ago})
+    out: list[dict] = []
+    for i, w in enumerate(wins):
+        near = [wins[j]["save"] for j in (i, i - 1, i + 1) if 0 <= j < len(wins)]
+        save = next((x for x in near if x is not None), None)
+        out.extend({**x, "save_us": save} for x in w["late"])
     return out
 
 

@@ -123,12 +123,24 @@ class LateFramesTest(unittest.TestCase):
         "[ft] r84:11970/12000/12040 w84:1/1/1 dt12 fps=80 sl=11-11",
         "[ft] r82:11970/12300/40000 w82:1/1/1 dt40 fps=80 sl=11-12",
         "[late] n=2 max=40000 ago_ms=300",
+        "[ft] r84:11970/12000/12040 w84:1/1/1 dt12 fps=80 sl=11-11",
+        "[ft] r84:11970/12000/12040 w84:1/1/1 dt12 fps=80 sl=11-11",
+        "[ft] r78:11958/12819/23678 w78:1/1/1 dt24 fps=80 sl=11-12",
+        "[late] n=1 max=23678 ago_ms=36",
+        "[mesh] state saved ok us=116312",
+        "[ft] r84:11970/12000/12040 w84:1/1/1 dt12 fps=80 sl=11-11",
+        "[ft] r73:11971/58812831/4292472685 w73:1/1/1 dt4294964801 fps=80 sl=11-11",
+        "[late] n=1 max=4292472685 ago_ms=4294964803",
     ]
 
     def test_attribution(self) -> None:
         late = core.late_frames(self.LINES)
-        self.assertEqual([(x["n"], x["save_us"]) for x in late], [(1, 91000), (2, None)])
-        self.assertEqual(core.late_counts({"a": late}), (2, 1))
+        # A save printed after the late frame's window (it ended there) still owns it; a clock
+        # step's wrapped interval is no late frame.
+        self.assertEqual(
+            [(x["n"], x["save_us"]) for x in late], [(1, 91000), (2, None), (1, 116312)]
+        )
+        self.assertEqual(core.late_counts({"a": late}), (2, 2))
 
     def test_gate(self) -> None:
         p = good()
