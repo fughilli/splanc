@@ -24,6 +24,8 @@ struct LhStatus {
   int64_t ready_us;   //   the kernel done with it
   float pos_sigma;    // the pose's position uncertainty (m, sqrt of the covariance trace)
   uint32_t starts, losses, coasts;  // locks gained (fresh solves) and lost; darks coasted
+  uint32_t ms_by_health[5];         // device time in each health state below (ms, running)
+  uint32_t health_changes;          // health state changes (running)
   // lh_health::Health (#446): 0 lost, 1 uncertain (σ past the limit), 2 acquiring (a fresh
   // solve settling), 3 coasting (IMU dead reckoning, no light confirming it, σ within the
   // limit), 4 locked. Coasting and locked are poses to follow.
