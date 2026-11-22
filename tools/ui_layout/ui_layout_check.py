@@ -26,7 +26,12 @@ import layout_guard  # noqa: E402
 import newfixture_scenarios  # noqa: E402
 import oobe_scenarios  # noqa: E402
 
-SCENARIO_MODULES = [connect_scenarios, credits_scenarios, newfixture_scenarios, oobe_scenarios]
+SCENARIO_MODULES = [
+    connect_scenarios,
+    credits_scenarios,
+    newfixture_scenarios,
+    oobe_scenarios,
+]
 
 
 def find_dist() -> Path:
