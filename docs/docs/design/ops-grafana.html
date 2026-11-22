@@ -233,6 +233,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
@@ -255,6 +256,7 @@
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -571,8 +573,8 @@ Infinity datasource;</p></li>
 <h2>Alerts (<code class="docutils literal notranslate"><span class="pre">ops/grafana/business/alerts.json</span></code>, rule group <code class="docutils literal notranslate"><span class="pre">splanc-business</span></code>)<a class="headerlink" href="#alerts-ops-grafana-business-alerts-json-rule-group-splanc-business" title="Link to this heading">¶</a></h2>
 <p>Each rule is a LogQL query, reduced to its last value, then a threshold or a
 math condition. The group evaluates every 5 minutes. The rules watch
-<code class="docutils literal notranslate"><span class="pre">env=~&quot;production|sandbox&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">alert_env</span></code>); narrow that to production once it
-exists.</p>
+<code class="docutils literal notranslate"><span class="pre">env=~&quot;production|sandbox&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">alert_env</span></code>); narrow that to production at the
+go-live (<a class="reference internal" href="../ops/billing-go-live.html#grafana-alert-env"><span class="std std-ref">docs/ops/billing-go-live.md</span></a>).</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>

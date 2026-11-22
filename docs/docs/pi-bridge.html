@@ -233,6 +233,7 @@
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
@@ -255,6 +256,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -655,7 +657,9 @@ itself. Only updates signed by Splanc are accepted.</p></li>
 <li><p><strong>Without the OLED HAT</strong>, install over SSH: <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">splanc-system-update</span> <span class="pre">install</span></code> (system) or
 <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">splanc-bridge</span> <span class="pre">update</span></code> (Splanc software).</p></li>
 <li><p>Writing the card again with the flasher also works, but starts fresh: you pair your agents again
-afterwards.</p></li>
+afterwards. To keep the pairing (for example to move a bridge written before system updates
+existed onto a current card), back it up and restore it onto the new card with
+<a class="reference internal" href="#../tools/bridge_migrate/README.md"><span class="xref myst">bridge_migrate</span></a>.</p></li>
 </ul>
 </section>
 <section id="changing-settings-later">
