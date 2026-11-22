@@ -13,6 +13,7 @@ The effects compiler <../docs/design/effects-compiler>
 Performance monitoring <../docs/design/perf-monitoring>
 FX decks, crossfade & uniform keypoints <../docs/design/uniform-keypoints>
 FX debugger: pause, inspect, replay <../docs/design/fx-debugger>
+On-device effect store <../docs/design/effect-store>
 ```
 
 ## Capture, solve & reconstruct
