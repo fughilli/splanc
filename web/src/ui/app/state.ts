@@ -409,6 +409,9 @@ class AppState {
           if (devId !== undefined) await this.checkCert(c, devId).catch(() => undefined);
           // The updater answers only the update protocol (no clock sync).
           if (!inLoader(c.welcome)) await c.syncClock().catch(() => undefined);
+          // A fixture in a mesh this app administers: unlock this connection too (a first
+          // connect that only got through on a background retry, or any reconnect).
+          if (!inLoader(c.welcome) && deviceHasMesh(c.welcome)) unlockMeshOnConnect(c, () => this.client === c);
         })();
       }
     }, 600);

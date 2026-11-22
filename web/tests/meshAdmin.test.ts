@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { decodeClient, encodeClient } from "../src/net/proto";
-import { meshAdminMessage, type MeshAdminOp, type MeshAdminResultInfo, type MeshStateInfo } from "../src/net/mesh";
+import { meshAdminMessage, type MeshAdminOp, type MeshAdminResultInfo, type MeshResultInfo, type MeshStateInfo } from "../src/net/mesh";
 import {
   fromHex,
   grantSignedBytes,
@@ -369,4 +369,35 @@ test("a large relayed effect is shared with the other members (M6, skipGateway)"
   assert.equal(route.kind, "large");
   sharer!.share(client, msg, route.kind === "large" ? route.inner : new Uint8Array());
   assert.deepEqual(calls, [{ id: "big", n: 3000, opts: { activate: true, deck: 1, skipGateway: true } }]);
+});
+
+test("unlock on connect: one subscription per client, an unlock on every (re)connect", async () => {
+  const { unlockMeshOnConnect, lastMeshResult } = await import("../src/store/meshSession");
+  let subs = 0;
+  let reads = 0;
+  let current = true;
+  const fns: ((r: MeshResultInfo) => void)[] = [];
+  const c = {
+    meshState: null,
+    onMeshResult(fn: (r: MeshResultInfo) => void) {
+      subs++;
+      fns.push(fn);
+      return () => undefined;
+    },
+    async getMesh(): Promise<MeshStateInfo> {
+      reads++;
+      return {}; // not in a mesh: nothing to unlock
+    },
+    async meshAdmin(): Promise<MeshAdminResultInfo> {
+      return {};
+    },
+  };
+  unlockMeshOnConnect(c, () => current); // the first connect
+  unlockMeshOnConnect(c, () => current); // a background reconnect of the same client
+  current = false; // the connection is gone: no renewal timer outlives the test
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(subs, 1, "results are collected once per client");
+  assert.equal(reads, 2, "each (re)connect checks the session again");
+  for (const fn of fns) fn({ opId: 7, members: [{ node: 2, latencyMs: 30 }] });
+  assert.equal(lastMeshResult(c)?.opId, 7);
 });

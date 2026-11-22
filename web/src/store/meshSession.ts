@@ -61,22 +61,39 @@ export function meshMemberName(client: { readonly meshState: MeshStateInfo | nul
   return rec?.members.find((m) => m.node === node)?.label ?? null;
 }
 
+const subscribed = new WeakSet<object>();
+const renewing = new WeakSet<object>();
+
 /** Unlock `client` now (quietly; nothing happens for a fixture outside our meshes), keep
- * checking the grant while `isCurrent()`, and collect its per-member results. */
+ * checking the grant while `isCurrent()`, and collect its per-member results. Call it on
+ * every (re)connect, the background ones included: an admin session belongs to one
+ * connection, so a reconnected client must unlock again. Subscribing and the renewal loop
+ * happen once per client. */
 export function unlockMeshOnConnect(client: MeshAdminClient & ResultClient & object, isCurrent: () => boolean): void {
-  client.onMeshResult((r) => {
-    if (!r.members?.length) return;
-    lastResults.set(client, r);
-    for (const fn of resultListeners) fn(client, r);
-  });
+  if (!subscribed.has(client)) {
+    subscribed.add(client);
+    client.onMeshResult((r) => {
+      if (!r.members?.length) return;
+      lastResults.set(client, r);
+      for (const fn of resultListeners) fn(client, r);
+    });
+  }
   void meshStore.load().catch(() => undefined);
+  const once = (): Promise<unknown> => ensureUnlocked(client, meshSignerLookup).catch(() => false);
+  if (renewing.has(client)) {
+    if (isCurrent()) void once();
+    return;
+  }
+  renewing.add(client);
   const run = (): void => {
-    if (!isCurrent()) return;
-    void ensureUnlocked(client, meshSignerLookup)
-      .catch(() => false)
-      .finally(() => {
-        if (isCurrent()) setTimeout(run, RENEW_CHECK_MS);
-      });
+    if (!isCurrent()) {
+      renewing.delete(client);
+      return;
+    }
+    void once().finally(() => {
+      if (isCurrent()) setTimeout(run, RENEW_CHECK_MS);
+      else renewing.delete(client);
+    });
   };
   run();
 }

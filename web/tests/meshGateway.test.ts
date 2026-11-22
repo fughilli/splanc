@@ -36,6 +36,15 @@ test("discrete changes are scheduled ahead; live moves go on arrival", () => {
   assert.equal((live as unknown as Record<string, unknown>)["leadMs"], undefined);
   const xf = wrapForMesh(msg({ type: "set_crossfade", position: 0.4, seq: 9 }), encodeClient);
   assert.equal((xf as unknown as Record<string, unknown>)["leadMs"], undefined, "a crossfade drag");
+  // Per-member answers ("Last change sent to the mesh"): discrete changes and committed
+  // values ask for them, each move of a drag does not (the gateway holds few operations).
+  assert.equal(b["wantReply"], true, "brightness");
+  assert.equal((live as unknown as Record<string, unknown>)["wantReply"], false, "a slider move");
+  assert.equal((xf as unknown as Record<string, unknown>)["wantReply"], false, "a crossfade move");
+  const done = wrapForMesh(msg({ type: "set_uniforms", values: [{ slot: 1, value: [0.2] }], seq: 4, commit: true }), encodeClient);
+  assert.equal((done as unknown as Record<string, unknown>)["wantReply"], true, "the slider let go (commit)");
+  const once = wrapForMesh(msg({ type: "set_uniforms", values: [{ slot: 1, value: [0.2] }] }), encodeClient);
+  assert.equal((once as unknown as Record<string, unknown>)["wantReply"], true, "a one-shot set");
   // Already scheduled by the caller: left alone.
   const at = wrapForMesh(msg({ type: "set_effect", effectId: "x", applyAtMs: 5000 }), encodeClient);
   assert.equal((at as unknown as Record<string, unknown>)["leadMs"], undefined);

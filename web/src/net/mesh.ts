@@ -165,10 +165,21 @@ export function meshLeadMs(msg: { type: string; seq?: unknown }): number {
   return MESH_LEAD_MS;
 }
 
+/** Whether the gateway reports every member's answer (a pushed `mesh.result`, shown as
+ * "Last change sent to the mesh"): for discrete changes (an effect switch, brightness, a
+ * crossfade set once) and a slider's committed value, not for each move of a drag. The
+ * gateway collects only a few operations at once (splanc_mesh::gateway::OPS), so a 30 Hz
+ * drag asking for answers would finish them early, as missed. */
+export function meshWantsReply(msg: { type: string; seq?: unknown; commit?: unknown }): boolean {
+  if (msg.commit === true) return true;
+  if (msg.type === "set_uniforms" || msg.type === "blend_keypoints") return msg.commit === undefined && msg.seq == null;
+  return msg.seq === undefined || msg.seq === null;
+}
+
 /** `msg` wrapped for the whole mesh, or null when it is not relayable (it then goes to the
  * connected fixture alone): off the allow-list, or too big for one mesh packet. */
 export function wrapForMesh(msg: ClientMessage, encode: (m: ClientMessage) => Uint8Array): ClientMessage | null {
-  const flat = msg as unknown as { type: string; seq?: unknown; applyAtMs?: unknown };
+  const flat = msg as unknown as { type: string; seq?: unknown; applyAtMs?: unknown; commit?: unknown };
   if (!MESH_RELAY_TYPES.has(flat.type)) return null;
   const inner = encode(msg);
   if (inner.length > MESH_INNER_MAX) return null;
@@ -178,7 +189,7 @@ export function wrapForMesh(msg: ClientMessage, encode: (m: ClientMessage) => Ui
     opId: 0,
     targets: {},
     inner,
-    wantReply: false,
+    wantReply: meshWantsReply(flat),
     ...(lead > 0 ? { leadMs: lead } : {}),
   } as unknown as ClientMessage;
 }
