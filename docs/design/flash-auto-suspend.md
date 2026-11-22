@@ -74,6 +74,22 @@ reports those phases and gates them only with `--strict`.
 - `mesh_join_admin` is strict again: late frames next to a membership write fail
   (`--allow-flash-late` relaxes it).
 
+## Results (hitl-rig-1, C6FH4, JEDEC 464016)
+
+| | without auto-suspend | with auto-suspend |
+| --- | --- | --- |
+| `mesh_join_admin`, late frames at a fixture's first membership write (116-129 ms) | 1 per fixture, 21-37 ms intervals (#594 r4-r8: 5/5 runs) | 0 (3 runs, strict gate: PASS) |
+| `flash_render` map phase (2 writes, 35-46 ms) | 0 | 0 (3 runs) |
+| `flash_render` settings phase (5 writes, 17-50 ms) | 0 | 0 (3 runs) |
+| `flash_render` effect store (4 stores + 1 delete) | 8 late, worst 43 ms | 5 late, worst 44-49 ms (lock, below) |
+| `flash_render` keypoints (3 saves) | 4 late, worst 77 ms | 3 late, worst 73-81 ms (lock, below) |
+
+Short writes are a string of short cache-disabled operations, each shorter than the slack in
+a frame, so the map and settings writers did not drop frames before either; what auto-suspend
+removes is the long stall (an erase plus a littlefs compaction, 100+ ms), which hit the
+membership writes every time. `flash_render`'s gated phases therefore guard against a
+regression rather than reproduce the old hitch; `mesh_join_admin` (strict) is the A/B.
+
 ## Limits
 
 - A cache miss during an erase waits for the suspend (tSUS, ~50 µs) and the read; the
