@@ -351,6 +351,10 @@ bool lm_ws_reply_droppable() { return false; }
 // A newcomer may take the session over (#444): the uploads and updates that make a session
 // busy are the P4's, and it refuses a second client's window itself (link_transport.cpp).
 bool lm_ws_session_busy() { return false; }
+
+// Improv Identify (#605): the shared netstack loop starts the picker's Blink here. The
+// relay front end drives no LEDs (the P4 renders), so there is nothing to blink.
+void player_identify_start() {}
 // OSC on udp/9000: the uniforms (and any module's addresses) are the P4's.
 void lm_netstack_osc_rx(const uint8_t *data, size_t len) { frontend_link_osc(data, len); }
 
