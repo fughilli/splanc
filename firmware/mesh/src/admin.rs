@@ -379,7 +379,8 @@ impl Sessions {
                 s.not_after = g.not_after;
                 self.stats.renewals += 1;
             }
-            if s.floor.is_some() || now_us - s.ack_us < ACK_RETRY_US {
+            // (A clock that stepped back, now < ack_us, counts as due: see due_ack.)
+            if s.floor.is_some() || (0..ACK_RETRY_US).contains(&(now_us - s.ack_us)) {
                 return Ok(None);
             }
             s.ack_us = now_us;
@@ -434,11 +435,15 @@ impl Sessions {
     }
 
     /// Unconfirmed sessions whose Ack is due again: 1, 2, then every 4 s, with per-node
-    /// jitter (64 members answering one grant must not retry in step).
+    /// jitter (64 members answering one grant must not retry in step). A clock that stepped
+    /// back (the C6's esp_timer was seen to: `[clock] millis() stepped -37749 ms`) makes the
+    /// last Ack look like it is in the future: that counts as due, else a lost Ack waits out
+    /// the whole step (hitl-rig-1, mesh_join_admin: 29 s with no session after a reboot).
     pub fn due_ack(&mut self, now_us: i64, me: NodeId, dev: &dyn DeviceKey) -> Option<(NodeId, SessionMsg)> {
         let s = self.s.iter_mut().flatten().find(|s| {
             let wait = (ACK_RETRY_US << s.tries.min(2)) + (s.nonce % 500_000) as i64;
-            s.floor.is_none() && now_us - s.ack_us >= wait
+            let since = now_us - s.ack_us;
+            s.floor.is_none() && (since >= wait || since < 0)
         })?;
         s.ack_us = now_us;
         s.tries = s.tries.saturating_add(1);
@@ -827,5 +832,18 @@ mod tests {
         assert_eq!(gate.unlock(0, now_s, 0, &long, Some(&admin.public()), MESH, 1, &gw.public_key()), Err(UnlockError::BadGrant));
         let ok = grant(&admin, &gw, 7, now_s + 12 * 3600);
         assert_eq!(gate.unlock(3_000_000, now_s, 0, &ok, Some(&admin.public()), MESH, 1, &gw.public_key()), Ok(()));
+    }
+    /// A clock that steps back must not hold an unconfirmed member's Ack retries.
+    #[test]
+    fn ack_retry_survives_a_backward_clock_step() {
+        let admin = AdminSigner::from_secret(b"0123456789abcdef", MESH);
+        let (gw, m2) = (HostKey::from_seed(1), HostKey::from_seed(2));
+        let mut rng = TestRng(5);
+        let g = grant(&admin, &gw, 7, 1000);
+        let mut s = Sessions::new();
+        s.on_grant(50_000_000, 0, &g, Some(&admin.public()), MESH, 2, &m2, &mut rng).unwrap().unwrap();
+        assert!(s.due_ack(50_100_000, 2, &m2).is_none(), "not due yet");
+        assert!(s.due_ack(12_000_000, 2, &m2).is_some(), "the clock stepped back 38 s: due now");
+        assert!(s.due_ack(12_100_000, 2, &m2).is_none(), "and paced again from there");
     }
 }
