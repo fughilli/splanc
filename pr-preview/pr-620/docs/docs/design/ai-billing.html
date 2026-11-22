@@ -426,49 +426,53 @@ pins the bytes).</p></li>
 </tr>
 <tr class="row-odd"><td><p>6</p></td>
 <td><p>Sign-in</p></td>
-<td><p><strong>Sign in with Apple + Sign in with Google + anonymous device accounts</strong> that can be linked later. No e-mail login. In-app account deletion stays (Apple 5.1.1(v)).</p></td>
+<td><p><strong>Sign in with Apple + Sign in with Google + anonymous device accounts</strong> that can be linked later. In-app account deletion stays (Apple 5.1.1(v)). <strong>Changed 2026-11-18:</strong> accounts can also have a <strong>verified email</strong> used to <strong>recover the account and its credits</strong> on a new device or after the app’s data was cleared (codes by email, no passwords; <a class="reference internal" href="#email-and-recovery">Email and recovery</a>).</p></td>
 </tr>
-<tr class="row-even"><td><p>7</p></td>
+<tr class="row-even"><td><p>6a</p></td>
+<td><p>Is email required to buy?</p></td>
+<td><p><strong>No, optional.</strong> Users may stay anonymous and still buy, but the app tells them plainly that <strong>without a verified email, losing the app’s data or the device loses the credits</strong>. The account records when they acknowledged that (<code class="docutils literal notranslate"><span class="pre">anonymous_ack_at</span></code>). <code class="docutils literal notranslate"><span class="pre">/billing/checkout</span></code> doesn’t require an email.</p></td>
+</tr>
+<tr class="row-odd"><td><p>7</p></td>
 <td><p>Minors</p></td>
 <td><p><strong>18+ gate on buying credits.</strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>8</p></td>
+<tr class="row-even"><td><p>8</p></td>
 <td><p>Retention</p></td>
 <td><p>No prompt content; ledger / financial records as long as tax law requires; request logs 30 days.</p></td>
 </tr>
-<tr class="row-even"><td><p>9</p></td>
+<tr class="row-odd"><td><p>9</p></td>
 <td><p>Deletion with credit left</p></td>
 <td><p><strong>Forfeit, with a clear warning</strong> before confirming.</p></td>
 </tr>
-<tr class="row-odd"><td><p>10</p></td>
+<tr class="row-even"><td><p>10</p></td>
 <td><p>Models</p></td>
 <td><p><strong>Claude Sonnet 5.5 (default), Claude Haiku 5.5, Claude Opus 5.5.</strong></p></td>
 </tr>
-<tr class="row-even"><td><p>11</p></td>
+<tr class="row-odd"><td><p>11</p></td>
 <td><p>Caps</p></td>
 <td><p>2,000 credits a day, 20,000 a month, 2 concurrent per account.</p></td>
 </tr>
-<tr class="row-odd"><td><p>12</p></td>
+<tr class="row-even"><td><p>12</p></td>
 <td><p>Anthropic usage tier</p></td>
 <td><p><strong>Launch on the current tier</strong>, raise it when needed. Monitoring and alerting for approaching the org spend limit, and a graceful “Splanc AI credits are busy right now. Try again later.” when it is hit (<a class="reference internal" href="#org-spend-limit">Org spend limit</a>).</p></td>
 </tr>
-<tr class="row-even"><td><p>13</p></td>
+<tr class="row-odd"><td><p>13</p></td>
 <td><p>Org monthly spend limit</p></td>
 <td><p><strong>US$1,000</strong> (in the pricing config, not a secret): alert at <strong>US$800</strong> (80 %), graceful stop at <strong>US$980</strong> (98 %).</p></td>
 </tr>
-<tr class="row-odd"><td><p>14</p></td>
+<tr class="row-even"><td><p>14</p></td>
 <td><p>Where alerts go</p></td>
 <td><p><strong>Grafana Cloud alerting</strong> (as for the HITL rigs): the relay pushes billing events to Grafana Cloud Logs, and the alert rules are code (<a class="reference internal" href="#observability-and-alerts">Observability and alerts</a>).</p></td>
 </tr>
-<tr class="row-even"><td><p>15</p></td>
+<tr class="row-odd"><td><p>15</p></td>
 <td><p>Apple refund consumption requests</p></td>
 <td><p><strong>Yes, with consent.</strong> The app asks for the user’s opt-in (in the purchase flow and in AI settings); with it, the relay answers Apple’s CONSUMPTION_REQUEST with the pack’s consumption (<a class="reference internal" href="#apple-refund-requests-consumption-request">Apple refund requests</a>).</p></td>
 </tr>
-<tr class="row-odd"><td><p>16</p></td>
+<tr class="row-even"><td><p>16</p></td>
 <td><p>Refund preference in consumption answers</p></td>
 <td><p><strong>By usage:</strong> GRANT_FULL if none of the pack was used, GRANT_PRORATED if part was, DECLINE if all was.</p></td>
 </tr>
-<tr class="row-even"><td><p>17</p></td>
+<tr class="row-odd"><td><p>17</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">sampleContentProvided</span></code></p></td>
 <td><p><strong>true</strong>: the free tier counts as a sample.</p></td>
 </tr>
@@ -1381,41 +1385,45 @@ only, so it never learns that web packs exist.</p>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/billing/account</span></code></p></td>
 <td><p>session</p></td>
-<td><p>Close the account (deletion)</p></td>
+<td><p>Close the account (deletion; erases the email, signs every device out)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code></p></td>
+<tr class="row-odd"><td><p>Email and recovery routes</p></td>
+<td><p></p></td>
+<td><p>See <a class="reference internal" href="#email-and-recovery">Email and recovery</a></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code></p></td>
 <td><p>session</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">{balance_credits,</span> <span class="pre">held_credits,</span> <span class="pre">available_credits,</span> <span class="pre">low,</span> <span class="pre">status,</span> <span class="pre">adult,</span> <span class="pre">apple_consumption_consent,</span> <span class="pre">apple_consumption_asked,</span> <span class="pre">account_ref,</span> <span class="pre">pricing_version}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{balance_credits,</span> <span class="pre">held_credits,</span> <span class="pre">available_credits,</span> <span class="pre">low,</span> <span class="pre">status,</span> <span class="pre">adult,</span> <span class="pre">apple_consumption_consent,</span> <span class="pre">apple_consumption_asked,</span> <span class="pre">account_ref,</span> <span class="pre">identities,</span> <span class="pre">email_hint,</span> <span class="pre">email_verified,</span> <span class="pre">anonymous_ack_at,</span> <span class="pre">pricing_version}</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/pricing?channel=</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/pricing?channel=</span></code></p></td>
 <td><p>none</p></td>
 <td><p>The public pricing view</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/statement</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/statement</span></code></p></td>
 <td><p>session</p></td>
 <td><p>The newest 50 entries (numbers only)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/&lt;apple|web&gt;</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/&lt;apple|web&gt;</span></code></p></td>
 <td><p>session</p></td>
 <td><p>Proof of purchase → credit (201; a replay is 200 with the same entry). Apple: <code class="docutils literal notranslate"><span class="pre">{jws}</span></code> = StoreKit 2’s <code class="docutils literal notranslate"><span class="pre">jwsRepresentation</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/consent</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/consent</span></code></p></td>
 <td><p>session</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{apple_consumption:</span> <span class="pre">bool}</span></code>: the opt-in to answer Apple’s refund consumption requests</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/&lt;apple|web&gt;</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/&lt;apple|web&gt;</span></code></p></td>
 <td><p>store signature</p></td>
 <td><p>Refunds / revocations → claw back; Apple CONSUMPTION_REQUEST → consumption answer (with consent). Apple: App Store Server Notifications v2 <code class="docutils literal notranslate"><span class="pre">{signedPayload}</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/admin/status</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/admin/status</span></code></p></td>
 <td><p>admin token (<code class="docutils literal notranslate"><span class="pre">BILLING_ADMIN_TOKEN</span></code>)</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{account,</span> <span class="pre">status:</span> <span class="pre">active|suspended,</span> <span class="pre">reason?}</span></code>: abuse suspension / reinstatement</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/signin/config</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/signin[/nonce|/switch|/unlink|/apple/notify]</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/signin/config</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/signin[/nonce|/switch|/unlink|/apple/notify]</span></code></p></td>
 <td><p>see §Sign in with Apple and Google</p></td>
 <td><p>Link, sign in, conflicts, unlink, Apple notifications</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/ai/v1/messages</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/ai/v1/messages</span></code></p></td>
 <td><p>session</p></td>
 <td><p>The metered proxy (SSE)</p></td>
 </tr>
@@ -1497,6 +1505,212 @@ the tier with <code class="docutils literal notranslate"><span class="pre">updat
 for that kind.</p></li>
 </ul>
 </section>
+<section id="email-and-recovery">
+<h3>Email and recovery<a class="headerlink" href="#email-and-recovery" title="Link to this heading">¶</a></h3>
+<p>The problem it solves: credits sit on a server account, but an anonymous
+account lives only in the app’s storage. Clearing that storage, or changing
+device, loses the session token and with it the balance. A verified email lets
+the user get back in. It is optional (decision 6a), and it uses one-time codes
+by email rather than passwords.</p>
+<p><strong>Endpoints</strong> (<code class="docutils literal notranslate"><span class="pre">agent/relay/src/billing/email.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">endpoint.ts</span></code>; the shapes
+the app’s UI uses):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Route</p></th>
+<th class="head"><p>Auth</p></th>
+<th class="head"><p>Body → answer</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account/email</span></code></p></td>
+<td><p>session</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{email}</span></code> → 202 <code class="docutils literal notranslate"><span class="pre">{ok,</span> <span class="pre">message}</span></code>. Sends a code. It gives the <strong>same</strong> 202 when the email already belongs to another account: that mailbox gets a “use Recover instead” note, not a code.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account/email/verify</span></code></p></td>
+<td><p>session</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{email,</span> <span class="pre">code}</span></code> → 200 <code class="docutils literal notranslate"><span class="pre">{ok,</span> <span class="pre">email_hint,</span> <span class="pre">email_verified:</span> <span class="pre">true}</span></code>, or 400 <code class="docutils literal notranslate"><span class="pre">invalid_code</span></code>, or 409 <code class="docutils literal notranslate"><span class="pre">email_in_use</span></code> (shown only after proving control of the mailbox).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/billing/account/email</span></code></p></td>
+<td><p>session</p></td>
+<td><p>Removes the email (the address becomes free).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account/anonymous</span></code></p></td>
+<td><p>session</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{acknowledge:</span> <span class="pre">true}</span></code> → <code class="docutils literal notranslate"><span class="pre">{ok,</span> <span class="pre">anonymous_ack_at}</span></code>: the user chose to stay without an email after the warning.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/recover/start</span></code></p></td>
+<td><p>none</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{email}</span></code> → <strong>always</strong> 202 <code class="docutils literal notranslate"><span class="pre">{ok,</span> <span class="pre">message:</span> <span class="pre">&quot;If</span> <span class="pre">that</span> <span class="pre">email</span> <span class="pre">belongs</span> <span class="pre">to</span> <span class="pre">a</span> <span class="pre">Splanc</span> <span class="pre">AI</span> <span class="pre">account,</span> <span class="pre">we</span> <span class="pre">sent</span> <span class="pre">it</span> <span class="pre">a</span> <span class="pre">code…&quot;}</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/recover/verify</span></code></p></td>
+<td><p>none</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{email,</span> <span class="pre">code,</span> <span class="pre">revoke_other_devices?}</span></code> → 200 <code class="docutils literal notranslate"><span class="pre">{account_id,</span> <span class="pre">token,</span> <span class="pre">account_ref,</span> <span class="pre">balance_credits}</span></code>, or 400 <code class="docutils literal notranslate"><span class="pre">invalid_code</span></code>. Other devices are signed out unless <code class="docutils literal notranslate"><span class="pre">revoke_other_devices:</span> <span class="pre">false</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code></p></td>
+<td><p>session</p></td>
+<td><p>Adds <code class="docutils literal notranslate"><span class="pre">email_hint</span></code> (“k•••&#64;gmail.com” or null), <code class="docutils literal notranslate"><span class="pre">email_verified</span></code>, and <code class="docutils literal notranslate"><span class="pre">anonymous_ack_at</span></code> (ISO or null).</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Rules.</strong></p>
+<ul class="simple">
+<li><p><strong>Codes.</strong> 6 digits from a uniform random source, valid <strong>10 minutes</strong>,
+<strong>single use</strong>. A new code replaces the old one.</p></li>
+<li><p><strong>Attempts.</strong> Each code allows <strong>5</strong> attempts; the 5th wrong one burns it.</p></li>
+<li><p><strong>Rate limits.</strong> Codes sent: 10 an hour per IP, <strong>5 an hour per address</strong>
+(and per account), 2,000 a day overall. Code checks: 30 an hour per IP.
+That caps a guesser at about 25 tries an hour against a 1-in-a-million code.</p></li>
+<li><p><strong>One email per account, one account per email.</strong> Verifying a new address
+replaces the old one and frees it. The map is claimed atomically, so a race
+can’t link one email to two accounts.</p></li>
+<li><p><strong>Recovery signs other devices out.</strong> Tokens are <code class="docutils literal notranslate"><span class="pre">sst2.&lt;account&gt;.&lt;gen&gt;.…</span></code>;
+recovery bumps the account’s session generation, so tokens minted before it
+stop working (401). Deletion bumps it too. <code class="docutils literal notranslate"><span class="pre">sst1</span></code> tokens from before this
+change count as generation 0. Like <code class="docutils literal notranslate"><span class="pre">sst1</span></code>, <code class="docutils literal notranslate"><span class="pre">sst2</span></code> tokens are scoped to the
+billing mode (AI_BILLING): a sandbox token never opens a production relay.</p></li>
+<li><p><strong>Emails are per billing mode.</strong> The keyed hash includes the mode in
+production (sandbox keeps the plain input), so the email map, codes and
+per-address limits are separate per mode. An email verified on a sandbox
+(test-money) account can’t recover it once the relay runs in production;
+the user attaches it again to their production account. Recovery also
+refuses an account of the other environment.</p></li>
+<li><p><strong>No account enumeration.</strong></p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">recover/start</span></code> answers identically for known and unknown emails, and
+sends in the background (<code class="docutils literal notranslate"><span class="pre">waitUntil</span></code>) so timing doesn’t tell either.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">account/email</span></code> answers identically for free and taken emails.</p></li>
+<li><p><strong>Every</strong> code failure (wrong, expired, burned, or no code because the
+email has no account) is the same 400 with the same text. Attempts left
+are not reported.</p></li>
+</ul>
+</li>
+</ul>
+<p><strong>What is stored, and why.</strong></p>
+<ul class="simple">
+<li><p><strong>The lookup.</strong> A <strong>keyed hash</strong> of the normalized address
+(HMAC-SHA256 with <code class="docutils literal notranslate"><span class="pre">BILLING_EMAIL_HASH_KEY</span></code>) maps the email to the account
+(<code class="docutils literal notranslate"><span class="pre">em:&lt;hash&gt;</span></code> in the Directory). Recovery needs exactly this lookup; with a
+key, a storage leak can’t be dictionary-attacked.</p></li>
+<li><p><strong>On the account:</strong> the same hash, a display hint (<code class="docutils literal notranslate"><span class="pre">k•••&#64;gmail.com</span></code>) and
+when it was verified.</p></li>
+<li><p><strong>Not the address itself.</strong> Every flow that sends a code gets the address
+from the user in that same request, so the server never needs to keep it.
+If a later feature has to email users unprompted (receipts, policy
+notices), add an AES-GCM-encrypted copy under its own key then, and update
+the privacy notice.</p></li>
+<li><p><strong>Codes:</strong> stored only as an HMAC with an expiry and an attempt count
+(<code class="docutils literal notranslate"><span class="pre">ec:&lt;purpose&gt;:&lt;hash&gt;</span></code>). The alarm purges expired ones.</p></li>
+<li><p><strong>Logs:</strong> no address and no code (a test scans storage and logs for both).</p></li>
+<li><p><strong>Normalization:</strong> trim and lowercase only. No provider folding such as
+Gmail dots: the code goes to what the user typed.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">BILLING_EMAIL_HASH_KEY</span></code> is set once.</strong> Rotating it orphans every stored
+email.</p></li>
+</ul>
+<p><strong>Deletion.</strong> <code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/billing/account</span></code> erases the email: it is removed from
+the account, the email → account map entry and any pending codes are deleted,
+and every device is signed out. The address can then be used on a new account.</p>
+<p><strong>Purchase flow (UI, on <code class="docutils literal notranslate"><span class="pre">agent/credits-flow-ui</span></code>).</strong></p>
+<ul class="simple">
+<li><p>Before the first purchase, ask for an email (“so you can get your credits
+back on a new phone”), with an explicit “Continue without email” that shows
+the warning and records <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account/anonymous</span></code>.</p></li>
+<li><p>AI settings shows the email hint, or “No email: credits can’t be recovered
+if you lose this device’s data”, plus “Recover my account” on a fresh
+install.</p></li>
+</ul>
+<p><strong>Privacy notice impact.</strong></p>
+<ul class="simple">
+<li><p>We process an email address, only if the user adds one, to verify it and
+to recover the account.</p></li>
+<li><p>We keep only a keyed hash and a masked hint, not the address.</p></li>
+<li><p>The address is passed to our email provider (a sub-processor, see below) to
+deliver the code.</p></li>
+<li><p>Deleting the account erases it.</p></li>
+<li><p>App Store privacy label: “Email address: App functionality (account
+recovery), linked to the user, not used for tracking”.</p></li>
+</ul>
+<p><strong>Email provider: needs an owner decision.</strong> Codes are sent through an
+<code class="docutils literal notranslate"><span class="pre">EmailSender</span></code> interface. The tests use <code class="docutils literal notranslate"><span class="pre">FakeEmailSender</span></code>;
+<code class="docutils literal notranslate"><span class="pre">ResendEmailSender</span></code> is ready but has never called the real API. Until
+<code class="docutils literal notranslate"><span class="pre">BILLING_EMAIL_HASH_KEY</span></code> plus a sender are configured, the email routes
+answer 503.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Provider</p></th>
+<th class="head"><p>From a Worker</p></th>
+<th class="head"><p>Deliverability</p></th>
+<th class="head"><p>Cost (checked 2026-11-18)</p></th>
+<th class="head"><p>Setup</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Resend</strong> (recommended)</p></td>
+<td><p>One HTTPS <code class="docutils literal notranslate"><span class="pre">fetch</span></code> + API key (<code class="docutils literal notranslate"><span class="pre">ResendEmailSender</span></code>)</p></td>
+<td><p>Good; built for transactional mail</p></td>
+<td><p>Free 3,000/month (100/day); Pro US$20/month for 50,000</p></td>
+<td><p>Account; verify a sending subdomain (SPF/DKIM/DMARC records at the current DNS host)</p></td>
+<td><p>Simplest. The free tier covers sandbox and launch volumes of login codes.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Postmark</p></td>
+<td><p>HTTPS <code class="docutils literal notranslate"><span class="pre">fetch</span></code></p></td>
+<td><p>Best-in-class for transactional (separate transactional streams)</p></td>
+<td><p>Free 100/month; paid from about US$15/month for 10,000</p></td>
+<td><p>Same DNS work; account approval</p></td>
+<td><p>The pick if deliverability problems appear; costs more at our size.</p></td>
+</tr>
+<tr class="row-even"><td><p>Amazon SES</p></td>
+<td><p>HTTPS, but needs AWS SigV4 request signing in the Worker</p></td>
+<td><p>Good once reputation is built</p></td>
+<td><p>US$0.10 per 1,000; no lasting free tier</p></td>
+<td><p>AWS account, leave the SES sandbox (manual review), DNS</p></td>
+<td><p>Cheapest at volume; most setup and code.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Cloudflare Email Service</p></td>
+<td><p>Native Workers <code class="docutils literal notranslate"><span class="pre">send_email</span></code> binding, no key</p></td>
+<td><p>Unproven (beta)</p></td>
+<td><p>3,000/month included, then US$0.35 per 1,000; <strong>arbitrary recipients need Workers Paid</strong></p></td>
+<td><p>Likely needs the domain on Cloudflare DNS (splanc.io’s DNS is elsewhere)</p></td>
+<td><p>Still <strong>beta</strong>. The free MailChannels-from-Workers route ended in 2024. Revisit when it’s GA.</p></td>
+</tr>
+<tr class="row-even"><td><p>Mailgun</p></td>
+<td><p>HTTPS <code class="docutils literal notranslate"><span class="pre">fetch</span></code></p></td>
+<td><p>Good</p></td>
+<td><p>Small free tier; paid from about US$15/month</p></td>
+<td><p>DNS + account</p></td>
+<td><p>Fine, but no advantage over Resend here.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Sources: <a class="reference external" href="https://resend.com/pricing">Resend pricing</a>,
+<a class="reference external" href="https://postmarkapp.com/pricing">Postmark pricing</a>,
+<a class="reference external" href="https://aws.amazon.com/ses/pricing/">Amazon SES pricing</a>,
+<a class="reference external" href="https://developers.cloudflare.com/email-service/">Cloudflare Email Service</a> and its
+<a class="reference external" href="https://developers.cloudflare.com/email-service/platform/pricing/">pricing</a>.
+Third-party price summaries were cross-checked where vendor pages didn’t load;
+re-check before signing up.</p>
+<p><strong>Recommendation: Resend.</strong></p>
+<ul class="simple">
+<li><p>It is one <code class="docutils literal notranslate"><span class="pre">fetch</span></code> from the Worker, and the free tier covers sandbox and
+early launch.</p></li>
+<li><p>DNS records can stay where splanc.io’s DNS already is.</p></li>
+<li><p>Postmark is the fallback if deliverability becomes a problem.</p></li>
+<li><p><strong>[owner]:</strong></p>
+<ul>
+<li><p>a Resend account for the owner’s LLC;</p></li>
+<li><p>a sending subdomain (e.g. <code class="docutils literal notranslate"><span class="pre">mail.splanc.io</span></code>: add Resend’s SPF and DKIM
+records, plus a DMARC record);</p></li>
+<li><p>a <strong>sending-only</strong> API key → <code class="docutils literal notranslate"><span class="pre">RESEND_API_KEY</span></code> (secret);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BILLING_EMAIL_FROM</span></code> (e.g. <code class="docutils literal notranslate"><span class="pre">Splanc</span> <span class="pre">&lt;codes&#64;mail.splanc.io&gt;</span></code>);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BILLING_EMAIL_HASH_KEY</span></code> (random, set once).</p></li>
+</ul>
+</li>
+</ul>
+</section>
 <section id="privacy">
 <h3>Privacy<a class="headerlink" href="#privacy" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -1559,7 +1773,15 @@ outside the AI config, so it’s never in one.</p></li>
 </tr>
 <tr class="row-even"><td><p>T7</p></td>
 <td><p>A stolen session token</p></td>
-<td><p>Bearer token only to our relay over HTTPS; 180-day expiry plus refresh; sign-in linking (later) allows revocation (a per-account token generation).</p></td>
+<td><p>Bearer token only to our relay over HTTPS; 180-day expiry; a per-account session generation: recovery (and deletion) signs every earlier token out.</p></td>
+</tr>
+<tr class="row-odd"><td><p>T9</p></td>
+<td><p>Account takeover through recovery</p></td>
+<td><p>A code only to the verified address; 6 digits, 10 minutes, single use, 5 attempts; per-IP and per-address limits; recovery signs other devices out; the <code class="docutils literal notranslate"><span class="pre">biz-recovery-spike</span></code> alert. Whoever controls the mailbox controls the account (the usual email-recovery trade-off).</p></td>
+</tr>
+<tr class="row-even"><td><p>T10</p></td>
+<td><p>Account enumeration by email</p></td>
+<td><p>Identical answers and timing for known and unknown emails (<code class="docutils literal notranslate"><span class="pre">recover/start</span></code>, <code class="docutils literal notranslate"><span class="pre">account/email</span></code>); identical code failures; no attempts-left.</p></td>
 </tr>
 <tr class="row-odd"><td><p>T8</p></td>
 <td><p>A bad config loses money</p></td>
@@ -1951,6 +2173,11 @@ node<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;proc
 node<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;process.stdout.write(require(&quot;crypto&quot;).randomBytes(24).toString(&quot;hex&quot;))&#39;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>&gt;<span class="w"> </span>../../credentials/billing_admin_token.txt
 tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;\n&#39;</span><span class="w"> </span>&lt;<span class="w"> </span>../../credentials/billing_admin_token.txt<span class="w">        </span><span class="p">|</span><span class="w"> </span><span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>BILLING_ADMIN_TOKEN<span class="w">   </span>--config<span class="w"> </span>wrangler.toml
+<span class="c1"># Email + recovery (optional; once the provider is chosen, see &quot;Email and recovery&quot;):</span>
+node<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;process.stdout.write(require(&quot;crypto&quot;).randomBytes(32).toString(&quot;base64url&quot;))&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>BILLING_EMAIL_HASH_KEY<span class="w"> </span>--config<span class="w"> </span>wrangler.toml<span class="w">      </span><span class="c1"># set ONCE, never rotate</span>
+tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;\n&#39;</span><span class="w"> </span>&lt;<span class="w"> </span>../../credentials/resend_api_key.txt<span class="w">              </span><span class="p">|</span><span class="w"> </span><span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>RESEND_API_KEY<span class="w">        </span>--config<span class="w"> </span>wrangler.toml
+<span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;Splanc &lt;codes@mail.splanc.io&gt;&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>BILLING_EMAIL_FROM<span class="w"> </span>--config<span class="w"> </span>wrangler.toml
 
 <span class="c1"># 3. The pricing config, with the TEST-mode price ids, then turn sandbox mode on.</span>
 jq<span class="w"> </span>--arg<span class="w"> </span>p10<span class="w"> </span>price_TEST10_FROM_DASHBOARD<span class="w"> </span>--arg<span class="w"> </span>p25<span class="w"> </span>price_TEST25_FROM_DASHBOARD<span class="w"> </span><span class="se">\</span>
@@ -2292,6 +2519,7 @@ without the bridge and wasm);</p></li>
 <li><a class="reference internal" href="#api">API</a></li>
 <li><a class="reference internal" href="#flows">Flows</a></li>
 <li><a class="reference internal" href="#interface-with-the-model-setup-picker-agent-ai-tiers">Interface with the model-setup picker (<code class="docutils literal notranslate"><span class="pre">agent/ai-tiers</span></code>)</a></li>
+<li><a class="reference internal" href="#email-and-recovery">Email and recovery</a></li>
 <li><a class="reference internal" href="#privacy">Privacy</a></li>
 <li><a class="reference internal" href="#threat-model">Threat model</a></li>
 <li><a class="reference internal" href="#org-spend-limit">Org spend limit</a></li>
