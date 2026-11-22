@@ -8,7 +8,39 @@ only the connected fixture. Now an effect of any size up to the player's effect 
 (4 KiB of `.fxb` on a C6) reaches every member, and they all switch to it on the same frame.
 Maps stay per fixture.
 
-RESULTS_PLACEHOLDER
+Measured with `//pi/hitl/harness:mesh_effect` on hitl-rig-1: three C6 players (c6-123170 =
+a, the gateway; c6-711130 = b; c6-711f48 = c) on the rig AP, `:esp32c6_netstack_meshdev`,
+membership and grants as in M7 (`mesh_admin_tool` stands in for the app). The client holds
+one wss connection to a only. Logs and JSON: `/workspace/.claude/mesh/m6/runs/`.
+
+## Results
+
+Run r4 (2026-11-22, **PASS**; r5 pending, queued behind CI on the rig). Effects: `meshStorm` (1 981 B fxb, 7 uniforms,
+a 1 998 B submit_effect frame) and `meshEmber` (2 907 B fxb, 11 uniforms, 2 924 B frame),
+alternating; odd rounds go as 1 KB `upload_chunk` windows (the BLE path's sharding).
+
+| | Result (r4) |
+| --- | --- |
+| **Every member runs it**: 8 rounds of `mesh_send{submit_effect}` to a | **8/8**: a answers `result_ready`, b and c answer OK, all three run the new effect (`get_effect_uniforms`) |
+| **Same frame**: the load's instant on the AP clock (the rig AP's beacons, as M4/M5) | spread **0.4–1.9 ms** (one frame is 12.5 ms); the same time-base grid frame `k` on all three in 8/8 |
+| Submit → every fixture switched | **0.58–0.86 s** (one wss frame), **0.83–1.26 s** (1 KB windows) |
+| Members' fetch (2 KB / 3 KB, from the gateway) | 269–362 ms / 479–548 ms (13 / 19 chunks at the 20 ms bulk pace) |
+| Pushed `MeshResult` | 0.35–1.10 s after the submit |
+| The load itself (render task, at its frame, on the tick stack) | 2.8–3.4 ms |
+| **Render during transfers**: members | **no late frame on b or c in any round**; 80 fps (the autoscaler restarts after each load, as for any load: 30 → 80 over ~6 s) |
+| Render on the gateway | late frames only next to its flash writes: the sharded upload's `/lfs/upload.tmp` windows (an existing path: any sharded upload does it) and the persisted effect (20–160 ms littlefs writes) — desk item |
+| **Heap**: lowest free on a member while a blob is in flight | **42 992 B** (2.9 KB blob held), 45 932 B for 2 KB; the gateway 38 020–39 108 B at the share |
+| **Late joiner**: c's mesh off, a new effect and a committed uniform (cloud_speed 1.25) shared, c's mesh on | c rejoined, synced and was **caught up 5.7 s** after `MESH ON`: runs the new effect, cloud_speed 1.25 = a's |
+| **Reboot**: b reset | caught up **1.4 s** after its bridge came back: its persisted effect was the blob (found by hash, `skipped=1`: **not reloaded**), the state blob (54 ms) applied |
+| Resets | none outside the reboot |
+
+r1 found the render task's stack too small for a load (the load now runs on the tick stack);
+r2/r3 found harness issues (a second wss to the gateway ended the app's session; the
+reboot's catch-up landed in the reset capture; the grid index `k` differs when fps differ,
+so alignment is judged on the AP clock). meshsim `effect_share_and_late_joiner`: 3.5 KB to
+three members applied at one instant 460 ms after the share, 4.4 KB at 10 % loss in 930 ms,
+a late joiner caught up 620 ms after joining, a rebooted member without a reload.
+
 
 ## How the app uses it
 
@@ -94,7 +126,20 @@ second phase with anything but OK gets a catch-up too.
 
 ## Cost
 
-COST_PLACEHOLDER
+- **Flash** (default image, both built here from the same base): M7 tip (fc7177a01) 2 275 104 B →
+  **M6 2 281 728 B (+6 624 B)**; `//firmware/loader:layout_test` passes with **12 032 B**
+  of its headroom left. M6's own code is ~+19 KB (the crate's blob/scene/share 7 KB, the
+  firmware store and scene glue 7 KB, the player's staged load, check and scene frames
+  2.5 KB, the gateway arm 1.5 KB); the swarm's firmware image updater and settings
+  bundles, linked but dead on the C6 (no flash, no bundle key), are now host-only
+  (features `fw_update`, `swarm_settings`): −12.5 KB.
+- **RAM, default image**: `.dram0.data` identical, `.dram0.bss` **+56 B** (the staged
+  load's slot in the player, the tick-stack trampoline). Mesh off: nothing else.
+- **Heap while on**: the mesh block grows by the blob slots' bookkeeping (~200 B); blob
+  bytes are heap only while a blob is in use (≤ 3 slots, freed 20 s after last use).
+- **Stack**: fetching, serving and hashing on the tick stack (painted high water as M7);
+  the staged load on the tick stack from the render task (render keeps its 5 KB).
+
 
 ## Open
 
