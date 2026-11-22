@@ -3,14 +3,14 @@
   "title": "splanc",
   "project": {
     "name": "splanc",
-    "source": "FUG-88 \"Draft requirements and risk assessment for Splanc\" baseline (UN-1..8, PR-1..25, RISK-1..12), verbatim. The per-risk mitigations FUG-88 states as prose are mitigations MIT-1..12, each implemented by a risk-control requirement PR-26..37 (FUG-89). PR-38+ are later product requirements."
+    "source": "FUG-88 \"Draft requirements and risk assessment for Splanc\" baseline (UN-1..8, PR-1..25, RISK-1..12), verbatim. The per-risk mitigations FUG-88 states as prose are mitigations MIT-1..12, each implemented by a risk-control requirement PR-26..37 (FUG-89). PR-38+ and UN-9+ are later product requirements and user needs."
   },
   "summary": {
-    "user_needs": 8,
+    "user_needs": 9,
     "user_needs_validated": 0,
-    "requirements": 39,
+    "requirements": 40,
     "requirements_verified": 10,
-    "requirements_under_verified": 18,
+    "requirements_under_verified": 19,
     "requirements_partial": 0,
     "requirements_failed": 0,
     "requirements_unverified": 11,
@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 3503,
-    "gaps": 35
+    "test_cases": 3513,
+    "gaps": 37
   },
   "levels": [
     {
@@ -131,7 +131,8 @@
         "PR-27",
         "PR-28",
         "PR-33",
-        "PR-34"
+        "PR-34",
+        "PR-40"
       ]
     },
     {
@@ -163,6 +164,15 @@
         "PR-25",
         "PR-30",
         "PR-36"
+      ]
+    },
+    {
+      "id": "UN-9",
+      "title": "Lights stay smooth while the system works in the background",
+      "status": "PARTIAL",
+      "description": "Users need the lights to keep animating smoothly, without a visible stutter, freeze or frame-rate dip, while the system does its own work: unlocking, admitting or removing fixtures, re-keying a mesh, connecting clients or saving settings. Security and housekeeping are invisible on the lights.",
+      "requirements": [
+        "PR-40"
       ]
     }
   ],
@@ -6897,6 +6907,58 @@
         }
       ],
       "verified_in": []
+    },
+    {
+      "id": "PR-40",
+      "title": "Crypto and membership work never delay a rendered frame",
+      "status": "UNDER-VERIFIED",
+      "description": "Cryptographic operations on a player (ECDSA verifies of admin grants and rotation orders, ECDH for session and join keys, mesh joins and key rotations) shall never block or delay the render task: they run strictly below the render task's priority on every path (whatever priority the network loop holds) and never hold a lock the render task takes, so the render task preempts them the moment a frame is due. Verified on HITL: no late frame (a render-start interval over 1.5 frame periods) on any fixture while a mesh is formed, unlocked, administered, re-keyed and revoked (//pi/hitl/harness:mesh_join_admin). Product decision, desk D-323, 2026-11-21 (\"NO BLIPPING\").",
+      "evidence": [
+        {
+          "name": "//pi/hitl/tests:hitl_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test",
+          "kind": "target"
+        },
+        {
+          "name": "pi.hitl.tests.test_mesh_join_admin_core.LateFramesTest::test_attribution",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_mesh_join_admin_core.LateFramesTest::test_gate",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        }
+      ],
+      "demanded_level": "hitl",
+      "provided_level": "simulation",
+      "satisfies": [
+        "UN-9",
+        "UN-6"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hitl",
+      "modules": [
+        "firmware",
+        "pi/hitl"
+      ],
+      "implemented_in": [],
+      "verified_in": [
+        {
+          "ids": [
+            "PR-40"
+          ],
+          "relation": "verifies",
+          "path": "pi/hitl/tests/test_mesh_join_admin_core.py",
+          "line": 111,
+          "symbol": "class LateFramesTest"
+        }
+      ]
     }
   ],
   "mitigations": [
@@ -7499,6 +7561,20 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
+    },
+    {
+      "kind": "under-verified",
+      "entity": "PR-40",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
+    },
+    {
+      "kind": "no-implementation",
+      "entity": "PR-40",
+      "message": "no source annotation implements it",
+      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
