@@ -13,7 +13,7 @@ import {
   type ClientOptions,
   type SocketFactory,
 } from "../../net/client";
-import { connectionRegistry } from "../../net/connectionRegistry";
+import { connectionRegistry, deviceHostKey } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
 import { isBleUrl } from "../../net/bleTransport";
 import { deviceStore } from "../../store/deviceStore";
@@ -145,8 +145,13 @@ class AppState {
     }
     const dev = deviceStore.upsert(wssUrl, label);
     deviceStore.setActive(dev.id);
-    // A different device was freed: probe it now (it is no longer the active one).
-    if (freed && freed !== dev.id) void deviceProber.probeNow(freed);
+    // A different device was freed: probe it now (it is no longer the active one). Not
+    // when it is this same player under another record (an older spelling of its
+    // address): that probe would race this connection for the player's TLS slot.
+    const freedUrl = freed ? deviceStore.get(freed)?.wssUrl : undefined;
+    if (freed && freed !== dev.id && (!freedUrl || deviceHostKey(freedUrl) !== deviceHostKey(wssUrl))) {
+      void deviceProber.probeNow(freed);
+    }
     // coldRetryLimit defaults to 1 (give up fast on an untrusted cert so we don't
     // starve the cert-approval page's TLS slot). The trust flow passes a higher
     // value: once the user has accepted the cert the only thing left that can
