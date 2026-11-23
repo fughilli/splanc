@@ -489,6 +489,8 @@ export const RELAY_PATHS = new Set([
   // notifications use the workers.dev address directly.
   "/billing/signin", "/billing/signin/config", "/billing/signin/nonce",
   "/billing/signin/switch", "/billing/signin/unlink",
+  "/billing/purchase/apple", "/billing/account/anonymous", "/billing/account/email",
+  "/billing/account/email/verify", "/billing/recover/start", "/billing/recover/verify",
 ]);
 
 export function relayRoute(request, url, env) {
