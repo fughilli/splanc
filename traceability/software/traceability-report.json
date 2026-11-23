@@ -7009,7 +7009,7 @@
           ],
           "relation": "verifies",
           "path": "pi/hitl/tests/test_flash_render_core.py",
-          "line": 32,
+          "line": 33,
           "symbol": "class FlashRenderTest"
         }
       ]
