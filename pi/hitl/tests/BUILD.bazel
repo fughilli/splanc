@@ -78,6 +78,7 @@ py_test(
         "test_reservation_queue_priority.py",
         "test_reservation_readiness.py",
         "test_rig_isolation_core.py",
+        "test_rig_routing.py",
         "test_serial_capture.py",
         "test_serial_discovery.py",
         "test_stable_identity_core.py",

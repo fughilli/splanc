@@ -472,7 +472,11 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # eaec330 (PR #18, squash-merged on main): the triggered logic-analyzer capture
+    # 7b8495c (PR #19, squash-merged on main): activation no longer renews a dead
+    # waiter's lease (a client that died while queued held the unit one more full
+    # lease), and a waiter whose lease already lapsed is never started (reap-sweep
+    # container churn). Pairs with catalog lease_seconds 1800 -> 300.
+    # Prior: eaec330 (PR #18, squash-merged on main): the triggered logic-analyzer capture
     # gets its own 20 s deadline (+ WaitDelay), so a trigger that never fires fails
     # fast instead of hanging 90 s (the 2026-11-12 spidev boot race).
     # Prior: d531698 (PR #17, squash-merged on main): priority classes merge-queue >
@@ -496,7 +500,7 @@ git_override(
     # nix/hitl-app.nix passes 2 fleet-wide), PR #4 (--net-host), PR #3 (--mount dbus).
     # Backward-compatible. Keep in lockstep with the hitl-reserve rev in
     # pi/hitl/flake.nix / flake.lock (bump all three together).
-    commit = "eaec330534df23ea764bbb96acbac0df58d135b5",
+    commit = "7b8495c62feaf9ea92a0a1f58b4845561f9133fa",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
