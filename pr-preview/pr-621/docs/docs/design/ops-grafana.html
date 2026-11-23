@@ -233,6 +233,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
@@ -480,19 +481,23 @@ sits in an event. One write path covers all of it.</p></li>
 <td><p><code class="docutils literal notranslate"><span class="pre">ai_checkout_created</span></code> / <code class="docutils literal notranslate"><span class="pre">_failed</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_purchase_rejected</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_webhook_rejected</span></code></p></td>
 <td><p>sku, code, reason</p></td>
 </tr>
-<tr class="row-even"><td><p>Apple consumption</p></td>
+<tr class="row-even"><td><p>Email + recovery</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ai_email_verified</span></code> / <code class="docutils literal notranslate"><span class="pre">_removed</span></code> / <code class="docutils literal notranslate"><span class="pre">_failed</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_recover_requested</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_account_recovered</span></code></p></td>
+<td><p>replaced, known, revoked_others (never the address or its hash)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Apple consumption</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">ai_consumption_sent</span></code> / <code class="docutils literal notranslate"><span class="pre">_skipped</span></code> / <code class="docutils literal notranslate"><span class="pre">_failed</span></code></p></td>
 <td><p>consumption, preference, reason</p></td>
 </tr>
-<tr class="row-odd"><td><p>Reconciliation</p></td>
+<tr class="row-even"><td><p>Reconciliation</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">ai_reconcile_usage</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_reconcile_store</span></code></p></td>
 <td><p>day, ledger vs Anthropic USD, mismatch fraction, missing / unknown counts</p></td>
 </tr>
-<tr class="row-even"><td><p>Feedback</p></td>
+<tr class="row-odd"><td><p>Feedback</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">fb_received</span></code>, <code class="docutils literal notranslate"><span class="pre">fb_reason</span></code> (one per reason chip), <code class="docutils literal notranslate"><span class="pre">fb_status</span></code>, <code class="docutils literal notranslate"><span class="pre">fb_duplicate</span></code>, <code class="docutils literal notranslate"><span class="pre">fb_rate_limited</span></code>, <code class="docutils literal notranslate"><span class="pre">fb_rejected</span></code>, <code class="docutils literal notranslate"><span class="pre">fb_deleted</span></code></p></td>
 <td><p>surface, reasons, signature, failing tool, app / firmware version, AI kind/vendor/model, status, prev, age_h</p></td>
 </tr>
-<tr class="row-odd"><td><p>Demo relay</p></td>
+<tr class="row-even"><td><p>Demo relay</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">demo_request</span></code> (one per POST)</p></td>
 <td><p>outcome (our own vocabulary), status, model, attempts, ms, images</p></td>
 </tr>
@@ -621,6 +626,14 @@ go-live (<a class="reference internal" href="../ops/billing-go-live.html#grafana
 </tr>
 <tr class="row-odd"><td><p>Webhook signatures failing</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">ai_webhook_rejected</span></code> (1 h) &gt; 5</p></td>
+<td><p>warn</p></td>
+</tr>
+<tr class="row-even"><td><p>Verification / recovery emails failing</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ai_email_failed</span></code> (1 h) &gt; 2</p></td>
+<td><p>warn</p></td>
+</tr>
+<tr class="row-odd"><td><p>Account recoveries spiking</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ai_account_recovered</span></code> (1 h) &gt; 20</p></td>
 <td><p>warn</p></td>
 </tr>
 <tr class="row-even"><td><p>Apple consumption answer failed</p></td>
