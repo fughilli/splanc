@@ -110,15 +110,21 @@ export class MeshTopoView {
     const r0 = Math.max(0.5, b.radius);
     const p0 = this.orbit.projector(w, h, b.ctr, r0);
     let fx = 0, fy = 0;
+    const floorY = Math.min(...nodes.map((n) => n.pos[1])) - 0.05;
     for (const n of nodes) {
-      const q = p0(n.pos);
-      fx = Math.max(fx, Math.abs(q.x - w / 2) / Math.max(1, w / 2 - 70));
-      fy = Math.max(fy, Math.abs(q.y - h / 2) / Math.max(1, h / 2 - 36));
+      // The node (its label above it) and its drop line's foot on the floor.
+      for (const [q, mx, my] of [
+        [p0(n.pos), 70, 36],
+        [p0([n.pos[0], floorY, n.pos[2]] as Vec3), 12, 12],
+      ] as [ReturnType<typeof p0>, number, number][]) {
+        fx = Math.max(fx, Math.abs(q.x - w / 2) / Math.max(1, w / 2 - mx));
+        fy = Math.max(fy, Math.abs(q.y - h / 2) / Math.max(1, h / 2 - my));
+      }
     }
     const fit0 = Math.max(fx, fy);
     const radius = fit0 > 0 ? r0 * fit0 : r0;
     const proj = this.orbit.projector(w, h, b.ctr, radius);
-    const floor = Math.min(...nodes.map((n) => n.pos[1])) - 0.05;
+    const floor = floorY;
     drawFloorGrid(g, proj, min, max, floor, fg);
     if (this.model.anyPosed) drawAxes(g, proj);
 
