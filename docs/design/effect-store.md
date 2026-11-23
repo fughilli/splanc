@@ -3,9 +3,8 @@
 A player keeps a small library of compiled effects on its own flash, beside the deck-A effect it
 resumes on boot. An app (or any client) stores an effect without running it, lists the store, opens
 one onto a deck, and deletes one. This is how a fixture carries a set of shows that need no phone
-library to replay, for example the tracker demos in `lighthouse/demos/splanc` of
-fughilli/indoor_localization (`hot_spots_pose.glsl`, `tracker_demo_pose.glsl`,
-`flashlight_pose.glsl`). They are installed by storing them; they aren't built into the firmware.
+library to replay, for example the tracker demos in `tools/vive/demos/effects`
+(`hot_spots_pose.glsl`, `tracker_demo_pose.glsl`, `flashlight_pose.glsl`). They are installed by storing them; they aren't built into the firmware.
 
 Firmware: `firmware/player_app/effect_store.rs` (record format, protocol) and `main.cpp` (the
 littlefs hooks, the staged load, persistence). Protocol: `shared/protocol/proto/ledmapper.proto`

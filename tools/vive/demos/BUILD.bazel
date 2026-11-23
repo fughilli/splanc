@@ -1,0 +1,82 @@
+"""tools/vive/demos — Vive Tracker demos on Splanc fixtures (moved from fughilli/indoor_localization).
+
+All of them read poses from //tools/vive/pose_server and drive fixtures over OSC.
+- flashlight: a Vive stylus as a flashlight (effects/flashlight_pose.glsl).
+- demo: the tracker <-> fixture calibration wizard and the live plane / sphere demo
+  (`--p4` for a P4 player with its own tracker; effects/tracker_demo_pose.glsl).
+- The scavenger hunt is an effect only (effects/hot_spots_pose.glsl): its spots are
+  uniforms.
+They also run straight from the checkout with python3 (README.md).
+"""
+
+load("@aspect_rules_js//js:defs.bzl", "js_test")
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "lib",
+    srcs = glob(
+        ["*.py"],
+        exclude = [
+            "app.py",
+            "flashlight.py",
+        ],
+    ),
+    data = glob([
+        "effects/*.glsl",
+        "static/**",
+    ]),
+    imports = ["."],
+    deps = [
+        requirement("numpy"),
+        requirement("scipy"),
+    ],
+)
+
+py_binary(
+    name = "demo",
+    srcs = ["app.py"],
+    main = "app.py",
+    deps = [":lib"],
+)
+
+py_binary(
+    name = "flashlight",
+    srcs = ["flashlight.py"],
+    main = "flashlight.py",
+    deps = [":lib"],
+)
+
+# The tests import app.py and flashlight.py as modules next to them.
+# test_calib_synth runs the calibration solver ~3 minutes.
+[
+    py_test(
+        name = f.removeprefix("tests/").removesuffix(".py"),
+        size = "large" if f == "tests/test_calib_synth.py" else "medium",
+        srcs = [
+            "app.py",
+            "flashlight.py",
+            f,
+        ],
+        main = f,
+        deps = [":lib"],
+    )
+    for f in glob(["tests/test_*.py"])
+]
+
+# effects/flashlight_pose.glsl on the real effect VM (the compiler and simulator wasm
+# from //agent:wasm): the stylus validity gate, frame by frame.
+js_test(
+    name = "flashlight_effect_test",
+    data = [
+        "effects/flashlight_pose.glsl",
+        "//agent:wasm",
+    ],
+    entry_point = "tests/flashlight_effect_check.mjs",
+    env = {
+        "SPLANC_AGENT": "$(rootpath //agent:wasm)",
+        "SPLANC_AGENT_REQUIRED": "1",
+    },
+)

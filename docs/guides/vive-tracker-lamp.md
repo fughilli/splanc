@@ -12,14 +12,13 @@ computer, which streams the beam to the lamp over OSC.
         └──light──► stylus ──radio──► dongle ──USB──► computer: lhd ─► flashlight.py ─OSC─┘
 ```
 
-The host side lives in two public repositories:
+The host side is in this repository:
 
-- [fughilli/lighthouse](https://github.com/fughilli/lighthouse): `lhd`, the Lighthouse tracking
-  daemon. The P4 runs the same tracking kernel.
-- [fughilli/indoor_localization](https://github.com/fughilli/indoor_localization): the pose
-  server (`swarm/tools/vive_web`) and the demos (`lighthouse/demos/splanc`). The demos' own
-  [README](https://github.com/fughilli/indoor_localization/blob/master/lighthouse/demos/splanc/README.md)
-  is the full reference. This guide is the shortest path through it.
+- `tools/vive/pose_server`: the pose server. It runs `lhd`, the Lighthouse tracking daemon from
+  [fughilli/lighthouse](https://github.com/fughilli/lighthouse) (the `@lighthouse` module; the
+  P4 runs the same tracking kernel).
+- `tools/vive/demos`: the demos. Their [README](../../tools/vive/demos/README.md) is the full
+  reference. This guide is the shortest path through it.
 
 ## What you need
 
@@ -32,7 +31,8 @@ The host side lives in two public repositories:
   **B and C** (C syncs optically to B, so they must see each other), or to A and B with a sync
   cable.
 - **A computer** (macOS or Linux) on the same LAN as the lamp, with the dongle plugged in. It
-  needs Bazel (Bazelisk) and Python 3.9 or later with numpy and scipy.
+  needs Bazel (Bazelisk), and Python 3.9 or later with numpy and scipy to run the demos straight
+  from the checkout.
 - Something for the stylus tip to pivot in while it's calibrated: a small dimple in a block of
   wood or plastic is enough.
 
@@ -55,16 +55,14 @@ instead of reopening the port.
 ## 2. Run the tracking daemon
 
 ```sh
-git clone https://github.com/fughilli/indoor_localization && cd indoor_localization
-bazel build -c opt @lighthouse//daemon:lhd
-python3 swarm/tools/vive_web/server.py --source lhd --no-open     # http://127.0.0.1:8765
+bazel run -c opt //tools/vive/pose_server -- --no-open     # http://127.0.0.1:8765
 ```
 
 - **Turn on every base station before starting the server.** lhd solves the stations from
   scratch at start and locks onto the ones it sees then. After you add a station or change a
   channel, restart the server instead of waiting for lhd to notice.
-- The server finds lhd in `bazel-bin`. If you skip the build, it fails with
-  `TypeError: expected str ... not NoneType`.
+- `bazel run` builds lhd and passes it to the server. Running `server.py` directly needs
+  `--lhd <path>` (after `bazel build -c opt @lighthouse//daemon:lhd`).
 - Healthy log lines in the page or in `/events`: `locked=True type=timing`, a `type=station`
   line, `calibrated (FirstStations)`, then `<serial> tracking started`.
 - If the dongle doesn't show up as a USB device, try another cable. Charge-only USB-C cables are
@@ -77,7 +75,7 @@ transform (the **mount**). You do both once, with the main demo. Find the lamp's
 stylus's serial (`LHR-…`, it's in the pose server's log), then:
 
 ```sh
-cd lighthouse/demos/splanc
+cd tools/vive/demos
 # The lamp's LED map: export it from Splanc (the agent's export_map, format csv).
 python3 app.py --p4 --stylus <stylus serial> --map <lamp map>.csv --fixture <lamp IP>   # http://127.0.0.1:8770
 ```
@@ -130,12 +128,12 @@ width 12.0 deg …` is the healthy status line. Point the stylus at the lamp.
 
 ## Troubleshooting
 
-| Symptom                                            | Check                                                                                                                                                                                                   |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NO STYLUS` / `STYLUS LOST` in the driver          | The driver says why. The pose server may be down, the stylus may have lost sight of the stations, the `--stylus` serial may be wrong, or no poses are arriving at all.                                  |
-| `tracking lost (Drifted)` again and again          | The stylus is turning its sensors away from a single station. Add a second station, or keep the stylus facing the one you have.                                                                         |
-| No `locked=True type=timing` for minutes           | No station light is reaching the trackers. A channel-C station blinks until it has synced to B. Check that the stylus points at the stations, not face-down on the table.                               |
-| The beam lands in the wrong place on the lamp      | The stations changed since the lamp's mount was probed. Re-run step 3's _Probe LEDs_. Don't hand-edit lhd's calibration file.                                                                           |
-| macOS: `No route to host` when sending to the lamp | Python needs Local Network access (System Settings → Privacy & Security → Local Network). Homebrew's Python may never be prompted; Apple's `/usr/bin/python3` is covered by your terminal's permission. |
-| The lamp has no `tracker_*` uniforms               | It was flashed without `--//firmware/p4:tracker` (step 1).                                                                                                                                              |
-| You can't find the lamp after moving networks      | Its address changed. Look it up again (`list_players`, or mDNS `_splanc._tcp`).                                                                                                                         |
+| Symptom                                            | Check                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NO STYLUS` / `STYLUS LOST` in the driver          | The driver says why. The pose server may be down, the stylus may have lost sight of the stations, the `--stylus` serial may be wrong, or no poses are arriving at all.                                                                                                                                      |
+| `tracking lost (Drifted)` again and again          | The stylus is turning its sensors away from a single station. Add a second station, or keep the stylus facing the one you have.                                                                                                                                                                             |
+| No `locked=True type=timing` for minutes           | No station light is reaching the trackers. A channel-C station blinks until it has synced to B. Check that the stylus points at the stations, not face-down on the table. If the stylus is in view and paired (its buttons show in the log) but still never locks, power cycle the stylus and the stations. |
+| The beam lands in the wrong place on the lamp      | The stations changed since the lamp's mount was probed. Re-run step 3's _Probe LEDs_. Don't hand-edit lhd's calibration file.                                                                                                                                                                               |
+| macOS: `No route to host` when sending to the lamp | Python needs Local Network access (System Settings → Privacy & Security → Local Network). Homebrew's Python may never be prompted; Apple's `/usr/bin/python3` is covered by your terminal's permission.                                                                                                     |
+| The lamp has no `tracker_*` uniforms               | It was flashed without `--//firmware/p4:tracker` (step 1).                                                                                                                                                                                                                                                  |
+| You can't find the lamp after moving networks      | Its address changed. Look it up again (`list_players`, or mDNS `_splanc._tcp`).                                                                                                                                                                                                                             |
