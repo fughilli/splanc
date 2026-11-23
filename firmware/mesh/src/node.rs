@@ -143,16 +143,38 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
     /// `dst` is valid for writes; on `Ok` every field is initialised, on `Err` none is and
     /// `net` was not called. `net` must initialise its slot.
     pub unsafe fn init_in(dst: *mut Self, net: impl FnOnce(*mut NetOf<P>), backhaul: B, guard: G, cfg: NodeConfig) -> Result<(), MtuTooSmall> {
+        Self::init_in_with(dst, net, |p| p.write(backhaul), |p, _| p.write(guard), cfg)
+    }
+
+    /// [`Node::init_in`] with the backhaul and the guard built in place too: `backhaul`
+    /// initialises its slot, then `guard` its own, given the backhaul's MTU. Nothing big is
+    /// ever a by-value temporary on the caller's stack (firmware: the mesh is built on the
+    /// tick's 14 KB stack).
+    ///
+    /// # Safety
+    /// As [`Node::init_in`]; `backhaul` and `guard` must initialise their slots. On `Err`
+    /// both are dropped again and `net` was not called.
+    pub unsafe fn init_in_with(
+        dst: *mut Self,
+        net: impl FnOnce(*mut NetOf<P>),
+        backhaul: impl FnOnce(*mut B),
+        guard: impl FnOnce(*mut G, usize),
+        cfg: NodeConfig,
+    ) -> Result<(), MtuTooSmall> {
         use core::ptr::addr_of_mut;
-        let mtu = backhaul.mtu().saturating_sub(cfg.frame_overhead + guard.overhead());
+        let bp = addr_of_mut!((*dst).backhaul);
+        backhaul(bp);
+        let gp = addr_of_mut!((*dst).guard);
+        guard(gp, (*bp).mtu());
+        let mtu = (*bp).mtu().saturating_sub(cfg.frame_overhead + (*gp).overhead());
         if mtu < MIN_MTU {
+            core::ptr::drop_in_place(gp);
+            core::ptr::drop_in_place(bp);
             return Err(MtuTooSmall { mtu, min: MIN_MTU });
         }
         let np = addr_of_mut!((*dst).net);
         net(np);
         (*np).mesh.set_max_payload(link::mesh_payload_for_mtu(mtu));
-        addr_of_mut!((*dst).backhaul).write(backhaul);
-        addr_of_mut!((*dst).guard).write(guard);
         addr_of_mut!((*dst).cfg).write(cfg);
         addr_of_mut!((*dst).stats).write(NodeStats::default());
         addr_of_mut!((*dst).mtu).write(mtu);

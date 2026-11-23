@@ -73,6 +73,13 @@ fn main() -> std::io::Result<()> {
         Config::new().max_bytes(if firmware { 1 } else { 8192 }),
     );
 
+    // Mesh catch-up `shared state` (≤ 128 words): the firmware reads it in place
+    // (pbview, ffi.rs) and encodes it zero-copy, so its profile keeps a stub.
+    g.configure(
+        ".ledmapper.v1.SetFxState.words",
+        Config::new().max_bytes(if firmware { 1 } else { 512 }),
+    );
+
     // Batched telemetry (Pi-profile arms; players silently drop them).
     g.configure(
         ".ledmapper.v1.Detections.batch",

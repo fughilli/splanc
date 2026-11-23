@@ -824,6 +824,7 @@ impl Player {
             | CMsg::MeshSend(_)
             | CMsg::GetMesh(_)
             | CMsg::MeshAdmin(_)
+            | CMsg::SetFxState(_)
             // Lamp power: the player_app power layer (power_ffi.rs).
             | CMsg::SetPower(_)
             | CMsg::GetPower(_)

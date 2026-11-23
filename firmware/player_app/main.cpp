@@ -922,6 +922,8 @@ extern "C" int32_t lm_mesh_stage(const uint8_t *frame, uint32_t len, uint32_t ap
   return r;
 }
 
+static void keep_deckb_frame(const uint8_t *req, size_t len);  // deck B for a catch-up (below)
+
 // The staged frame the render task applied (try-lock: the mesh asks again next pass).
 extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame) {
   *frame = nullptr;
@@ -937,6 +939,12 @@ extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame) {
     remove(kEffectSelPath);
     Log().printf("[mesh] shared effect persisted %s %u B us=%lu\n", ok ? "ok" : "FAILED", (unsigned)len,
                  (unsigned long)(esp_timer_get_time() - t0));
+  } else if (r == 1 && deck == 1) {
+    // As a deck-B upload: kept in RAM for a later catch-up (D-465). Without this, a deck B
+    // shared through the mesh was on every fixture but in no gateway's catch-up, so a
+    // rebooted member came back with deck A alone.
+    keep_deckb_frame(*frame, len);
+    Log().printf("[mesh] shared deck-B effect kept %u B\n", (unsigned)len);
   }
   return r;
 }
@@ -2300,6 +2308,11 @@ extern "C" int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint
   int n = dispatch_relayed(in, len, &reply);
   g_kiosk_src = LM_KIOSK_SRC_WSS;
   g_reply_droppable = false;
+  uint32_t lag_ms = 0;
+  if (uint32_t fs = lm_fx_state_restored(&lag_ms)) {
+    Log().printf("[mesh] shared state %s lag_ms=%lu\n",
+                 fs == 1 ? "restored" : "refused (not the same build of the effect)", (unsigned long)lag_ms);
+  }
   if (n < 0) {
     *code = 0xfffe;
     return 1;

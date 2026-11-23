@@ -110,6 +110,9 @@ uint32_t lm_fx_staged_apply(void);
 // The look a mesh catch-up carries besides the effect: len(2) || ClientMessage frames
 // (deck A's uniforms, brightness, crossfade). Returns the length, -1 if `cap` is too small.
 int32_t lm_fx_scene_frames(uint8_t *out, size_t cap);
+// The last set_fx_state (a mesh catch-up's `shared state`): 0 none, 1 restored, 2 refused;
+// cleared. *lag_ms: the time the next update() adds.
+uint32_t lm_fx_state_restored(uint32_t *lag_ms);
 // Lock-free video ingest (network task, under the texture-queue lock only): decode +
 // queue a set_texture for lm_tex_present. Returns the TextureAck length in `out`
 // (0 = none), -2 = not a set_texture, -3 = can't be queued (dispatch it normally).

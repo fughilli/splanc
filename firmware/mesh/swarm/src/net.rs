@@ -115,6 +115,22 @@ impl<const P: usize> NetOf<P> {
         }
     }
 
+    /// Splanc: [`NetOf::new`] built in place at `dst`, each field from a frame of its own:
+    /// the stack this needs is the largest field's, not a whole `NetOf` (~9 KB) plus the
+    /// constructors' temporaries (firmware builds the mesh on its 14 KB tick stack).
+    ///
+    /// # Safety
+    /// `dst` is valid for writes; every field is initialised on return.
+    pub unsafe fn init_in(dst: *mut Self, me: u16, hmac_key: Option<[u8; HMAC_KEY_LEN]>, fw_key: [u8; P256_PUBLIC_KEY_LEN], running: u32, seed: u32) {
+        use core::ptr::addr_of_mut;
+        put(addr_of_mut!((*dst).mesh), || MeshOf::new(me, MeshConfig::default(), seed));
+        put(addr_of_mut!((*dst).settings), || Settings::new(me, hmac_key));
+        put(addr_of_mut!((*dst).updater), || Updater::new(me, fw_key, running));
+        put(addr_of_mut!((*dst).changes), NetChanges::default);
+        put(addr_of_mut!((*dst).app), || [None; APP_QUEUE]);
+        addr_of_mut!((*dst).report).write(None);
+    }
+
     pub fn me(&self) -> u16 {
         self.mesh.me
     }
@@ -549,4 +565,14 @@ mod tests {
             assert_eq!(x.net.updater.status(), Status::Serving, "node {}: {:?}", i, x.net.updater.summary());
         }
     }
+}
+
+/// Splanc: write `f()` into `dst` from a frame of its own (never inlined), so a big field's
+/// by-value temporary lives only for this call ([`NetOf::init_in`]).
+///
+/// # Safety
+/// `dst` is valid for writes.
+#[inline(never)]
+unsafe fn put<T>(dst: *mut T, f: impl FnOnce() -> T) {
+    dst.write(f())
 }

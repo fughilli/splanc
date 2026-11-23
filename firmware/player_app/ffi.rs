@@ -167,6 +167,12 @@ struct DeckState {
     id_len: usize,
     /// Hash of the loaded `.fxb` (PerfReport identity, deck A).
     hash: u32,
+    /// The program's state layout (`Program::layout_hash`, before the JIT patch): a mesh
+    /// catch-up's `set_fx_state` restores `shared state` only into the same layout.
+    state_hash: u32,
+    /// Seconds a restored `shared state` snapshot is behind this fixture's clock: the
+    /// next update() runs with this much more `dt`, then it is 0.
+    catchup_dt: f32,
     /// This deck's slice of FX_ARENA (deck A from the front, B from the back).
     arena_off: usize,
     arena_len: usize,
@@ -193,6 +199,8 @@ impl DeckState {
         id: [0; 64],
         id_len: 0,
         hash: 0,
+        state_hash: 0,
+        catchup_dt: 0.0,
         arena_off: 0,
         arena_len: 0,
         morph: Morph::new(),
@@ -2044,6 +2052,11 @@ pub unsafe extern "C" fn lm_player_handle(
             handle_set_jit(frame);
             return 0;
         }
+        // A mesh catch-up's `shared state` (no reply).
+        Some(ARM_SET_FX_STATE) => {
+            handle_set_fx_state(frame);
+            return 0;
+        }
         // Video-texture frame: decode into the active effect's texture arena.
         // Fire-and-forget (no reply) so high frame rates aren't gated on a round
         // trip — a malformed/oversized frame is silently dropped.
@@ -2481,7 +2494,77 @@ pub unsafe extern "C" fn lm_fx_scene_frames(out: *mut u8, cap: usize) -> i32 {
             return -1;
         }
     }
+    // set_fx_state = 102 {deck = 1, layout_hash = 2, time = 3, words = 4}: each deck's
+    // `shared state`, taken here between frames, so it is one frame's consistent values.
+    // Last, and left out (not an error) when it does not fit: the look still catches up.
+    for (d, deck_no) in [(DECK_A_IDX, 0u64), (DECK_B_IDX, 1)] {
+        let Some(p) = deck(d).filter(|p| (**p).renders()) else { continue };
+        let (Some(prog), Some(vm)) = ((*p).prog.as_ref(), (*p).vm.as_ref()) else { continue };
+        let n = prog.shared_words();
+        if n == 0 {
+            continue;
+        }
+        let hash = (*p).state_hash;
+        let _ = put(&mut o, ARM_SET_FX_STATE, &mut |w: &mut PbOut| {
+            w.uint(1, deck_no);
+            w.fixed32(2, hash);
+            w.fixed32(3, FX_F_TIME.to_bits());
+            w.key(4, 2);
+            w.varint((n * 4) as u64);
+            vm.each_shared_word(prog, |x| {
+                for b in x.to_le_bytes() {
+                    w.byte(b);
+                }
+            });
+        });
+    }
     o as i32
+}
+
+/// set_fx_state (a mesh catch-up, docs/design/fx-mesh-state-and-agents.md): restore a
+/// deck's `shared state` when its effect has the snapshot's layout, and have the next
+/// update() cover the time since the snapshot. No reply.
+///
+/// # Safety
+/// Under the player mutex (loopTask), like every handled frame.
+unsafe fn handle_set_fx_state(frame: &[u8]) {
+    let Some(CArm::SetFxState(m)) = client_arm(frame) else { return };
+    let d = if m.deck() == 1 { DECK_B_IDX } else { DECK_A_IDX };
+    let Some(p) = deck(d) else { return };
+    FX_STATE_RESTORE = 2;
+    if !(*p).loaded() || (*p).state_hash != m.layout_hash() {
+        return;
+    }
+    let (Some(prog), Some(vm)) = ((*p).prog.as_ref(), (*p).vm.as_mut()) else { return };
+    if !vm.restore_shared_le(prog, m.words()) {
+        return;
+    }
+    // Both clocks are the mesh's show clock: the gap is transit + load time. A gap
+    // outside 0..10 s means the time bases differ; restore the values, add nothing.
+    let lag = FX_F_TIME - m.time();
+    (*p).catchup_dt = if lag > 0.0 && lag < 10.0 { lag } else { 0.0 };
+    FX_STATE_RESTORE = 1;
+    FX_STATE_LAG_MS = ((*p).catchup_dt * 1000.0) as u32;
+}
+
+/// The last set_fx_state: 0 none, 1 restored, 2 refused (another layout, or no effect).
+/// Read and cleared by main.cpp's mesh dispatch log ([`lm_fx_state_restored`]).
+static mut FX_STATE_RESTORE: u32 = 0;
+static mut FX_STATE_LAG_MS: u32 = 0;
+
+/// The last set_fx_state's outcome (see `FX_STATE_RESTORE`), cleared; `*lag_ms` the
+/// time the next update() adds.
+///
+/// # Safety
+/// Under the player mutex; `lag_ms` valid.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_state_restored(lag_ms: *mut u32) -> u32 {
+    let r = FX_STATE_RESTORE;
+    FX_STATE_RESTORE = 0;
+    if !lag_ms.is_null() {
+        *lag_ms = FX_STATE_LAG_MS;
+    }
+    r
 }
 
 /// Scheduled changes waiting (diagnostics / tests).
@@ -3012,6 +3095,7 @@ const ARM_SET_PERF: u32 = 25;
 const ARM_GET_PERF_REPORT: u32 = 26;
 const ARM_SET_TEXTURE: u32 = 28;
 const ARM_SET_JIT: u32 = 32;
+const ARM_SET_FX_STATE: u32 = 102;
 const ARM_LIST_EFFECTS: u32 = 36;
 const ARM_SAVE_KEYPOINT: u32 = 40;
 const ARM_DELETE_KEYPOINT: u32 = 41;
@@ -5366,6 +5450,8 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     (*p).uses_ctxfix = prog.uses_ctxfix();
     (*p).uses_uv = prog.uses_uv();
     (*p).uses_room = prog.uses_room();
+    (*p).state_hash = prog.layout_hash();
+    (*p).catchup_dt = 0.0;
     (*p).morph.reset(prog.manifest);
     // Bind uniforms named like a pool entry (imu_quat, ...) to the live pool.
     uniform_pool::bind(d, prog.manifest);
@@ -5892,6 +5978,9 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     if (*p).morph.running() {
         fx_advance_morph(p, dt_s);
     }
+    if (*p).catchup_dt != 0.0 {
+        return Some(fx_update_catchup(p, f));
+    }
     Some(if PERF_MODE == PERF_FULL {
         // FULL: pay the counted VM path so instr_update / stack_max are real.
         let (oc, c) = vm.run_update_counted(prog, f, &fx_budget());
@@ -5902,6 +5991,19 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
         // BASIC/OFF: the plain path — no per-opcode counting overhead.
         vm.run_update_bounded(prog, f, &fx_budget())
     })
+}
+
+/// The first update() after a restored `shared state` snapshot: this frame's `dt` plus
+/// the time since the snapshot, once (an integrator lands where the gateway's is).
+#[cold]
+#[inline(never)]
+unsafe fn fx_update_catchup(p: *mut DeckState, f: &FxFrame) -> Outcome {
+    let mut g = *f;
+    g.dt += (*p).catchup_dt;
+    g.dt_fix = q16_16(g.dt);
+    (*p).catchup_dt = 0.0;
+    let (Some(prog), Some(vm)) = ((*p).prog.as_ref(), (*p).vm.as_mut()) else { return Outcome::Ok };
+    vm.run_update_bounded(prog, &g, &fx_budget())
 }
 
 #[cold]

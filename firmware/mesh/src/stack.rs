@@ -384,18 +384,38 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     ///
     /// # Safety
     /// `dst` is valid for writes. On `Ok` every field is initialised; on `Err` none is.
-    pub unsafe fn init_in(dst: *mut Self, me: NodeId, mac: [u8; 6], backhaul: B, dev: K, mut rng: E, mut cfg: StackConfig) -> Result<(), MtuTooSmall> {
+    pub unsafe fn init_in(dst: *mut Self, me: NodeId, mac: [u8; 6], backhaul: B, dev: K, rng: E, cfg: StackConfig) -> Result<(), MtuTooSmall> {
+        Self::init_in_with(dst, me, mac, |p| p.write(backhaul), |p| p.write(dev), rng, cfg)
+    }
+
+    /// [`MeshStack::init_in`] with the backhaul and the device key built in place too
+    /// (`backhaul` and `dev` initialise their slots), and every field built in its own
+    /// frame ([`put`]): the stack this needs is the largest single field's, not the sum of
+    /// all of them. The firmware builds the mesh on the tick's 14 KB stack this way, with
+    /// no separate ~26 KB create stack to find in the heap.
+    ///
+    /// # Safety
+    /// As [`MeshStack::init_in`]; `backhaul` and `dev` must initialise their slots. On
+    /// `Err` nothing is left initialised (`dev` was not called).
+    pub unsafe fn init_in_with(
+        dst: *mut Self,
+        me: NodeId,
+        mac: [u8; 6],
+        backhaul: impl FnOnce(*mut B),
+        dev: impl FnOnce(*mut K),
+        mut rng: E,
+        mut cfg: StackConfig,
+    ) -> Result<(), MtuTooSmall> {
         use core::ptr::addr_of_mut;
         if !cfg.capacity_aware {
             cfg.class = Class::C6;
         }
         let seed = rng.u32();
-        let guard = MeshSecurity::new(me, cfg.mic, backhaul.mtu(), cfg.counter_mark);
         let c = cfg;
-        Node::init_in(
+        Node::init_in_with(
             addr_of_mut!((*dst).node),
             |np: *mut NetOf<P>| {
-                np.write(NetOf::<P>::new(me, None, c.fw_key, c.firmware, seed));
+                NetOf::<P>::init_in(np, me, None, c.fw_key, c.firmware, seed);
                 let net = &mut *np;
                 net.mesh.cfg.high_ports = Port::HIGH_PRIORITY;
                 net.mesh.cfg.hop_limit = c.hop_limit.clamp(1, MAX_HOPS);
@@ -411,14 +431,15 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 }
             },
             backhaul,
-            guard,
+            |gp: *mut MeshSecurity, mtu| put(gp, || MeshSecurity::new(me, c.mic, mtu, c.counter_mark)),
             cfg.node,
         )?;
+        dev(addr_of_mut!((*dst).dev));
         #[cfg(feature = "open_mode")]
-        let kh = key_hash(&dev.public_key());
+        let kh = key_hash(&(*dst).dev.public_key());
         macro_rules! w {
             ($f:ident, $v:expr) => {
-                addr_of_mut!((*dst).$f).write($v)
+                put(addr_of_mut!((*dst).$f), || $v)
             };
         }
         w!(membership, Membership::new(me, mac, cfg.firmware));
@@ -430,7 +451,6 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         #[cfg(feature = "open_mode")]
         w!(follower, Follower::new(Follow::Off, me, kh, cfg.firmware));
         w!(gate, AdminGate::new());
-        w!(dev, dev);
         w!(rng, rng);
         w!(neighbours, [None; NEIGHBOURS]);
         w!(cfg, cfg);
@@ -1598,4 +1618,15 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         }
         self.node.net.send(dest, port as u8, body, want_ack).ok_or(SendError::QueueFull)
     }
+}
+
+/// Write `f()` into `dst` from a frame of its own (never inlined): a by-value temporary of
+/// a big field lives only as long as this call, so building a struct field by field through
+/// it needs the stack of its largest field, not of all of them at once.
+///
+/// # Safety
+/// `dst` is valid for writes.
+#[inline(never)]
+pub(crate) unsafe fn put<T>(dst: *mut T, f: impl FnOnce() -> T) {
+    dst.write(f())
 }

@@ -230,6 +230,7 @@ const ADMIN_ERRORS: Record<string, string> = {
   MESH_ADMIN_BUSY: "the mesh is busy, try again",
   MESH_ADMIN_BAD_ORDER: "the key rotation was refused",
   MESH_ADMIN_UNSUPPORTED: "this fixture cannot do that",
+  MESH_ADMIN_NO_MEMORY: "the fixture does not have enough free memory to turn its mesh on",
 };
 const ADMIN_ERROR_NUM = ["", ...Object.keys(ADMIN_ERRORS)];
 
