@@ -295,6 +295,8 @@ _TEST_SOURCE_DATA = {
     "tests/touchDriver.test.ts": [":drivers_ttp223_touch"],
     # Real diffused-rope frames + exact LED centres (tests/tools/build_diffuse_dataset.py).
     "tests/diffuseRope.test.ts": glob(["tests/testdata/diffuse_rope/**"]),
+    # The same frames as a brightness x exposure grid for the diffuse servo's closed loop.
+    "tests/diffuseServo.test.ts": glob(["tests/testdata/diffuse_rope/**"]),
 }
 
 # The kernel's staggered-pilot goldens, copied into this package (a js_test's
