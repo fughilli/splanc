@@ -1479,7 +1479,7 @@ body.is-locked {
   padding-top: env(safe-area-inset-top, 0px);
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-2); /* ≥ 8 px between Back, the name, ⋯ and collapse (layout guard) */
   background: color-mix(in srgb, var(--surface-2) 88%, transparent);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(6px);
@@ -2046,7 +2046,8 @@ body.is-locked {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
-  padding: 0 0 0 0.5rem;
+  /* Right: ≥ 8 px from the next dock's tabs across the divider (layout guard). */
+  padding: 0 var(--sp-2) 0 0.5rem;
   min-height: 1.35rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
@@ -2064,7 +2065,7 @@ body.is-locked {
 }
 .fxpane-ctl {
   display: flex;
-  gap: 0;
+  gap: var(--sp-2); /* Move / Hide pane: ≥ 8 px apart (layout guard) */
   flex: 0 0 auto;
 }
 .fxpane-btn {
@@ -2177,6 +2178,9 @@ body.is-locked {
   align-items: center;
   flex: 0 0 auto;
   margin-left: auto;
+  /* ≥ 8 px from the tabs, between Move / Hide, and from the next dock (layout guard). */
+  padding: 0 var(--sp-2);
+  gap: var(--sp-2);
 }
 .fxlayout-edgetab {
   flex: 0 0 auto;
