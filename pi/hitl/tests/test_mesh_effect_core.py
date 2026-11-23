@@ -139,3 +139,24 @@ def test_sharded_upload_windows_are_flash_writes():
         "[late] n=1 max=30000 ago_ms=5",
     ]
     assert [x["save_us"] for x in late_frames(lines)] == [0, 0, None]
+
+
+def test_ram_upload_is_not_a_flash_write():
+    lines = [
+        FT,
+        "[upload] kind 2 id 1: first window 1024 B (ram)",
+        FT,
+        "[late] n=1 max=21000 ago_ms=57",
+    ]
+    assert late_frames(lines)[0]["save_us"] is None
+
+
+def test_tls_handshake_late_frames_are_reported_not_gated():
+    lines = [
+        FT,
+        "*** TLS HANDSHAKE COMPLETE (TLS-ECDHE) ***",
+        FT,
+        "[late] n=22 max=24022 ago_ms=215",
+    ]
+    lf = late_frames(lines)
+    assert lf[0]["tls"] and lf[0]["save_us"] is None
