@@ -636,17 +636,22 @@ py_test(
 # snapshot — output, state and buffers must match BIT-EXACTLY (JIT on), one LED's
 # re-run locals must match the host's, and a paused engine must auto-resume on a
 # lapsed hold and on a disconnect. Pure verdict: fx_debug_core.
+# fx_compiler's init_test pins the state slots hitl_fx_debug.py checks.
+exports_files(["ab_demo/dbgInit.fx"])
+
 genrule(
     name = "fxdebug_fxbs",
     srcs = [
         "ab_demo/dbgFixed.fx",
         "ab_demo/dbgHue.fx",
+        "ab_demo/dbgInit.fx",
         "ab_demo/dbgLoop.fx",
         "ab_demo/dbgTrail.fx",
     ],
     outs = [
         "dbgFixed.fxb",
         "dbgHue.fxb",
+        "dbgInit.fxb",
         "dbgLoop.fxb",
         "dbgTrail.fxb",
     ],
@@ -655,6 +660,7 @@ genrule(
         for n in [
             "dbgFixed",
             "dbgHue",
+            "dbgInit",
             "dbgLoop",
             "dbgTrail",
         ]

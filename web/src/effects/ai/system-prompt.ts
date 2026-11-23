@@ -98,19 +98,17 @@ void update() {
 }
 vec3 shade(Led led) { return base * glow; }
 
-EXAMPLE 4 — agents simulated in update() with a struct array (a per-LED loop multiplies its body by the trip count, so keep it short and in fixed point):
+EXAMPLE 4 — agents seeded once in init() and simulated in update() with a struct array (a per-LED loop multiplies its body by the trip count, so keep it short and in fixed point):
 struct Agent { fixed pos; fixed vel; vec3 col; };
 state Agent agents[4];
-state bool inited;
-void update() {
-  if (!inited) {
-    for (int i = 0; i < 4; i = i + 1) {
-      agents[i].pos = fixed(hash(float(i)));
-      agents[i].vel = fixed(0.1 + hash(float(i) * 3.0) * 0.3);
-      agents[i].col = hsv2rgb(hash(float(i) * 7.0), 0.9, 1.0);
-    }
-    inited = true;
+void init() {
+  for (int i = 0; i < 4; i = i + 1) {
+    agents[i].pos = fixed(hash(float(i)));
+    agents[i].vel = fixed(0.1 + hash(float(i) * 3.0) * 0.3);
+    agents[i].col = hsv2rgb(hash(float(i) * 7.0), 0.9, 1.0);
   }
+}
+void update() {
   for (int i = 0; i < 4; i = i + 1) {
     agents[i].pos = fract(agents[i].pos + agents[i].vel * fixed(dt));
   }
@@ -150,14 +148,14 @@ UNIFORM SYNTAX (expose the interesting parameters as uniforms with sensible rang
 - dropdown: uniform int mode : {"fire","ice"} = 0;
 - toggle:   uniform bool invert = false;
 
-STATE: \`state\` variables persist across frames — written by update(), read-only in shade(). Use them for phases/integrators.
+STATE: \`state\` variables persist across frames — written by update(), read-only in shade(). Use them for phases/integrators. They start at zero, or at an initial value (\`state float level = 0.5;\`, scalars/vectors). Optional \`void init() { ... }\` runs once before the first update() — seed arrays/structs there.
 
 RATE CONTROLS — A COMMON BUG, NEVER DO IT: a uniform that sets a speed/rate/frequency must NOT multiply \`time\` inside a phase (\`fract(led.s - time * speed)\`, \`sin(time * rate)\`). \`time * speed\` rescales ALL the elapsed time, so moving the slider jumps the phase by Δspeed × time — after minutes of uptime the effect stutters wildly while the knob moves. Integrate each rate in update() as its OWN \`state\` phase, wrapped with fract so float precision stays bounded:
   state float ph;                                  // one phase per rate uniform
   void update() { ph = fract(ph + dt * speed); }   // dt = seconds since the last frame
 then use ph in shade(): \`fract(led.s - ph)\` (scrolling), \`sin(ph * 6.2832)\` (oscillator; float sin is radians), \`hsv2rgb(fract(led.dist + ph), 0.9, 1.0)\`. Constant factors go inside (\`dt * speed * 0.5\`). A non-periodic offset (scrolling noise) integrates without fract: \`drift = drift + dt * speed;\`. Fixed point: \`state fixed ph;\` + \`ph = fract(ph + fixed(dt) * fixed(speed));\`, then \`sin(fixed16(ph))\` (LUT, angle in turns). Plain \`time\` with no knob scaling it is fine (\`fract(led.s - time)\`, \`sin(time * 0.7)\`). The compiler reports rate × time as a "warning:" — fix it like an error.
 
-STRUCTS & ARRAYS: declare composite types with \`struct Name { float a; vec3 b; };\` (scalar/vec fields) and fixed-size arrays with \`Type name[N];\`. Arrays index with \`a[i]\` (a runtime int index is fine, one per access) and struct fields with \`.field\`. Put an array of structs in \`state\` to simulate agents/particles across frames (seed them once behind a \`state bool\` flag, then advance them in a \`for\` loop). Keep totals modest — state and locals are each capped near 128 slots.
+STRUCTS & ARRAYS: declare composite types with \`struct Name { float a; vec3 b; };\` (scalar/vec fields) and fixed-size arrays with \`Type name[N];\`. Arrays index with \`a[i]\` (a runtime int index is fine, one per access) and struct fields with \`.field\`. Put an array of structs in \`state\` to simulate agents/particles across frames (seed them once in \`void init()\`, then advance them in update() with a \`for\` loop). Keep totals modest — state and locals are each capped near 128 slots.
 
 BUFFERS: \`buffer vec3 trail;\` declares a hidden per-LED buffer (one element per LED, numeric scalar/vec) that persists across frames — like \`state\`, but sized to the whole LED raster instead of a single slot. Read/write with \`trail[i]\`, i an int LED index (0..led.count-1). Ideal for feedback effects: in shade() do \`vec3 p = trail[led.idx]; vec3 v = p * 0.9 + spark; trail[led.idx] = v; return v;\` for decaying trails/persistence-of-vision. Unlike \`state\`, a buffer MAY be written from shade() (each LED owns its slot). Always index it — a bare \`trail\` is an error.
 

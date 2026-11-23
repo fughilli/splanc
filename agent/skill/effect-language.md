@@ -119,6 +119,11 @@ a `dot` per LED (`examples/plane_slice_pose.fx`).
 ## Storage
 
 - `state float x;` — per-frame state; written by `update()`, read-only in `shade()`.
+  Starts at zero, or at an initial value: `state float level = 0.5;` (scalar /
+  vector / matrix; may read uniforms and state declared above it).
+- `void init() { ... }` — optional; runs once before the first `update()` after
+  the effect loads (after the initial values). Seed arrays / structs here
+  instead of a hand-rolled `state bool inited;` flag.
 - `buffer vec3 trail;` — one element per LED, persists; `trail[led.idx]` may be
   written from `shade()` (trails, feedback).
 - `texture vec3 img(64, 64);` — a W×H texture; `sample(img, uv)` (bilinear),

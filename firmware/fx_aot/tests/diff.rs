@@ -194,8 +194,41 @@ fn make_ctx(
 
 /// The compiler's control/function/fixed corpus (mirrors fx_compiler's optimizer
 /// test corpus) plus a few extra opcode exercises.
+/// D-500: state initial values + init() (an init block in front of update()).
+const INIT_STATE: &str = r#"uniform float speed : 0.0 .. 5.0 = 1.0;
+uniform float start : 0.0 .. 1.0 = 0.25;
+state float ph = start;
+state vec3 tint = vec3(0.2, 0.6, 1.0);
+state float gain;
+void init() {
+  gain = 0.5 + start;
+  if (gain > 2.0) {
+    return;
+  }
+  tint = tint * gain;
+}
+void update() {
+  ph = fract(ph + dt * speed);
+}
+vec3 shade(Led led) {
+  float band = smoothstep(0.12, 0.0, abs(fract(led.s - ph) - 0.5));
+  return tint * band;
+}"#;
+
+/// init() without an update(): the init block is the whole update entry.
+const INIT_ONLY: &str = r#"state float level = 0.5;
+state vec3 c;
+void init() {
+  c = vec3(level, 0.25, 1.0 - level);
+}
+vec3 shade(Led led) {
+  return c * fract(led.s + level);
+}"#;
+
 fn corpus() -> Vec<(&'static str, &'static str)> {
     vec![
+        ("init_state", INIT_STATE),
+        ("init_only", INIT_ONLY),
         (
             "band",
             r#"uniform float speed : 0.0 .. 5.0 = 1.0;
@@ -418,6 +451,16 @@ fn native_matches_vm() {
         lowered >= 8,
         "too few effects lowered ({lowered}); pipeline regressed?"
     );
+}
+
+/// The init block is ordinary control flow: the AOT lowers it (no VM
+/// fallback) and matches the VM frame for frame (`native_matches_vm`).
+#[test]
+fn init_block_lowers() {
+    for (name, src) in [("init_state", INIT_STATE), ("init_only", INIT_ONLY)] {
+        let (fxb, uniforms) = compile(src).expect("compiles");
+        assert_eq!(differential(name, &fxb, &uniforms), Ok(true), "{name} fell back to the VM");
+    }
 }
 
 /// The VM faults on a fixed-point `frac` operand above 30; the lowering must

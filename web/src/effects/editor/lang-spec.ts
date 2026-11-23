@@ -35,11 +35,11 @@ export const KEYWORDS = [
  * detail. Type-name keywords are documented richly in TYPES instead. */
 export const KEYWORD_DOCS: Record<string, string> = {
   uniform: "declare a live, user-tweakable parameter with a range + default",
-  state: "declare a value persisted across frames (written in update())",
+  state: "declare a value persisted across frames (written in update()/init()); starts at zero or an initial value: `state float level = 0.5;`",
   buffer: "declare a hidden per-LED buffer that persists across frames: `buffer vec3 trail;` then read/write `trail[i]` (i an int LED index). Pack narrow to save RAM: `buffer fixed8 t;` (1 B/LED) or `buffer vec3 c : fixed8;` (3 B/LED, read/written as float)",
   texture: "declare a hidden WxH 2D texture: `texture vec3 img(64, 64);` then `sample(img, uv)` (bilinear, always float) / `paint(img, uv, c)` / flat `img[i]`. Add `: fixed8` / `: fixed16` to compress storage (e.g. `texture vec3 img(64,64) : fixed8;`)",
   struct: "declare a composite type: struct Name { float a; vec3 b; };",
-  void: "the return type of update() — produces no value",
+  void: "the return type of update() and init() — produces no value",
   return: "return a value from shade() (or exit update())",
   if: "conditional branch",
   else: "the alternative branch of an if",

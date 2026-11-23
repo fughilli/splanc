@@ -33,6 +33,18 @@ rust_binary(
     deps = [":fx_compiler"],
 )
 
+# D-500: state initial values + void init().
+rust_test(
+    name = "init_test",
+    srcs = ["tests/init.rs"],
+    compile_data = ["//pi/hitl/harness:ab_demo/dbgInit.fx"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
 rust_test(
     name = "fx_compiler_test",
     srcs = ["tests/compile.rs"],

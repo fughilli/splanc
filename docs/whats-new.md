@@ -5,6 +5,17 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## November 2026
 
+### Effect language: state initial values and `init()`
+
+- **`state float level = 0.5;`** gives a state variable its starting value
+  (scalars, vectors, matrices). A state without one still starts at zero.
+- **`void init() { ... }`** runs once before the first `update()` after the
+  effect loads: seed arrays and agents there instead of a hand-rolled
+  `state bool inited;` flag.
+- Plain bytecode, no firmware update needed: it runs the same on the device,
+  the JIT and the editor preview, on old firmware too.
+- Details: [EFFECTS.md § State initialisation](../EFFECTS.md#state-initialisation).
+
 ### Effects stored on the device
 
 - **A player keeps up to 8 compiled effects on its own flash.** **Store on device**

@@ -13,6 +13,7 @@ from fx_debug_core import (
     EffectResult,
     ResumeCheck,
     diff_bytes,
+    init_state_ok,
     locals_from_device,
     locals_from_host,
     reassemble,
@@ -107,7 +108,18 @@ def test_effect_result_flags_every_kind_of_divergence():
         {"locals_mismatch": [0]},
         {"jit_disagrees": True},
         {"step_time_ok": False},
+        {"init_ok": False},
     ):
         r = EffectResult("x", **kw)
         assert not r.ok(), kw
         assert r.summary().startswith("x: ")
+
+
+def test_init_state_ok_checks_each_slot():
+    state = struct.pack("<6f", 0.75, 0.75, 0.25, 0.5, 0.3, 1.0)
+    want = ((0, 0.75), (1, 0.75), (2, 0.25), (3, 0.5), (5, 1.0))
+    assert init_state_ok(state, want)
+    # init() never ran: the state is still zero.
+    assert not init_state_ok(bytes(24), want)
+    # A short section can't hold the flag.
+    assert not init_state_ok(state[:16], want)

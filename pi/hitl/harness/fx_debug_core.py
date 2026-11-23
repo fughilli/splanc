@@ -18,7 +18,7 @@ from __future__ import annotations
 import base64
 import struct
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 PASS = "pass"
 FAIL = "fail"
@@ -122,6 +122,7 @@ class EffectResult:
     jit_disagrees: bool = False  # the device's normal path != its interpreter
     step_time_ok: bool = True  # a step landed exactly on its time / dt
     jit_blocks: int = 0
+    init_ok: bool = True  # state holds what its initial values / init() set (D-500)
     error: Optional[str] = None  # couldn't complete (infra) -> not asserted
 
     def ok(self) -> bool:
@@ -133,6 +134,7 @@ class EffectResult:
             and not self.locals_mismatch
             and not self.jit_disagrees
             and self.step_time_ok
+            and self.init_ok
         )
 
     def summary(self) -> str:
@@ -155,6 +157,8 @@ class EffectResult:
             bits.append("JIT != interpreter on the device")
         if not self.step_time_ok:
             bits.append("step time/dt not exact")
+        if not self.init_ok:
+            bits.append("state lacks its init() / initial values")
         return f"{self.effect}: " + "; ".join(bits)
 
 
@@ -169,6 +173,16 @@ class ResumeCheck:
 
     def ok(self) -> bool:
         return self.resumed is True and self.reason == self.kind and self.advancing is not False
+
+
+def init_state_ok(state: bytes, expect: Sequence[Tuple[int, float]]) -> bool:
+    """Whether the paused `state` section holds each (slot, f32 value) — what an
+    effect's initial values and init() leave in slots update() never writes."""
+    for slot, want in expect:
+        o = 4 * slot
+        if len(state) < o + 4 or state[o : o + 4] != struct.pack("<f", want):
+            return False
+    return True
 
 
 def verdict(reached: bool, effects: Sequence[EffectResult], resumes: Sequence[ResumeCheck]):

@@ -1,7 +1,8 @@
 """HITL gate: the FX debugger on a real C6 (docs/design/fx-debugger.md).
 
 Flashes the netstack bundle, provisions the DUT onto the rig AP, gives it a
-linear map, then for each debug effect (float / fixed / buffer feedback / loops;
+linear map, then for each debug effect (float / fixed / buffer feedback / loops /
+state initial values + init();
 the device JIT on, as shipped):
 
   1. pause the engine, read the paused frame's program / state / buffers;
@@ -41,7 +42,12 @@ import fx_debug_core as core
 from python.runfiles import runfiles
 
 LEDS = 32
-EFFECTS = ("dbgHue", "dbgFixed", "dbgTrail", "dbgLoop")
+EFFECTS = ("dbgHue", "dbgFixed", "dbgTrail", "dbgLoop", "dbgInit")
+# D-500: (state slot, f32) that an effect's initial values / init() leave in
+# slots update() never writes — the paused state must hold them. dbgInit.fx:
+# seed = 0.75 (slot 0), tint = vec3(seed, 0.25, 0.5) (1..3); slot 5 is the
+# compiler's hidden "init done" flag (after ph, slot 4).
+INIT_CHECKS = {"dbgInit": ((0, 0.75), (1, 0.75), (2, 0.25), (3, 0.5), (5, 1.0))}
 HOLD_MS = 60_000
 CHUNK = 768
 
@@ -160,6 +166,10 @@ async def _one_effect(
         res.error = "pause did not take"
         return res
     before = {k: await s.section(k) for k in ("program", "state", "arena")}
+    if name in INIT_CHECKS:
+        res.init_ok = core.init_state_ok(before["state"], INIT_CHECKS[name])
+        if not res.init_ok:
+            _log(f"[{name}] paused state {before['state'][:24].hex()} lacks init() values")
     if before["program"] != fxb:
         res.output_mismatch = [-1]
         _log(

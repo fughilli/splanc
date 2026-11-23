@@ -596,6 +596,18 @@ pub struct Compiler {
     /// `fired()` last saw.
     trigger_last: HashMap<String, u8>,
     poll_entry: u16,
+    /// `state T x = expr;` initialisers (D-500), in declaration order: the
+    /// slot, type, token index of `expr`, and how many `state` names were
+    /// declared before this one (the initialiser only sees those). Compiled
+    /// into the init block (see [`Compiler::emit_init_block`]).
+    state_inits: Vec<(u8, Ty, usize, usize)>,
+    /// Every `state` name in declaration order (initialiser scoping).
+    state_names: Vec<String>,
+    /// `void init() { ... }` (D-500): the token index of its `{`. Its body is
+    /// compiled into the init block after the program's other declarations.
+    init_body: Option<usize>,
+    /// While compiling init()'s body: the `return;` jumps to patch to its end.
+    init_returns: Option<Vec<usize>>,
     // FUG-125: run the bytecode optimizer in `finish`. Off only for the
     // differential test harness / instruction-count measurements.
     optimize: bool,
@@ -782,6 +794,10 @@ impl Compiler {
             exports: Vec::new(),
             trigger_last: HashMap::new(),
             poll_entry: NO_ENTRY,
+            state_inits: Vec::new(),
+            state_names: Vec::new(),
+            init_body: None,
+            init_returns: None,
             optimize,
             memo,
             lint: lint::Lint::default(),
@@ -992,7 +1008,7 @@ impl Compiler {
         if !is_driver && self.shade_entry == NO_ENTRY {
             return self.err("program must define `vec3 shade(Led led)` (or `void poll()` for a driver)");
         }
-        Ok(())
+        self.emit_init_block()
     }
 
     // export float temperature "°C";   export vec3 imu_raw_accel;
@@ -1122,7 +1138,7 @@ impl Compiler {
         let arg = self.eat_ident()?;
         self.expect_sym(')')?;
         if name == "fired" {
-            if self.cur_fn != "update" && self.cur_fn != "poll" {
+            if self.in_per_led_code() {
                 return self.err("fired() is only valid in update() (a trigger fires once per frame, not per LED)");
             }
             let Some(&last) = self.trigger_last.get(&arg) else {
@@ -1423,12 +1439,178 @@ impl Compiler {
             .ok_or_else(|| self.mkdiag("unknown type"))?;
         let name = self.eat_ident()?;
         let ty = self.maybe_array_suffix(base_ty)?;
+        // `state float x = 0.5;` (D-500): the initialiser is compiled later,
+        // into the init block that runs once before the first update().
+        let init_at = if *self.cur() == Tok::Sym('=') {
+            if matches!(ty, Ty::Struct(_) | Ty::Array(_)) {
+                return self.err("only a scalar, vector or matrix `state` can have an initial value; set arrays and structs in `void init()`");
+            }
+            self.advance();
+            let at = self.p;
+            self.skip_to_semicolon()?;
+            Some(at)
+        } else {
+            None
+        };
         self.expect_sym(';')?;
         let w = self.ty_width(ty);
         let slot = self.alloc_state(w)?;
         self.note_sym("state", &name, slot, w);
+        if let Some(at) = init_at {
+            self.state_inits.push((slot, ty, at, self.state_names.len()));
+        }
+        self.state_names.push(name.clone());
         self.syms.insert(name, Sym { kind: SymKind::State, slot, ty });
         Ok(())
+    }
+
+    /// Skip an expression's tokens up to (not including) the `;` that ends it
+    /// at bracket depth 0 — a state initialiser, compiled later.
+    fn skip_to_semicolon(&mut self) -> Result<(), Diagnostic> {
+        let start = self.p;
+        let mut depth = 0i32;
+        loop {
+            match self.cur() {
+                Tok::Eof => return self.err("expected ';'"),
+                Tok::Sym(';') if depth == 0 => break,
+                Tok::Sym('(' | '[' | '{') => depth += 1,
+                Tok::Sym(')' | ']' | '}') => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return self.err("expected ';'");
+                    }
+                }
+                _ => {}
+            }
+            self.advance();
+        }
+        if self.p == start {
+            return self.err("expected an initial value after '='");
+        }
+        Ok(())
+    }
+
+    /// Skip a `{ ... }` block (the cursor on its `{`), through the matching `}`.
+    fn skip_braced(&mut self) -> Result<(), Diagnostic> {
+        let mut depth = 0i32;
+        loop {
+            match self.cur() {
+                Tok::Eof => return self.err("expected '}'"),
+                Tok::Sym('{') => depth += 1,
+                Tok::Sym('}') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        self.advance();
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+            self.advance();
+        }
+    }
+
+    /// The init block (D-500): the program's real update() (or a driver's
+    /// poll()) entry becomes
+    ///
+    /// ```text
+    /// E:  LoadState done      ; hidden flag, 0 when the state is fresh
+    ///     BrFalse I
+    ///     Jmp update          ; (Ret 0 when there is no update())
+    /// I:  done = 1
+    ///     state initialisers, in declaration order
+    ///     init() body         ; its `return;` jumps to R
+    /// R:  Jmp update          ; (Ret 0)
+    /// ```
+    ///
+    /// So it runs on the first update() after the state starts at zero — every
+    /// effect load (and the editor preview's every recompile) — on every
+    /// execution path that runs the bytecode (VM, JIT, preview, old firmware:
+    /// it is plain existing opcodes, no format change), costing three ops per
+    /// frame afterwards. The flag is set first, so an init that blows the
+    /// instruction budget is not retried every frame (the effect keeps running).
+    fn emit_init_block(&mut self) -> Result<(), Diagnostic> {
+        use fx_vm_op::*;
+        if self.state_inits.is_empty() && self.init_body.is_none() {
+            return Ok(());
+        }
+        let is_driver = self.poll_entry != NO_ENTRY;
+        let target = if is_driver { self.poll_entry } else { self.update_entry };
+        let save_p = self.p;
+        self.cur_fn = "init".to_string();
+        self.cur_fn_is_entry = false;
+        self.mat_scratch = None;
+        let done = self.alloc_state(1)?;
+        let entry = self.code.len() as u16;
+        self.emit(LOAD_STATE);
+        self.emit(done);
+        self.emit(1);
+        self.emit(BR_FALSE);
+        let patch_init = self.code.len();
+        self.emit_u16(0);
+        self.emit_continue(target);
+        let rel = (self.code.len() as isize - (patch_init + 2) as isize) as i16;
+        self.code[patch_init..patch_init + 2].copy_from_slice(&rel.to_le_bytes());
+        self.push_const(1.0f32.to_bits());
+        self.emit(STORE_STATE);
+        self.emit(done);
+        self.emit(1);
+        for (slot, ty, at, n_before) in self.state_inits.clone() {
+            // An initialiser sees the state declared above it, not itself or
+            // anything below (those are still zero when it runs).
+            let hidden: Vec<(String, Sym)> = self.state_names[n_before..]
+                .iter()
+                .filter_map(|n| self.syms.remove(n).map(|s| (n.clone(), s)))
+                .collect();
+            self.p = at;
+            let r = self.expr().and_then(|t| self.coerce(t, ty));
+            for (n, s) in hidden {
+                self.syms.insert(n, s);
+            }
+            r?;
+            let taint = std::mem::take(&mut self.lint.taint);
+            self.lint.vars.insert(self.state_names[n_before].clone(), taint);
+            let w = self.ty_width(ty);
+            self.emit(STORE_STATE);
+            self.emit(slot);
+            self.emit(w);
+        }
+        if let Some(at) = self.init_body {
+            self.p = at;
+            self.expect_sym('{')?;
+            self.init_returns = Some(Vec::new());
+            let r = self.block(Ty::Void).and_then(|_| self.expect_sym('}'));
+            let returns = self.init_returns.take().unwrap_or_default();
+            r?;
+            for patch in returns {
+                let rel = (self.code.len() as isize - (patch + 2) as isize) as i16;
+                self.code[patch..patch + 2].copy_from_slice(&rel.to_le_bytes());
+            }
+            self.syms.retain(|_, s| !matches!(s.kind, SymKind::Local));
+            let syms = &self.syms;
+            self.lint.vars.retain(|n, _| syms.contains_key(n));
+        }
+        self.emit_continue(target);
+        if is_driver {
+            self.poll_entry = entry;
+        } else {
+            self.update_entry = entry;
+        }
+        self.p = save_p;
+        Ok(())
+    }
+
+    /// The init block's exit: jump into the program's own update() / poll(), or
+    /// return from update() when the program has none.
+    fn emit_continue(&mut self, target: u16) {
+        if target == NO_ENTRY {
+            self.emit(fx_vm_op::RET);
+            self.emit(0);
+        } else {
+            self.emit(fx_vm_op::JMP);
+            let rel = (target as isize - (self.code.len() + 2) as isize) as i16;
+            self.emit_u16(rel as u16);
+        }
     }
 
     /// Resolve a buffer/texture element type name to its on-stack element type,
@@ -1557,6 +1739,9 @@ impl Compiler {
     fn func_decl(&mut self) -> Result<(), Diagnostic> {
         let ret_ty = Self::ty_from_ident(&self.eat_ident()?).unwrap();
         let name = self.eat_ident()?;
+        if name == "init" {
+            return self.init_decl(ret_ty);
+        }
         self.cur_fn = name.clone();
         self.mat_scratch = None;
         self.expect_sym('(')?;
@@ -1638,6 +1823,28 @@ impl Compiler {
         Ok(())
     }
 
+    /// `void init() { ... }` (D-500): runs once, before the first update(). Its
+    /// body is compiled after every other declaration, into the init block
+    /// ([`Compiler::emit_init_block`]); here it is only checked and skipped.
+    fn init_decl(&mut self, ret_ty: Ty) -> Result<(), Diagnostic> {
+        if ret_ty != Ty::Void {
+            return self.err("init() returns nothing: declare it `void init()`");
+        }
+        self.expect_sym('(')?;
+        if *self.cur() != Tok::Sym(')') {
+            return self.err("init() takes no parameters");
+        }
+        self.advance();
+        if self.init_body.is_some() {
+            return self.err("init() is defined twice");
+        }
+        if *self.cur() != Tok::Sym('{') {
+            return self.err("expected '{'");
+        }
+        self.init_body = Some(self.p);
+        self.skip_braced()
+    }
+
     fn block(&mut self, ret: Ty) -> Result<(), Diagnostic> {
         while *self.cur() != Tok::Sym('}') && *self.cur() != Tok::Eof {
             self.stmt(ret)?;
@@ -1649,6 +1856,20 @@ impl Compiler {
         match self.cur().clone() {
             Tok::Ident(kw) if kw == "return" => {
                 self.advance();
+                if self.init_returns.is_some() {
+                    // init(): `return;` leaves the init block (patched to its end).
+                    if *self.cur() != Tok::Sym(';') {
+                        return self.err("init() returns nothing");
+                    }
+                    self.advance();
+                    self.emit(fx_vm_op::JMP);
+                    let at = self.code.len();
+                    self.emit_u16(0);
+                    if let Some(r) = self.init_returns.as_mut() {
+                        r.push(at);
+                    }
+                    return Ok(());
+                }
                 if *self.cur() == Tok::Sym(';') {
                     self.advance();
                     if self.cur_fn_is_entry {
@@ -2183,7 +2404,7 @@ impl Compiler {
     /// Per-LED code only: shade() and the helper functions (update()/poll()
     /// run once per frame, where a conversion is noise).
     fn in_per_led_code(&self) -> bool {
-        self.cur_fn != "update" && self.cur_fn != "poll"
+        !matches!(self.cur_fn.as_str(), "update" | "poll" | "init")
     }
 
     fn warn_at(&mut self, line: u32, col: u32, msg: String) {
