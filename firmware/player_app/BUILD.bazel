@@ -1219,6 +1219,7 @@ cc_library(
         "mesh_spike_impl.h",
         "netstack_transport.cpp",
         "psk_reject.h",
+        "rate_ctl.h",
         "serial_log.h",
         "session_takeover.h",
         "sta_mac.h",
@@ -2089,6 +2090,21 @@ cc_test(
     srcs = ["identify_blink_test.cc"],
     deps = [
         ":identify_blink",
+        "@rules_requirements//cc:case",
+    ],
+)
+
+# Adaptive TX rate control for the netstack data path (Minstrel-like, legacy rates).
+cc_library(
+    name = "rate_ctl",
+    hdrs = ["rate_ctl.h"],
+)
+
+cc_test(
+    name = "rate_ctl_test",
+    srcs = ["rate_ctl_test.cc"],
+    deps = [
+        ":rate_ctl",
         "@rules_requirements//cc:case",
     ],
 )

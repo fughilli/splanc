@@ -43,6 +43,7 @@
 #include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
 #include "join_guard.h"     // per-boot 802.11 sequence numbers + the unanswered-auth guard
 #include "psk_reject.h"     // Improv: report a password the AP rejects (4-way M2 refused)
+#include "rate_ctl.h"       // adaptive data TX rate (Minstrel-like, legacy rates)
 #include "serial_log.h"     // Console(): the ordered, lossless log ring (identity lines)
 
 extern "C" {
@@ -726,14 +727,18 @@ extern "C" void lm_mesh_tx_hold(uint32_t us) { g_tx_busy_until_us = (uint32_t)es
 // duplicate from a lost ACK is dropped by the AP's sequence/replay check. The ACK wait and
 // the no-completion hold use the 1 Mb/s airtime: an upper bound at every rate.
 uint8_t g_tx_tries = 7;  // console WIFI TXTRIES n
-// Data TX rate (wifi_phy_rate_t: 0/1/2/3 = 1/2/5.5/11 Mb/s, 0xB/0xA/0x9 = 6/12/24 Mb/s OFDM;
-// console WIFI TXRATE code). 6 Mb/s OFDM, not the path's old 1 Mb/s: the loss is per unit of
-// airtime, so a 1.4 KB frame at 1 Mb/s (~11 ms) rarely survived even 7 attempts, while at
-// 6 Mb/s (~2 ms) it does. Measured on SilviasLamp, 20 pings per cell, loss at 56/700/1400 B:
-// 1 Mb/s 0/0/85 %, 2 Mb/s 0/5/10 %, 5.5 and 11 Mb/s 0/0/0 %, 6 Mb/s 0/0/0 %, 12 and 24 Mb/s
-// 0/5/0 %. 6 Mb/s is mandatory in every 2.4 GHz basic rate set (an 11g/n-only AP may ignore
-// 11b CCK) and the most robust OFDM rate. The last attempt drops to 1 Mb/s for range.
-uint8_t g_tx_rate = 0x0B;
+// Data TX rate: adaptive by default (rate_ctl.h: per-rate ACK success, best expected
+// throughput first, probes, a retry chain down to the most reliable rate and 1 Mb/s last).
+// The path used to send everything at 1 Mb/s, the bring-up template's rate field 0, and on
+// a marginal uplink the loss is per unit of airtime: SilviasLamp, 20 pings per cell, loss at
+// 56/700/1400 B with retries: 1 Mb/s 0/0/85 %, 2 Mb/s 0/5/10 %, 5.5-24 Mb/s ~0/0/0 %.
+// Console WIFI TXRATE <code> pins a rate (wifi_phy_rate_t: 0/1/2/3 = 1/2/5.5/11 Mb/s,
+// 0xB/0xA/0xE/0x9/0xD/0x8/0xC = 6-54 Mb/s; the last attempt still drops to 1 Mb/s);
+// WIFI TXRATE auto resumes adaptation; WIFI TXRC prints the table.
+lm_rate::RateCtl g_rc;
+bool g_tx_rate_fixed = false;
+uint8_t g_tx_rate = 0x0B;      // the pinned rate (g_tx_rate_fixed)
+uint8_t g_rc_bssid[6] = {0};   // the AP the controller's statistics belong to
 uint32_t g_txr_frames = 0;     // frames sent on the ACKed path
 uint32_t g_txr_first = 0;      // ACKed on the first attempt
 uint32_t g_txr_retried = 0;    // ACKed after one or more retries
@@ -748,8 +753,20 @@ static void tx_send_acked(uint8_t *frame, uint32_t flen) {
   const uint32_t start = (uint32_t)esp_timer_get_time();
   uint32_t flags = 1u;  // expect the AP's ACK
   g_txr_frames++;
+  // Statistics are per link: a different AP (a rejoin, a new network) starts over.
+  if (memcmp(g_rc_bssid, g_bssid, 6) != 0) {
+    memcpy(g_rc_bssid, g_bssid, 6);
+    g_rc.reset();
+  }
+  uint8_t chain[15];
+  const int n = g_tx_tries > 15 ? 15 : g_tx_tries;
+  if (g_tx_rate_fixed) {
+    for (int i = 0; i < n; i++) chain[i] = (i == n - 1 && n > 1) ? 0 : g_tx_rate;
+  } else {
+    g_rc.plan(flen, chain, n);
+  }
   bool acked = false;
-  for (uint8_t a = 1; a <= g_tx_tries && !acked; a++) {
+  for (int a = 1; a <= n && !acked; a++) {
     if (a > 1) {
       const uint32_t until = (uint32_t)esp_timer_get_time() + 2000u * (a - 1) + (esp_random() % 1000u);
       while ((int32_t)(until - (uint32_t)esp_timer_get_time()) > 0) {
@@ -759,17 +776,21 @@ static void tx_send_acked(uint8_t *frame, uint32_t flen) {
     }
     tx_pace_before();
     const uint32_t t0 = (uint32_t)esp_timer_get_time();
-    const uint8_t rate = (a == g_tx_tries && a > 1) ? 0 : g_tx_rate;  // last try: 1 Mb/s
+    const uint8_t rate = chain[a - 1];
     if (!ns_mac_send_p2p(frame, flen, 0, rate, 0x14 /* set_rate's power */, flags)) break;
     uint32_t pmd = 0, done = 0;
     while ((uint32_t)esp_timer_get_time() - t0 < wait && !(done = ns_mac_tx_done(0, &pmd))) {
     }
     g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + (done ? 50u : air);
     if (!done) {
+      // No completion in time: the MAC held the frame (BLE had the radio), which says
+      // nothing about the rate, so it is not reported to the controller.
       g_txr_nocompl++;
       continue;
     }
-    if (ns_p2p_tx_status(pmd) == 0) {
+    const bool ok = ns_p2p_tx_status(pmd) == 0;
+    if (!g_tx_rate_fixed) g_rc.report(rate, ok);
+    if (ok) {
       acked = true;
       if (a == 1) g_txr_first++;
       else g_txr_retried++;
@@ -2070,11 +2091,13 @@ int netstack_net_stats(char *buf, size_t cap) {
   g_txr_max_us = 0;
   return snprintf(buf, cap,
                   "segs=%u ooo=%u dup=%u trunc=%u zwnd=%u rto=%u frx=%u ring_hwm=%u ring_full=%u "
-                  "loop_gap_max=%uus txr=%u/%u/%u/%u/%u txr_max=%uus",
+                  "loop_gap_max=%uus txr=%u/%u/%u/%u/%u txr_max=%uus rate=%uk/%u%%",
                   (unsigned)t[0], (unsigned)t[1], (unsigned)t[2], (unsigned)t[3], (unsigned)t[4],
                   (unsigned)t[5], (unsigned)t[6], (unsigned)r[0], (unsigned)r[1], (unsigned)gap,
                   (unsigned)g_txr_frames, (unsigned)g_txr_first, (unsigned)g_txr_retried,
-                  (unsigned)g_txr_failed, (unsigned)g_txr_nocompl, (unsigned)txr_max);
+                  (unsigned)g_txr_failed, (unsigned)g_txr_nocompl, (unsigned)txr_max,
+                  (unsigned)(g_tx_rate_fixed ? 0 : lm_rate::kRates[g_rc.last_best()].kbps),
+                  (unsigned)(g_rc.prob(g_rc.last_best()) / 100));
 }
 
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
@@ -3228,7 +3251,8 @@ void netstack_loop() {
           //   WIFI SCAN    run one background sweep now
           //   WIFI DHCP    drop the lease and re-DISCOVER (the DHCP retry path)
           //   WIFI GIVEUP  re-join through the random-MAC fallback (stable-address loss)
-          //   WIFI TXRATE <code>  data TX rate (wifi_phy_rate_t; 0xB = 6 Mb/s, the default)
+          //   WIFI TXRATE <code>|auto  pin the data TX rate (wifi_phy_rate_t) / adapt (default)
+          //   WIFI TXRC           print the rate controller's per-rate table
           //   WIFI TXTRIES <n>    data TX attempts per frame (1-15, default 7)
           //   WIFI SCANMISS <n>  the next n sweeps hear nothing (0 clears): the HITL
           //                improv_fresh_join gate's "AP not seen by the first sweeps"
@@ -3242,11 +3266,24 @@ void netstack_loop() {
             drop_link_for_new_network();
             Serial.printf("[t=%lu] [wifi] console: lease dropped -> re-DISCOVER\n",
                           (unsigned long)nowc);
+          } else if (strcmp(arg, "TXRATE auto") == 0) {
+            g_tx_rate_fixed = false;
+            g_rc.reset();
+            g_txr_frames = g_txr_first = g_txr_retried = g_txr_failed = g_txr_nocompl = 0;
+            Serial.printf("[t=%lu] [wifi] console: data TX rate adaptive\n", (unsigned long)nowc);
           } else if (strncmp(arg, "TXRATE ", 7) == 0) {
             g_tx_rate = (uint8_t)strtoul(arg + 7, nullptr, 0);
+            g_tx_rate_fixed = true;
             g_txr_frames = g_txr_first = g_txr_retried = g_txr_failed = g_txr_nocompl = 0;
             Serial.printf("[t=%lu] [wifi] console: data TX rate code 0x%x\n", (unsigned long)nowc,
                           (unsigned)g_tx_rate);
+          } else if (strcmp(arg, "TXRC") == 0) {
+            Serial.printf("[rc] %s, best %u kb/s\n", g_tx_rate_fixed ? "pinned" : "adaptive",
+                          (unsigned)lm_rate::kRates[g_rc.last_best()].kbps);
+            for (int i = 0; i < lm_rate::kNumRates; i++)
+              Serial.printf("[rc]   %5u kb/s  p=%3u.%02u%%  attempts=%u\n",
+                            (unsigned)lm_rate::kRates[i].kbps, (unsigned)(g_rc.prob(i) / 100),
+                            (unsigned)(g_rc.prob(i) % 100), (unsigned)g_rc.tried(i));
           } else if (strncmp(arg, "TXTRIES ", 8) == 0) {
             uint32_t n = strtoul(arg + 8, nullptr, 10);
             g_tx_tries = (uint8_t)(n < 1 ? 1 : n > 15 ? 15 : n);
