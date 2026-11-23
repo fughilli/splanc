@@ -851,14 +851,24 @@ def run(args: argparse.Namespace) -> int:
                 s["members_after_2s"] = app.text(".mesh-members")
                 app.shot("device-sheet-after-eject")
                 # The section re-reads the mesh every 3 s: how long until c is off the list?
-                n_rows = 3
-                while time.monotonic() - t_ej < args.eject_list_timeout:
+                # Count at least once: on a loaded host the 2 s wait, the sheet and the
+                # screenshot alone can outlast the timeout, and an uncounted list is not a
+                # listed fixture (r1 of #640 failed so with c already off the list).
+                while True:
                     n_rows = page.locator(".mesh-members .mesh-member").count()
-                    if n_rows <= 2:
+                    if n_rows <= 2 or time.monotonic() - t_ej >= args.eject_list_timeout:
                         break
                     page.wait_for_timeout(1000)
                 s["members"] = app.text(".mesh-members")
                 s["listed_s"] = round(time.monotonic() - t_ej, 1)
+                # Every member list in the page (where a stray row comes from).
+                s["lists"] = page.evaluate(
+                    "() => [...document.querySelectorAll('.mesh-members')].map(l => ({"
+                    " where: [...(function* (e) { for (; e && e !== document.body;"
+                    " e = e.parentElement) yield e.className || e.tagName; })(l)].slice(0, 6),"
+                    " hidden: !!l.closest('[hidden]') || l.getClientRects().length === 0,"
+                    " rows: [...l.querySelectorAll('.mesh-member')].map(b => b.innerText.split('\\n')[0]) }))"
+                )
                 app.shot("device-sheet-after-eject-settled")
                 s["c_phase"] = info(c).get("phase")
                 s["ok"] = bool(line) and n_rows <= 2
