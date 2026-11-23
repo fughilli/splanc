@@ -10,8 +10,10 @@ listens on the abstract unix socket ``@splanc-splash``. This service:
 2. waits until the system is quiet enough for the UI to animate smoothly
    (``wait_quiet``: CPU busy share, and PSI CPU pressure where the kernel has
    it), at most QUIET_MAX_SECONDS;
-3. sends ``stop``. The splash stops drawing, closes the SPI device and the
-   framebuffer, answers with the animation's start time (CLOCK_MONOTONIC, the
+3. renders its first HDMI page into a file in the framebuffer's format and
+   sends ``stop`` with it: the splash opens HDMI into that page (a circle
+   growing from the logo, its outro), then stops drawing, closes the SPI
+   device and the framebuffer, answers with the animation's start time (CLOCK_MONOTONIC, the
    clock time.monotonic() reads), the stage text it showed and whether the
    OLED was driven, passes its GPIO line request (DC + RST, still held: releasing
    RST would reset the panel) over the socket, and exits;
@@ -44,7 +46,12 @@ STAGES = (
     "Connecting…",  # NetworkManager up, no default route yet
     "Starting bridge…",  # online, the bridge hasn't written its status yet
     "Almost ready…",  # the bridge is up; the screens are loading
+    # A system update that didn't come up (sysupdate.py, pi/bridge/README.md
+    # "System updates"): these replace the ones above for the rest of the boot.
+    "Recovering…",  # booted the old system with an update pending: rolling back
+    "Rolled back",  # + " to <version>": the update was rolled back
 )
+RECOVERING, ROLLED_BACK = 5, 6
 STAGE_FONT = "spleen/spleen-5x8.bdf"  # the terminus sets' small fallback
 STAGE_BOTTOM = 64  # the text's ink sits on the panel's last rows, under the LED row
 
@@ -62,10 +69,20 @@ class Handoff:
     oled: bool  # the splash drove the OLED (and passed its GPIO lines)
     gpio_fd: Optional[int]  # GPIO v2 line request: DC (offset 0) + RST (offset 1)
     frame: int = 0
+    version: str = ""  # with ROLLED_BACK: the version now running
 
     @property
     def text(self) -> str:
-        return STAGES[self.stage] if 0 <= self.stage < len(STAGES) else ""
+        return stage_text(self.stage, self.version)
+
+
+def stage_text(stage: int, version: str = "") -> str:
+    """The splash's stage hint (the C splash draws the same string)."""
+    if not 0 <= stage < len(STAGES):
+        return ""
+    if stage == ROLLED_BACK and version:
+        return f"{STAGES[stage]} to {version}"
+    return STAGES[stage]
 
 
 def _connect(address: str, timeout: float) -> Optional[socket.socket]:
@@ -88,8 +105,9 @@ def alive(address: Optional[str] = None) -> bool:
     return True
 
 
-def parse_reply(line: str) -> Tuple[float, int, bool, int]:
-    """``ok t0=<ns> stage=<i> oled=<0|1> frame=<n>`` -> (t0 s, stage, oled, frame)."""
+def parse_reply(line: str) -> Tuple[float, int, bool, int, str]:
+    """``ok t0=<ns> stage=<i> oled=<0|1> frame=<n> [ver=<version>]`` -> (t0 s,
+    stage, oled, frame, version)."""
     parts = line.strip().split()
     if not parts or parts[0] != "ok":
         raise ValueError(f"splash refused: {line.strip()!r}")
@@ -99,18 +117,24 @@ def parse_reply(line: str) -> Tuple[float, int, bool, int]:
         int(kv.get("stage", 0)),
         kv.get("oled") == "1",
         int(kv.get("frame", 0)),
+        kv.get("ver", ""),
     )
 
 
-def stop(hdmi: bool, address: Optional[str] = None, timeout: float = 3.0) -> Optional[Handoff]:
+def stop(
+    hdmi: bool, address: Optional[str] = None, timeout: float = 5.0, page: Optional[str] = None
+) -> Optional[Handoff]:
     """Ask the splash to stop and hand over. ``hdmi``: we draw on /dev/fb0 next, so
-    leave the console VT in graphics mode (else the splash gives it back). None if
-    no splash is running (or it went away mid-way)."""
+    leave the console VT in graphics mode (else the splash gives it back).
+    ``page``: a file with our first HDMI frame in the framebuffer's own format
+    (write_page): the splash opens HDMI into it (its outro, ~0.65 s) before it
+    answers. None if no splash is running (or it went away mid-way)."""
     s = _connect(address or ADDRESS, timeout)
     if s is None:
         return None
     try:
-        s.sendall(b"stop hdmi=%d\n" % (1 if hdmi else 0))
+        req = "stop hdmi=%d" % (1 if hdmi else 0) + (f" page={page}" if hdmi and page else "")
+        s.sendall(req.encode() + b"\n")
         data, fds = b"", []
         while not data.endswith(b"\n"):
             msg, anc, _flags, _addr = s.recvmsg(
@@ -124,7 +148,7 @@ def stop(hdmi: bool, address: Optional[str] = None, timeout: float = 3.0) -> Opt
             if not msg:
                 break
             data += msg
-        t0, stage, oled, frame = parse_reply(data.decode("utf-8", "replace"))
+        t0, stage, oled, frame, version = parse_reply(data.decode("utf-8", "replace"))
     except (OSError, ValueError, KeyError) as e:
         print(f"splanc-display: splash hand-off failed: {e}", flush=True)
         return None
@@ -137,8 +161,30 @@ def stop(hdmi: bool, address: Optional[str] = None, timeout: float = 3.0) -> Opt
         os.close(gpio_fd)
         gpio_fd = None
     return Handoff(
-        t0=t0, stage=stage, oled=oled and gpio_fd is not None, gpio_fd=gpio_fd, frame=frame
+        t0=t0,
+        stage=stage,
+        oled=oled and gpio_fd is not None,
+        gpio_fd=gpio_fd,
+        frame=frame,
+        version=version,
     )
+
+
+def write_page(img, info, path: str) -> bool:
+    """``img`` (our first HDMI frame, at the framebuffer's size) as the framebuffer's
+    bytes (fb.pack), for the splash's outro."""
+    from . import fb
+
+    try:
+        data = fb.pack(img, info)
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+        return True
+    except (OSError, ValueError) as e:
+        print(f"splanc-display: no HDMI page for the splash's outro: {e}", flush=True)
+        return False
 
 
 # --- "is the system quiet yet?" ----------------------------------------------------

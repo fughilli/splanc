@@ -98,6 +98,7 @@ class FakeHost(su.Host):
         self.rebooted = None
         self.clock = 1_000_000.0
         self.mono = 100.0
+        self.boot = "boot-1"
         self.free = 10 << 30
         self.import_board = "pi5"
 
@@ -114,6 +115,9 @@ class FakeHost(su.Host):
         with open(dest, "wb") as f:
             f.write(data)
         return hashlib.sha256(data).digest()
+
+    def boot_id(self):
+        return self.boot
 
     # -- clocks
     def now(self):
@@ -628,6 +632,10 @@ def test_tryboot_apply_keeps_the_old_default(tmp_path):
     # real builder writes it.
     trial = open(os.path.join(b.fw, "nixos/2-default/cmdline.txt")).read().split()
     assert f"init={b.prof}/system-2-link/init" in trial
+    # The trial (only) turns hangs into panics -> panic=10 -> the old system.
+    assert all(p in trial for p in su.TRIAL_KERNEL_PARAMS)
+    default = open(os.path.join(b.fw, "nixos/default/cmdline.txt")).read().split()
+    assert not any(p in default for p in su.TRIAL_KERNEL_PARAMS)
 
 
 # ---- device: confirm ----------------------------------------------------------
@@ -767,3 +775,55 @@ def test_cli_install_and_check(bench, monkeypatch):
     assert os.path.exists(os.path.join(state, ".lock"))
     monkeypatch.setenv("SPLANC_AUTO_UPDATE", "0")
     assert su.main(["--state-dir", state, "run", "--auto"]) == 0 and len(calls) == 3
+
+
+# ---- the boot splash's view: "Recovering…" / "Rolled back to <version>" ----
+
+
+def splash_files(bench):
+    st = os.path.join(bench.tmp, "state")
+
+    def read(n):
+        try:
+            return open(os.path.join(st, n)).read().split()
+        except FileNotFoundError:
+            return None
+
+    return read("trial"), read("splash-notice")
+
+
+def test_trial_file_names_the_update_until_it_is_committed(bench):
+    rel, u = applied(bench)
+    assert splash_files(bench) == ([rel.top], None)
+    bench.host.boot = "boot-2"
+    assert u.confirm() == 0
+    assert splash_files(bench) == (None, None)
+
+
+def test_rollback_tells_the_next_boot_then_ages_out(bench):
+    st = bench.updater().load_state()
+    st["current"] = {"toplevel": bench.a, "version": "1.2.0"}
+    bench.updater().save_state(st)
+    rel, u = applied(bench)
+    bench.host.boot = "boot-2"  # the trial boot
+    bench.host.health["splanc-display.service"] = (False, 0.0)
+    assert u.confirm() == 1 and bench.host.rebooted == "reboot"
+    assert splash_files(bench) == (None, ["rolled_back", "1.2.0", "next"])
+    bench.boot_into(bench.a)
+    bench.host.boot = "boot-3"  # back on the old system: shown on this boot
+    assert u.confirm() == 0
+    assert splash_files(bench)[1] == ["rolled_back", "1.2.0", "boot-3"]
+    bench.host.boot = "boot-4"  # and not again
+    assert u.confirm() == 0
+    assert splash_files(bench) == (None, None)
+
+
+def test_a_trial_that_never_came_up_is_shown_as_rolled_back_on_this_boot(tmp_path):
+    b = Bench(os.path.realpath(tmp_path), mode="tryboot")
+    rel = b.publish()
+    u = b.updater()
+    u.install()
+    assert splash_files(b)[0] == [rel.top]
+    b.host.boot = "boot-2"  # the trial reset; the firmware booted the old system
+    assert u.confirm() == 1
+    assert splash_files(b) == (None, ["rolled_back", "-", "boot-2"])  # (no version known)
