@@ -24,6 +24,10 @@ wss client).
   reboot       b resets (DUT only): it rejoins and catches up
   reload       the page reloads: the app unlocks its new connection by itself
   final        one more brightness change: all three, one frame
+  backup       "Back up this mesh": the backup text (D-442)
+  import       a second browser (no mesh of its own) sees the mesh as another phone's,
+               pastes the backup ("Use a mesh from another phone") and the gateway
+               unlocks it as the mesh's admin
   leave        MESH LEAVE on every DUT (the rig as found)
 
 Screenshots of every screen at phone and desktop widths go to --shots; each is also run
@@ -101,17 +105,24 @@ def _chromium(p):
         return p.chromium.launch(headless=True)
 
 
+# The effect editor's regions, each checked on its own (editor_scenarios.py): the pane
+# strips, and the floating toolbar.
+EDITOR_REGIONS = (".fxlayout-edgetabs, .fxlayout-tabs, .fxpane-head", ".fxedit-drawer")
+
+
 class App:
     """The app in one Chromium page: taps, waits and screenshots (both widths)."""
 
-    def __init__(self, page, shots: Path, out: str, lg) -> None:
+    def __init__(
+        self, page, shots: Path, out: str, lg, console: str = "browser-console.log"
+    ) -> None:
         self.page = page
         self.shots = shots
         self.lg = lg
         self.n = 0
         self.layout: dict[str, list[str]] = {}
         self.frames: list[tuple[float, str, str, int, str]] = []
-        self.console = open(os.path.join(out, "browser-console.log"), "w", encoding="utf-8")
+        self.console = open(os.path.join(out, console), "w", encoding="utf-8")
         page.on("console", lambda m: self._con(f"{m.type}: {m.text}"))
         page.on("pageerror", lambda e: self._con(f"PAGEERROR: {e}"))
         page.on("websocket", self._ws)
@@ -152,10 +163,16 @@ class App:
                     "() => { document.querySelectorAll('[data-e2e-top]').forEach(e =>"
                     " e.removeAttribute('data-e2e-top'));"
                     " const c = document.querySelectorAll('.k-confirm, .k-sheet');"
+                    # The effect editor is checked per region, as its layout-guard scenarios
+                    # do (tools/ui_layout/editor_scenarios.py): its dense docks sit on their
+                    # panes' content by design; the strips and the toolbar are what can cram.
+                    " if (!c.length && document.querySelector('textarea.fxedit-code'))"
+                    " return 'editor';"
                     " if (!c.length) return '.shell-outlet';"
                     " c[c.length - 1].setAttribute('data-e2e-top', '1'); return '[data-e2e-top]'; }"
                 )
-                v, _ = self.lg.check_page(self.page, root)
+                roots = EDITOR_REGIONS if root == "editor" else (root,)
+                v = [x for r in roots for x in self.lg.check_page(self.page, r)[0]]
                 if v:
                     self.layout[f"{base}-{vname}"] = [str(x) for x in v]
             except Exception as e:  # noqa: BLE001
@@ -847,6 +864,80 @@ def run(args: argparse.Namespace) -> int:
                 if any(v != "member" for v in s["phase"].values()):
                     s["ok"] = False
                     s["fail"] = (s.get("fail") or "") + f" phase {s['phase']}"
+
+            # D-442: the admin secret goes to another phone as a backup text. This phone
+            # shows it ("Back up this mesh"); a second browser, with the same fixtures but no
+            # mesh of its own, sees the mesh as another phone's, pastes the backup ("Use a
+            # mesh from another phone") and becomes its admin: the gateway unlocks it.
+            backup = ""
+            with step("backup") as s:
+                app.open_device_sheet()
+                app.click(".mesh-section button:has-text('Back up this mesh')")
+                app.wait(".k-sheet textarea.mesh-backup-text")
+                page.wait_for_timeout(800)
+                backup = page.locator(".k-sheet textarea.mesh-backup-text").last.input_value()
+                s["prefix"] = backup[:14]
+                s["chars"] = len(backup)
+                app.shot("mesh-backup")
+                app.close_sheets()
+                s["ok"] = backup.startswith("splanc-mesh-1:") and len(backup) > 40
+                if not s["ok"]:
+                    s["fail"] = f"backup text {backup[:40]!r} ({len(backup)} chars)"
+
+            with step("import") as s:
+                if not backup:
+                    raise RuntimeError("no backup to import")
+                page.close()  # one phone at a time on the fixtures (TLS slots)
+                ctx2 = browser.new_context(
+                    viewport=DESKTOP, device_scale_factor=2, ignore_https_errors=True
+                )
+                ctx2.add_init_script(lg.seed_js(seed, "light"))
+                page2 = ctx2.new_page()
+                app2 = App(page2, shots, args.out, lg, "browser-console-phone2.log")
+                app2.n = app.n
+                app2.layout = app.layout  # one layout report for both phones
+                ui[0] = app2
+                page2.goto(f"{origin}/index.html#/maps", wait_until="load", timeout=30_000)
+                page2.locator(".k-pill[data-state='connected']").first.wait_for(
+                    state="visible", timeout=args.connect_timeout * 1000
+                )
+                app2.open_device_sheet()
+                app2.wait(".mesh-section button:has-text('Use a mesh from another phone')", 20_000)
+                s["foreign_section"] = app2.text(".mesh-section")
+                app2.shot("phone2-device-sheet-mesh-foreign")
+                app2.click(".mesh-section button:has-text('Use a mesh from another phone')")
+                app2.wait(".k-sheet textarea.mesh-backup-text")
+                app2.shot("phone2-mesh-import")
+                page2.locator(".k-sheet textarea.mesh-backup-text").last.fill(backup)
+                app2.shot("phone2-mesh-import-pasted")
+                ma = a.mark()
+                app2.click(".k-sheet button:has-text('Add this mesh')")
+                page2.wait_for_timeout(1500)
+                # A fresh connection unlocks with the imported admin key.
+                app2.close_sheets()
+                page2.reload(wait_until="load")
+                line = wait_line(a, r"\[mesh\] unlock conn=.* -> ", ma, 40.0)
+                s["unlock"] = line
+                app2.open_device_sheet()
+                # The section re-reads the mesh every few seconds: wait for it to show this
+                # phone as the mesh's admin (its "Back up this mesh"), and keep what it showed.
+                admin = False
+                end = time.monotonic() + 30.0
+                while time.monotonic() < end:
+                    s["section"] = app2.text(".mesh-section:not([hidden])")
+                    admin = "Back up this mesh" in s["section"]
+                    if admin:
+                        break
+                    page2.wait_for_timeout(1000)
+                page2.locator(".mesh-section:not([hidden])").first.scroll_into_view_if_needed(
+                    timeout=3000
+                )
+                app2.shot("phone2-device-sheet-mesh-admin")
+                s["ok"] = bool(line) and line.endswith("ok") and admin
+                if not s["ok"]:
+                    s["fail"] = (
+                        f"unlock line {line!r}; admin={admin}; section {s['section'][:300]!r}"
+                    )
         except RuntimeError as e:
             record.setdefault("errors", {})["run"] = str(e)
         finally:
