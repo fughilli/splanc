@@ -20,6 +20,7 @@
 
 use core::ptr::{addr_of, addr_of_mut};
 
+use ledmapper_bss::BssOption;
 use ledmapper_osc as osc;
 use ledmapper_power::{self as pw, Config, Machine, Request, Start};
 
@@ -33,7 +34,9 @@ pub const ARM_GET_POWER: u32 = 131;
 pub const ARM_SET_POWER_CONFIG: u32 = 132;
 
 static mut MACHINE: Machine = Machine::new(true);
-static mut CONFIG: Config = Config::DEFAULT;
+// BssOption (not `Config::DEFAULT`): the default has a few non-zero bytes, which would put
+// the whole ~0.5 KB record in .data (flash). Empty = the default, filled on first use.
+static mut CONFIG: BssOption<Config> = BssOption::NONE;
 /// The toggle trigger's last-seen count (None = not seen since bind / boot) and
 /// how often it toggled the lamp since boot.
 static mut TRIGGER_LAST: Option<f32> = None;
@@ -78,7 +81,7 @@ unsafe fn machine() -> &'static mut Machine {
     &mut *addr_of_mut!(MACHINE)
 }
 unsafe fn config() -> &'static mut Config {
-    &mut *addr_of_mut!(CONFIG)
+    (*addr_of_mut!(CONFIG)).get_or_insert_with(|| Config::DEFAULT)
 }
 
 /// Deck B is free for a transition effect: not showing in a crossfade.
@@ -98,7 +101,7 @@ unsafe fn request(on: bool, instant: bool, duration_ms: u32, source: u8, now: u3
     let slot = if on { 0 } else { 1 };
     let effect_ok = (*addr_of!(STORED))[slot] && config().transition(on).has_effect() && deck_b_free();
     let r = Request { on, instant, duration_ms, source };
-    let cfg = *addr_of!(CONFIG);
+    let cfg = *config();
     match machine().request(r, &cfg, effect_ok, now) {
         Start::Unchanged => {}
         Start::Started => {
@@ -156,7 +159,7 @@ fn write_transition(w: &mut PbOut, t: &pw::Transition, on: bool) {
 
 unsafe fn write_state(w: &mut PbOut, now: u32) {
     let m = &*addr_of!(MACHINE);
-    let c = &*addr_of!(CONFIG);
+    let c = &*config();
     let nz = |w: &mut PbOut, f: u32, v: u64| {
         if v != 0 {
             w.uint(f, v)
@@ -218,7 +221,7 @@ pub(crate) unsafe fn handle_set_power_config(frame: &[u8], now: u32, out: *mut u
     let Some(CArm::SetPowerConfig(m)) = client_arm(frame) else {
         return reply_state(out, cap, now);
     };
-    let before = *addr_of!(CONFIG);
+    let before = *config();
     let c = config();
     if let Some(b) = m.boot() {
         c.boot = pw::sanitize_boot(b);
@@ -262,7 +265,7 @@ pub(crate) unsafe fn handle_set_power_config(frame: &[u8], now: u32, out: *mut u
     if let Some(pin) = m.sim_gpio() {
         SIM_REQ = Some((pin, m.sim_pull().min(2) as u8));
     }
-    if *addr_of!(CONFIG) != before {
+    if *config() != before {
         CFG_GEN = CFG_GEN.wrapping_add(1);
         machine().seq = machine().seq.wrapping_add(1);
         note_change();
@@ -317,7 +320,7 @@ pub(crate) unsafe fn note_load(ok: bool) {
 pub unsafe extern "C" fn lm_power_seed(rec: *const u8, len: usize, last_on: i32, on_stored: bool, off_stored: bool) -> bool {
     if !rec.is_null() {
         if let Some(c) = pw::decode_config(core::slice::from_raw_parts(rec, len)) {
-            CONFIG = c;
+            (*addr_of_mut!(CONFIG)).set(c);
         }
     }
     let c = config();
@@ -373,7 +376,7 @@ pub unsafe extern "C" fn lm_power_frame(now: u32, level_q8: *mut u16) -> u32 {
 /// Loop task, under the player mutex.
 #[no_mangle]
 pub unsafe extern "C" fn lm_power_poll_trigger(now: u32) -> bool {
-    let c = &*addr_of!(CONFIG);
+    let c = &*config();
     if c.trigger_len == 0 {
         return false;
     }
@@ -517,7 +520,7 @@ pub unsafe extern "C" fn lm_power_cfg_record(out: *mut u8, cap: usize) -> i32 {
         return -1;
     }
     let mut r = [0u8; pw::RECORD_LEN];
-    pw::encode_config(&*addr_of!(CONFIG), &mut r);
+    pw::encode_config(&*config(), &mut r);
     core::ptr::copy_nonoverlapping(r.as_ptr(), out, pw::RECORD_LEN);
     pw::RECORD_LEN as i32
 }
