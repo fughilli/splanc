@@ -1,6 +1,7 @@
 /**
  * Conservative auto-formatter for the fx (GLSL-ish) effect language. It ONLY:
  *   - re-indents each line by its nesting depth (braces + parens + brackets),
+ *     four spaces per level,
  *   - trims trailing whitespace,
  *   - collapses runs of blank lines to one, and
  *   - ensures a single trailing newline.
@@ -9,7 +10,8 @@
  * `/* … *\/` block comments are ignored when computing depth.
  */
 
-const INDENT = "  ";
+/** One indent level: a four-space tab stop (D-500). */
+export const INDENT = "    ";
 
 const isOpener = (c: string): boolean => c === "{" || c === "(" || c === "[";
 const isCloser = (c: string): boolean => c === "}" || c === ")" || c === "]";

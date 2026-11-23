@@ -180,6 +180,8 @@ class Scenario:
     seed:    localStorage key -> value set before the app boots
     steps:   interaction after load: ("click", selector) | ("fill", selector, text)
              | ("check", selector) | ("wait", ms) | ("wait_for", selector)
+             | ("press", selector, key) | ("hover", selector) (forced: the pointer
+             lands on the element's box even under an overlay, e.g. a textarea)
     network: makes a per-run request handler: handler(route, request) -> bool
              (True = handled); everything else off-origin is blocked
     root:    where to look for controls (the screen, not the app chrome)
@@ -249,6 +251,10 @@ def run_steps(page, steps: list[tuple]) -> None:
             page.locator(st[1]).first.fill(st[2], timeout=8000)
         elif op == "check":
             page.locator(st[1]).first.check(timeout=8000)
+        elif op == "press":
+            page.locator(st[1]).first.press(st[2], timeout=8000)
+        elif op == "hover":
+            page.locator(st[1]).first.hover(force=True, timeout=8000)
         elif op == "css":  # inject a stylesheet (the guard's self-test crams a row)
             page.add_style_tag(content=st[1])
         elif op == "wait":

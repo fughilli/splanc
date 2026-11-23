@@ -1214,7 +1214,7 @@ body.is-locked {
   box-sizing: border-box;
   padding: 0.6rem 0.8rem;
   font: 13px/1.5 var(--font-mono, ui-monospace, monospace);
-  tab-size: 2;
+  tab-size: 4;
   white-space: pre;
   overflow: auto;
   border: 0;
@@ -3721,4 +3721,103 @@ input.device-name-input {
   font: inherit;
   font-size: 0.8em;
   max-width: 7em;
+}
+
+/* -- Code editor diagnostics (D-501) -------------------------------------
+ * .fxedit-diaglayer repeats the code (transparent) over the highlighted
+ * backdrop: lines with an error / warning get a tinted band with a stripe in
+ * the left padding, the offending span a wavy underline. Hover (or the caret
+ * inside a span) shows .fxdiag-tip with the compiler's explanation. */
+.fxedit-diaglayer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font: 13px/1.5 var(--font-mono, ui-monospace, monospace);
+  tab-size: 4;
+  white-space: pre;
+  overflow: hidden;
+  border: 0;
+  color: transparent;
+  background: transparent;
+  pointer-events: none;
+  z-index: 0;
+}
+.fxdiag-line {
+  display: inline-block;
+  vertical-align: top;
+  min-width: calc(100% + 0.8rem);
+  margin-left: -0.8rem;
+  padding-left: 0.8rem;
+}
+.fxdiag-line--error {
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--err);
+}
+.fxdiag-line--warning {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+.fxdiag-sq {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1.5px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+.fxdiag-sq--error {
+  text-decoration-color: var(--err);
+}
+.fxdiag-sq--warning {
+  text-decoration-color: var(--warn);
+}
+.fxdiag-tip {
+  position: absolute;
+  z-index: 6;
+  max-width: min(28rem, calc(100% - 8px));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  font: 12px/1.4 var(--font-ui, system-ui, sans-serif);
+  pointer-events: none;
+  white-space: normal;
+}
+.fxdiag-tip-sev {
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fxdiag-tip-sev--error {
+  color: var(--err);
+}
+.fxdiag-tip-sev--warning {
+  color: var(--warn);
+}
+/* Cursor readout at the right end of the status line; keeps its own colour
+ * whatever the compile status tints the line. */
+.fxedit-cursorpos {
+  flex: 0 0 auto;
+  margin-left: var(--sp-3);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Keyboard-shortcut hint on a menu item (e.g. Format code ⌘⇧F). */
+.fxedit-menu-item:has(.fxedit-menu-kbd) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.fxedit-menu-kbd {
+  font: 11px/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--text-dim);
 }
