@@ -168,6 +168,45 @@ def last_change_ok(rows: list[dict], want: int) -> bool:
     return len(rows) >= want and all(r.get("ok") for r in rows)
 
 
+_TOPO_STATUS = re.compile(r"(\d+) fixtures? · (\d+) radio links? · (.+)$")
+
+
+def topology_view(status: str, rows: list[dict]) -> dict:
+    """The mesh map's state as the app shows it (#/mesh/topology): its status line
+    ("3 fixtures · 3 radio links · 2 of 3 placed in the room") and fixture rows
+    ({name, detail, placed}: placed = its dot is solid, i.e. it has a room position)."""
+    m = _TOPO_STATUS.search(status.strip())
+    return {
+        "fixtures": int(m.group(1)) if m else 0,
+        "links": int(m.group(2)) if m else 0,
+        "placement": m.group(3) if m else "",
+        "rows": len(rows),
+        "placed": sorted(r["name"] for r in rows if r.get("placed")),
+        "unplaced": sorted(r["name"] for r in rows if not r.get("placed")),
+        "direct": sum(1 for r in rows if "Direct neighbour" in r.get("detail", "")),
+        "no_topology": sum(1 for r in rows if "older firmware" in r.get("detail", "")),
+    }
+
+
+def topology_ok(v: dict, fixtures: int, placed: int) -> tuple[bool, list[str]]:
+    """The map shows every fixture, a connected graph of links (at least fixtures - 1),
+    `placed` members at their room positions and the connected fixture ("(this one)", which
+    has none) from the layout, every member as a direct neighbour of the gateway (one
+    bench), and topology from every one."""
+    why: list[str] = []
+    if v["fixtures"] != fixtures or v["rows"] != fixtures:
+        why.append(f"{v['fixtures']} fixtures / {v['rows']} rows, want {fixtures}")
+    if v["links"] < fixtures - 1:
+        why.append(f"{v['links']} links, want >= {fixtures - 1}")
+    if len(v["placed"]) != placed or any("(this one)" in n for n in v["placed"]):
+        why.append(f"placed {v['placed']}, want {placed} members")
+    if v["direct"] != fixtures - 1:
+        why.append(f"{v['direct']} direct neighbours, want {fixtures - 1}")
+    if v["no_topology"]:
+        why.append(f"{v['no_topology']} without topology")
+    return (not why), why
+
+
 def verdict(record: dict, strict_late: bool = False) -> tuple[bool, list[str]]:
     """The gate. Every step reached its end state; whole-mesh changes landed on one frame
     (effect, brightness) and every fixture answered; eject, re-add and reboot left all

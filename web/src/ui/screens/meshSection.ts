@@ -6,8 +6,8 @@
  *  - Not in a mesh: "Create a mesh" (the dedicated flow, meshFlow.ts) and, when this app
  *    already administers a mesh, "Add to <mesh>".
  *  - In a mesh this app administers: the connection is unlocked with the stored admin key
- *    automatically; the members (name, time sync, signal), fixtures waiting to join with
- *    Admit, "Add a fixture to this mesh", "Remove from mesh", and the "Control the whole
+ *    automatically; the members (name, time sync, signal), "Show the mesh map"
+ *    (#/mesh/topology), fixtures waiting to join with Admit, "Add a fixture to this mesh", "Remove from mesh", and the "Control the whole
  *    mesh" switch (M5).
  *  - In a closed mesh another phone administers: its status and where to manage it.
  *  - A dev mesh (no admin key): the M5 status + switch, as before.
@@ -94,6 +94,11 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
     const list = h("ul", "mesh-members");
     for (const row of m.members) list.append(memberItem(row, m, rec));
     el.append(list);
+
+    // The mesh map (#/mesh/topology): where each fixture is, its links and its health.
+    const mapRow = h("div", "mesh-actions");
+    mapRow.append(Button({ label: "Show the mesh map", icon: "graph", variant: "quiet", onClick: () => go("#/mesh/topology") }));
+    el.append(mapRow);
 
     if (last && (m.kind === "admin" || m.kind === "dev")) el.append(lastChange(last));
 

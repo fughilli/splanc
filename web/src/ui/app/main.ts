@@ -52,6 +52,7 @@ import { installNewFixtureWatch } from "./newFixtureWatch";
 import { AboutScreen } from "../screens/about";
 import { CreditsFlowScreen } from "../screens/creditsFlow";
 import { MeshFlowScreen } from "../screens/meshFlow";
+import { MeshTopologyScreen } from "../screens/meshTopology";
 import { warmActiveProvider } from "../../effects/ai/generate";
 import { refreshFreeTierLimit } from "../../effects/ai/tiers";
 import { AcidModeScreen } from "../screens/acidMode";
@@ -275,6 +276,11 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Add to mesh", back: true, tabs: false });
       const from = m.query.get("from");
       return MeshFlowScreen(router, "add", { meshId: Number(m.params["id"]) >>> 0, ...(from ? { from } : {}) });
+    })
+    .add("/mesh/topology", () => {
+      // The mesh map: the connected fixture's mesh in 3D (room positions, links, health).
+      shell.setChrome({ title: "Mesh map", back: true, tabs: false });
+      return MeshTopologyScreen(router);
     })
     .add("/room", () => {
       shell.setChrome({ title: "Localize room", back: true, tabs: false });
