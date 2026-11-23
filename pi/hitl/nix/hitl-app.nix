@@ -232,7 +232,7 @@ let
     # The shared RADIO isn't a concurrency-cap concern anymore: airtime-critical phases
     # take the AP-exclusive flock (/run/hitl-ap-lock, #228) and BLE provisioning the
     # per-rig adapter lock (/run/hitl-provision), whatever the cap. So on the Pi 5 rigs
-    # the host ceiling is the sum of the class caps (rig-1: 4 C6 + 2 Pi = 6; rig-2: 4)
+    # the host ceiling is the sum of the class caps (rig-1: 4 C6 + 2 Pi = 6; rig-2: 5)
     # and the per-class caps do the shaping. If #170's symptoms ("ws never came up",
     # USB resets) come back at 4 concurrent C6s, drop esp32c6 to 3. Every other host
     # (the Pi 3 rig-3 with its single USB bus, one-off boxes) keeps the original host-wide 2 and no class caps.
@@ -240,7 +240,7 @@ let
       type = lib.types.ints.unsigned;
       default =
         if config.networking.hostName == "hitl-rig-1" then 6
-        else if config.networking.hostName == "hitl-rig-2" then 4
+        else if config.networking.hostName == "hitl-rig-2" then 5
         else 2;
       description = "Host-wide cap on concurrently-active reservations (0 = unlimited).";
     };
@@ -253,7 +253,14 @@ let
           # ... and the 2 network led-mapper Pis, the "current 2" they used to share.
           "led-mapper-pi" = 2;
         } else if config.networking.hostName == "hitl-rig-2" then {
-          esp32c6 = 4; # its 2 analyzer-tapped C6s + 2 more on the powered USB hub
+          # Its 2 analyzer-tapped C6s on root ports + 3 on the powered USB hub (a 5th
+          # board was plugged in 2026-11-19). Was 4: with 5 boards that left one C6
+          # idle under the cap while 100+ reservations queued, and made the idle
+          # unit look free to every client's rig picker. No bus reason to keep it:
+          # rig-1 runs all 4 of its C6s behind ONE hub on one USB2 bus at once, and
+          # rig-2 at 5 still puts at most 3 behind its hub (it already ran 3-on-hub
+          # concurrently for ~33 h in the week before).
+          esp32c6 = 5;
         } else { };
       example = { esp32c6 = 2; "led-mapper-pi" = 2; };
       description = ''
