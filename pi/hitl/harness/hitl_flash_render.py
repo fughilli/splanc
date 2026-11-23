@@ -11,12 +11,12 @@ over 1.5 frame periods) in each phase from the DUT serial log:
 3. map: submit_map twice (a 150-LED map, then the 60-LED one: /lfs/map.pb);
 4. keypoints: save three (one littlefs file each);
 5. settings: committed uniforms (/lfs/fx.pb), color correction (the LUT record), a device
-   rename (NVS).
+   rename (NVS);
+6. app_reads: the app's device-sheet and effect-editor reads, 5 times (no writes: gated on
+   late frames only).
 
-Verdict (flash_render_core): PASS = auto-suspend on and no late frame in the map and settings
-phases, with a flash write seen in each (the effect-store and keypoint phases are reported:
-their handlers hold the player mutex for littlefs reads, the follow-up; `--strict` gates
-them); FAIL otherwise (the DUT serial log is printed); SKIP on bench failures, or a flash
+Verdict (flash_render_core): PASS = auto-suspend on and no late frame in any writer phase,
+with a flash write seen in each; FAIL otherwise (the DUT serial log is printed); SKIP on bench failures, or a flash
 without suspend support (`--allow-no-suspend` runs the phases anyway: the A/B baseline on an
 image without auto-suspend).
 
@@ -43,6 +43,19 @@ vec3 shade(Led led) {
   return vec3(p, 0.3, 1.0 - p);
 }
 """
+
+
+# The device sheet's refresh and the effect editor's opening reads (app traffic, mesh e2e r12).
+APP_READS = [
+    {"type": "get_wifi_policy"},
+    {"type": "get_mesh"},
+    {"type": "list_stored_effects"},
+    {"type": "get_kiosk_status"},
+    {"type": "get_sensors"},
+    {"type": "get_stored_map"},
+    {"type": "get_effect_uniforms"},
+    {"type": "list_keypoints", "deck": 0},
+]
 
 
 def stored_src(i: int, terms: int) -> str:
@@ -74,7 +87,9 @@ async def drive(url: str, fx: dict[str, bytes], leds: int, phases: dict) -> None
 
     try:
         t0 = time.time()
-        await hello(c)
+        w = await hello(c)
+        flash = [f for f in (w.get("features") or []) if f.startswith("flash_")]
+        _log(f"[flr] welcome flash feature: {flash}")
         await c.call(line_map(leds), "result_ready")
         await c.call({"type": "set_led_count", "led_count": leds}, "led_count_state")
         await c.call(
@@ -135,6 +150,16 @@ async def drive(url: str, fx: dict[str, bytes], leds: int, phases: dict) -> None
         )
         await asyncio.sleep(3.0)
         mark("settings", t0)
+
+        # What the app reads when it opens a device sheet and the effect editor (the mesh e2e
+        # saw a frame dropped on each: list_stored_effects read 8 records under the lock).
+        t0 = time.time()
+        for _ in range(5):
+            for req in APP_READS:
+                await rpc(c, req)
+            await asyncio.sleep(0.4)
+        await asyncio.sleep(1.5)
+        mark("app_reads", t0)
     finally:
         await c.close()
 
@@ -193,7 +218,7 @@ def run(args) -> int:
     if rep.suspend is not None and rep.suspend != "on" and not args.allow_no_suspend:
         _log(f"[flr] flash auto-suspend {rep.suspend} (jedec {rep.jedec}) — SKIP (hardware)")
         return 0
-    verdict, why = core.verdict(rep, require_suspend=not args.allow_no_suspend, strict=args.strict)
+    verdict, why = core.verdict(rep, require_suspend=not args.allow_no_suspend)
     summary = {
         name: {
             "late": rep.late_in(name),
@@ -249,11 +274,6 @@ def main() -> int:
         "--allow-no-suspend",
         action="store_true",
         help="run and report without auto-suspend (the A/B baseline); never PASSes on late frames",
-    )
-    ap.add_argument(
-        "--strict",
-        action="store_true",
-        help="gate the effect-store and keypoint phases too (their handlers hold the player mutex)",
     )
     return run(ap.parse_args())
 

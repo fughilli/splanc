@@ -838,6 +838,9 @@ fn join_admin_closed_mesh() {
     w.nodes[GW].stack.eject(t, CONN, id(1), kh1).expect("eject");
     w.run_until(3_000, |w| w.nodes[1].stack.membership.state.is_none()).expect("ejected");
     assert!(w.nodes[1].events.iter().any(|(_, e)| *e == Ev::Ejected));
+    // The gateway stops listing it at once (not after MEMBER_STALE_US).
+    let t = w.local(GW);
+    assert!(w.nodes[GW].stack.fanout.live(t).all(|m| m.node != id(1)), "the ejected member is still listed");
     eprintln!(
         "join_admin: closed mesh formed in {formed_ms} ms; b synced {sync_ms} ms after unlock; c admitted {admit_ms} ms after the tap; \
          insider control refused ({} untrusted), forged epoch ignored ({} unsigned); revocation refused {refused_before} rejoins, {refused_after} after a reboot",

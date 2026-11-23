@@ -1277,7 +1277,14 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// Eject one member (M7; issue #571's seam): it leaves the mesh. Not a removal (no
     /// rotation): use [`MeshStack::rotate`] with a revocation to keep it out.
     pub fn eject(&mut self, now_us: i64, conn: usize, node: NodeId, key_hash: KeyHash) -> Result<usize, SendError> {
-        self.command(now_us, conn, &MemberCommand::Eject { node, key_hash })
+        let n = self.command(now_us, conn, &MemberCommand::Eject { node, key_hash })?;
+        // It leaves on receipt: the app's member list drops it now (the e2e saw it listed
+        // for the 30 s MEMBER_STALE_US), and the session's commands stop MAC'ing for it.
+        self.fanout.forget(node);
+        if let Some(gs) = self.gateway.as_mut() {
+            gs.remove(node);
+        }
+        Ok(n)
     }
 
     pub fn set_mode(&mut self, now_us: i64, conn: usize, mode: Mode) -> Result<usize, SendError> {
@@ -1299,6 +1306,9 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             for &n in exclude {
                 gs.remove(n);
             }
+        }
+        for &n in exclude {
+            self.fanout.forget(n);
         }
         let keys = NewKeys { epoch: order.epoch, mesh_key: *mesh_key, site_secret: *site_secret, rev_version: order.rev_version, revoked: order.revoked, n_revoked: order.n_revoked };
         self.install(now_us, &keys, on);

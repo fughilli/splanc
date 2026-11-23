@@ -391,6 +391,16 @@ impl<const N: usize> Fanout<N> {
         m
     }
 
+    /// `node` left the mesh (ejected or revoked by the admin): stop listing it now, not
+    /// [`MEMBER_STALE_US`] later.
+    pub fn forget(&mut self, node: NodeId) {
+        for m in self.members.iter_mut() {
+            if m.is_some_and(|m| m.node == node) {
+                *m = None;
+            }
+        }
+    }
+
     pub fn on_status(&mut self, now_us: i64, node: NodeId, s: StatusMsg) {
         self.stats.statuses += 1;
         let m = self.touch(now_us, node);
@@ -579,6 +589,11 @@ mod tests {
         let r = f.take_done().unwrap();
         assert!(r.complete);
         assert_eq!((r.n, &r.status[..2], r.latency_ms[0], r.latency_ms[1]), (2, &[Status::Ok, Status::Refused][..], 5, 9));
+        // An ejected member drops out at once.
+        f.touch(200, 9);
+        assert_eq!(f.live(300).filter(|m| m.node == 9).count(), 1);
+        f.forget(9);
+        assert_eq!(f.live(300).filter(|m| m.node == 9).count(), 0);
         // A stale member drops out of "all"; a timeout reports the silent one missing.
         assert_eq!(f.begin(MEMBER_STALE_US + 10_000, 0, 8, 31, &Targets::All, 1_000, 1), 0);
         assert!(f.take_done().unwrap().complete);

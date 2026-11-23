@@ -19,13 +19,10 @@ _LATE = re.compile(r"\[late\] n=(\d+) max=(\d+) ago_ms=(\d+)")
 _WROTE = re.compile(r"\[fs\] wrote (\S+) (\d+) B us=(\d+)")
 _SUSPEND = re.compile(r"\[flash\] auto-suspend (on|off[^j]*?)\s*jedec=([0-9a-f]+)")
 
-# Phases whose flash writes must not delay a frame (they write outside the player mutex).
-GATED = ("map", "settings")
-# Measured and reported, not gated yet: these handlers hold the player mutex (which the render
-# task takes every frame) for 30-70 ms of littlefs reads (the keypoint slot scan and listing,
-# the store's record bookkeeping). Not a flash stall; the follow-up moves that I/O out of the
-# lock (docs/design/flash-auto-suspend.md "Still late"). `strict` gates them too.
-UNDER_LOCK = ("effect_store", "keypoints")
+# Phases whose flash writes (and the handlers around them) must not delay a frame.
+GATED = ("effect_store", "map", "keypoints", "settings")
+# Phases that only read (the app's own traffic): no late frame either, no write expected.
+READ_GATED = ("app_reads",)
 
 
 def stamped(text: str) -> list[tuple[float, str]]:
@@ -109,16 +106,21 @@ def report(
     return rep
 
 
-def verdict(
-    rep: Report, require_suspend: bool = True, strict: bool = False
-) -> tuple[str, list[str]]:
-    """PASS: no late frame in any gated phase (and the UNDER_LOCK ones if `strict`), with
-    auto-suspend on (if required) and at least one flash write seen in every gated phase
-    (else the test proved nothing). FAIL otherwise; the reasons name the phase."""
+def verdict(rep: Report, require_suspend: bool = True) -> tuple[str, list[str]]:
+    """PASS: no late frame in any gated phase, with auto-suspend on (if required) and at
+    least one flash write seen in every gated phase (else the test proved nothing). FAIL
+    otherwise; the reasons name the phase."""
     why = []
     if require_suspend and rep.suspend != "on":
         why.append(f"flash auto-suspend is {rep.suspend!r} (jedec {rep.jedec})")
-    for name in GATED + (UNDER_LOCK if strict else ()):
+    for name in READ_GATED:
+        p = rep.per_phase.get(name)
+        if p is None:
+            why.append(f"{name}: not run")
+        elif rep.late_in(name):
+            worst = max(x["max_us"] for x in p["late"])
+            why.append(f"{name}: {rep.late_in(name)} late frame(s), worst {worst} us")
+    for name in GATED:
         p = rep.per_phase.get(name)
         if p is None:
             why.append(f"{name}: not run")
