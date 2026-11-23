@@ -1893,7 +1893,20 @@ static void upload_ram_gc() {
 }
 #endif
 
+static int32_t process_upload_chunk_(const LmUploadChunk *ch, const uint8_t *payload);
+// Below the render task (PR-41, desk D-464): a map/topology window is a littlefs
+// open/append/close (the last a decode off flash), and an effect's last window loads and
+// persists it; at render's priority (loopTask's while a client is on a settled link, #371)
+// that work took turns with frames (the mesh gateway lost 2-7 frames of up to 31 ms per
+// 3-window upload before effect windows moved to RAM).
 static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payload) {
+  const uint32_t prio = lm_prio_below_render();
+  const int32_t n = process_upload_chunk_(ch, payload);
+  lm_prio_restore(prio);
+  return n;
+}
+static __attribute__((noinline)) int32_t process_upload_chunk_(const LmUploadChunk *ch,
+                                                               const uint8_t *payload) {
 #if defined(LM_NETSTACK)
   if (ch->kind == 2) return process_effect_chunk_ram(ch, payload);
 #endif
