@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 3612,
+    "test_cases": 3616,
     "gaps": 39
   },
   "levels": [
@@ -6812,7 +6812,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/sysmode/tests/reachability.rs",
-          "line": 91,
+          "line": 101,
           "symbol": "fn ble_and_wss_coexist"
         }
       ]
