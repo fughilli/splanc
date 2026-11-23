@@ -10,7 +10,7 @@
 
 use ledmapper_bss::BssOption;
 use ledmapper_netstack::lmac;
-use ledmapper_netstack::mac::{rx_frame, RxRing};
+use ledmapper_netstack::mac::{rx_frame, RxRing, SideQueue};
 use ledmapper_netstack::{p2p, tx};
 use ledmapper_netstack::sta::{Out, Sta};
 use ledmapper_netstack::tx::TxRing;
@@ -18,6 +18,47 @@ use ledmapper_netstack::wpa::PmkDeriv;
 
 const RX_SLOTS: usize = 16;
 static mut RX: RxRing<RX_SLOTS> = RxRing::new();
+/// Set while loopTask is inside an RX-ring operation (recv / pending / install). The only
+/// other user of the ring is `ns_mac_rx_shed`, called from the higher-priority esp_timer
+/// task on this single-core chip: it can preempt loopTask but never be preempted by it, so
+/// seeing the flag clear means loopTask is not mid-operation, and it skips otherwise.
+static RX_BUSY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Frames freed by `ns_mac_rx_shed` (read + reset by `ns_mac_rx_shed_count`).
+static mut RX_SHED: u32 = 0;
+/// Kept frames moved off the ring's head while loopTask was stalled (`ns_mac_rx_shed`), so
+/// the ring keeps draining behind them in arrival order; always served before the ring.
+/// Whole reaped buffers (RX vector included): ~3 full-size frames or dozens of small ones.
+static mut RX_SIDE: SideQueue<6144> = SideQueue::new();
+/// Frames moved into `RX_SIDE` / kept frames that found it full (read + reset with the
+/// shed count).
+static mut RX_SIDE_MOVED: u32 = 0;
+static mut RX_SIDE_FULL: u32 = 0;
+/// Shed passes that stopped at a kept head frame, by kind (see `ns_mac_rx_shed`).
+static mut RX_HEAD_KEPT: [u32; 5] = [0; 5];
+
+/// Copy + reset the head-kept histogram into `out[0..5]`.
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_head_kept(out: *mut u32) {
+    unsafe {
+        for i in 0..5 {
+            *out.add(i) = RX_HEAD_KEPT[i];
+            RX_HEAD_KEPT[i] = 0;
+        }
+    }
+}
+
+struct RxGuard;
+impl RxGuard {
+    fn take() -> Self {
+        RX_BUSY.store(true, core::sync::atomic::Ordering::SeqCst);
+        RxGuard
+    }
+}
+impl Drop for RxGuard {
+    fn drop(&mut self) {
+        RX_BUSY.store(false, core::sync::atomic::Ordering::SeqCst);
+    }
+}
 static mut TX: TxRing<4> = TxRing::new();
 
 /// Per-STA 802.11 transmit sequence number (12-bit, mod 4096). IEEE 802.11 §9.2.4.4
@@ -493,6 +534,7 @@ pub extern "C" fn ns_aes_selftest(out: *mut u8) -> u32 {
 /// PHY/clock/channel up via the vendor blob and put the MAC in promiscuous filter).
 #[no_mangle]
 pub extern "C" fn ns_mac_rx_install() {
+    let _g = RxGuard::take();
     unsafe {
         lmac::datapath::disable_rx();
         RX.install();
@@ -531,20 +573,103 @@ unsafe fn rx_reap() {
     }
 }
 
+/// Free the junk frames at the head of the RX ring (`mac::is_junk`: other networks'
+/// beacons, other stations' traffic, ...), so the ring keeps room for our own frames while
+/// loopTask is busy (a TLS handshake's crypto holds it ~270 ms, long enough for the channel
+/// to fill all 16 slots). `own` / `bssid` are 6-byte MACs; `keep_ap_beacons` nonzero keeps
+/// our AP's beacons (the mesh's time reference). Call from the esp_timer task
+/// only, and only while associated and not sweeping. `stalled` nonzero (loopTask hasn't
+/// serviced RX for a while) also moves kept head frames into the side queue. Returns the
+/// frames freed (0 if loopTask was mid-operation on the ring).
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_shed(own: *const u8, bssid: *const u8, keep_ap_beacons: u32, stalled: u32) -> u32 {
+    if RX_BUSY.load(core::sync::atomic::Ordering::SeqCst) {
+        return 0;
+    }
+    unsafe {
+        let own = &*(own as *const [u8; 6]);
+        let bssid = &*(bssid as *const [u8; 6]);
+        rx_reap();
+        let junk = |buf: &[u8]| ledmapper_netstack::mac::is_junk(rx_frame(buf), own, bssid, keep_ap_beacons != 0);
+        let mut n = RX.shed_head(junk) as u32;
+        // loopTask stalled, or falling behind (the ring half full: a reply burst services RX
+        // one frame at a time while frames keep arriving): move the kept frame pinning the
+        // head aside and keep shedding behind it, so the ring keeps room for what arrives.
+        while stalled != 0 || RX.ready_count() >= RX_SLOTS / 2 {
+            let Some(buf) = RX.head_frame() else { break };
+            if !RX_SIDE.push(buf) {
+                RX_SIDE_FULL = RX_SIDE_FULL.wrapping_add(1);
+                break;
+            }
+            RX.drop_head();
+            RX_SIDE_MOVED = RX_SIDE_MOVED.wrapping_add(1);
+            n += RX.shed_head(junk) as u32;
+        }
+        RX_SHED = RX_SHED.wrapping_add(n);
+        // Diagnostic: what kind of kept frame is holding the head (0 data to us, 1 group data
+        // from our AP, 2 management to us, 3 action, 4 other kept).
+        if let Some(buf) = RX.head_frame() {
+            let f = rx_frame(buf);
+            let k = if f.len() < 24 {
+                4
+            } else {
+                let ftype = (f[0] >> 2) & 3;
+                let to_us = &f[4..10] == own;
+                match (ftype, to_us) {
+                    (2, true) => 0,
+                    (2, false) => 1,
+                    (0, _) if f[0] >> 4 == 13 || f[0] >> 4 == 14 => 3,
+                    (0, true) => 2,
+                    _ => 4,
+                }
+            };
+            RX_HEAD_KEPT[k] = RX_HEAD_KEPT[k].wrapping_add(1);
+        }
+        n
+    }
+}
+
+/// Frames freed by [`ns_mac_rx_shed`] since the last call (then reset); `side` (if
+/// non-null) gets [moved into the side queue, kept frames that found it full].
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_shed_count(side: *mut u32) -> u32 {
+    unsafe {
+        let n = RX_SHED;
+        RX_SHED = 0;
+        if !side.is_null() {
+            *side = RX_SIDE_MOVED;
+            *side.add(1) = RX_SIDE_FULL;
+        }
+        RX_SIDE_MOVED = 0;
+        RX_SIDE_FULL = 0;
+        n
+    }
+}
+
 /// Frames waiting in the RX ring (completed by the MAC, not yet taken by
 /// `ns_mac_recv`). One descriptor scan, no copy: lets the caller skip a whole
 /// service pass when nothing arrived. Same task as `ns_mac_recv`.
 #[no_mangle]
 pub extern "C" fn ns_mac_rx_pending() -> u32 {
+    let _g = RxGuard::take();
     unsafe {
         rx_reap();
-        RX.ready_count() as u32
+        (RX.ready_count() + RX_SIDE.len()) as u32
     }
 }
 
 #[no_mangle]
 pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
+    let _g = RxGuard::take();
     unsafe {
+        if let Some(n) = RX_SIDE.pop(|buf| {
+            let frame = rx_frame(buf);
+            let n = frame.len().min(cap as usize);
+            core::ptr::copy_nonoverlapping(frame.as_ptr(), out, n);
+            n as u32
+        }) {
+            return n;
+        }
         rx_reap();
         if let Some((idx, buf)) = RX.next_frame() {
             let frame = rx_frame(buf);
@@ -614,7 +739,20 @@ pub extern "C" fn ns_mac_send_sec(frame: *const u8, len: u32, queue: u32) -> u32
 /// (`p2p::RXV_LEN` bytes; skipped if null). Returns the frame length, or 0.
 #[no_mangle]
 pub extern "C" fn ns_mac_recv_rxv(out: *mut u8, cap: u32, rxv: *mut u8) -> u32 {
+    let _g = RxGuard::take();
     unsafe {
+        if let Some(n) = RX_SIDE.pop(|buf| {
+            let frame = rx_frame(buf);
+            let n = frame.len().min(cap as usize);
+            core::ptr::copy_nonoverlapping(frame.as_ptr(), out, n);
+            if !rxv.is_null() {
+                let v = buf.len().min(p2p::RXV_LEN);
+                core::ptr::copy_nonoverlapping(buf.as_ptr(), rxv, v);
+            }
+            n as u32
+        }) {
+            return n;
+        }
         rx_reap();
         if let Some((idx, buf)) = RX.next_frame() {
             let frame = rx_frame(buf);

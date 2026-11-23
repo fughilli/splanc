@@ -53,6 +53,10 @@ void ns_tcp_stats(uint32_t *out);     // [segs, ooo, dup, trunc, zero_wnd, rto, 
 uint32_t ns_aes_selftest(uint8_t *out); // FIPS-197 AES-128: bit0=enc ok, bit1=dec ok; out=ciphertext
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
 uint32_t ns_mac_rx_pending(void);
+uint32_t ns_mac_rx_shed(const uint8_t *own, const uint8_t *bssid, uint32_t keep_ap_beacons,
+                        uint32_t stalled);  // esp_timer task only
+uint32_t ns_mac_rx_shed_count(uint32_t *side);  // side: [moved aside, side queue full]
+void ns_mac_rx_head_kept(uint32_t *out);  // [data to us, AP group data, mgmt to us, action, other]
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
 uint32_t ns_mac_send_sec(const uint8_t *frame, uint32_t len, uint32_t queue); // HW CCMP encrypt
 // ACK-expecting submit (mesh M3a's path; flags bit0 = expect ACK, bit1 = keep the sequence
@@ -1747,6 +1751,12 @@ constexpr uint32_t kRxFrameCap = 1600;
 uint8_t g_rxf[kRxFrameCap];
 uint8_t g_rx_pt[kRxFrameCap];
 bool g_rx_draining = false;
+// When loopTask last pulled from the RX ring (esp_timer µs). coex_timer_cb treats a gap of
+// more than kRxStallUs as a stall (a TLS handshake's crypto, ~270 ms) and moves the kept
+// frames pinning the ring's head into the side queue (ns_mac_rx_shed). Normal loop gaps
+// run to ~33 ms.
+volatile uint32_t g_rx_service_us = 0;
+constexpr uint32_t kRxStallUs = 50000;
 
 // The mesh (docs/design/mesh.md M3, mesh_glue.h): off until MESH ON, and then the only
 // cost is its heap block. link_recv is ns_mac_recv while it is off; while on it reaps with
@@ -1777,6 +1787,7 @@ static void tcp_tick_all() {
 }
 
 static void pump_link_once() {
+  if (!g_rx_draining) g_rx_service_us = (uint32_t)esp_timer_get_time();
   uint32_t n = g_rx_draining ? 0 : link_recv(g_rxf, sizeof(g_rxf));
   NS_TRACE(if (!g_rx_draining) {  // a skipped RX (see g_rx_draining) is not an empty ring
     if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us();
@@ -2089,15 +2100,20 @@ int netstack_net_stats(char *buf, size_t cap) {
   g_loop_gap_max_us = 0;
   uint32_t txr_max = g_txr_max_us;
   g_txr_max_us = 0;
+  uint32_t hk[5] = {0, 0, 0, 0, 0};
+  ns_mac_rx_head_kept(hk);
+  uint32_t side[2] = {0, 0};
+  const uint32_t shed = ns_mac_rx_shed_count(side);
   return snprintf(buf, cap,
                   "segs=%u ooo=%u dup=%u trunc=%u zwnd=%u rto=%u frx=%u ring_hwm=%u ring_full=%u "
-                  "loop_gap_max=%uus txr=%u/%u/%u/%u/%u txr_max=%uus rate=%uk/%u%%",
+                  "loop_gap_max=%uus txr=%u/%u/%u/%u/%u txr_max=%uus rate=%uk/%u%% shed=%u side=%u/%u head=%u/%u/%u/%u/%u",
                   (unsigned)t[0], (unsigned)t[1], (unsigned)t[2], (unsigned)t[3], (unsigned)t[4],
                   (unsigned)t[5], (unsigned)t[6], (unsigned)r[0], (unsigned)r[1], (unsigned)gap,
                   (unsigned)g_txr_frames, (unsigned)g_txr_first, (unsigned)g_txr_retried,
                   (unsigned)g_txr_failed, (unsigned)g_txr_nocompl, (unsigned)txr_max,
                   (unsigned)(g_tx_rate_fixed ? 0 : lm_rate::kRates[g_rc.last_best()].kbps),
-                  (unsigned)(g_rc.prob(g_rc.last_best()) / 100));
+                  (unsigned)(g_rc.prob(g_rc.last_best()) / 100), (unsigned)shed, (unsigned)side[0], (unsigned)side[1], (unsigned)hk[0], (unsigned)hk[1],
+                  (unsigned)hk[2], (unsigned)hk[3], (unsigned)hk[4]);
 }
 
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
@@ -2342,10 +2358,23 @@ extern "C" void pm_go_to_sleep();
 // The loop recomputes the flag every pass (g_coex_wifi_idle, below), so a sweep or an
 // auth reclaims the radio at the next tick.
 volatile bool g_coex_wifi_idle = false;
+// RX-ring shedding (ns_mac_rx_shed) is safe and useful: associated + leased, online, and no
+// sweep running (a sweep wants every beacon on the channel). Recomputed every loop pass.
+volatile bool g_rx_shed_ok = false;
 static const uint32_t kImprovNotifyHoldMs = 1500;  // cap on BLE's radio priority per report
 static const uint32_t COEX_TICK_US = 4000;  // 4ms
 static void coex_timer_cb(void *) {
   static int mode = 0;  // 0 = MAC force-awake (WiFi), 1 = MAC asleep (BLE owns the slice)
+  // Keep the RX ring from filling while loopTask is busy. The MAC is in all-frames mode, so
+  // the 16 slots also collect every beacon and every other station's frames on the channel;
+  // a TLS handshake holds loopTask ~270 ms, long enough to fill them (ring_full rose ~1.5
+  // per handshake on SilviasLamp), and our own TCP segments then found no slot. Every 4 ms
+  // this frees the junk at the head of the ring, in arrival order (mac::is_junk), and while
+  // loopTask is stalled moves the kept frames pinning the head into a side queue served first.
+  if (g_rx_shed_ok) {
+    const bool stalled = (uint32_t)esp_timer_get_time() - g_rx_service_us > kRxStallUs;
+    ns_mac_rx_shed(OUR_MAC, g_bssid, g_mesh != nullptr /* mesh: AP beacons = time ref */, stalled);
+  }
   // Offline at runtime: the MAC was released to sleep (netstack_set_wifi_policy) — keep
   // it there (no force-awake), BLE has the radio.
   if (g_silent) {
@@ -2408,6 +2437,7 @@ namespace {  // with mesh_spike_rx's forward declaration (pump_link_once, above)
 // mistyped credentials back to the right ones. Mirrors the deauth re-join reset.
 static void drop_link_for_new_network() {
   g_leased = false;
+  g_rx_shed_ok = false;  // no shedding until the next lease (coex_timer_cb)
   g_have_offer = false;
   g_tcp_started = false;
   if (TLS_SERVER) sessions_clear_all();
@@ -2994,6 +3024,7 @@ void netstack_loop() {
   uint32_t n = 0;
   int drained = 0;
   g_rx_draining = true;
+  g_rx_service_us = (uint32_t)esp_timer_get_time();
   while (g_radio_up && drained++ < 32 && (n = link_recv(rx, kRxFrameCap)) > 0) {
   NS_TRACE(g_ns_rx_stamps.reap_us = ns_now_us());
   bgscan_on_frame(rx, n);  // a background sweep listens to every BSS (wifi_scan.h)
@@ -3075,6 +3106,7 @@ void netstack_loop() {
       inited = false;
       t = 0;
       g_leased = false;
+      g_rx_shed_ok = false;  // no shedding until the next lease (coex_timer_cb)
       g_tcp_started = false;
       if (TLS_SERVER) sessions_clear_all();
       else g_s->bio_tx = g_s->bio_rx = 0;
@@ -3397,6 +3429,7 @@ void netstack_loop() {
     g_force_sweep = false;
     uint32_t first_gap = lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s());
     if (forced || (!g_hop.active() && g_scan_sched.due(wanted, now_ms, first_gap))) {
+      g_rx_shed_ok = false;  // the sweep wants every beacon (before its first hop)
       g_hop.start();
       g_coex_wifi_idle = false;  // the sweep needs the radio from its first hop
       g_sweep_forced = forced;
@@ -3500,6 +3533,7 @@ void netstack_loop() {
   // app got UNABLE_TO_CONNECT. An auth answer proves the AP and disarms the report.
   bool auth_target = g_scan_matched || (g_improv_scan.armed() && g_latch_known);
   // Nothing for WiFi to send or hear until the next sweep: hand the radio to BLE (coex_timer_cb).
+  g_rx_shed_ok = g_radio_up && !g_silent && g_leased && !g_hop.active();
   g_coex_wifi_idle = st == AUTH && !g_hop.active() &&
                      !(g_creds_ready && auth_target && autonomous((uint32_t)millis()));
   if (st == AUTH && g_creds_ready && ns_pmk_ready() && auth_target && !g_hop.active() &&
@@ -3750,6 +3784,7 @@ void netstack_loop() {
     if (age >= g_lease_secs) { // expired with no ACK — fall back to a fresh DORA
       Serial.println("[dhcp] lease EXPIRED — re-DISCOVER");
       g_leased = false;
+      g_rx_shed_ok = false;  // no shedding until the next lease (coex_timer_cb)
       g_have_offer = false;
     }
   }
