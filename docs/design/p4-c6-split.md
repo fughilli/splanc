@@ -718,6 +718,84 @@ nearly full. The netstack's own buffers, the HW-AES bounce and the 6.5 KB WS upg
 (`c6-ram-audit` notes). Bring up the SDIO slave with the player already removed, never next to
 it.
 
+### 4.3.1 Several wss sessions on the front end
+
+**Decision.** The number of concurrent wss sessions is a build parameter, `LM_WSS_SESSIONS`.
+Plain C6 players keep **1**, because their RAM is tight. The C6 front end in the P4 + C6 build
+gets **2** (D-119). With 1, the logic is the single-session transport as it was.
+
+**Build.** `//firmware/netstack:wifi_sta_ffi` has one TCP server slot;
+`:wifi_sta_ffi_sessions2` is the same source with the `sessions2` crate feature.
+`//firmware/player_app:netstack_transport_sessions2` defines `LM_WSS_SESSIONS=2` and links it;
+`:player_app_frontend` uses that. The players and the loader link the one-slot pair.
+
+**TCP slot table** (`firmware/netstack/src/tcp_slots.rs`, `TcpSlots<N>`). N `TcpConn`s on the
+one listening port; at the bind every slot listens (distinct ISNs). `ns_tcp_select(i)` picks
+the slot the other `ns_tcp_*` calls act on, except `ns_tcp_on_ip`, which demuxes each
+datagram itself by the peer's address and port:
+
+1. A slot already bound to that peer (any state but `Listen`) takes it.
+2. Otherwise the first `Listen` slot: a SYN latches it, anything else gets its RST.
+3. Otherwise every slot is busy. A slot that isn't a live, serving session takes it, so a new
+   SYN is dropped and retried in ~1 s, by when a closing slot has re-listened. Only when every
+   slot is Established and serving does slot 0 take it, and slot 0's own rules apply: the
+   RST|ACK refusal, or the idle-session takeover (#444, `session_takeover.h`).
+
+With N = 1 every datagram goes to slot 0 (`single_slot_keeps_the_busy_slot_rules`).
+
+**Per-session state** (`netstack_transport.cpp`, `struct Session`, `g_sess[kSessions]`). Each
+session has its own TLS context (`g_ssl[kSessions]`, one context at N = 1, so
+`tls_abi_test` reads the same symbol size), its flags (`tls_hs`, `ws_up`, `ws_closing`,
+`responding`), its takeover policy, the 6 KB WS reassembly buffer, the BIO progress counters,
+and every reclaim gate's clock and mark (`serve_slot`). The config, the device cert and the key
+stay shared. Each `netstack_loop` pass serves the sessions in turn; send windows and RTOs are
+pumped for every slot (`tcp_pump_all`, `tcp_tick_all`), including inside a TLS write spin. The
+"a client is connected" gates (DHCP renewal, gratuitous ARP and mDNS group replies, the
+data-plane priority) ask about any session; link-wide resets clear every session.
+
+**Sessions over the link.** A session's id is its slot + 1 (1..N); the BLE central is `0x100`.
+The front end sends each forwarded message with its session's id, the P4 replies to that id,
+and a PUSH goes to the session it names (`netstack_ws_send_to`; dropped when that session is
+gone or its window is full). When a session that had a client ends, the front end sends
+`LINK RESET(session)`, so the P4 stops pushing there and frees its upload. When the P4 sends
+`RESET(session)` in place of a REPLY (another session's sharded upload is running:
+`link_transport.cpp` gives the upload to the session that sent window 0 until its last window,
+its session ends or 3 s of quiet), the front end drops that session and its client retries.
+Forwarding is still synchronous, one message at a time.
+
+**TLS region** (`tls_region.cpp`): N + 1 record slots of 6,912 B and 4 KB more small region
+per extra session. A miss falls back to the heap (`fb=`).
+
+**The model** (`//firmware/sysmode`, `Profile::FrontEnd`, `cost::frontend`). `SysMode.wss` is a
+session count, 0..=the profile's cap (1 on the player, whose states and pinned figures are
+unchanged). The front-end profile runs no LED activity and boots idle. On top of the measured
+idle heap its components are the vendor scan transient, a BLE central's link, TLS record
+buffers past the region's N + 1 slots (every open session assumed mid-handshake) and
+small-region overflow. `reachability_test` proves every reachable front-end state keeps the
+24 KB floor at the shipped N, and reports the largest N that would.
+
+**Measured** (the relay alone on a HITL C6, //pi/hitl/harness:frontend_relay; the `[relay]`
+status line, which also reaches the P4's console), 2026-11-21, hitl-rig-2:
+
+| front-end image | static internal RAM (to the heap start) | idle free (joined) | all-time min |
+| --- | ---: | ---: | ---: |
+| old (player core, 1 session) | 329,024 B | 70,400 B | 61,992 B |
+| relay, 1 session (#607) | 243,792 B | 167,340 B | 153,576 B |
+| relay, 2 sessions | 267,936 B | 143,172 B (2 sessions open: 143,172 B) | 134,600 B |
+
+A session past the first costs 24,104 B of statics: its TCP slot (6,320 B), its `Session`
+(6,224 B), its TLS context (552 B), one more record slot (6,912 B) and 4 KB of small region.
+Sessions draw no heap of their own; the TLS region absorbs the handshakes.
+
+**Link failures are surfaced and recovered.** The P4 counts failed ESSL calls (`sdio_err=` on
+its `[net]` line). When the front end's 100 ms heartbeat has been silent for 2 s, the P4 tears
+the SDIO link down and reopens it (`relinks=`); every third failed attempt resets the C6 first.
+
+**Still to do:** async forwarding (a reply table keyed by session and request id, so a slow
+P4 reply doesn't hold up the other session), and pub/sub pushes (every subscribed session
+instead of the one that spoke last). Every client is one source to the player, for the kiosk
+unlock too (decided 2026-11-08).
+
 ### 4.4 Pin map and conflicts
 
 **C6 side: fixed.** The C6 SDIO slave pins go through the IO MUX, not the GPIO matrix:
