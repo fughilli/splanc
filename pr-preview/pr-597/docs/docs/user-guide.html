@@ -233,6 +233,7 @@
 <li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
@@ -255,6 +256,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -569,9 +571,10 @@ grid, and axes triad).</p>
 <h3>The effects library<a class="headerlink" href="#the-effects-library" title="Link to this heading">¶</a></h3>
 <p><em>Browse, create, tag, and test the shader effects that drive your LEDs.</em></p>
 <p><img alt="The effects library — Splanc app screen" src="docs/user-guide/img/effects-library.png" /></p>
-<p>The Effects tab is a library of animations, mirroring the maps browser: a search box, tag chips,
-folders, and a row per saved effect. Tap one to open the editor; the + button creates a new effect
-from a starter template.</p>
+<p>The Effects tab is the app’s home: a card on top says which fixture is connected and what it’s
+playing, then the library: Starters, Examples and your own effects. Tap one to play it on your
+fixture and adjust its sliders and colours; Open in editor changes its code. The + button creates a
+new effect.</p>
 <section id="in-the-library">
 <h4>In the library<a class="headerlink" href="#in-the-library" title="Link to this heading">¶</a></h4>
 <ul class="simple">

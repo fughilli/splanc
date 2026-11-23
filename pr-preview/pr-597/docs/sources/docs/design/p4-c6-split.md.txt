@@ -665,8 +665,14 @@ the same laser crossing on the P4's clock.
 
 ### 4.3 C6 firmware: the front-end build
 
-**What changes.** A new `esp32c6_frontend` target. It is `player_app_netstack` with the player core
-compiled out under `LM_FRONTEND`. In its place go the link driver and the router of §2.2.
+**What changes.** A new `esp32c6_frontend` target: a pure relay (`relay_main.cpp` +
+`relay_ffi.rs`), its own small program on the player's netstack transport, like the OTA loader.
+It links no player core and no effects engine; in their place go the link driver and the router
+of §2.2. It answers `get_tls_info` and `set/get_wifi_policy` itself, applies a rename (BLE and
+mDNS advertise the name) before forwarding it, forwards everything else, and answers
+`error{player_unavailable}` while the P4 is down. (The first cut was `player_app_netstack` with
+`LM_FRONTEND`: it still linked the player core and effects engine, about 62 KB of RAM, only to
+answer while the P4 was down. **Measured** below.)
 
 **What stays exactly as it is.**
 

@@ -233,6 +233,7 @@
 <li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
@@ -255,6 +256,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -326,6 +328,22 @@
 <h1>What’s new<a class="headerlink" href="#what-s-new" title="Link to this heading">¶</a></h1>
 <p>Notable changes, newest first. Each entry links the PRs and the doc that covers
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
+<section id="november-2026">
+<h2>November 2026<a class="headerlink" href="#november-2026" title="Link to this heading">¶</a></h2>
+<section id="effects-stored-on-the-device">
+<h3>Effects stored on the device<a class="headerlink" href="#effects-stored-on-the-device" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>A player keeps up to 8 compiled effects on its own flash.</strong> <strong>Store on device</strong>
+in the effect editor puts one there without running it. <strong>Device settings →
+Stored effects</strong> lists them, opens one (it plays, its uniforms appear as live
+controls, and the device resumes it on boot) or deletes one. New firmware
+feature <code class="docutils literal notranslate"><span class="pre">effect_store</span></code>.</p></li>
+<li><p>Shows that live on the fixture don’t need the phone’s library to come back.
+This is how demo effects get pre-installed on a fixture.</p></li>
+<li><p>Details: <a class="reference internal" href="design/effect-store.html"><span class="std std-doc">effect-store.md</span></a>.</p></li>
+</ul>
+</section>
+</section>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
 <section id="heavy-effects-no-longer-lock-players-off-the-network-1-12-4">
@@ -1066,6 +1084,10 @@ the way it is.</p></li>
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
+<li><a class="reference internal" href="#november-2026">November 2026</a><ul>
+<li><a class="reference internal" href="#effects-stored-on-the-device">Effects stored on the device</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
 <li><a class="reference internal" href="#heavy-effects-no-longer-lock-players-off-the-network-1-12-4">Heavy effects no longer lock players off the network (1.12.4)</a></li>
 <li><a class="reference internal" href="#wi-fi-rejoin-the-long-absence-slow-down-is-opt-in">Wi-Fi rejoin: the long-absence slow-down is opt-in</a></li>
