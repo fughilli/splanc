@@ -1,0 +1,1 @@
+import{s as e}from"./iap-TgfAm8wY.js";export{e as startIapDelivery};
