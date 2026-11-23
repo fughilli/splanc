@@ -3,6 +3,624 @@
  "product": "firmware",
  "releases": [
   {
+   "version": "1.16.0",
+   "tag": "firmware-v1.16.0",
+   "name": "firmware-v1.16.0",
+   "date": "2026-11-23T18:41:32Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.16.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Rolling stride: diffuse capture with live tracks at every moment (D-176) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/601"
+         },
+         "c": [
+          "#601"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh rig: one Jeanoko attenuator per DUT (rfctl atten_uart, node model, VNA calibration) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/598"
+         },
+         "c": [
+          "#598"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "AI billing: optional verified email + account recovery by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/557"
+         },
+         "c": [
+          "#557"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "HITL BLE player gates: ride out a dropped BLE link like the app, and report it by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/599"
+         },
+         "c": [
+          "#599"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fps: a lagging effect's sleep no longer flips at a ms rounding boundary (wifi_cadence heavy gate) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/606"
+         },
+         "c": [
+          "#606"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M7: real membership and signed admin sessions (closed mesh, approval joins, grants, revocation) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/594"
+         },
+         "c": [
+          "#594"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: compile the C6/C3 toolchain's C/C++ -Os, not -O0 (-182 KB flash) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/618"
+         },
+         "c": [
+          "#618"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: big zero-initialized statics move from .data to .bss (-55.7 KB flash) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/617"
+         },
+         "c": [
+          "#617"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "identify_blink: grade the device-measured blink; connect via the USB adapter with retries by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/624"
+         },
+         "c": [
+          "#624"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: build the cold Rust crates for size on the ESP32 images (~-31 KB flash) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/619"
+         },
+         "c": [
+          "#619"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Flash auto-suspend: flash writes no longer stall the render task (D-459) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/615"
+         },
+         "c": [
+          "#615"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: route HITL reservations by admittable capacity + cross-rig work stealing; rig-2 cap 5; 5-min lease by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/628"
+         },
+         "c": [
+          "#628"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Keypoints and the effect store read nothing from flash under the render lock (D-459) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/620"
+         },
+         "c": [
+          "#620"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Effect editor: Move / Hide pane and toolbar buttons 8 px apart; editor in the layout guard by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/623"
+         },
+         "c": [
+          "#623"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Mesh M6: effect sharing, scenes and catch-up by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/614"
+         },
+         "c": [
+          "#614"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Player: reassemble effect uploads in RAM (no flash writes during upload) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/616"
+         },
+         "c": [
+          "#616"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Mesh UI: create a mesh, manage members, unlock on connect (M7 app side) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/613"
+         },
+         "c": [
+          "#613"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: mesh_app_e2e — the real app drives three C6s through the mesh flow by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/621"
+         },
+         "c": [
+          "#621"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Lamp power: touch on/off (TTP223 via the driver VM), trigger uniforms, ON/OFF transitions, SetPower + power_state push by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/602"
+         },
+         "c": [
+          "#602"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Diffuse capture: servo on spot SNR + per-channel clipping, settle-then-hold brightness (D-178) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/597"
+         },
+         "c": [
+          "#597"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "P4 front end: two concurrent wss sessions (D-119), on the pure relay by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/440"
+         },
+         "c": [
+          "#440"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "player: sharded-upload windows are written below the render task (D-464) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/629"
+         },
+         "c": [
+          "#629"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh_app_e2e: the mesh backup goes to a second phone, which becomes its admin (D-442) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/632"
+         },
+         "c": [
+          "#632"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.16.0...firmware-v1.16.0"
+       },
+       "c": [
+        "app-v1.16.0...firmware-v1.16.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
    "version": "1.15.0",
    "tag": "firmware-v1.15.0",
    "name": "firmware-v1.15.0",
