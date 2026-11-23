@@ -1,0 +1,664 @@
+{
+  "schema": 2,
+  "product": "firmware",
+  "releases": [
+    {
+      "version": "1.14.1",
+      "tag": "firmware-v1.14.1",
+      "name": "firmware-v1.14.1",
+      "date": "2026-11-17T03:33:43Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.14.1",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["What's Changed"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                "Bridge OTA: confirm on the display before any update installs by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/511"
+                  },
+                  "c": ["#511"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "capture: Stop & finish solves without a device session; device stop is fire-and-forget by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/512"
+                  },
+                  "c": ["#512"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "firmware: advertise hue_stagger_pilot (hue code v2 on C6/P4) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/517"
+                  },
+                  "c": ["#517"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "strong",
+              "c": ["Full Changelog"]
+            },
+            ": ",
+            {
+              "t": "a",
+              "a": {
+                "href": "https://github.com/fughilli/splanc/compare/app-v1.15.0...firmware-v1.14.1"
+              },
+              "c": ["app-v1.15.0...firmware-v1.14.1"]
+            }
+          ]
+        }
+      ],
+      "media": []
+    },
+    {
+      "version": "1.14.0",
+      "tag": "firmware-v1.14.0",
+      "name": "firmware-v1.14.0",
+      "date": "2026-11-17T00:42:29Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.14.0",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["Highlights"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                {
+                  "t": "strong",
+                  "c": ["Synced shows."]
+                },
+                " Uniform, effect, crossfade and brightness changes can carry an ",
+                {
+                  "t": "code",
+                  "c": ["apply_at"]
+                },
+                " time so a room-wide change lands on the same frame on every fixture; the bridge keeps the shared time base disciplined, and stateful effects integrate on shared-time ",
+                {
+                  "t": "code",
+                  "c": ["dt"]
+                },
+                " so they stay in step."
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                {
+                  "t": "strong",
+                  "c": ["One colour-code kernel."]
+                },
+                " The mapping colour code (now hue code v2 with staggered cycles and a palette pilot) is a single Rust kernel shared by firmware, the web app (WASM) and Python tools."
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                {
+                  "t": "strong",
+                  "c": ["ESP32-P4 support."]
+                },
+                " Splanc runs on the ESP32-P4 with a C6 front end and a wired Vive tracker, with one signed OTA package for both chips and DDP / Art-Net network outputs over Ethernet."
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                {
+                  "t": "strong",
+                  "c": ["Wi-Fi connect fixes."]
+                },
+                " Busy vs. certificate errors are told apart, idle sessions hand over cleanly, an mbedTLS context overrun is fixed, and idle peers are reset before their slot is reclaimed (fixes Android ERR_TOO_MANY_RETRIES)."
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                {
+                  "t": "strong",
+                  "c": ["Host player."]
+                },
+                " The Mac host player drives WLED over DDP / Art-Net with a shared time base and an output-latency offset."
+              ]
+            }
+          ]
+        },
+        {
+          "t": "h2",
+          "c": ["What's Changed"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                "hitl: pin hitl-reserve eaec330 (analyzer capture deadline) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/496"
+                  },
+                  "c": ["#496"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "pattern: one Rust colour-code kernel for firmware, web (WASM) and Python by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/488"
+                  },
+                  "c": ["#488"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Hue code v2 phase 2: staggered cycles + a palette pilot unique by code-book pruning by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/501"
+                  },
+                  "c": ["#501"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "player_host: virtual LED wall as a player the phone app adds by address by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/500"
+                  },
+                  "c": ["#500"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "capture: one monotonic solve progress bar + full-screen solve preview by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/502"
+                  },
+                  "c": ["#502"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "pi/player_rs: shared time base + output latency offset (host player) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/498"
+                  },
+                  "c": ["#498"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Canonicalize approved splash motion and generate relay boot bitmaps by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/503"
+                  },
+                  "c": ["#503"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Synced show: bridge drift discipline + shared-time dt for stateful effects by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/497"
+                  },
+                  "c": ["#497"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Bridge OLED: draw at the panel's native rate; 240 fps boot animation by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/507"
+                  },
+                  "c": ["#507"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Bridge OLED: shift-safe 127x63 canvas and a Life-glider screensaver by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/508"
+                  },
+                  "c": ["#508"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Scheduled changes (apply_at): room-wide control changes land on one frame by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/499"
+                  },
+                  "c": ["#499"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "ci: medium size for //pi/bridge:display_test (macOS timeout) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/509"
+                  },
+                  "c": ["#509"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "strong",
+              "c": ["Full Changelog"]
+            },
+            ": ",
+            {
+              "t": "a",
+              "a": {
+                "href": "https://github.com/fughilli/splanc/compare/app-v1.14.1...firmware-v1.14.0"
+              },
+              "c": ["app-v1.14.1...firmware-v1.14.0"]
+            }
+          ]
+        }
+      ],
+      "media": []
+    },
+    {
+      "version": "1.13.0",
+      "tag": "firmware-v1.13.0",
+      "name": "firmware-v1.13.0",
+      "date": "2026-10-30T01:15:02Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.13.0",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["What's Changed"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                "Bridge: per-client credential management (list, last used, revoke one) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/415"
+                  },
+                  "c": ["#415"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "max_ota_release: read --toplevel files that live in the store by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/416"
+                  },
+                  "c": ["#416"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "bridge flasher: show the image version and let users pick an older one by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/417"
+                  },
+                  "c": ["#417"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "web: native BLE player socket + connect-by-name for iOS (Halloween) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/418"
+                  },
+                  "c": ["#418"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Halloween install: kiosk mode, play mode, iOS BLE, free Acid Mode, presets, per-channel capture by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/426"
+                  },
+                  "c": ["#426"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "strong",
+              "c": ["Full Changelog"]
+            },
+            ": ",
+            {
+              "t": "a",
+              "a": {
+                "href": "https://github.com/fughilli/splanc/compare/app-v1.12.9...firmware-v1.13.0"
+              },
+              "c": ["app-v1.12.9...firmware-v1.13.0"]
+            }
+          ]
+        }
+      ],
+      "media": []
+    },
+    {
+      "version": "1.12.9",
+      "tag": "firmware-v1.12.9",
+      "name": "firmware-v1.12.9",
+      "date": "2026-10-28T23:24:39Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.12.9",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["What's Changed"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                "Splanc MAX over-the-air updates (pull, signed, one-shot trial boot + rollback) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/369"
+                  },
+                  "c": ["#369"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "strong",
+              "c": ["Full Changelog"]
+            },
+            ": ",
+            {
+              "t": "a",
+              "a": {
+                "href": "https://github.com/fughilli/splanc/compare/pi-bridge-v1.1.0...firmware-v1.12.9"
+              },
+              "c": ["pi-bridge-v1.1.0...firmware-v1.12.9"]
+            }
+          ]
+        }
+      ],
+      "media": []
+    }
+  ]
+}

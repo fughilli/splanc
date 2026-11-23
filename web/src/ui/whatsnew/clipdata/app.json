@@ -1,0 +1,414 @@
+{
+  "schema": 2,
+  "product": "app",
+  "releases": [
+    {
+      "version": "1.15.7",
+      "tag": "app-v1.15.7",
+      "name": "app-v1.15.7",
+      "date": "2026-11-19T01:23:21Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.7",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["What's Changed"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                "lint: fix main after ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/555"
+                  },
+                  "c": ["#555"]
+                },
+                " (diffuse dataset tools) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/561"
+                  },
+                  "c": ["#561"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "AI settings as a Settings tab + dedicated Splanc AI credits flow + layout guard by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/558"
+                  },
+                  "c": ["#558"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "AI: default Anthropic model for bring-your-own-key is Claude Sonnet 5.5 by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/560"
+                  },
+                  "c": ["#560"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "strong",
+              "c": ["Full Changelog"]
+            },
+            ": ",
+            {
+              "t": "a",
+              "a": {
+                "href": "https://github.com/fughilli/splanc/compare/app-v1.15.6...app-v1.15.7"
+              },
+              "c": ["app-v1.15.6...app-v1.15.7"]
+            }
+          ]
+        }
+      ],
+      "media": []
+    },
+    {
+      "version": "1.15.6",
+      "tag": "app-v1.15.6",
+      "name": "app-v1.15.6",
+      "date": "2026-11-18T20:12:42Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.6",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["What's Changed"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                "Diffuse capture: adaptive spot detector (web + iOS), negotiated exposure and bit rate by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/555"
+                  },
+                  "c": ["#555"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "strong",
+              "c": ["Full Changelog"]
+            },
+            ": ",
+            {
+              "t": "a",
+              "a": {
+                "href": "https://github.com/fughilli/splanc/compare/app-v1.15.5...app-v1.15.6"
+              },
+              "c": ["app-v1.15.5...app-v1.15.6"]
+            }
+          ]
+        }
+      ],
+      "media": []
+    },
+    {
+      "version": "1.15.5",
+      "tag": "app-v1.15.5",
+      "name": "app-v1.15.5",
+      "date": "2026-11-18T19:54:38Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.5",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["What's Changed"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                "AI billing: design + sandbox scaffold for Splanc AI credits by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/547"
+                  },
+                  "c": ["#547"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "AI billing: Stripe web checkout + webhook (test mode), Buy flow on web/Android by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/554"
+                  },
+                  "c": ["#554"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "strong",
+              "c": ["Full Changelog"]
+            },
+            ": ",
+            {
+              "t": "a",
+              "a": {
+                "href": "https://github.com/fughilli/splanc/compare/app-v1.15.4...app-v1.15.5"
+              },
+              "c": ["app-v1.15.4...app-v1.15.5"]
+            }
+          ]
+        }
+      ],
+      "media": []
+    },
+    {
+      "version": "1.15.4",
+      "tag": "app-v1.15.4",
+      "name": "app-v1.15.4",
+      "date": "2026-11-18T13:45:24Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.4",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["What's Changed"]
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": [
+                "p4/tracker: slow solves on a worker task; lighthouse @42d1a17 (mode B, deferred solves) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/538"
+                  },
+                  "c": ["#538"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "agent: an uncalibrated estimate never blocks deploy_effect or crossfade_to by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/540"
+                  },
+                  "c": ["#540"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Agent feedback: report a bad AI answer with its trace (private store, triage + replay) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/539"
+                  },
+                  "c": ["#539"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "flasher test: corrupt the damaged download for real (1-in-256 flake) by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/543"
+                  },
+                  "c": ["#543"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "ios: upload to TestFlight with the app's Apple ID explicitly by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/542"
+                  },
+                  "c": ["#542"]
+                }
+              ]
+            },
+            {
+              "t": "li",
+              "c": [
+                "AI tiers: free OpenRouter models + first-prompt model setup by ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli"
+                  },
+                  "c": ["@fughilli"]
+                },
+                " in ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://github.com/fughilli/splanc/pull/548"
+                  },
+                  "c": ["#548"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "strong",
+              "c": ["Full Changelog"]
+            },
+            ": ",
+            {
+              "t": "a",
+              "a": {
+                "href": "https://github.com/fughilli/splanc/compare/app-v1.15.3...app-v1.15.4"
+              },
+              "c": ["app-v1.15.3...app-v1.15.4"]
+            }
+          ]
+        }
+      ],
+      "media": []
+    }
+  ]
+}
