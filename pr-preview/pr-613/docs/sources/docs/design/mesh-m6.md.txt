@@ -138,8 +138,8 @@ second phase with anything but OK gets a catch-up too.
   of its headroom left. M6's own code is ~+19 KB (the crate's blob/scene/share 7 KB, the
   firmware store and scene glue 7 KB, the player's staged load, check and scene frames
   2.5 KB, the gateway arm 1.5 KB); the swarm's firmware image updater and settings
-  bundles, linked but dead on the C6 (no flash, no bundle key), are now host-only
-  (features `fw_update`, `swarm_settings`): −12.5 KB.
+  bundles were made host-only here (−12.5 KB), then kept on the C6 by desk D-463 (OTA over
+  the mesh comes back on them): +12.5 KB again.
 - **RAM, default image**: `.dram0.data` identical, `.dram0.bss` **+56 B** (the staged
   load's slot in the player, the tick-stack trampoline). Mesh off: nothing else.
 - **Heap while on**: the mesh block grows by the blob slots' bookkeeping (~200 B); blob
@@ -155,8 +155,9 @@ second phase with anything but OK gets a catch-up too.
 
 - **Catch-up needs the session.** As for the show epoch (M7), a member that rejoins while no
   app holds a grant renders what it persisted until the next unlock (desk item).
-- **Deck B** is not part of a catch-up (it is never persisted on the C6); a share to deck B
-  works.
+- **Deck B** is part of a catch-up (desk D-465): every fixture keeps its loaded deck-B frame
+  in RAM (never persisted; up to the effect cap of heap while one is loaded), and the
+  catch-up scene carries it as a third blob, with deck B's uniforms in the state blob.
 - **Multi-hop**: every holder serves its neighbours (Deluge), but a member keeps a blob only
   20 s after it applied it; a far member that starts fetching later than that asks the
   gateway (unicast over the mesh).

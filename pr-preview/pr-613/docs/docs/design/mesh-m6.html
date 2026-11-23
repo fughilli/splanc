@@ -233,6 +233,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
@@ -496,8 +497,8 @@ task at its frame (the only way to switch on one frame).</p></li>
 of its headroom left. M6’s own code is ~+19 KB (the crate’s blob/scene/share 7 KB, the
 firmware store and scene glue 7 KB, the player’s staged load, check and scene frames
 2.5 KB, the gateway arm 1.5 KB); the swarm’s firmware image updater and settings
-bundles, linked but dead on the C6 (no flash, no bundle key), are now host-only
-(features <code class="docutils literal notranslate"><span class="pre">fw_update</span></code>, <code class="docutils literal notranslate"><span class="pre">swarm_settings</span></code>): −12.5 KB.</p></li>
+bundles were made host-only here (−12.5 KB), then kept on the C6 by desk D-463 (OTA over
+the mesh comes back on them): +12.5 KB again.</p></li>
 <li><p><strong>RAM, default image</strong>: <code class="docutils literal notranslate"><span class="pre">.dram0.data</span></code> identical, <code class="docutils literal notranslate"><span class="pre">.dram0.bss</span></code> <strong>+56 B</strong> (the staged
 load’s slot in the player, the tick-stack trampoline). Mesh off: nothing else.</p></li>
 <li><p><strong>Heap while on</strong>: the mesh block grows by the blob slots’ bookkeeping (~200 B); blob
@@ -514,8 +515,9 @@ margin of 12 288 B).</p></li>
 <ul class="simple">
 <li><p><strong>Catch-up needs the session.</strong> As for the show epoch (M7), a member that rejoins while no
 app holds a grant renders what it persisted until the next unlock (desk item).</p></li>
-<li><p><strong>Deck B</strong> is not part of a catch-up (it is never persisted on the C6); a share to deck B
-works.</p></li>
+<li><p><strong>Deck B</strong> is part of a catch-up (desk D-465): every fixture keeps its loaded deck-B frame
+in RAM (never persisted; up to the effect cap of heap while one is loaded), and the
+catch-up scene carries it as a third blob, with deck B’s uniforms in the state blob.</p></li>
 <li><p><strong>Multi-hop</strong>: every holder serves its neighbours (Deluge), but a member keeps a blob only
 20 s after it applied it; a far member that starts fetching later than that asks the
 gateway (unicast over the mesh).</p></li>
