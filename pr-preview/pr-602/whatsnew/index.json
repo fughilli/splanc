@@ -1,18 +1,18 @@
 {
  "schema": 2,
  "repo": "fughilli/splanc",
- "generated_at": "2026-11-22T02:53:06Z",
- "digest": "sha256:471d4a6400b69985611c9d81fb77eadbbb1a78802d7730ed1f6f785e66cf3fba",
+ "generated_at": "2026-11-23T05:44:20Z",
+ "digest": "sha256:e7e783753aae3eacae9752b2efc29a1cd34a79eba00ed627df1b3e82cd6c274c",
  "products": [
   {
    "id": "app",
    "name": "Splanc app",
    "label": "Splanc",
    "file": "app.json",
-   "count": 27,
+   "count": 28,
    "latest": {
-    "version": "1.15.8",
-    "date": "2026-11-20T12:12:06Z"
+    "version": "1.16.0",
+    "date": "2026-11-22T08:26:16Z"
    }
   },
   {
@@ -20,10 +20,10 @@
    "name": "Firmware",
    "label": "Firmware",
    "file": "firmware.json",
-   "count": 29,
+   "count": 30,
    "latest": {
-    "version": "1.14.1",
-    "date": "2026-11-17T03:33:43Z"
+    "version": "1.15.0",
+    "date": "2026-11-22T08:27:56Z"
    }
   },
   {

@@ -1204,7 +1204,16 @@ The verify runs in the mesh task, once per session, never in the render task. It
 touch effects as long as the render task keeps its higher priority on the single C6 core.
 
 **Recovery.** USB console `mesh admin reset` clears the admin public key on that device; the
-app re-provisions it.
+app re-provisions it. (As built in M7: `MESH LEAVE` erases the whole membership.)
+
+**M7 on hardware** ([mesh-m7.md](mesh-m7.md)): the app's `mesh_admin` provisions, unlocks with
+a signed grant, admits, revokes and ejects; the device key is the per-device TLS key; the
+membership persists in littlefs and survives reboots. On three C6s: a closed mesh forms from
+the site secret in 5.8 s, an unapproved fixture waits until admitted (then joins in 1.5 s),
+an insider's envelope control and beacon epochs are refused, a revocation holds across a
+reboot, and effects stay at 80 fps. A member's grant costs 53–55 ms of C6 CPU (ECDSA verify +
+ECDH), the gateway's Ack 10 ms (ECDH), once per session. On a mesh with an admin key the show
+epoch now travels as the session's signed `TIME_BASE`; beacons only gossip it.
 
 **Threat model.**
 - An attacker with a board extracts its device key and the mesh key. It can then act as that

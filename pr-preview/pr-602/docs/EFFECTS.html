@@ -233,6 +233,7 @@
 <li class="toctree-l1"><a class="reference internal" href="docs/pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/runbook.html">Runbook</a></li>
@@ -365,9 +366,11 @@ instruction budget — see <a class="reference internal" href="#execution-model"
 <h3>Types<a class="headerlink" href="#types" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">float</span></code>, <code class="docutils literal notranslate"><span class="pre">vec2</span></code>, <code class="docutils literal notranslate"><span class="pre">vec3</span></code>, <code class="docutils literal notranslate"><span class="pre">vec4</span></code>, <code class="docutils literal notranslate"><span class="pre">int</span></code>, <code class="docutils literal notranslate"><span class="pre">bool</span></code>, plus fixed-point <code class="docutils literal notranslate"><span class="pre">fixed</span></code> (Q16.16),
 <code class="docutils literal notranslate"><span class="pre">fixed16</span></code> (Q1.14) and <code class="docutils literal notranslate"><span class="pre">fixed8</span></code> (Q1.6), and user <code class="docutils literal notranslate"><span class="pre">struct</span></code>s and fixed-size arrays
-(<code class="docutils literal notranslate"><span class="pre">Type</span> <span class="pre">name[N]</span></code>). At runtime everything is an <code class="docutils literal notranslate"><span class="pre">f32</span></code> slot; the compiler types every
-operation so the VM stays untyped (integers and fixed-point values ride in the f32
-slot bit-for-bit).</p>
+(<code class="docutils literal notranslate"><span class="pre">Type</span> <span class="pre">name[N]</span></code>). A fixed-point literal takes a suffix: <code class="docutils literal notranslate"><span class="pre">0.6fx</span></code> is <code class="docutils literal notranslate"><span class="pre">fixed(0.6)</span></code>,
+<code class="docutils literal notranslate"><span class="pre">0.6fx16</span></code> is <code class="docutils literal notranslate"><span class="pre">fixed16(0.6)</span></code> and <code class="docutils literal notranslate"><span class="pre">0.6fx8</span></code> is <code class="docutils literal notranslate"><span class="pre">fixed8(0.6)</span></code> (folded to the same
+constant; <code class="docutils literal notranslate"><span class="pre">fx16</span></code>/<code class="docutils literal notranslate"><span class="pre">fx8</span></code> literals must be below 2). At runtime everything is an <code class="docutils literal notranslate"><span class="pre">f32</span></code>
+slot; the compiler types every operation so the VM stays untyped (integers and
+fixed-point values ride in the f32 slot bit-for-bit).</p>
 </section>
 <section id="read-only-contexts">
 <h3>Read-only contexts<a class="headerlink" href="#read-only-contexts" title="Link to this heading">¶</a></h3>
@@ -1030,7 +1033,7 @@ Float <code class="docutils literal notranslate"><span class="pre">sin</span></c
 (range reduction + interpolation in soft-float), and <code class="docutils literal notranslate"><span class="pre">hash</span></code> ~185 — cheaper than
 <code class="docutils literal notranslate"><span class="pre">exp</span></code>/<code class="docutils literal notranslate"><span class="pre">pow</span></code>, not cheap: every opcode also pays ~70 cycles of dispatch. The
 cheap forms on the FPU-less C6 are the integer ones: per-LED maths in <code class="docutils literal notranslate"><span class="pre">fixed</span></code>
-(Q16.16) with <code class="docutils literal notranslate"><span class="pre">fixed()</span></code> around every literal (<code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">*</span> <span class="pre">0.6</span></code> promotes a fixed <code class="docutils literal notranslate"><span class="pre">x</span></code> to
+(Q16.16) with every literal fixed (<code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">*</span> <span class="pre">0.6fx</span></code>; <code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">*</span> <span class="pre">0.6</span></code> promotes a fixed <code class="docutils literal notranslate"><span class="pre">x</span></code> to
 soft-float — the compiler warns), <code class="docutils literal notranslate"><span class="pre">sin</span></code>/<code class="docutils literal notranslate"><span class="pre">cos</span></code> of a fixed angle in TURNS
 (~150), and <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code>/<code class="docutils literal notranslate"><span class="pre">atan2</span></code>/<code class="docutils literal notranslate"><span class="pre">sqrt</span></code> with all-fixed arguments. The measured
 per-op-class table the authoring agents are given is <code class="docutils literal notranslate"><span class="pre">PERF_GUIDE</span></code> in
