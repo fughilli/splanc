@@ -54,6 +54,12 @@ uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
 uint32_t ns_mac_rx_pending(void);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
 uint32_t ns_mac_send_sec(const uint8_t *frame, uint32_t len, uint32_t queue); // HW CCMP encrypt
+// ACK-expecting submit (mesh M3a's path; flags bit0 = expect ACK, bit1 = keep the sequence
+// number) + its completion poll and PMD status decode (0 OK, 5 ACK timeout).
+uint32_t ns_mac_send_p2p(const uint8_t *frame, uint32_t len, uint32_t queue, uint32_t rate,
+                         uint32_t pwr, uint32_t flags);
+uint32_t ns_mac_tx_done(uint32_t queue, uint32_t *pmd);
+uint32_t ns_p2p_tx_status(uint32_t pmd);
 uint32_t ns_tx_desc_word0(uint32_t idx); // read back TX descriptor word0 (secure-TX diagnostic)
 void ns_wpa_init(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, uint32_t pass_len,
                  const uint8_t *ap, const uint8_t *self_mac, const uint8_t *snonce);
@@ -700,14 +706,79 @@ static void tx_pace_before() {
 }
 // Airtime of a `frame_len`-byte (no FCS) frame at 1 Mb/s plus SIFS and the AP's ACK, us.
 static uint32_t tx_airtime_1m_us(uint32_t frame_len) { return 192 + (frame_len + 4) * 8 + 10 + 304; }
-static void tx_pace_after(uint32_t frame_len) {
-  g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + 50 + tx_airtime_1m_us(frame_len);
-}
 // The mesh backhaul's view of the shared pacing (mesh_ffi.rs's Radio).
 extern "C" uint32_t lm_mesh_tx_idle() {
   return (int32_t)(g_tx_busy_until_us - (uint32_t)esp_timer_get_time()) <= 0;
 }
 extern "C" void lm_mesh_tx_hold(uint32_t us) { g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + us; }
+
+// Unicast data to the AP with an ACK and software MAC retries. The plain ns_mac_send path
+// arms with "no ACK expected" (PLCP0 ack-type 0), so the MAC never learns a frame was lost
+// and nothing re-sends it below TCP. On a marginal uplink that is fatal for long frames: at
+// 1 Mb/s a 1.3 KB segment is ~11 ms on air, and on SilviasLamp (Nov 2026) echo replies were
+// lost 10 % at 84 B, 50 % at 428 B, 85 % at 1 KB and 100 % at 1.4 KB, so a 1247 B wss reply
+// and every TCP resend of it vanished and the app hung at "syncing clock". Every real STA
+// retries up to ~7 times at the MAC; the C6 does that in software (lmacProcessTxComplete),
+// and mesh M3a validated the recipe on this path (docs/design/mesh-m3a.md): ack-type 1,
+// poll completion, re-arm with the Retry bit and the SAME sequence number after a growing
+// backoff (2, 4, 6 ms + jitter) so the attempts don't all land in one BLE event. The Retry
+// bit is masked out of the CCMP AAD, so the already-encrypted frame is re-sent as is; a
+// duplicate from a lost ACK is dropped by the AP's sequence/replay check. The ACK wait and
+// the no-completion hold use the 1 Mb/s airtime: an upper bound at every rate.
+uint8_t g_tx_tries = 7;  // console WIFI TXTRIES n
+// Data TX rate (wifi_phy_rate_t: 0/1/2/3 = 1/2/5.5/11 Mb/s, 0xB/0xA/0x9 = 6/12/24 Mb/s OFDM;
+// console WIFI TXRATE code). 6 Mb/s OFDM, not the path's old 1 Mb/s: the loss is per unit of
+// airtime, so a 1.4 KB frame at 1 Mb/s (~11 ms) rarely survived even 7 attempts, while at
+// 6 Mb/s (~2 ms) it does. Measured on SilviasLamp, 20 pings per cell, loss at 56/700/1400 B:
+// 1 Mb/s 0/0/85 %, 2 Mb/s 0/5/10 %, 5.5 and 11 Mb/s 0/0/0 %, 6 Mb/s 0/0/0 %, 12 and 24 Mb/s
+// 0/5/0 %. 6 Mb/s is mandatory in every 2.4 GHz basic rate set (an 11g/n-only AP may ignore
+// 11b CCK) and the most robust OFDM rate. The last attempt drops to 1 Mb/s for range.
+uint8_t g_tx_rate = 0x0B;
+uint32_t g_txr_frames = 0;     // frames sent on the ACKed path
+uint32_t g_txr_first = 0;      // ACKed on the first attempt
+uint32_t g_txr_retried = 0;    // ACKed after one or more retries
+uint32_t g_txr_failed = 0;     // every attempt went unACKed
+uint32_t g_txr_nocompl = 0;    // attempts with no completion reported in time
+uint32_t g_txr_max_us = 0;     // longest time spent on one frame, all attempts (since last stats)
+static void tx_send_acked(uint8_t *frame, uint32_t flen) {
+  const uint32_t air = tx_airtime_1m_us(flen);
+  // + ACK timeout, + up to ~10 ms the MAC can hold a frame back while BLE has the radio
+  // (M3a r1: TX-to-air jitter up to 9.9 ms with BLE advertising every 200 ms).
+  const uint32_t wait = air + 12000u;
+  const uint32_t start = (uint32_t)esp_timer_get_time();
+  uint32_t flags = 1u;  // expect the AP's ACK
+  g_txr_frames++;
+  bool acked = false;
+  for (uint8_t a = 1; a <= g_tx_tries && !acked; a++) {
+    if (a > 1) {
+      const uint32_t until = (uint32_t)esp_timer_get_time() + 2000u * (a - 1) + (esp_random() % 1000u);
+      while ((int32_t)(until - (uint32_t)esp_timer_get_time()) > 0) {
+      }
+      frame[1] |= 0x08;  // Retry bit
+      flags |= 2u;       // keep the sequence number: the same MPDU
+    }
+    tx_pace_before();
+    const uint32_t t0 = (uint32_t)esp_timer_get_time();
+    const uint8_t rate = (a == g_tx_tries && a > 1) ? 0 : g_tx_rate;  // last try: 1 Mb/s
+    if (!ns_mac_send_p2p(frame, flen, 0, rate, 0x14 /* set_rate's power */, flags)) break;
+    uint32_t pmd = 0, done = 0;
+    while ((uint32_t)esp_timer_get_time() - t0 < wait && !(done = ns_mac_tx_done(0, &pmd))) {
+    }
+    g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + (done ? 50u : air);
+    if (!done) {
+      g_txr_nocompl++;
+      continue;
+    }
+    if (ns_p2p_tx_status(pmd) == 0) {
+      acked = true;
+      if (a == 1) g_txr_first++;
+      else g_txr_retried++;
+    }
+  }
+  if (!acked) g_txr_failed++;
+  const uint32_t took = (uint32_t)esp_timer_get_time() - start;
+  if (took > g_txr_max_us) g_txr_max_us = took;
+}
 
 uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char *label) {
   if (plen < 0 || plen > (int)(sizeof g_txf - kTxL2)) return 0;
@@ -739,9 +810,7 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
   static uint8_t enc[1700];  // static: off the deep TLS-write stack (encrypt can't run in place)
   uint32_t el = ns_sta_encrypt(qhdr, 26, payload, plen, enc, sizeof(enc));
   if (el > 0) {
-    tx_pace_before();
-    ns_mac_send(enc, el, 0);
-    tx_pace_after(el);
+    tx_send_acked(enc, el);  // unicast to the AP (a1 = BSSID): ACK + MAC retries
     static int dbg = 0;
     if (dbg++ < 4) {
       auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
@@ -1095,6 +1164,25 @@ static void stale_rst_resend() {
   if ((int32_t)(millis() - g_stale_rst_due[i]) < 0) return;
   send_ip(g_stale_rst, g_stale_rst_len);
   g_stale_rst_left--;
+}
+
+// Reset the peer whose slot is being reclaimed: send the abort RST now and twice more 25 and
+// 75 ms later (stale_rst_resend), with group-addressed TX held quiet behind it (see the
+// pre-WS handshake-wedge reclaim in netstack_loop for why one copy is not enough).
+static void reclaim_rst() {
+  uint32_t sq[3] = {0, 0, 0};
+  if (ns_tcp_seq_diag(sq))
+    Serial.printf("[reclaim] RST at sent=%lu (acked=%lu, high=%lu) bytes\n",
+                  (unsigned long)sq[1], (unsigned long)sq[0], (unsigned long)sq[2]);
+  g_stale_rst_len = ns_tcp_abort(g_stale_rst, sizeof g_stale_rst);
+  if (g_stale_rst_len > 0) {
+    send_ip(g_stale_rst, g_stale_rst_len);
+    const uint32_t now = millis();
+    g_stale_rst_due[0] = now + 25;
+    g_stale_rst_due[1] = now + 75;
+    g_stale_rst_left = 2;
+    g_group_tx_quiet_until_ms = now + 250;
+  }
 }
 
 void send_gratuitous_arp() {
@@ -1978,11 +2066,15 @@ int netstack_net_stats(char *buf, size_t cap) {
   ns_tcp_stats(t);
   uint32_t gap = g_loop_gap_max_us;
   g_loop_gap_max_us = 0;
+  uint32_t txr_max = g_txr_max_us;
+  g_txr_max_us = 0;
   return snprintf(buf, cap,
                   "segs=%u ooo=%u dup=%u trunc=%u zwnd=%u rto=%u frx=%u ring_hwm=%u ring_full=%u "
-                  "loop_gap_max=%uus",
+                  "loop_gap_max=%uus txr=%u/%u/%u/%u/%u txr_max=%uus",
                   (unsigned)t[0], (unsigned)t[1], (unsigned)t[2], (unsigned)t[3], (unsigned)t[4],
-                  (unsigned)t[5], (unsigned)t[6], (unsigned)r[0], (unsigned)r[1], (unsigned)gap);
+                  (unsigned)t[5], (unsigned)t[6], (unsigned)r[0], (unsigned)r[1], (unsigned)gap,
+                  (unsigned)g_txr_frames, (unsigned)g_txr_first, (unsigned)g_txr_retried,
+                  (unsigned)g_txr_failed, (unsigned)g_txr_nocompl, (unsigned)txr_max);
 }
 
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
@@ -2611,21 +2703,7 @@ __attribute__((always_inline)) static inline void serve_slot() {
         // suspect. So send it now and again 25 and 75 ms later (stale_rst_resend), and
         // keep group-addressed TX quiet behind it. Copies are identical: whichever lands
         // resets the peer, and Linux ignores an RST for a socket that is already gone.
-        {
-          uint32_t sq[3] = {0, 0, 0};
-          if (ns_tcp_seq_diag(sq))
-            Serial.printf("[reclaim] RST at sent=%lu (acked=%lu, high=%lu) bytes\n",
-                          (unsigned long)sq[1], (unsigned long)sq[0], (unsigned long)sq[2]);
-          g_stale_rst_len = ns_tcp_abort(g_stale_rst, sizeof g_stale_rst);
-          if (g_stale_rst_len > 0) {
-            send_ip(g_stale_rst, g_stale_rst_len);
-            const uint32_t now = millis();
-            g_stale_rst_due[0] = now + 25;
-            g_stale_rst_due[1] = now + 75;
-            g_stale_rst_left = 2;
-            g_group_tx_quiet_until_ms = now + 250;
-          }
-        }
+        reclaim_rst();
         static uint32_t riss = 0x5000;
         ns_tcp_listen(g_offer_ip, SERVER_PORT, riss + 0x100000u * (uint32_t)sess_index(g_s));
         riss += 0x1000;
@@ -2666,6 +2744,11 @@ __attribute__((always_inline)) static inline void serve_slot() {
         g_s->last_una = una;
       } else if (millis() - g_s->txstuck_since > 6000) {
         Serial.println("*** SERVER post-WS peer-gone (no ACK 6s) — reclaiming ***");
+        // Reset the peer before re-listening, as the pre-WS reclaim does. Re-listening alone
+        // left the client's socket half-open: a reply it never received (the uplink lost it)
+        // stranded the app at "syncing clock" on a connection the device had already
+        // dropped, and it never redialled. The RST makes it fail fast and reconnect.
+        reclaim_rst();
         static uint32_t piss = 0x6000;
         ns_tcp_listen(g_offer_ip, SERVER_PORT, piss + 0x100000u * (uint32_t)sess_index(g_s));
         piss += 0x1000;
@@ -3145,6 +3228,8 @@ void netstack_loop() {
           //   WIFI SCAN    run one background sweep now
           //   WIFI DHCP    drop the lease and re-DISCOVER (the DHCP retry path)
           //   WIFI GIVEUP  re-join through the random-MAC fallback (stable-address loss)
+          //   WIFI TXRATE <code>  data TX rate (wifi_phy_rate_t; 0xB = 6 Mb/s, the default)
+          //   WIFI TXTRIES <n>    data TX attempts per frame (1-15, default 7)
           //   WIFI SCANMISS <n>  the next n sweeps hear nothing (0 clears): the HITL
           //                improv_fresh_join gate's "AP not seen by the first sweeps"
           // Anything else goes to the app's console hook (Wi-Fi policy: WIFI MODE …).
@@ -3157,6 +3242,16 @@ void netstack_loop() {
             drop_link_for_new_network();
             Serial.printf("[t=%lu] [wifi] console: lease dropped -> re-DISCOVER\n",
                           (unsigned long)nowc);
+          } else if (strncmp(arg, "TXRATE ", 7) == 0) {
+            g_tx_rate = (uint8_t)strtoul(arg + 7, nullptr, 0);
+            g_txr_frames = g_txr_first = g_txr_retried = g_txr_failed = g_txr_nocompl = 0;
+            Serial.printf("[t=%lu] [wifi] console: data TX rate code 0x%x\n", (unsigned long)nowc,
+                          (unsigned)g_tx_rate);
+          } else if (strncmp(arg, "TXTRIES ", 8) == 0) {
+            uint32_t n = strtoul(arg + 8, nullptr, 10);
+            g_tx_tries = (uint8_t)(n < 1 ? 1 : n > 15 ? 15 : n);
+            Serial.printf("[t=%lu] [wifi] console: data TX attempts %u\n", (unsigned long)nowc,
+                          (unsigned)g_tx_tries);
           } else if (strncmp(arg, "SCANMISS ", 9) == 0) {
             g_scan_blind = (uint32_t)strtoul(arg + 9, nullptr, 10);
             Serial.printf("[t=%lu] [wifi] console: the next %lu sweep(s) hear nothing\n",
