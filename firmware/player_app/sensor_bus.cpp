@@ -224,9 +224,68 @@ size_t drv_scan(uint8_t *out, size_t cap) {
   return n;
 }
 
-const LmDrvHost kDrvHost = {drv_alloc, drv_free, drv_bus_ensure, drv_scan, cycles};
+// -- GPIO driver intrinsics (gpio_read / gpio_mode; docs/design/lamp-power.md) --
+// A driver may read a GPIO input (a touch module's OUT) and set its pull. Pins
+// with another duty are refused: the LED outputs, the I2C bus pins in use,
+// USB-Serial-JTAG (12/13) and the flash pins (18/19 on the SuperMini, 24..30
+// in-package). The mode is applied once per change (gpio_config is not free),
+// and a HITL pull simulation (sensor_gpio_sim) outranks the driver's pull.
+constexpr int kGpioMax = 31;
+int8_t g_gpio_mode[kGpioMax] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+                                -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+int g_sim_pin = -1;
+int g_sim_pull = 0;
+
+bool gpio_allowed(int pin) {
+  if (pin < 0 || pin >= kGpioMax) return false;
+  if (pin == 12 || pin == 13 || pin == 18 || pin == 19 || pin >= 24) return false;
+  if (pin == lm_hw_gpio(0) || pin == lm_hw_gpio(1)) return false;
+  if ((g_bus || g_pins_ok) && (pin == g_sda || pin == g_scl)) return false;
+  return true;
+}
+
+void apply_pull(int pin, int mode) {
+  gpio_pull_mode_t pm = GPIO_FLOATING;
+  if (mode == 1) pm = GPIO_PULLUP_ONLY;
+  if (mode == 2) pm = GPIO_PULLDOWN_ONLY;
+  if (pin == g_sim_pin && g_sim_pull != 0) pm = g_sim_pull == 1 ? GPIO_PULLUP_ONLY : GPIO_PULLDOWN_ONLY;
+  gpio_set_pull_mode((gpio_num_t)pin, pm);
+}
+
+bool drv_gpio_mode(uint8_t pin, uint8_t mode) {
+  if (!gpio_allowed(pin) || mode > 2) return false;
+  if (g_gpio_mode[pin] == (int8_t)mode) return true;
+  gpio_reset_pin((gpio_num_t)pin);
+  gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT);
+  apply_pull(pin, mode);
+  g_gpio_mode[pin] = (int8_t)mode;
+  Log().printf("[drv] gpio %u: input, pull %s\n", (unsigned)pin,
+               mode == 1 ? "up" : mode == 2 ? "down" : "none");
+  return true;
+}
+
+int32_t drv_gpio_read(uint8_t pin) {
+  if (!gpio_allowed(pin)) return -1;
+  if (g_gpio_mode[pin] < 0 && !drv_gpio_mode(pin, 0)) return -1;
+  return gpio_get_level((gpio_num_t)pin) ? 1 : 0;
+}
+
+const LmDrvHost kDrvHost = {drv_alloc, drv_free, drv_bus_ensure, drv_scan, cycles, drv_gpio_read, drv_gpio_mode};
 
 }  // namespace
+
+void sensor_gpio_sim(int pin, int pull) {
+  if (!gpio_allowed(pin)) {
+    Log().printf("[drv] gpio sim refused on gpio %d\n", pin);
+    return;
+  }
+  g_sim_pin = pull == 0 ? -1 : pin;
+  g_sim_pull = pull;
+  if (g_gpio_mode[pin] < 0) drv_gpio_mode((uint8_t)pin, 0);
+  apply_pull(pin, g_gpio_mode[pin] < 0 ? 0 : g_gpio_mode[pin]);
+  if (pull == 0) apply_pull(pin, g_gpio_mode[pin]);
+  Log().printf("[drv] gpio %d sim pull %s\n", pin, pull == 1 ? "up" : pull == 2 ? "down" : "off");
+}
 
 void sensor_loop() {
   lm_drv_poll((uint64_t)esp_timer_get_time());

@@ -823,7 +823,11 @@ impl Player {
             // The mesh gateway: the netstack player's mesh (player_app mesh_ffi.rs), when on.
             | CMsg::MeshSend(_)
             | CMsg::GetMesh(_)
-            | CMsg::MeshAdmin(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
+            | CMsg::MeshAdmin(_)
+            // Lamp power: the player_app power layer (power_ffi.rs).
+            | CMsg::SetPower(_)
+            | CMsg::GetPower(_)
+            | CMsg::SetPowerConfig(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.

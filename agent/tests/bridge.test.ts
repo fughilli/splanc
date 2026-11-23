@@ -384,6 +384,7 @@ describe("mcp", () => {
       "export_map",
       "get_effect",
       "get_keypoint",
+      "get_power",
       "get_wifi_policy",
       "list_decks",
       "list_keypoints",

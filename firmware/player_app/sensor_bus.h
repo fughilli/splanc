@@ -46,5 +46,10 @@ void sensor_begin(bool enabled, int sda, int scl, int int_gpio, int led_gpio0, i
 // when due and persist a calibration it led to. Call with the player mutex held.
 void sensor_loop();
 
+// HITL test hook (SetPowerConfig.sim_gpio/sim_pull): override GPIO `pin`'s
+// internal pull (1 = up, 2 = down, 0 = back to the driver's) so a driver reading
+// an unwired pin sees a level change. Loop task.
+void sensor_gpio_sim(int pin, int pull);
+
 // Append the sensor status to the periodic serial report (no-op when absent).
 void sensor_log_status();
