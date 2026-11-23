@@ -842,6 +842,10 @@ _MESH_FFI_SYMS = [
     "ns_mesh_state_len",
     "ns_mesh_crypto_staged",
     "ns_mesh_leave",
+    # Effect sharing (mesh M6, mesh_blob.rs).
+    "ns_mesh_scenes",
+    "ns_mesh_take_dispatch",
+    "ns_mesh_dispatch_done",
 ]
 
 # The mesh (docs/design/mesh.md M3): MeshStack over the 802.11 backhaul
@@ -851,6 +855,7 @@ _MESH_FFI_SYMS = [
 rust_static_library(
     name = "mesh_ffi",
     srcs = [
+        "mesh_blob.rs",
         "mesh_ffi.rs",
         "mesh_gw.rs",
     ],
@@ -872,6 +877,7 @@ rust_test(
     name = "mesh_ffi_test",
     size = "small",
     srcs = [
+        "mesh_blob.rs",
         "mesh_ffi.rs",
         "mesh_gw.rs",
     ],

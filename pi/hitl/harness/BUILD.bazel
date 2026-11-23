@@ -168,6 +168,7 @@ py_library(
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "mesh_apply_at_skew_core.py",
+        "mesh_effect_core.py",
         "mesh_gateway_core.py",
         "mesh_join_admin_core.py",
         "mesh_smoke_core.py",
@@ -1852,14 +1853,20 @@ py_binary(
 genrule(
     name = "mesh_gateway_fxbs",
     srcs = [
+        "ab_demo/meshEmber.fx",
         "ab_demo/meshHue.fx",
+        "ab_demo/meshStorm.fx",
         "ab_demo/meshTint.fx",
     ],
     outs = [
+        "meshEmber.fxb",
         "meshHue.fxb",
+        "meshStorm.fxb",
         "meshTint.fxb",
     ],
-    cmd = "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshHue.fx) $(location meshHue.fxb) && " +
+    cmd = "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshEmber.fx) $(location meshEmber.fxb) && " +
+          "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshHue.fx) $(location meshHue.fxb) && " +
+          "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshStorm.fx) $(location meshStorm.fxb) && " +
           "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshTint.fx) $(location meshTint.fxb)",
     tools = ["//fx_compiler:fx_compile"],
 )
@@ -1937,6 +1944,48 @@ py_binary(
     },
     imports = ["."],
     main = "hitl_mesh_join_admin.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Mesh M6 (docs/design/mesh-m6.md): a 2-4 KB effect with uniforms (meshStorm) submitted
+# through one gateway runs on every member, all switching on one frame, rendering smoothly
+# through the transfer; a member that joins later and one that reboots catch up (effect +
+# uniforms). hitl-rig-1's three C6s. Pure logic: mesh_effect_core.
+py_binary(
+    name = "mesh_effect",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_apply_at_skew.py",
+        "hitl_mesh_effect.py",
+        "hitl_mesh_gateway.py",
+        "hitl_mesh_join_admin.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "mesh_serial_bridge.py",
+        ":mesh_gateway_fxbs",
+        "//firmware/mesh:mesh_admin_tool",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+    ],
+    env = {
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "MESH_ADMIN_TOOL_RUNFILE": "_main/firmware/mesh/mesh_admin_tool",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/meshTint.fxb",
+        "MESH_EMBER_RUNFILE": "_main/pi/hitl/harness/meshEmber.fxb",
+        "MESH_STORM_RUNFILE": "_main/pi/hitl/harness/meshStorm.fxb",
+    },
+    imports = ["."],
+    main = "hitl_mesh_effect.py",
     tags = ["manual"],
     deps = [
         ":harness",

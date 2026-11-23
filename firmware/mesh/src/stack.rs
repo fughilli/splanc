@@ -24,6 +24,7 @@ use swarm_net::update::Flash;
 
 use crate::admin::{self, AdminGate, GatewaySession, Grant, SessionMsg, Sessions, UnlockError};
 use crate::backhaul::{Backhaul, NodeId};
+use crate::blob::{BlobDone, BlobStore, Blobs, Fetch, Hash, NoBlobs, SceneMsg};
 use crate::crypto::{key_hash, DeviceKey, Entropy, KeyHash};
 use crate::envelope::{Header, MicLen};
 use crate::gateway::{self, Fanout, ReplyMsg, StatusMsg, STATUS_EVERY_US, T_STATUS};
@@ -174,6 +175,21 @@ pub enum Event<'a> {
     /// The admin ejected this device (mesh M7, issue #571's seam): its mesh state is gone;
     /// the firmware forgets the persisted state and turns the mesh off.
     Ejected,
+    /// Member (M6): every blob `msg` names is held (fetched and hash-checked): apply it as
+    /// the scene says (at `apply_at`, at once, or only hold it) and answer the gateway when
+    /// it asked ([`MeshStack::reply`]).
+    Scene { origin: NodeId, msg: SceneMsg },
+    /// Member (M6): a scene's blob could not be had (code: [`SceneFail`]); answered already.
+    SceneFailed { origin: NodeId, op_id: u32, code: u16 },
+    /// A blob fetch finished (M6; logging).
+    Blob(BlobDone),
+    /// Gateway (M6): the first phase of [`MeshStack::distribute`] is over: `have` of `of`
+    /// targets hold the blob. The device now picks the show-clock time and calls
+    /// [`MeshStack::distribute_apply`].
+    Fetched { op_id: u32, have: usize, of: usize },
+    /// Gateway (M6): `node` (re)joined the session after the scene changed: send it the
+    /// current scene (a catch-up share, [`SceneMsg::CATCH_UP`]).
+    CatchUp { node: NodeId },
     #[cfg(feature = "open_mode")]
     FollowStarted { mesh_id: u32 },
     #[cfg(feature = "open_mode")]
@@ -237,6 +253,38 @@ pub struct Neighbour {
     pub channel: u8,
     pub last_us: i64,
 }
+
+/// Why a member could not have a scene's blob (the code in its `REPLY`).
+pub mod scene_fail {
+    pub const TOO_BIG: u16 = 0xb001;
+    pub const NO_ROOM: u16 = 0xb002;
+    pub const BAD_HASH: u16 = 0xb003;
+    pub const STALLED: u16 = 0xb004;
+}
+pub use scene_fail as SceneFail;
+
+/// A scene a member works on (fetching its blobs).
+#[derive(Clone, Copy, Debug)]
+struct PendingScene {
+    origin: NodeId,
+    msg: SceneMsg,
+}
+
+/// A gateway's two-phase share (M6): fetch everywhere, then apply on one frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Distribution {
+    pub conn: usize,
+    pub op_id: u32,
+    pub fetch_op: u32,
+    pub targets: Targets,
+    pub blob: (Hash, u16),
+    pub fetched: bool,
+}
+
+/// Catch-ups a gateway queues (members that synced after a scene change).
+pub const CATCHUPS: usize = 4;
+/// How long a gateway collects "have" answers before applying anyway.
+pub const FETCH_TIMEOUT_US: i64 = 12_000_000;
 
 /// A command waiting for its session to sync (one at a time: the newest wins).
 struct Held<const P: usize> {
@@ -304,6 +352,16 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     /// Signed `TIME_BASE` commands sent (gateway) and taken (member).
     pub epochs_sent: u32,
     pub epochs_signed: u32,
+    /// Blobs and scenes (M6): the bulk side, the scene this member works on, the gateway's
+    /// share in progress, its scene generation and the members to catch up.
+    pub blobs: Blobs,
+    scene: Option<PendingScene>,
+    pub dist: Option<Distribution>,
+    pub scene_gen: u32,
+    catchup: [Option<NodeId>; CATCHUPS],
+    pub scenes_in: u32,
+    pub scenes_failed: u32,
+    pub catchups: u32,
 }
 
 impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> MeshStack<B, P, K, E, R> {
@@ -398,6 +456,14 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(epoch_announce, false);
         w!(epochs_sent, 0);
         w!(epochs_signed, 0);
+        w!(blobs, Blobs::new());
+        w!(scene, None);
+        w!(dist, None);
+        w!(scene_gen, 0);
+        w!(catchup, [None; CATCHUPS]);
+        w!(scenes_in, 0);
+        w!(scenes_failed, 0);
+        w!(catchups, 0);
         Ok(())
     }
 
@@ -459,6 +525,9 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         self.pending_acks = [None; CRYPTO_ACKS];
         self.epoch_announce = false;
         self.time.epoch_allowed = None;
+        self.scene = None;
+        self.dist = None;
+        self.catchup = [None; CATCHUPS];
     }
 
     /// Connection `conn` holds a grant for this gateway's live session (not envelope trust).
@@ -595,6 +664,11 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// Run the device's mesh for one step: receive, timers, adverts, sessions, the mesh slot,
     /// deliver. `scratch` must hold `scratch_len()` bytes. Bounded work; never blocks.
     pub fn tick(&mut self, now_us: i64, flash: &mut dyn Flash, scratch: &mut [u8], on: &mut dyn FnMut(Event<'_>)) {
+        self.tick_blobs(now_us, flash, &mut NoBlobs, scratch, on);
+    }
+
+    /// [`MeshStack::tick`] for a device that keeps blobs (M6: effect sharing, catch-up).
+    pub fn tick_blobs(&mut self, now_us: i64, flash: &mut dyn Flash, store: &mut dyn BlobStore, scratch: &mut [u8], on: &mut dyn FnMut(Event<'_>)) {
         // Signed epochs (M7): with an admin key, only the session's TIME_BASE sets the epoch.
         self.time.epoch_signed = !self.envelope_trust();
         // 0. The last time beacon's completion (two-step stamp, M4).
@@ -749,6 +823,20 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         if self.node.guard.next_epoch().is_some() && (self.node.guard.take_heard_next() || gw_ready) {
             self.node.guard.switch_to_next(now_us);
         }
+        // 5c. Blobs (M6): the next request, chunk or announcement, paced like all bulk (one
+        // hop: every holder serves its neighbours), and a stalled fetch given up.
+        if let Some(d) = self.blobs.poll(now_us, store) {
+            self.on_blob_done(d, on);
+        }
+        if self.membership.is_member() && self.bulk_clear_to_send(now_us) {
+            let mut b = [0u8; crate::blob::BULK_MAX];
+            if let Some((dest, n)) = self.blobs.next(now_us, store, &mut b) {
+                let hops = if dest == BROADCAST || self.is_neighbour(now_us, dest) { 0 } else { self.node.net.mesh.cfg.hop_limit };
+                if self.node.net.mesh.send_with_hops(dest, Port::Bulk as u8, &b[..n], false, hops).is_some() {
+                    self.last_bulk_us = Some(now_us);
+                }
+            }
+        }
         // 6. The mesh slot.
         if self.may_transmit() {
             self.node.run_slot(now_us, flash, scratch);
@@ -778,7 +866,126 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             if pkt.hops >= self.hops_seen.0 || now_us - self.hops_seen.1 >= DIAMETER_WINDOW_US {
                 self.hops_seen = (pkt.hops, now_us);
             }
-            self.deliver(now_us, pkt.origin, pkt.port, &pkt.payload[..pkt.len], on);
+            self.deliver(now_us, pkt.origin, pkt.port, &pkt.payload[..pkt.len], store, on);
+        }
+        // 8. Scenes (M6): the member's blobs, the gateway's share and its catch-ups.
+        self.scene_step(now_us, store, on);
+        if let Some(d) = self.dist.as_mut().filter(|d| !d.fetched) {
+            if let Some(r) = self.fanout.take_done_op(d.fetch_op) {
+                d.fetched = true;
+                let have = r.status[..r.n].iter().filter(|s| **s == gateway::Status::Ok).count();
+                on(Event::Fetched { op_id: d.op_id, have, of: r.n });
+            }
+        }
+        if self.dist.is_none() {
+            if let Some(node) = self.catchup.iter_mut().find_map(|c| c.take()) {
+                self.catchups += 1;
+                on(Event::CatchUp { node });
+            }
+        }
+    }
+
+    fn is_neighbour(&self, now_us: i64, id: NodeId) -> bool {
+        self.neighbours.iter().flatten().any(|n| n.id == id && now_us - n.last_us < 5_000_000)
+    }
+
+    // ---- Blobs and scenes (M6, crate::blob) ----
+
+    fn on_blob_done(&mut self, d: BlobDone, on: &mut dyn FnMut(Event<'_>)) {
+        on(Event::Blob(d));
+        let (BlobDone::BadHash(h) | BlobDone::Stalled(h)) = d else { return };
+        if self.scene.is_some_and(|p| p.msg.blobs().iter().any(|b| b.0 == h)) {
+            let code = if matches!(d, BlobDone::BadHash(_)) { SceneFail::BAD_HASH } else { SceneFail::STALLED };
+            self.fail_scene(code, on);
+        }
+    }
+
+    fn fail_scene(&mut self, code: u16, on: &mut dyn FnMut(Event<'_>)) {
+        let Some(p) = self.scene.take() else { return };
+        self.scenes_failed += 1;
+        if p.msg.want_reply() {
+            let _ = self.reply(p.origin, &ReplyMsg { op_id: p.msg.op_id, status: gateway::Status::Failed, arm: gateway::arm::SUBMIT_EFFECT as u8, code });
+        }
+        on(Event::SceneFailed { origin: p.origin, op_id: p.msg.op_id, code });
+    }
+
+    /// The member's scene: fetch the first blob it lacks; once all are held, hand it over.
+    fn scene_step(&mut self, now_us: i64, store: &mut dyn BlobStore, on: &mut dyn FnMut(Event<'_>)) {
+        let Some(p) = self.scene else { return };
+        for &(h, size) in p.msg.blobs() {
+            match self.blobs.fetch(now_us, &h, size as usize, p.origin, store) {
+                Fetch::Have => continue,
+                Fetch::Started => return,
+                Fetch::TooBig => return self.fail_scene(SceneFail::TOO_BIG, on),
+                Fetch::NoRoom => return self.fail_scene(SceneFail::NO_ROOM, on),
+            }
+        }
+        self.scene = None;
+        on(Event::Scene { origin: p.origin, msg: p.msg });
+    }
+
+    /// The scene this member is fetching blobs for: (op id, blobs held, blobs named).
+    pub fn scene_pending(&self) -> Option<(u32, usize)> {
+        self.scene.map(|p| (p.msg.op_id, p.msg.n as usize))
+    }
+
+    /// Gateway: send scene `msg` under connection `conn`'s session to its targets (all synced
+    /// members, or `msg.targets`' nodes), and collect their answers for `timeout_us` when it
+    /// wants replies. Returns the packets sent.
+    pub fn share(&mut self, now_us: i64, conn: usize, msg: &SceneMsg, timeout_us: i64) -> Result<usize, SendError> {
+        let mut b = [0u8; SceneMsg::MAX_LEN];
+        let n = msg.encode(&mut b).ok_or(SendError::TooBig)?;
+        let only = match msg.targets {
+            Targets::Nodes { ids, n } => Some((ids, n as usize)),
+            _ => None,
+        };
+        let only_slice = only.as_ref().map(|(ids, n)| &ids[..*n]);
+        let sent = self.send_admin(now_us, conn, Port::Scene, &b[..n], only_slice)?;
+        if msg.want_reply() {
+            let me = self.me();
+            self.fanout.begin(now_us, conn, msg.op_id, gateway::arm::SUBMIT_EFFECT as u8, &msg.targets, timeout_us, me);
+        }
+        Ok(sent)
+    }
+
+    /// Gateway: share blob `blob` (it is in this device's store) with `targets` in two
+    /// phases. First every target fetches it and answers "have" (up to `fetch_timeout_us`);
+    /// then [`Event::Fetched`] asks the device for the show-clock time, and
+    /// [`MeshStack::distribute_apply`] tells every target to apply it then, so all switch on
+    /// one frame. A member that had no blob by then applies it as soon as it does (late).
+    pub fn distribute(&mut self, now_us: i64, conn: usize, op_id: u32, targets: Targets, blob: (Hash, u16), fetch_timeout_us: i64) -> Result<usize, SendError> {
+        let fetch_op = op_id ^ 0x8000_0000;
+        let msg = SceneMsg::new(fetch_op, SceneMsg::WANT_REPLY, 0, targets, &[blob]).ok_or(SendError::TooBig)?;
+        let n = self.share(now_us, conn, &msg, fetch_timeout_us)?;
+        self.dist = Some(Distribution { conn, op_id, fetch_op, targets, blob, fetched: false });
+        self.scene_changed();
+        Ok(n)
+    }
+
+    /// Gateway: the second phase: apply at `apply_at` on the show clock (None: at once),
+    /// collecting answers for `timeout_us`. The share is over (its result is `op_id`'s).
+    pub fn distribute_apply(&mut self, now_us: i64, apply_at: Option<u32>, timeout_us: i64) -> Result<SceneMsg, SendError> {
+        let d = self.dist.take().ok_or(SendError::NoRecipients)?;
+        let flags = SceneMsg::APPLY | SceneMsg::WANT_REPLY | if apply_at.is_none() { SceneMsg::NOW } else { 0 };
+        let msg = SceneMsg::new(d.op_id, flags, apply_at.unwrap_or(0), d.targets, &[d.blob]).ok_or(SendError::TooBig)?;
+        self.share(now_us, d.conn, &msg, timeout_us)?;
+        Ok(msg)
+    }
+
+    /// Gateway: the look changed through this session (a share, or relayed control that is
+    /// part of the scene: an effect, committed uniforms, brightness, crossfade). Members that
+    /// sync with the session from now on get a catch-up.
+    pub fn scene_changed(&mut self) {
+        self.scene_gen = self.scene_gen.wrapping_add(1).max(1);
+    }
+
+    /// Gateway: send `node` a catch-up (a member that missed a change: it failed or was away).
+    pub fn queue_catch_up(&mut self, node: NodeId) {
+        if node == self.me() || self.catchup.contains(&Some(node)) {
+            return;
+        }
+        if let Some(slot) = self.catchup.iter_mut().find(|c| c.is_none()) {
+            *slot = Some(node);
         }
     }
 
@@ -897,7 +1104,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         on(Event::FollowStopped);
     }
 
-    fn deliver(&mut self, now_us: i64, origin: NodeId, port: u8, payload: &[u8], on: &mut dyn FnMut(Event<'_>)) {
+    fn deliver(&mut self, now_us: i64, origin: NodeId, port: u8, payload: &[u8], store: &mut dyn BlobStore, on: &mut dyn FnMut(Event<'_>)) {
         #[cfg(feature = "open_mode")]
         let role = if self.node.guard.domain() == Domain::Guest { Role::Guest } else { Role::Member };
         #[cfg(not(feature = "open_mode"))]
@@ -928,7 +1135,21 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             Err(_) => return,
         };
         match port {
-            Port::Freshness => self.on_freshness(now_us, origin, body, on),
+            Port::Freshness => self.on_freshness(now_us, origin, body, store, on),
+            Port::Bulk => {
+                if let Some(d) = self.blobs.on_packet(now_us, origin, body, store) {
+                    self.on_blob_done(d, on);
+                }
+            }
+            Port::Scene if admin => {
+                // The admin session's scene (M6): authoritative; one at a time, the newest.
+                if let Some(msg) = SceneMsg::decode(body) {
+                    if msg.targets.includes(self.me(), &self.membership.groups()) {
+                        self.scenes_in += 1;
+                        self.scene = Some(PendingScene { origin, msg });
+                    }
+                }
+            }
             Port::Membership => {
                 if let Some(c) = MemberCommand::decode(body) {
                     if let MemberCommand::Eject { node, key_hash } = c {
@@ -980,7 +1201,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         }
     }
 
-    fn on_freshness(&mut self, now_us: i64, origin: NodeId, body: &[u8], on: &mut dyn FnMut(Event<'_>)) {
+    fn on_freshness(&mut self, now_us: i64, origin: NodeId, body: &[u8], store: &mut dyn BlobStore, on: &mut dyn FnMut(Event<'_>)) {
         let me = self.me();
         let mesh_id = self.node.guard.mesh_id;
         if let Some(m) = SessionMsg::decode(body) {
@@ -1016,7 +1237,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                         on(Event::SessionSynced { session, gateway: gw });
                         if let Some(h) = self.held.take() {
                             let buf = h.buf;
-                            self.deliver(now_us, h.origin, h.port, &buf[..h.len], on);
+                            self.deliver(now_us, h.origin, h.port, &buf[..h.len], store, on);
                         }
                     }
                 }
@@ -1087,6 +1308,11 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             if let Some(gs) = self.gateway.as_mut() {
                 if let Some((to, conf)) = gs.on_ack(&m, &self.dev, mesh_id, me, counter) {
                     self.send_session(to, &conf, false);
+                    // A member synced after the look changed (it joined, or rebooted): it
+                    // gets the current scene (M6).
+                    if self.scene_gen != 0 {
+                        self.queue_catch_up(to);
+                    }
                 }
             }
             return true;

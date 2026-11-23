@@ -130,6 +130,7 @@ copy_to_bin(
         "src/net/liveProtocol.ts",
         "src/net/liveSender.ts",  # the live (VJ) protocol, shared with the bridge
         "src/net/mesh.ts",  # the mesh gateway (net/client.ts mesh_send / get_mesh)
+        "src/net/meshEffect.ts",  # effect sharing over the mesh (client.meshShareEffect, M6)
         "src/net/otaUpdate.ts",  # update_firmware (the over-the-air driver)
         "src/net/proto.ts",
         "src/net/textureCodec.ts",

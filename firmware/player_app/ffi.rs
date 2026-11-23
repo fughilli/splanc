@@ -2274,13 +2274,204 @@ unsafe fn sched_apply_frame(frame: &[u8]) -> u32 {
 /// Under the player lock.
 #[no_mangle]
 pub unsafe extern "C" fn lm_sched_apply(now_ms: i64) -> u32 {
+    let mut bits = staged_due(now_ms);
     let q = &mut *addr_of_mut!(SCHED);
     if q.next_due().map_or(true, |d| d > now_ms) {
-        return 0;
+        return bits;
     }
-    let mut bits = 0;
     q.pop_due(now_ms, |f| bits |= sched_apply_frame(f));
     bits
+}
+
+// -- a staged effect load (mesh M6, docs/design/mesh-m6.md) ------------------
+// A shared effect (a whole submit_effect frame, up to the effect buffer's 4 KiB of
+// .fxb) reaches every member before its show-clock time; each one hands the frame
+// here, and the render task loads it at the first frame boundary at/after that
+// time, so every fixture switches on the same frame (as a scheduled set_effect).
+// The frame stays the mesh's (a heap buffer in its block) until loopTask has taken
+// the outcome back (lm_fx_staged_take) and persisted it like a deck-A upload.
+
+/// lm_sched_apply bit: the staged effect loaded this frame (main.cpp logs it).
+pub const SCHED_LOADED: u32 = 4;
+/// lm_sched_apply bit: the staged effect is due on this frame: main.cpp loads it now
+/// (lm_fx_staged_apply) on a stack deep enough for a load (the render task's is not).
+pub const SCHED_STAGED_DUE: u32 = 8;
+
+#[derive(Clone, Copy)]
+struct StagedLoad {
+    due: i64,
+    frame: *const u8,
+    len: usize,
+}
+
+static mut STAGED: Option<StagedLoad> = None;
+/// The applied staged frame, its length, its outcome (1 loaded, 2 refused) and deck,
+/// until taken.
+static mut STAGED_DONE: Option<(*const u8, usize, u8, u8)> = None;
+
+unsafe fn staged_due(now_ms: i64) -> u32 {
+    match *addr_of!(STAGED) {
+        Some(s) if s.due <= now_ms && (*addr_of!(STAGED_DONE)).is_none() => SCHED_STAGED_DUE,
+        _ => 0,
+    }
+}
+
+/// Load the staged effect frame (it is due: [`SCHED_STAGED_DUE`]). The render task calls
+/// it at that frame's start, on the mesh's tick stack (a load's frames are deeper than the
+/// render task's stack). Returns SCHED_* bits.
+///
+/// # Safety
+/// Under the player lock.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_staged_apply() -> u32 {
+    let Some(s) = (*addr_of_mut!(STAGED)).take() else { return 0 };
+    // The loopTask's persist step reads these after its own dispatches: keep them.
+    let (deck_was, store_was) = (FX_LAST_DECK, effect_store::LAST_WAS_STORE);
+    let r = handle_submit_effect(core::slice::from_raw_parts(s.frame, s.len));
+    FX_LAST_DECK = deck_was;
+    effect_store::LAST_WAS_STORE = store_was;
+    let ok = matches!(r.r#msg, Some(pb::ServerMessage_::Msg::ResultReady(_)));
+    let d = match client_arm(core::slice::from_raw_parts(s.frame, s.len)) {
+        Some(CArm::SubmitEffect(m)) => deck_index(m.deck()) as u8,
+        _ => 0,
+    };
+    STAGED_DONE = Some((s.frame, s.len, if ok { 1 } else { 2 }, d));
+    SCHED_APPLIED | SCHED_LOADED
+}
+
+/// Stage `frame` (a submit_effect, `len` bytes, kept valid by the caller until it is
+/// taken back) to load at `apply_at_ms` on the shared time base. 1: staged (an earlier
+/// staged frame not yet applied is handed back in `*replaced`, refused); 0: its time
+/// has passed or there is no time base (dispatch it now instead); -1: refused.
+///
+/// # Safety
+/// Under the player mutex; `frame` valid for `len` bytes until taken back.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_stage(frame: *const u8, len: usize, apply_at_ms: u32, now_ms: i64, replaced: *mut *const u8) -> i32 {
+    if frame.is_null() || len == 0 {
+        return -1;
+    }
+    // A deck load only (never the effect store: no flash writes on the render task).
+    match client_arm(core::slice::from_raw_parts(frame, len)) {
+        Some(CArm::SubmitEffect(m)) if !m.store() => {}
+        _ => return -1,
+    }
+    let Some(due) = apply_due(Some(apply_at_ms), player().time_base_ms(), now_ms) else { return 0 };
+    if !replaced.is_null() {
+        *replaced = (*addr_of!(STAGED)).map_or(core::ptr::null(), |s| s.frame);
+    }
+    STAGED = Some(StagedLoad { due, frame, len });
+    1
+}
+
+/// The staged frame the render task applied: its pointer and length in `*frame` /
+/// `*len`, its deck in `*deck`, and 1 (loaded) or 2 (refused); 0 while none is done.
+/// Drop the frame (and persist a loaded deck-A one) after.
+///
+/// # Safety
+/// Under the player mutex; the out pointers valid.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_staged_take(frame: *mut *const u8, len: *mut usize, deck: *mut u32) -> u32 {
+    let Some((f, n, r, d)) = (*addr_of_mut!(STAGED_DONE)).take() else { return 0 };
+    *frame = f;
+    *len = n;
+    *deck = d as u32;
+    r as u32
+}
+
+/// Forget a staged frame (the mesh turns off and frees it): the pointer, or null.
+///
+/// # Safety
+/// Under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_stage_cancel() -> *const u8 {
+    (*addr_of_mut!(STAGED)).take().map_or(core::ptr::null(), |s| s.frame)
+}
+
+/// Check a submit_effect frame a mesh share is about to distribute, as the load would
+/// (its fxb parses, fits the effect buffer, is not a driver, not a store write), without
+/// loading it: 0 it would load, 1 bad_fxb, 2 effect_too_large.
+///
+/// # Safety
+/// `frame` valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_check_effect(frame: *const u8, len: usize) -> u32 {
+    let Some(CArm::SubmitEffect(m)) = client_arm(core::slice::from_raw_parts(frame, len)) else { return 1 };
+    if m.store() || !pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_FXB) {
+        return 1;
+    }
+    let fxb = m.fxb();
+    if fxb.len() > FX_MAX_BYTES {
+        return 2;
+    }
+    match Program::parse(fxb) {
+        Ok(p) if p.flags & ledmapper_fx_vm::FLAG_DRIVER == 0 => 0,
+        _ => 1,
+    }
+}
+
+/// The look a mesh catch-up carries besides the effect (mesh M6): `len (2) ‖ frame`
+/// entries, each an encoded ClientMessage: deck A's uniform values (committed), the
+/// output brightness, the crossfade. Into `out`; returns the length (-1: too small).
+///
+/// # Safety
+/// Under the player mutex; `out` valid for `cap` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_scene_frames(out: *mut u8, cap: usize) -> i32 {
+    let buf = core::slice::from_raw_parts_mut(out, cap);
+    let mut o = 0usize;
+    let mut put = |o: &mut usize, field: u32, body: &mut dyn FnMut(&mut PbOut)| -> bool {
+        if *o + 2 >= cap {
+            return false;
+        }
+        let n = write_arm(buf[*o + 2..].as_mut_ptr(), cap - *o - 2, field, |w| body(w));
+        if n <= 0 {
+            return false;
+        }
+        buf[*o..*o + 2].copy_from_slice(&(n as u16).to_be_bytes());
+        *o += 2 + n as usize;
+        true
+    };
+    // set_uniforms = 23 {values = 1, commit = 2 (true), deck = 3 (A)}.
+    let d = DECK_A_IDX;
+    if let Some(p) = deck(d).filter(|p| (**p).renders()) {
+        {
+            let ok = put(&mut o, 23, &mut |w: &mut PbOut| {
+                write_current(w, 1, d, p);
+                w.uint(2, 1);
+            });
+            if !ok {
+                return -1;
+            }
+        }
+    }
+    // Deck B's uniform values too (deck = 3: 1), when it renders (D-465: a catch-up carries
+    // deck B's effect).
+    if let Some(p) = deck(DECK_B_IDX).filter(|p| (**p).renders()) {
+        let ok = put(&mut o, 23, &mut |w: &mut PbOut| {
+            write_current(w, 1, DECK_B_IDX, p);
+            w.uint(2, 1);
+            w.uint(3, 1);
+        });
+        if !ok {
+            return -1;
+        }
+    }
+    // set_brightness = 31 {brightness = 1 (double)}; set_crossfade = 39 {position = 1}.
+    let b = player().output_brightness() as f64;
+    let x = player().crossfade() as f64;
+    for (field, v) in [(31u32, b), (39, x)] {
+        let ok = put(&mut o, field, &mut |w: &mut PbOut| {
+            w.key(1, 1);
+            for byte in v.to_le_bytes() {
+                w.byte(byte);
+            }
+        });
+        if !ok {
+            return -1;
+        }
+    }
+    o as i32
 }
 
 /// Scheduled changes waiting (diagnostics / tests).
@@ -3631,24 +3822,7 @@ unsafe fn write_effect_uniforms(w: &mut PbOut, d: usize, p: *mut DeckState, prog
     }
     w.bytes(2, prog.manifest);
     // current = 3: each manifest uniform's live value, read back from the VM.
-    // The deck OSC drives walks its table (every uniform it can drive); the other
-    // deck its blend rules (the same uniforms, within the keypoint bounds).
-    if let Some(vm) = (*p).vm.as_ref() {
-        let mut put = |slot: usize, width: usize| {
-            if let Some(vals) = vm.uniforms.get(slot..slot + width) {
-                w.value_msgs(3, slot as u32, vals);
-            }
-        };
-        if d == OSC_TABLE_DECK && !OSC_TABLE_STALE {
-            for port in (*addr_of!(OSC_TABLE)).ports() {
-                put(port.slot as usize, port.width as usize);
-            }
-        } else {
-            for r in (*p).morph.rules.rules() {
-                put(r.slot as usize, r.width as usize);
-            }
-        }
-    }
+    write_current(w, 3, d, p);
     // textures = 4: the declared 2D textures (buffer kind=1), so a texture source
     // learns the exact dimensions set_texture requires (a mismatch is dropped).
     for i in 0..prog.n_buffers as usize {
@@ -3666,6 +3840,28 @@ unsafe fn write_effect_uniforms(w: &mut PbOut, d: usize, p: *mut DeckState, prog
     }
     if d != DECK_A_IDX {
         w.uint(5, d as u64);
+    }
+}
+
+/// Deck `d`'s live uniform values as UniformValue messages at `field`. The deck OSC
+/// drives walks its table (every uniform it can drive); the other deck its blend rules
+/// (the same uniforms, within the keypoint bounds).
+#[inline(never)]
+unsafe fn write_current(w: &mut PbOut, field: u32, d: usize, p: *mut DeckState) {
+    let Some(vm) = (*p).vm.as_ref() else { return };
+    let mut put = |slot: usize, width: usize| {
+        if let Some(vals) = vm.uniforms.get(slot..slot + width) {
+            w.value_msgs(field, slot as u32, vals);
+        }
+    };
+    if d == OSC_TABLE_DECK && !OSC_TABLE_STALE {
+        for port in (*addr_of!(OSC_TABLE)).ports() {
+            put(port.slot as usize, port.width as usize);
+        }
+    } else {
+        for r in (*p).morph.rules.rules() {
+            put(r.slot as usize, r.width as usize);
+        }
     }
 }
 

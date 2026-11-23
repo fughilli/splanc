@@ -52,6 +52,7 @@ use splanc_mesh::wifi_p2p::{self, ChannelAction, ChannelRule, GroupPolicy, P2pCo
 use splanc_mesh::NodeId;
 use swarm_net::update::Flash;
 
+pub mod mesh_blob;
 pub mod mesh_gw;
 
 /// The 802.11 mesh payload (§5.2).
@@ -302,6 +303,10 @@ pub struct Mesh {
     /// fixture into its mesh, persisted with the membership; it lets that user leave or
     /// re-provision without an admin grant. Erased with the membership.
     pub(crate) owner_token: Option<[u8; OWNER_TOKEN_LEN]>,
+    // ---- effect sharing (M6, mesh_blob.rs) ----
+    /// The blob store (heap buffers only while a blob is in use) and the scene work.
+    pub(crate) blobs: mesh_blob::Slots,
+    pub(crate) bs: mesh_blob::BlobState,
 }
 
 /// Bytes of the provisioner token (D-324).
@@ -424,6 +429,8 @@ pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8
     f!((*p).crypto_us_max).write(0);
     f!((*p).crypto_us_last).write(0);
     f!((*p).owner_token).write(None);
+    f!((*p).blobs).write(mesh_blob::Slots::new());
+    f!((*p).bs).write(mesh_blob::BlobState::new());
     p
 }
 
@@ -572,6 +579,8 @@ pub unsafe extern "C" fn ns_mesh_destroy(m: *mut Mesh) -> *mut u8 {
         return core::ptr::null_mut();
     }
     let b = (*m).block;
+    // The transport took back any staged frame first (lm_fx_stage_cancel).
+    (*m).blobs.free_all();
     core::ptr::drop_in_place(m);
     b
 }
@@ -891,9 +900,11 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
     let mut pending: Option<splanc_mesh::msg::PendingJoin> = None;
     let mut synced: Option<(u32, NodeId)> = None;
     let mut renew: Option<(u32, u32)> = None;
+    let mut blob_log: Option<(NodeId, u32, u16)> = None;
     {
-        let Mesh { stack, scratch, test_rx, .. } = m;
-        stack.tick(now_us, &mut NoFlash, scratch, &mut |e| match e {
+        let Mesh { stack, scratch, test_rx, blobs, bs, .. } = m;
+        blobs.now_us = now_us;
+        stack.tick_blobs(now_us, &mut NoFlash, blobs, scratch, &mut |e| match e {
             Event::Control { origin, header, inner } => {
                 ctl += 1;
                 if let Some(slot) = ctl_in.iter_mut().find(|s| s.is_none()) {
@@ -930,6 +941,11 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
             Event::Pending(p) => pending = Some(p),
             Event::SessionSynced { session, gateway } => synced = Some((session, gateway)),
             Event::GrantRenewalDue { session, not_after } => renew = Some((session, not_after)),
+            // Effect sharing (M6): applied after the tick, on loopTask's stack.
+            Event::Scene { origin, msg } => bs.work.scene = Some((origin, msg)),
+            Event::Fetched { op_id, have, of } => bs.work.fetched = Some((op_id, have, of)),
+            Event::CatchUp { node } => bs.work.catch_up = Some(node),
+            Event::SceneFailed { origin, op_id, code } => blob_log = Some((origin, op_id, code)),
             _ => {}
         });
     }
@@ -953,6 +969,11 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
     }
     if let Some((s, t)) = renew {
         m.log(format_args!("[mesh] grant renewal due session={s} not_after={t}"));
+    }
+    if let Some((o, op, code)) = blob_log {
+        let b = m.stack.blobs.stats;
+        let _ = (o, b);
+        m.log(format_args!("[mesh] scene failed op={op:x} code={code:x}"));
     }
     m.controls += ctl;
     m.packets += pkt;
@@ -1011,6 +1032,14 @@ fn note_test(rx: &mut [Option<TestRx>; TEST_PEERS], origin: NodeId, tag: u8, por
     }
     r.uniq += 1;
     true
+}
+
+/// Effect sharing's work after a tick (M6, mesh_blob.rs): the staged load's outcome, a
+/// scene to apply, the gateway's second phase and catch-ups. The transport calls it on
+/// loopTask's stack (never the tick's): applying dispatches like an app message.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_scenes(m: *mut Mesh, now_us: i64) {
+    mesh_blob::after_tick(&mut *m, now_us);
 }
 
 /// Move the event log into `out` (`cap` bytes); returns the bytes written (whole lines).
@@ -1206,6 +1235,15 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
         (0, 1) => mesh_gw::report(m, w),
         (0, 2) => mesh_gw::report_membership(m, now, w),
         (0, 3) => mesh_gw::report_admin(m, w),
+        (0, 4) => {
+            // Effect sharing (M6).
+            let (bl, st) = (&s.blobs.stats, &m.bs);
+            write!(
+                w,
+                "[mesh] blobs fetched={} bad_hash={} stalled={} no_room={} chunks_in={} out={} applied={} loaded={} catchups={} peak={}",
+                bl.fetched, bl.bad_hash, bl.stalled, bl.no_room, bl.chunks_in, bl.chunks_out, st.applied, st.loaded, st.catchups_sent, m.blobs.stats.peak,
+            )
+        }
         (1, i) => {
             // Link neighbours (RSSI, ACKs), joined with the stack's advert table.
             let Some(n) = b.neighbours.iter().flatten().nth(i as usize) else { return false };
@@ -1317,6 +1355,36 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 // Host tests link the whole crate: stand-ins for the C side.
 #[cfg(test)]
 mod stubs {
+    // Effect sharing (M6): main.cpp's side, absent on the host.
+    #[no_mangle]
+    extern "C" fn esp_get_free_heap_size() -> u32 {
+        100_000
+    }
+    #[no_mangle]
+    extern "C" fn lm_mesh_effect_file(_: *mut u8, _: u32) -> u32 {
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_mesh_stage(_: *const u8, _: u32, _: u32, _: *mut *const u8) -> i32 {
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_mesh_staged_take(_: *mut *const u8) -> u32 {
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_mesh_scene_frames(_: *mut u8, _: u32) -> i32 {
+        -1
+    }
+    #[no_mangle]
+    extern "C" fn lm_mesh_deckb_frame(len: *mut u32) -> *const u8 {
+        unsafe { *len = 0 };
+        core::ptr::null()
+    }
+    #[no_mangle]
+    extern "C" fn lm_fx_check_effect(_: *const u8, _: usize) -> u32 {
+        1
+    }
     #[no_mangle]
     extern "C" fn lm_prio_below_render() -> u32 {
         0

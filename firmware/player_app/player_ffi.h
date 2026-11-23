@@ -94,6 +94,20 @@ int64_t lm_clock_observe(int64_t now_ms);
 // at its start, under the player mutex. Bits: 1 = applied, 2 = brightness changed
 // (re-run poll_brightness).
 uint32_t lm_sched_apply(int64_t now_ms);
+// Mesh M6 (docs/design/mesh-m6.md): a shared effect's submit_effect frame, loaded by the
+// render task (inside lm_sched_apply, bit 4) at the first frame at/after apply_at_ms. All
+// under the player mutex. lm_fx_stage: 1 staged (*replaced: an earlier staged frame handed
+// back), 0 its time has passed (dispatch it now), -1 refused. lm_fx_staged_take: the applied
+// frame (1 loaded, 2 refused; 0 none yet). lm_fx_stage_cancel: the staged frame, forgotten.
+int32_t lm_fx_stage(const uint8_t *frame, size_t len, uint32_t apply_at_ms, int64_t now_ms, const uint8_t **replaced);
+uint32_t lm_fx_staged_take(const uint8_t **frame, size_t *len, uint32_t *deck);
+const uint8_t *lm_fx_stage_cancel(void);
+// lm_sched_apply bit 8: the staged frame is due; load it with lm_fx_staged_apply (bits back)
+// on a deep stack (mesh_glue's tick stack: a load does not fit the render task's).
+uint32_t lm_fx_staged_apply(void);
+// The look a mesh catch-up carries besides the effect: len(2) || ClientMessage frames
+// (deck A's uniforms, brightness, crossfade). Returns the length, -1 if `cap` is too small.
+int32_t lm_fx_scene_frames(uint8_t *out, size_t cap);
 // Lock-free video ingest (network task, under the texture-queue lock only): decode +
 // queue a set_texture for lm_tex_present. Returns the TextureAck length in `out`
 // (0 = none), -2 = not a set_texture, -3 = can't be queued (dispatch it normally).

@@ -649,6 +649,10 @@ static const int32_t kArmEffectUniforms = 16;
 static const int32_t kArmWelcome = 1;
 static const int32_t kArmSetFixturePose = 37;
 static const int32_t kArmSetTimeBase = 38;
+static const int32_t kArmMeshSend = 99;
+#if defined(LM_NETSTACK)
+static int dispatch_mesh_upload(const uint8_t *msg, size_t len);  // a sharded mesh_send (M6)
+#endif
 static const int32_t kArmErrorReply = 9;  // ServerMessage.error
 static const int32_t kArmBlendKeypoints = 44;
 static const int32_t kArmLoadStoredEffect = 141;
@@ -868,6 +872,98 @@ extern "C" uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) {
     return 0;
   }
   return fs_write_file(kMeshStatePath, buf, len) ? 1 : 0;
+}
+
+// Effect sharing (mesh M6, mesh_blob.rs): the persisted deck-A frame is a blob a member may
+// already hold (and what a gateway's catch-up sends), a shared effect is staged for the
+// render task, and the loaded one is persisted here (loopTask) like a deck-A upload.
+extern "C" uint32_t lm_mesh_effect_file(uint8_t *buf, uint32_t cap) {
+  if (!fs_ok) return 0;
+  FILE *f = fs_open(kEffectPath, "rb");
+  if (f == nullptr) return 0;
+  uint32_t n = 0;
+  if (buf == nullptr) {
+    if (fseek(f, 0, SEEK_END) == 0) {
+      long e = ftell(f);
+      n = e > 0 ? (uint32_t)e : 0;
+    }
+  } else {
+    n = (uint32_t)fread(buf, 1, cap, f);
+  }
+  fclose(f);
+  return n;
+}
+
+extern "C" int32_t lm_mesh_stage(const uint8_t *frame, uint32_t len, uint32_t apply_at_ms, const uint8_t **replaced) {
+  *replaced = nullptr;
+  if (player_mutex == nullptr) return -1;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t r = lm_fx_stage(frame, len, apply_at_ms, (int64_t)millis(), replaced);
+  xSemaphoreGive(player_mutex);
+  return r;
+}
+
+// The staged frame the render task applied (try-lock: the mesh asks again next pass).
+extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame) {
+  *frame = nullptr;
+  if (player_mutex == nullptr || xSemaphoreTake(player_mutex, 0) != pdTRUE) return 0;
+  size_t len = 0;
+  uint32_t deck = 0;
+  uint32_t r = lm_fx_staged_take(frame, &len, &deck);
+  xSemaphoreGive(player_mutex);
+  if (r == 1 && deck == 0 && fs_ok && !lm_kiosk_msg_locked()) {
+    // As a deck-A upload (persist_if_upload): it resumes at boot; the old selection goes.
+    const int64_t t0 = esp_timer_get_time();
+    bool ok = fs_write_file(kEffectPath, *frame, len);
+    remove(kEffectSelPath);
+    Log().printf("[mesh] shared effect persisted %s %u B us=%lu\n", ok ? "ok" : "FAILED", (unsigned)len,
+                 (unsigned long)(esp_timer_get_time() - t0));
+  }
+  return r;
+}
+
+// mesh_glue.h: run `fn` on the mesh's tick stack (14 KB, idle between ticks), under its lock.
+extern "C" uint32_t lm_mesh_on_tick_stack(uint32_t (*fn)(void)) __attribute__((weak));
+
+extern "C" void lm_mesh_staged_cancel() {
+  if (player_mutex == nullptr) return;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  (void)lm_fx_stage_cancel();
+  const uint8_t *f = nullptr;
+  size_t len = 0;
+  uint32_t deck = 0;
+  (void)lm_fx_staged_take(&f, &len, &deck);
+  xSemaphoreGive(player_mutex);
+}
+
+// Deck B's effect frame, kept while it is loaded (desk D-465): deck B is never persisted
+// (uniform-keypoints design), so this is what a gateway's catch-up hands a member that joins
+// or reboots later. Heap (<= the effect cap), replaced by the next deck-B load.
+static uint8_t *g_deckb_frame = nullptr;
+static size_t g_deckb_len = 0;
+
+static void keep_deckb_frame(const uint8_t *req, size_t len) {
+  uint8_t *c = static_cast<uint8_t *>(malloc(len));
+  if (c == nullptr) return;  // keep the old one: a catch-up without deck B is the old behaviour
+  memcpy(c, req, len);
+  free(g_deckb_frame);
+  g_deckb_frame = c;
+  g_deckb_len = len;
+}
+
+// mesh_blob.rs: deck B's frame for a catch-up (nullptr: none). Valid until the next
+// handled message (loopTask only).
+extern "C" const uint8_t *lm_mesh_deckb_frame(uint32_t *len) {
+  *len = (uint32_t)g_deckb_len;
+  return g_deckb_frame;
+}
+
+extern "C" int32_t lm_mesh_scene_frames(uint8_t *out, uint32_t cap) {
+  if (player_mutex == nullptr) return -1;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_fx_scene_frames(out, cap);
+  xSemaphoreGive(player_mutex);
+  return n;
 }
 
 // Mesh time (docs/design/mesh.md §6.3, mesh M4): mesh_ffi.rs maps the mesh's show epoch
@@ -1318,6 +1414,9 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     // (docs/design/uniform-keypoints.md): a show re-cues it.
     fs_write_file(kEffectPath, req, req_len);
     remove(kEffectSelPath);
+  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect && lm_fx_last_deck() == 1 &&
+             !lm_fxs_last_was_store()) {
+    keep_deckb_frame(req, req_len);  // deck B: RAM only, for a mesh catch-up (D-465)
   } else if (reply_arm == kArmWelcome && req_arm == kArmSetFixturePose) {
     // A validated room pose (or a clear): persist the frame unless commit=false.
     if (lm_fixture_pose_commit()) fs_write_file(kPosePath, req, req_len);
@@ -1768,8 +1867,15 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     fclose(ef);
     remove(kUploadTmp);
     // dispatch_plain persists the frame (persist_if_upload) before returning,
-    // so the stage is free to go after it.
-    int32_t r = rn == upload_total ? dispatch_plain(buf, rn) : -1;
+    // so the stage is free to go after it. A sharded mesh_send (mesh M6: an effect shared
+    // with the whole mesh, too big for one window) goes to the mesh gateway instead.
+    int32_t r = -1;
+#if defined(LM_NETSTACK)
+    if (rn == upload_total && lm_envelope_arm(buf, rn) == kArmMeshSend) {
+      r = dispatch_mesh_upload(buf, rn);
+    } else
+#endif
+      r = rn == upload_total ? dispatch_plain(buf, rn) : -1;
     if (buf == nullptr) Log().printf("[upload] no heap to stage the %u B effect\n", (unsigned)upload_total);
     rx_stage_put(buf);
     return r;
@@ -1865,29 +1971,52 @@ static int load_stored_effect(const uint8_t *in, size_t len) {
 // out-of-order upload window → the transport should drop the connection). Shared verbatim by
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
-static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
+// The arms answered ahead of the player core (OTA, network outputs): true with the reply
+// length in *out when handled.
+static bool ws_reply_pre(const uint8_t *msg, size_t len, int *out) {
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
-  if (ota != 0) return ota;
+  if (ota != 0) return *out = ota, true;
 #if defined(LM_NETOUT)
   // Ethernet + network outputs (arms 95-98): answered here, never by the core.
   {
     const int n = netout_app_dispatch(msg, len, tx, sizeof tx, g_hw_gpio0, g_hw_gpio1);
-    if (n > 0) return n;
+    if (n > 0) return *out = n, true;
   }
 #endif
-  // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
-  // and handles the final-decode + persist).
-  LmUploadChunk ch;
-  if (lm_parse_upload_chunk(msg, len, &ch) == 1) {
-    return (int)process_upload_chunk(&ch, msg + ch.payload_off);
-  }
+  return false;
+}
+
+static int ws_reply_tail(const uint8_t *msg, size_t len) {
   if (lm_envelope_arm(msg, len) == kArmLoadStoredEffect) {
     int n = load_stored_effect(msg, len);
     if (n != kNotStaged) return n;
   }
   return dispatch_plain(msg, len);
 }
+
+static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
+  int n = 0;
+  if (ws_reply_pre(msg, len, &n)) return n;
+  // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
+  // and handles the final-decode + persist).
+  LmUploadChunk ch;
+  if (lm_parse_upload_chunk(msg, len, &ch) == 1) {
+    return (int)process_upload_chunk(&ch, msg + ch.payload_off);
+  }
+  return ws_reply_tail(msg, len);
+}
+
+#if defined(LM_NETSTACK)
+// A frame relayed over the mesh (mesh M5/M6): as ws_compute_reply_body but never a sharded
+// upload (members dispatch allow-listed arms only), so the member path stays off the
+// upload/gateway frames (the stack bound) and cannot recurse into dispatch_mesh_upload.
+static int ws_reply_relayed(const uint8_t *msg, size_t len) {
+  int n = 0;
+  if (ws_reply_pre(msg, len, &n)) return n;
+  return ws_reply_tail(msg, len);
+}
+#endif
 
 // The kiosk lock gate (kiosk_ffi.rs), ahead of EVERY handler (OTA and sharded uploads
 // included): 0 = handle the message, >0 = a kiosk_locked error reply is in tx.
@@ -1931,6 +2060,7 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // compute the reply into the shared tx, and hand back a pointer to it.
 static bool live_post(const uint8_t *in, size_t len);  // the live-move mailbox (below)
 static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply);
+static int dispatch_relayed(const uint8_t *in, size_t len, const uint8_t **reply);
 // The mesh gateway (netstack_transport.cpp, mesh M5).
 extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uint8_t *out, size_t cap,
                                const uint8_t **inner, uint32_t *inner_len);
@@ -1990,10 +2120,28 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   return n;
 }
 
+// A mesh_send reassembled from UploadChunk windows (mesh M6: an effect for the whole mesh,
+// sharded like any big effect upload): the kiosk gate, then the gateway, as lm_ws_dispatch.
+static int dispatch_mesh_upload(const uint8_t *msg, size_t len) {
+  int g = kiosk_gate(msg, len);
+  if (g > 0) return g;
+  const uint8_t *inner = nullptr;
+  uint32_t inner_len = 0;
+  int32_t r = lm_mesh_app(g_kiosk_src, msg, len, tx, sizeof tx, &inner, &inner_len);
+  if (r >= 0) return r;
+  if (r == -3) {
+    const uint8_t *reply = nullptr;
+    int n = dispatch_relayed(inner, inner_len, &reply);
+    lm_mesh_app_done(n < 0 || (n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmErrorReply) ? 1 : 0);
+    return n;
+  }
+  return dispatch_plain(msg, len);
+}
+
 // Everything after the kiosk gate (and the mesh arms): the live mailbox, or the shared handler.
-static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) {
-  // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
-  // now — never wait behind a render frame for the player mutex (lm_live_post).
+// A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack now —
+// never wait behind a render frame for the player mutex (lm_live_post). True if it was one.
+static bool live_gated(const uint8_t *in, size_t len, const uint8_t **reply, int *out) {
   if (live_post(in, len)) {
     fx_live_at = millis();
     int a = lm_take_control_ack(tx, sizeof tx);
@@ -2003,14 +2151,31 @@ static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) 
       g_tr_cur->flags |= 1;
     }
 #endif
+    *out = 0;
     if (a > 0) {
       g_reply_droppable = true;
       *reply = tx;
-      return a;
+      *out = a;
     }
-    return 0;
+    return true;
   }
-  int n = ws_compute_reply_body(in, len);
+  return false;
+}
+
+static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) {
+  int n = 0;
+  if (live_gated(in, len, reply, &n)) return n;
+  n = ws_compute_reply_body(in, len);
+  *reply = tx;
+  return n;
+}
+
+// dispatch_gated for a frame relayed over the mesh (or a reassembled mesh_send's inner):
+// never a sharded upload (ws_reply_relayed).
+static int dispatch_relayed(const uint8_t *in, size_t len, const uint8_t **reply) {
+  int n = 0;
+  if (live_gated(in, len, reply, &n)) return n;
+  n = ws_reply_relayed(in, len);
   *reply = tx;
   return n;
 }
@@ -2025,7 +2190,7 @@ extern "C" int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint
   *code = 0;
   const uint8_t *reply = nullptr;
   g_kiosk_src = LM_KIOSK_SRC_INTERNAL;
-  int n = dispatch_gated(in, len, &reply);
+  int n = dispatch_relayed(in, len, &reply);
   g_kiosk_src = LM_KIOSK_SRC_WSS;
   g_reply_droppable = false;
   if (n < 0) {
@@ -2499,7 +2664,14 @@ static uint32_t render_once() {
     int64_t sched_k;
     int64_t sched_us = esp_timer_get_time();
     uint32_t sched_bits = lm_sched_apply(grid_sched_ms(sched_us, &sched_k));
+    // A shared effect due on this frame (mesh M6): loaded here, on the mesh's tick stack.
+    if ((sched_bits & 8) && lm_mesh_on_tick_stack) sched_bits |= lm_mesh_on_tick_stack(lm_fx_staged_apply);
     if (sched_bits & 2) poll_brightness();
+    // A shared effect (mesh M6) loaded on this frame: the mesh_effect HITL's observable
+    // (every member logs the same grid frame k) and the load's cost on this frame.
+    if (sched_bits & 4)
+      Log().printf("[mesh] fx applied us=%lld k=%lld ms=%lld load_us=%lld\n", (long long)sched_us, (long long)sched_k,
+                   (long long)millis(), (long long)(esp_timer_get_time() - sched_us));
 #if defined(LM_MESH_DEVKEY)
     // The mesh_apply_at_skew HITL's observable: when this frame applied a scheduled change.
     if (sched_bits & 1)

@@ -33,6 +33,7 @@
 
 pub mod admin;
 pub mod backhaul;
+pub mod blob;
 pub mod codec;
 pub mod crypto;
 pub mod envelope;
