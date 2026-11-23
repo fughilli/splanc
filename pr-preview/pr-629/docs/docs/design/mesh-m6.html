@@ -525,6 +525,45 @@ gateway (unicast over the mesh).</p></li>
 reset, JIT build); <code class="docutils literal notranslate"><span class="pre">[mesh]</span> <span class="pre">fx</span> <span class="pre">applied</span> <span class="pre">load_us=</span></code> reports it.</p></li>
 </ul>
 </section>
+<section id="follow-up-effect-uploads-reassembled-in-ram-desk-d-464">
+<h2>Follow-up: effect uploads reassembled in RAM (desk D-464)<a class="headerlink" href="#follow-up-effect-uploads-reassembled-in-ram-desk-d-464" title="Link to this heading">¶</a></h2>
+<p>The sharded upload path appended every window of a kind-EFFECT upload to <code class="docutils literal notranslate"><span class="pre">/lfs/upload.tmp</span></code>
+(r4: 20 late frames on the gateway, all next to those writes). The netstack player now
+reassembles EFFECT windows in one 4.5 KiB heap block (held only while they arrive) and
+dispatches the frame from it. Runs r7 and r8 (2026-11-22, hitl-rig-1, <code class="docutils literal notranslate"><span class="pre">--ble</span></code>):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head"><p>r7 / r8</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Gateway late frames next to flash writes, whole run</p></td>
+<td><p><strong>2 / 3</strong> (r4: 20): only its membership write at the first join and the shared effect’s persisted copy after a switch; none during an upload (6 RAM uploads each run)</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>BLE end to end</strong> (the rig’s adapter as the phone on BLE, the wss client still connected): unlock over BLE, a 2.9 KB effect as 1 KB windows</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">welcome</span></code>, unlock OK, <code class="docutils literal notranslate"><span class="pre">chunk_ack</span></code> ×2, <strong><code class="docutils literal notranslate"><span class="pre">result_ready</span></code></strong>, the <code class="docutils literal notranslate"><span class="pre">mesh.result</span></code>; <strong>all three run it</strong>, the same grid frame, spread 0.27 / 1.06 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>Gateway heap during the BLE + wss session</p></td>
+<td><p>lowest free <strong>35 588 B</strong> (r8; r7 37 384 B) with the RAM upload block in use; the since-boot minimum stays <strong>20 832 B</strong> (set at <code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">ON</span></code>, as before)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Share rounds (8, as before)</p></td>
+<td><p>8/8 every member OK and running, spread 0.25–1.15 ms, submit to all 0.58–1.05 s</p></td>
+</tr>
+<tr class="row-even"><td><p>Late joiner / reboot</p></td>
+<td><p>caught up 5.7 s / 1.5 s (no reload)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Members show 20–24 late frames (16–25 ms intervals) whenever the harness opens a wss
+connection to them to check what they run: the TLS server handshake’s ECDHE shares the CPU
+with an effect running near its frame budget. That is the app connecting to a fixture, not
+the mesh; the gate reports it (<code class="docutils literal notranslate"><span class="pre">tls</span></code>) and does not count it (desk item).</p>
+<p>Flash: the default image is 2 284 240 B (+1 184 B over #614), layout_test headroom 9 520 B;
+loopTask stack bound 9 360 B (12 020 B with margin, of 12 288 B).</p>
+</section>
 </section>
 
         </article>
@@ -577,6 +616,7 @@ reset, JIT build); <code class="docutils literal notranslate"><span class="pre">
 </li>
 <li><a class="reference internal" href="#cost">Cost</a></li>
 <li><a class="reference internal" href="#open">Open</a></li>
+<li><a class="reference internal" href="#follow-up-effect-uploads-reassembled-in-ram-desk-d-464">Follow-up: effect uploads reassembled in RAM (desk D-464)</a></li>
 </ul>
 </li>
 </ul>
