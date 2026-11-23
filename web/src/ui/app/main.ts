@@ -48,6 +48,7 @@ import { NewFixtureScreen } from "../screens/newFixture";
 import { installNewFixtureWatch } from "./newFixtureWatch";
 import { AboutScreen } from "../screens/about";
 import { CreditsFlowScreen } from "../screens/creditsFlow";
+import { MeshFlowScreen } from "../screens/meshFlow";
 import { warmActiveProvider } from "../../effects/ai/generate";
 import { refreshFreeTierLimit } from "../../effects/ai/tiers";
 import { AcidModeScreen } from "../screens/acidMode";
@@ -245,6 +246,17 @@ async function main(): Promise<void> {
       // Coming back from Stripe: no app-bar Back (it would return to Stripe).
       shell.setChrome({ title: "Splanc AI credits", back: mode !== "return", tabs: false });
       return CreditsFlowScreen(router, known ? mode : "buy");
+    })
+    .add("/mesh/new", (m) => {
+      // The dedicated "Create a mesh" flow (mesh M7; one step per screen).
+      shell.setChrome({ title: "Create a mesh", back: true, tabs: false });
+      const from = m.query.get("from");
+      return MeshFlowScreen(router, "new", from ? { from } : {});
+    })
+    .add("/mesh/add/:id", (m) => {
+      shell.setChrome({ title: "Add to mesh", back: true, tabs: false });
+      const from = m.query.get("from");
+      return MeshFlowScreen(router, "add", { meshId: Number(m.params["id"]) >>> 0, ...(from ? { from } : {}) });
     })
     .add("/room", () => {
       shell.setChrome({ title: "Localize room", back: true, tabs: false });
