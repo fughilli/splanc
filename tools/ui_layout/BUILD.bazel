@@ -25,7 +25,7 @@ py_binary(
         "oobe_scenarios.py",
         "ui_layout_check.py",
     ],
-    data = ["//web:dist"],
+    data = ["//web:ios_payload"],  # the app + its wasm (the editor compiles)
     main = "ui_layout_check.py",
     deps = [
         ":layout_guard",

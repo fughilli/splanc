@@ -699,7 +699,8 @@ body.is-locked {
   display: grid;
   grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr) 3.6rem;
   column-gap: var(--sp-2);
-  row-gap: 6px;
+  /* The value fields stack one row apart: >= 8 px between them (no crammed controls). */
+  row-gap: var(--sp-2);
   align-items: center;
   width: 100%;
 }
@@ -780,7 +781,7 @@ body.is-locked {
 .upanel-mat {
   grid-column: 2 / span 2;
   display: grid;
-  gap: 2px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .upanel-num::-webkit-outer-spin-button,
