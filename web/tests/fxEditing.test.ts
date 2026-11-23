@@ -127,6 +127,14 @@ test("diagnostic spans cover the token, or the last token before a gap", () => {
   assert.deepEqual(diagSpan(src, 3, 1), { from: 28, to: 29 });
 });
 
+test("a name quoted in the message anchors the span (the compiler reports just after it)", () => {
+  const src = "    return vec3(t, 0.0, bogus);";
+  // col 30 is the `)` after `bogus`.
+  assert.deepEqual(diagSpan(src, 1, 30, "unknown identifier 'bogus'"), { from: 24, to: 29 });
+  // Not on the line: fall back to the token at the column.
+  assert.deepEqual(diagSpan(src, 1, 30, "unknown identifier 'zzz'"), { from: 29, to: 30 });
+});
+
 test("the diagnostics layer keeps the text and marks the line + span", () => {
   const src = "a < b;\nok;\nwarn;";
   const html = diagnosticsHtml(src, [

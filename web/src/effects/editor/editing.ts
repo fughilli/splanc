@@ -223,8 +223,15 @@ const isWord = (c: string | undefined): boolean => c !== undefined && /[A-Za-z0-
  * operator, or one punctuation char). A position on whitespace or past the end
  * of its line (an "expected `;`" at end of line) underlines the last token
  * before it instead, so there is always something visible to hover.
+ *
+ * The compiler often reports the position just AFTER the offending name
+ * (`unknown identifier 'bogus'` points at the `)` that follows it), so when
+ * `msg` quotes an identifier that occurs on the line, the occurrence nearest
+ * before the column wins.
  */
-export function diagSpan(src: string, line: number, col: number): { from: number; to: number } {
+export function diagSpan(src: string, line: number, col: number, msg = ""): { from: number; to: number } {
+  const named = quotedName(src, line, col, msg);
+  if (named) return named;
   let p = offsetOf(src, line, col);
   if (p >= src.length || /\s/.test(src[p]!)) {
     let q = p - 1;
@@ -243,6 +250,23 @@ export function diagSpan(src: string, line: number, col: number): { from: number
   const two = src.slice(p, p + 2);
   if (["==", "!=", "<=", ">=", "&&", "||", "..", "+=", "-=", "*=", "/="].includes(two)) return { from: p, to: p + 2 };
   return { from: p, to: p + 1 };
+}
+
+/** The span of an identifier quoted in `msg` ('x' or `x`) on `line`: the last
+ * whole-word occurrence starting before `col`, else the first one on the line. */
+function quotedName(src: string, line: number, col: number, msg: string): { from: number; to: number } | null {
+  const m = /['`]([A-Za-z_][A-Za-z0-9_]*)['`]/.exec(msg);
+  if (!m) return null;
+  const name = m[1]!;
+  const ls = offsetOf(src, line, 1);
+  const text = src.slice(ls, lineEndOf(src, ls));
+  const re = new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "g");
+  let best = -1;
+  for (let r = re.exec(text); r; r = re.exec(text)) {
+    if (best < 0 || r.index < col - 1) best = r.index;
+    if (r.index >= col - 1) break;
+  }
+  return best < 0 ? null : { from: ls + best, to: ls + best + name.length };
 }
 
 /** A compiler diagnostic with the severity the editor draws it at. */
@@ -270,7 +294,7 @@ export function diagnosticsHtml(src: string, marks: readonly Mark[]): string {
   const spans: { from: number; to: number; i: number; sev: Mark["severity"] }[] = [];
   const lineSev = new Map<number, Mark["severity"]>();
   for (const { m, i } of order) {
-    const sp = diagSpan(src, m.line, m.col);
+    const sp = diagSpan(src, m.line, m.col, m.msg);
     if (spans.some((s) => sp.from < s.to && s.from < sp.to)) continue;
     spans.push({ ...sp, i, sev: m.severity });
     const row = rowColAt(src, sp.from).row;

@@ -1345,7 +1345,9 @@ body.is-locked {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 0.35rem 0.8rem;
+  /* 8px above the row: its budget toggle keeps the no-crammed-controls gap
+   * from the code textarea right above it. */
+  padding: 0.5rem 0.8rem 0.35rem;
   font: 12px/1.4 ui-monospace, monospace;
   border-top: 1px solid var(--border);
   background: var(--surface-2);
@@ -1393,7 +1395,7 @@ body.is-locked {
   justify-content: center;
   width: 20px;
   height: 20px;
-  margin: -2px -4px -2px 0;
+  margin: 0 -4px -2px 0;
   padding: 0;
   background: none;
   border: 0;
