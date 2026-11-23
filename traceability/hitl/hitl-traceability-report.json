@@ -8,9 +8,9 @@
   "summary": {
     "user_needs": 9,
     "user_needs_validated": 0,
-    "requirements": 40,
+    "requirements": 41,
     "requirements_verified": 6,
-    "requirements_under_verified": 0,
+    "requirements_under_verified": 1,
     "requirements_partial": 0,
     "requirements_failed": 0,
     "requirements_unverified": 34,
@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 37,
-    "gaps": 43
+    "test_cases": 38,
+    "gaps": 44
   },
   "levels": [
     {
@@ -121,7 +121,7 @@
     {
       "id": "UN-6",
       "title": "Acceptable quality and predictable performance on device",
-      "status": "UNVALIDATED",
+      "status": "PARTIAL",
       "description": "Users need acceptable visual quality and predictable runtime performance on constrained device hardware.",
       "requirements": [
         "PR-17",
@@ -132,7 +132,8 @@
         "PR-28",
         "PR-33",
         "PR-34",
-        "PR-40"
+        "PR-40",
+        "PR-41"
       ]
     },
     {
@@ -169,10 +170,11 @@
     {
       "id": "UN-9",
       "title": "Lights stay smooth while the system works in the background",
-      "status": "UNVALIDATED",
+      "status": "PARTIAL",
       "description": "Users need the lights to keep animating smoothly, without a visible stutter, freeze or frame-rate dip, while the system does its own work: unlocking, admitting or removing fixtures, re-keying a mesh, connecting clients or saving settings. Security and housekeeping are invisible on the lights.",
       "requirements": [
-        "PR-40"
+        "PR-40",
+        "PR-41"
       ]
     }
   ],
@@ -986,6 +988,34 @@
         "firmware",
         "pi/hitl"
       ]
+    },
+    {
+      "id": "PR-41",
+      "title": "Flash writes never stall the render task",
+      "status": "UNDER-VERIFIED",
+      "description": "Persisting state (membership, maps, effects and their uniforms, the effect store, keypoints, color correction, settings) shall not delay a rendered frame: on flash that supports it, erase and program operations are auto-suspended so code keeps running from flash while they proceed, and no message handler holds the lock the render task takes per frame while it writes the flash. Verified on HITL: no late frame (a render-start interval over 1.5 frame periods) while those writers run (//pi/hitl/harness:flash_render_netstack, mesh_join_admin). Desk D-459, 2026-11-22.",
+      "evidence": [
+        {
+          "name": "//pi/hitl/harness:flash_render_netstack",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/harness:flash_render_netstack",
+          "kind": "target"
+        }
+      ],
+      "demanded_level": "hitl",
+      "provided_level": "simulation",
+      "satisfies": [
+        "UN-9",
+        "UN-6"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hitl",
+      "modules": [
+        "firmware",
+        "pi/hitl"
+      ]
     }
   ],
   "mitigations": [
@@ -1620,6 +1650,14 @@
       "message": "no test evidence",
       "route": "human-gate",
       "demanded_level": "hitl"
+    },
+    {
+      "kind": "under-verified",
+      "entity": "PR-41",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
     },
     {
       "kind": "high-risk-open",
