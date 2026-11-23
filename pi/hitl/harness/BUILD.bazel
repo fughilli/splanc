@@ -145,6 +145,7 @@ py_library(
         "effect_store_core.py",
         "flash_render_core.py",
         "frontend_relay_core.py",
+        "ftm_spike_core.py",
         "fx_bench_core.py",
         "fx_debug_core.py",
         "hardware_config_pattern.py",
@@ -2108,6 +2109,37 @@ py_binary(
         ":harness",
         "@rules_python//python/runfiles",
     ],
+)
+
+# FTM spike (docs/design/mesh-ftm.md): FTM-style ranging between two C6s from the MAC's fine
+# timestamps, on the mesh spike image. Manual; prints raw stamps, ftm_analyze.py reduces them.
+py_binary(
+    name = "ftm_spike",
+    srcs = [
+        "hitl_ftm_spike.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "mesh_serial_bridge.py",
+        "//firmware/player_app:esp32c6_netstack_meshspike_flashbundle",
+    ],
+    env = {"HITL_SKU": "esp32c6"},
+    imports = ["."],
+    main = "hitl_ftm_spike.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+py_binary(
+    name = "ftm_analyze",
+    srcs = ["ftm_analyze.py"],
+    imports = ["."],
+    main = "ftm_analyze.py",
+    tags = ["manual"],
+    deps = [":harness"],
 )
 
 py_binary(
