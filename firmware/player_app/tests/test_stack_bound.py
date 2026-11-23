@@ -23,6 +23,10 @@ class StackBoundTest(unittest.TestCase):
     def setUpClass(cls):
         with open(runfile("_main/firmware/player_app/stack_bound.json")) as f:
             cls.manifest = json.load(f)
+        # Another image's roots (ROOTS, e.g. the front end's) over the same edges and allowances.
+        if os.environ.get("ROOTS"):
+            with open(runfile(os.environ["ROOTS"])) as f:
+                cls.manifest["roots"] = json.load(f)["roots"]
         dis = stack_bound.objdump(runfile(os.environ["OBJDUMP"]), runfile(os.environ["ELF"]))
         cls.b = stack_bound.Bound(stack_bound.parse(dis), cls.manifest)
         cls.results = {r["name"]: (r, cls.b.depth(r["symbol"])) for r in cls.manifest["roots"]}

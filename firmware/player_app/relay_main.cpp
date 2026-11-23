@@ -9,7 +9,14 @@
 //   - the device's identity (its MAC and name: BLE and mDNS advertise them; the P4 takes
 //     them over the link so its Welcome names the device the app found);
 //   - get_tls_info (the TLS identity is this chip's);
-//   - this image's own OTA hooks (ota_app.cpp: crash-loop guard, health check).
+//   - this image's own OTA hooks (ota_app.cpp: crash-loop guard, health check);
+//   - the mesh layer (docs/design/mesh.md §8.2, mesh_glue.h; off until this fixture joins a
+//     mesh): the C6 is the mesh node, the P4 the endpoint. The membership and the frame
+//     counter live in /lfs here; get_mesh / mesh_admin are answered here; a control the mesh
+//     relays to this fixture goes to the P4 (LK_MESH) and its result back to the mesh; the
+//     P4's HEARTBEAT carries the status this member broadcasts. Mesh time on the P4's render
+//     clock, effect sharing (M6) and the gateway's mesh_send are the next step: until then
+//     the P4 answers mesh_send itself (error{unsupported}).
 // Every other player message goes to the P4 as link frames over the SDIO slave
 // (frontend_link.cpp) and its reply comes back the same way. While the P4 is down the
 // answer is error{player_unavailable}: there is no second player core here to answer from.
@@ -37,6 +44,8 @@
 #include "firmware/player_app/ota_app.h"
 #include "firmware/player_app/player_ffi.h"  // the Wi-Fi policy types (wifi_ffi.rs)
 #include "firmware/player_app/serial_log.h"
+#include "firmware/p4/link/link_codec.h"
+#include "flash_suspend/lm_flash_suspend.h"
 #include "frontend_link.h"
 #include "improv_ble.h"
 #include "netstack_transport.h"
@@ -48,6 +57,12 @@ int32_t lm_relay_device_name(const uint8_t *frame, size_t len, uint8_t *out, siz
 int32_t lm_relay_local(const uint8_t *frame, size_t len, uint8_t *out, size_t cap);
 void lm_relay_set_identity(const char *mac, const char *name, const char *fw, const char *tls_state);
 }
+
+// The mesh (netstack_transport.cpp / mesh_glue.h), as main.cpp declares them.
+extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uint8_t *out, size_t cap,
+                               const uint8_t **inner, uint32_t *inner_len);
+extern "C" void lm_mesh_sessions(uint32_t ws, uint32_t ble);
+extern "C" uint32_t lm_mesh_report_line(uint32_t what, uint32_t idx, char *out, uint32_t cap);
 
 // The netstack's loop with mbedtls nested inside a TLS write, plus the relay's own frames
 // (none large: no player core). The player's 12 KB bound holds with room to spare.
@@ -71,6 +86,9 @@ constexpr int32_t kArmGetTlsInfo = 45;
 constexpr int32_t kArmOtaBegin = 70;
 constexpr int32_t kArmGetOtaStatus = 74;
 constexpr int32_t kArmOtaReboot = 75;
+// The mesh's own arms (mesh_gw.rs): this chip runs the mesh layer.
+constexpr int32_t kArmGetMesh = 100;
+constexpr int32_t kArmMeshAdmin = 101;
 
 Preferences g_prefs;
 bool g_fs_ok = false;
@@ -91,7 +109,7 @@ char g_cert_sha[65] = "";
 bool g_tls_persisted = false;
 
 struct {
-  uint32_t forwarded, unavailable, local;
+  uint32_t forwarded, unavailable, local, mesh_app, mesh_ctl, mesh_ctl_failed;
 } g_stats;
 // The lowest free internal heap seen since the last status line (sampled every loop).
 uint32_t g_heap_window_min = UINT32_MAX;
@@ -115,6 +133,135 @@ void apply_rename(const uint8_t *msg, size_t len) {
   Log().printf("[relay] renamed to \"%s\"\n", g_name);
 }
 
+// -- the mesh (mesh_glue.h's hooks; main.cpp has the player's) ----------------------------
+
+// The mesh's gateway sessions are per connection, kiosk-source numbered (1 = wss, 2 = BLE;
+// player_ffi.h), as on the players, which serve one wss client. This front end serves
+// LM_WSS_SESSIONS: the wss session that last used a mesh arm owns connection 1, and another
+// session taking it over first ends whatever session (an admin unlock) the owner held, so
+// one client never rides another's unlock.
+uint16_t g_mesh_ws_owner = 0;
+bool g_mesh_ws_closed = false;  // the owner's session ended (netstack_session_closed)
+void (*g_session_closed_next)(uint16_t) = nullptr;
+
+void poll_mesh_sessions() {
+  if (g_mesh_ws_closed) {
+    g_mesh_ws_closed = false;
+    g_mesh_ws_owner = 0;
+  }
+  lm_mesh_sessions(g_mesh_ws_owner != 0, improv_ble_central_connected());
+}
+
+// get_mesh / mesh_admin: the reply's length in tx, or -1 when the mesh layer passes on it.
+int mesh_app(uint16_t session, const uint8_t *msg, size_t len) {
+  uint32_t conn = LM_KIOSK_SRC_BLE;
+  if (session != kBleSession) {
+    conn = LM_KIOSK_SRC_WSS;
+    if (session != g_mesh_ws_owner) {
+      if (g_mesh_ws_owner != 0) lm_mesh_sessions(0, improv_ble_central_connected());
+      g_mesh_ws_owner = session;
+      g_mesh_ws_closed = false;
+      lm_mesh_sessions(1, improv_ble_central_connected());
+    }
+  }
+  const uint8_t *inner = nullptr;
+  uint32_t inner_len = 0;
+  const int32_t r = lm_mesh_app(conn, msg, len, tx, sizeof tx, &inner, &inner_len);
+  // -3 (dispatch an inner here too) is mesh_send's, which this front end doesn't route yet.
+  return r >= 0 ? (int)r : -1;
+}
+
+}  // namespace
+
+// The relayed control for this fixture (after the mesh tick, loopTask): the P4 is the
+// player, so it goes over the link and the mesh gets the P4's result. A P4 that is down or
+// silent fails it with a kMeshP4* code (frontend_link.h); the gateway reports it missing.
+extern "C" int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint32_t *code) {
+  *code = 0;
+  g_stats.mesh_ctl++;
+  const int st = frontend_forward_mesh(in, len, code, 1000);
+  if (st != 0) g_stats.mesh_ctl_failed++;
+  return st;
+}
+
+// A finished mesh_send result to its connection (unused until the gateway's mesh_send is
+// routed here; kept so the contract is whole).
+extern "C" void lm_mesh_push(uint32_t conn, uint8_t *frame, uint32_t len) {
+  if (conn == LM_KIOSK_SRC_BLE) {
+    if (improv_ble_central_connected()) player_ble_push(frame, len);
+  } else if (g_mesh_ws_owner != 0) {
+    netstack_ws_send_to(g_mesh_ws_owner, frame, len);
+  }
+}
+
+// What this member broadcasts: the P4's player status from its HEARTBEAT (0s while the P4
+// is down: the gateway lists the fixture with fps 0).
+extern "C" void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_t *firmware) {
+  if (!frontend_p4_status(fps, brightness, firmware)) *fps = *brightness = *firmware = 0;
+}
+
+// Background mesh work (the tick, session crypto) runs below the render task on a player
+// (PR-40). Nothing renders here: loopTask keeps its priority.
+extern "C" uint32_t lm_prio_below_render() { return (uint32_t)uxTaskPriorityGet(nullptr); }
+extern "C" void lm_prio_restore(uint32_t) {}
+
+// The mesh's console lines for the P4's console ("[c6] [mesh] ..."): this chip's console
+// isn't wired on the P4 boards.
+extern "C" void lm_mesh_console_tee(const char *line) { frontend_link_log(line); }
+
+// The show epoch (mesh time, M4) mapped onto the player's time base: the P4's render clock
+// is the next step (the C6<->P4 clock offset, docs/design/mesh.md §10.2). Until then the
+// mapped time base is kept here, so the mesh layer's reconciliation is consistent, and the
+// P4 renders on its own clock (no frame alignment across members).
+namespace {
+int64_t g_tb_ms = 0;
+bool g_tb_set = false;
+bool g_tb_align = false;
+}  // namespace
+extern "C" int32_t lm_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t) {
+  switch (op) {
+    case 0:
+      *epoch_ms = g_tb_ms;
+      return g_tb_set ? 1 : 0;
+    case 1:
+      g_tb_ms = *epoch_ms;
+      g_tb_set = true;
+      return 1;
+    case 2:
+      g_tb_ms = 0;
+      g_tb_set = false;
+      return 1;
+    case 3:
+      g_tb_align = *epoch_ms != 0;
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+// Effect sharing (mesh M6, mesh_blob.rs) is the next step: the effect frames are the P4's.
+// Until then this member holds no effect file, stages nothing (a shared effect then loads
+// at once, through lm_mesh_member_dispatch, i.e. on the P4), and has no deck B or scene to
+// hand a catch-up. lm_fx_check_effect answers for the gateway's share, never reached here.
+extern "C" uint32_t lm_mesh_effect_file(uint8_t *, uint32_t) { return 0; }
+extern "C" int32_t lm_mesh_stage(const uint8_t *, uint32_t, uint32_t, const uint8_t **replaced) {
+  *replaced = nullptr;
+  return 0;  // "its time has passed": loaded now, through the dispatch
+}
+extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame) {
+  *frame = nullptr;
+  return 0;
+}
+extern "C" void lm_mesh_staged_cancel() {}
+extern "C" int32_t lm_mesh_scene_frames(uint8_t *, uint32_t) { return 0; }
+extern "C" const uint8_t *lm_mesh_deckb_frame(uint32_t *len) {
+  *len = 0;
+  return nullptr;
+}
+extern "C" uint32_t lm_fx_check_effect(const uint8_t *, size_t) { return 1; }
+
+namespace {
+
 // One player message from wss session `session` (or the BLE central): the reply's length
 // in tx, 0 for none, or -1 to drop the session (the client resumes).
 int handle(uint16_t session, const uint8_t *msg, size_t len) {
@@ -130,6 +277,20 @@ int handle(uint16_t session, const uint8_t *msg, size_t len) {
     if (n != -1) {
       g_stats.local++;
       return n > 0 ? (int)n : -1;
+    }
+  }
+  // The mesh's membership and listing are this chip's: the mesh layer runs here. A kiosk
+  // (the P4's player state) refuses them, as a locked C6 player's kiosk gate does; the
+  // owner turns the kiosk off to administer the mesh (no per-session kiosk unlock here yet).
+  if (arm == kArmGetMesh || arm == kArmMeshAdmin) {
+    if (frontend_p4_kiosk()) {
+      g_stats.local++;
+      return reply_error("kiosk_locked", "not available while the kiosk is on (turn kiosk mode off first)");
+    }
+    const int n = mesh_app(session, msg, len);
+    if (n >= 0) {
+      g_stats.mesh_app++;
+      return n;
     }
   }
   // Firmware updates are the P4's (ota_p4.cpp, docs/design/p4-c6-split.md §5.1): its
@@ -162,20 +323,15 @@ int handle(uint16_t session, const uint8_t *msg, size_t len) {
 
 // -- littlefs (the TLS identity lives there) -------------------------------------------
 
-size_t tls_store_read(uint8_t *buf, size_t cap) {
-  FILE *f = fopen(kTlsIdentityPath, "rb");
-  if (f == nullptr) return 0;
-  setvbuf(f, nullptr, _IONBF, 0);
-  size_t n = fread(buf, 1, cap, f);
-  fclose(f);
-  return n;
-}
+size_t fs_read_file(const char *path, uint8_t *buf, size_t cap);
+size_t tls_store_read(uint8_t *buf, size_t cap) { return fs_read_file(kTlsIdentityPath, buf, cap); }
 
 // Temp + fsync + rename, as the player (main.cpp fs_write_file): a reset mid-write leaves
-// the previous identity or the new one, never a torn file.
-bool tls_store_write(const uint8_t *buf, size_t len) {
+// the previous file or the new one, never a torn one.
+bool fs_write_file(const char *path, const uint8_t *buf, size_t len) {
+  if (!g_fs_ok) return false;
   char tmp[64];
-  snprintf(tmp, sizeof tmp, "%s.tmp", kTlsIdentityPath);
+  snprintf(tmp, sizeof tmp, "%s.tmp", path);
   FILE *f = fopen(tmp, "wb");
   if (f == nullptr) return false;
   setvbuf(f, nullptr, _IONBF, 0);
@@ -185,10 +341,63 @@ bool tls_store_write(const uint8_t *buf, size_t len) {
     remove(tmp);
     return false;
   }
-  return rename(tmp, kTlsIdentityPath) == 0;
+  return rename(tmp, path) == 0;
 }
 
+// Read up to `cap` bytes of `path`: the count, 0 when it is missing (or littlefs is down).
+size_t fs_read_file(const char *path, uint8_t *buf, size_t cap) {
+  if (!g_fs_ok) return 0;
+  FILE *f = fopen(path, "rb");
+  if (f == nullptr) return 0;
+  setvbuf(f, nullptr, _IONBF, 0);
+  size_t n = fread(buf, 1, cap, f);
+  fclose(f);
+  return n;
+}
+
+bool tls_store_write(const uint8_t *buf, size_t len) { return fs_write_file(kTlsIdentityPath, buf, len); }
+
 const DeviceCertStore kTlsStore = {tls_store_read, tls_store_write};
+
+// The mesh's two files, as the player keeps them (main.cpp): the frame counter's high-water
+// mark (docs/design/mesh.md §7.5: persisted before a counter in its block is used, so a
+// reboot never reuses an AES-CCM nonce) and the membership (§7.2; present = in a mesh, so
+// the mesh comes on at boot). Arrays: flash, not .data pointers.
+const char kMeshCounterPath[] = "/lfs/mesh_ctr.bin";
+const char kMeshStatePath[] = "/lfs/mesh.bin";
+
+}  // namespace
+
+extern "C" uint32_t lm_mesh_counter_load(uint64_t *mark) {
+  *mark = 0;
+  uint64_t v = 0;
+  if (fs_read_file(kMeshCounterPath, reinterpret_cast<uint8_t *>(&v), sizeof v) != sizeof v) return 0;
+  *mark = v;
+  return 1;
+}
+
+extern "C" uint32_t lm_mesh_counter_store(uint64_t mark) {
+  return fs_write_file(kMeshCounterPath, reinterpret_cast<const uint8_t *>(&mark), sizeof mark) ? 1 : 0;
+}
+
+extern "C" uint32_t lm_mesh_state_load(uint8_t *buf, uint32_t cap) {
+  return (uint32_t)fs_read_file(kMeshStatePath, buf, cap);
+}
+
+// store(nullptr, 0) erases it (leave, eject): 1 once it is gone.
+extern "C" uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) {
+  if (buf == nullptr || len == 0) {
+    if (!g_fs_ok) return 0;
+    remove(kMeshStatePath);
+    FILE *f = fopen(kMeshStatePath, "rb");
+    if (f == nullptr) return 1;
+    fclose(f);
+    return 0;
+  }
+  return fs_write_file(kMeshStatePath, buf, len) ? 1 : 0;
+}
+
+namespace {
 
 bool fs_mount() {
   esp_vfs_littlefs_conf_t conf = {};
@@ -347,6 +556,23 @@ void log_status() {
     return h ? (unsigned)uxTaskGetStackHighWaterMark(h) : 0u;
   };
   Log().printf("[stack] free loopTask=%u logdrain=%u\n", stk_free("loopTask"), stk_free("logdrain"));
+  // The mesh, for the P4's console (MESH INFO, every other line: the C6's own console isn't
+  // wired on the P4 boards). Nothing while it is off.
+  static uint32_t passes = 0;
+  if (passes++ % 2 == 0) {
+    char info[640];
+    for (uint32_t i = 0; i < 8 && lm_mesh_report_line(0, i, info, sizeof info - 1); i++) {
+      strcat(info, "\n");
+      Log().print(info);
+      frontend_link_log(info);
+    }
+    if (g_stats.mesh_app || g_stats.mesh_ctl) {
+      snprintf(line, sizeof line, "[relay] mesh app=%u ctl=%u ctl_failed=%u\n", (unsigned)g_stats.mesh_app,
+               (unsigned)g_stats.mesh_ctl, (unsigned)g_stats.mesh_ctl_failed);
+      Log().print(line);
+      frontend_link_log(line);
+    }
+  }
 }
 
 }  // namespace
@@ -466,12 +692,28 @@ void setup() {
   // console never stalls the loop.
   Serial.setTxTimeoutMs(100);
   log_drain_start();
+  // Flash auto-suspend (D-459) before anything writes the flash: a littlefs erase (the mesh
+  // state, the TLS identity) then never stalls the SDIO slave or the netstack (code keeps
+  // running from flash). Only on the flash it was measured on; the stock lock otherwise.
+  uint32_t jedec = 0;
+  const int fsus = lm_flash_auto_suspend_enable(&jedec);
+  // This front end runs the mesh layer: the P4's Welcome says "mesh" (LK_FE_MESH).
+  frontend_link_set_features(LK_FE_MESH);
   // The SDIO slave first: the P4 probes for this front end as soon as it boots.
   frontend_link_begin();
+  // The mesh's wss connection ends with its owner's session (mesh_app); the link's own
+  // handler (LK_OP_RESET to the P4) runs first.
+  g_session_closed_next = netstack_session_closed;
+  netstack_session_closed = [](uint16_t session) {
+    if (g_session_closed_next) g_session_closed_next(session);
+    if (session == g_mesh_ws_owner) g_mesh_ws_closed = true;
+  };
   Log().printf("[boot] reset_reason=%d relay %s (%s%s)\n", (int)esp_reset_reason(), LM_VERSION,
                LM_GIT_COMMIT_SHORT, LM_GIT_DIRTY ? "-dirty" : "");
   // OTA (docs/design/ota.md): crash-loop guard + the health deadline of a fresh install.
   ota_app_boot();
+  Log().printf("[flash] auto-suspend %s jedec=%06lx\n", fsus == LM_FLASH_SUSPEND_ON ? "on" : "off",
+               (unsigned long)jedec);
   g_fs_ok = fs_mount();
   if (!g_fs_ok) Log().printf("[relay] littlefs mount failed: the TLS identity is RAM-only\n");
   g_prefs.begin("ledmapper");
@@ -497,6 +739,7 @@ void loop() {
   }
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatches here)
   frontend_link_poll();
+  poll_mesh_sessions();
   poll_wifi_policy();
   {
     // OTA health: nothing renders here, so "alive" is the loop itself. Offline / manual
