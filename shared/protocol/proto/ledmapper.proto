@@ -1340,7 +1340,37 @@ message MeshSend {
 
 // Read the mesh this fixture is in (reply: mesh.state). Also opens the gateway's admin
 // session for this connection on a mesh with no admin key (mesh M5, dev site key).
-message GetMesh {}
+message GetMesh {
+  // Also report the mesh's topology (the app's mesh map): each member's room pose, hops and
+  // radio neighbours (MeshMember.pose / hops / neighbours), and this fixture's own
+  // (MeshState.pose / neighbours). Older firmware ignores it: those fields stay empty.
+  bool topology = 1;
+  // Topology in pages (a reply is one frame): members from this index of `members` on carry
+  // it; MeshState.topology_next says where the next page starts.
+  uint32 topology_from = 2;
+}
+
+// What a mesh member knows of another's room pose (the topology, GetMesh.topology).
+enum MeshPoseState {
+  // Nothing heard yet (older firmware, or a member whose pose has not come by since this
+  // fixture started: it is re-sent at least once a minute).
+  MESH_POSE_UNKNOWN = 0;
+  // It has no room pose (not placed by room localization yet).
+  MESH_POSE_NONE = 1;
+  // `pose` holds it (translation to 1 cm, the rotation, the room name up to 16 bytes).
+  MESH_POSE_SET = 2;
+}
+
+// One radio neighbour of a mesh member (the mesh topology).
+message MeshNeighbour {
+  uint32 node = 1;
+  // Its running-average RSSI as this member hears it, dBm.
+  sint32 rssi = 2;
+  // Unicasts to it that were delivered (MAC-ACKed), percent; absent before the first.
+  optional uint32 tx_ok_pct = 3;
+  // Reserved for Wi-Fi ranging (FTM): the measured distance, metres. Not sent yet.
+  optional float range_m = 4;
+}
 
 enum MeshMemberStatus {
   MESH_MEMBER_OK = 0;
@@ -1410,6 +1440,16 @@ message MeshMember {
   // The last relayed message it refused or failed (the code), and that op's id (low 16 bits).
   uint32 last_error = 12;
   uint32 last_error_op = 13;
+  // The topology (only when GetMesh.topology asked; empty from older firmware):
+  // Mesh hops its last status took to reach this fixture (1 = a direct neighbour; 0 unknown).
+  uint32 hops = 14;
+  // Its room pose (pose_state MESH_POSE_SET); room, translation and rotation only.
+  FixturePose pose = 15;
+  // Its radio neighbours as it reported them (at most 8, strongest first).
+  repeated MeshNeighbour neighbours = 16;
+  // Since its last topology report (absent: none yet; older firmware sends none).
+  optional uint32 topology_ms_ago = 17;
+  MeshPoseState pose_state = 18;
 }
 
 message MeshState {
@@ -1453,6 +1493,12 @@ message MeshState {
   uint32 sessions_synced = 24;
   // Mesh time in seconds (what a grant's expiry is in).
   uint32 mesh_s = 25;
+  // The topology (GetMesh.topology): this fixture's own room pose and radio neighbours, and
+  // where the next page of member topology starts (0: every member's is in this reply).
+  FixturePose pose = 26;
+  repeated MeshNeighbour neighbours = 27;
+  uint32 topology_next = 28;
+  MeshPoseState pose_state = 29;
 }
 
 // The mesh gateway's replies: `result` answers mesh_send (and is pushed when its member

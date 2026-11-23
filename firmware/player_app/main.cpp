@@ -2330,6 +2330,31 @@ extern "C" void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_
   *firmware = h;
 }
 
+// The room pose for the mesh topology (mesh_glue.h, once a second, loopTask). Copied out of
+// the player core only when its pose generation moved (set_fixture_pose, the boot replay of
+// /lfs/pose.pb), on this task, which is the one that handles messages: no player_mutex, so
+// nothing new waits on the render lock.
+extern "C" int32_t lm_mesh_pose_fill(float *t, float *q, uint8_t *room, uint32_t room_cap, uint32_t *room_len) {
+  static uint32_t gen = 0;
+  static bool have = false;
+  static int32_t posed = 0;
+  static float ct[3], cq[4];
+  static uint8_t croom[17];
+  static uint32_t clen = 0;
+  const uint32_t g = lm_fixture_pose_gen();
+  if (!have || g != gen) {
+    posed = lm_fixture_pose_get(ct, cq, croom, sizeof croom, &clen);
+    gen = g;
+    have = true;
+  }
+  memcpy(t, ct, sizeof ct);
+  memcpy(q, cq, sizeof cq);
+  const uint32_t n = clen < room_cap ? clen : room_cap;
+  memcpy(room, croom, n);
+  *room_len = n;
+  return posed;
+}
+
 // The mesh gateway's sessions belong to a connection (mesh M5): when the wss session or the
 // BLE central goes away (or a new one replaces it), whatever session it held ends. The
 // edge state lives in the mesh's block (no statics while the mesh is off).

@@ -70,6 +70,8 @@ int32_t lm_mdns_announce(const uint8_t *ip, uint8_t *out, size_t cap);
 // whether the last change asked to be persisted (commit, unset = true).
 uint32_t lm_fixture_pose_gen(void);
 bool lm_fixture_pose_commit(void);
+// The pose itself for the mesh topology: 0 unposed, 1 posed (t[3] m, q[4] x y z w, room bytes).
+int32_t lm_fixture_pose_get(float *t, float *q, uint8_t *room, uint32_t room_cap, uint32_t *room_len);
 // Shared effect-time epoch (set_time_base), device-clock ms: true + *epoch_ms when
 // set. The render loop derives effect time = (now - epoch) / 1000.
 bool lm_time_base(int64_t *epoch_ms);

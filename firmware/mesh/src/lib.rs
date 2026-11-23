@@ -24,6 +24,7 @@
 //!   (two-step completion stamps, two-way over broadcasts), per-neighbour clock fits, sync
 //!   states and the show epoch; [`interp`]: members interpolate live updates on their own
 //!   render clock.
+//! - [`topo`]: each member's room pose and radio neighbours, gossiped for the app's mesh map.
 //! - [`stack`]: one device's mesh, all of the above around a [`Node`], with capacity classes
 //!   and the custodian store hook.
 //!
@@ -57,6 +58,7 @@ pub mod replay;
 pub mod security;
 pub mod stack;
 pub mod timesync;
+pub mod topo;
 pub mod wifi_p2p;
 
 pub use backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass, TxStamp};
