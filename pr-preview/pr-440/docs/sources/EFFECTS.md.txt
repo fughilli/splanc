@@ -46,9 +46,11 @@ instruction budget — see [Execution model](#execution-model)).
 
 `float`, `vec2`, `vec3`, `vec4`, `int`, `bool`, plus fixed-point `fixed` (Q16.16),
 `fixed16` (Q1.14) and `fixed8` (Q1.6), and user `struct`s and fixed-size arrays
-(`Type name[N]`). At runtime everything is an `f32` slot; the compiler types every
-operation so the VM stays untyped (integers and fixed-point values ride in the f32
-slot bit-for-bit).
+(`Type name[N]`). A fixed-point literal takes a suffix: `0.6fx` is `fixed(0.6)`,
+`0.6fx16` is `fixed16(0.6)` and `0.6fx8` is `fixed8(0.6)` (folded to the same
+constant; `fx16`/`fx8` literals must be below 2). At runtime everything is an `f32`
+slot; the compiler types every operation so the VM stays untyped (integers and
+fixed-point values ride in the f32 slot bit-for-bit).
 
 ### Read-only contexts
 
@@ -431,7 +433,7 @@ Float `sin`/`cos` use a table internally but still cost ~570–650 cycles per ca
 (range reduction + interpolation in soft-float), and `hash` ~185 — cheaper than
 `exp`/`pow`, not cheap: every opcode also pays ~70 cycles of dispatch. The
 cheap forms on the FPU-less C6 are the integer ones: per-LED maths in `fixed`
-(Q16.16) with `fixed()` around every literal (`x * 0.6` promotes a fixed `x` to
+(Q16.16) with every literal fixed (`x * 0.6fx`; `x * 0.6` promotes a fixed `x` to
 soft-float — the compiler warns), `sin`/`cos` of a fixed angle in TURNS
 (~150), and `hsv2rgb`/`atan2`/`sqrt` with all-fixed arguments. The measured
 per-op-class table the authoring agents are given is `PERF_GUIDE` in

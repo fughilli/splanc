@@ -238,9 +238,10 @@ _Browse, create, tag, and test the shader effects that drive your LEDs._
 
 ![The effects library — Splanc app screen](user-guide/img/effects-library.png)
 
-The Effects tab is a library of animations, mirroring the maps browser: a search box, tag chips,
-folders, and a row per saved effect. Tap one to open the editor; the + button creates a new effect
-from a starter template.
+The Effects tab is the app's home: a card on top says which fixture is connected and what it's
+playing, then the library: Starters, Examples and your own effects. Tap one to play it on your
+fixture and adjust its sliders and colours; Open in editor changes its code. The + button creates a
+new effect.
 
 #### In the library
 

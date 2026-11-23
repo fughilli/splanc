@@ -779,9 +779,9 @@ status line, which also reaches the P4's console), 2026-11-21, hitl-rig-2:
 
 | front-end image | static internal RAM (to the heap start) | idle free (joined) | all-time min |
 | --- | ---: | ---: | ---: |
-| old (player core, 1 session) | 329,024 B | (bench run pending) | |
+| old (player core, 1 session) | 329,024 B | 70,400 B | 61,992 B |
 | relay, 1 session (#607) | 243,792 B | 167,340 B | 153,576 B |
-| relay, 2 sessions | 267,936 B | (bench run pending) | |
+| relay, 2 sessions | 267,936 B | 143,172 B (2 sessions open: 143,172 B) | 134,600 B |
 
 A session past the first costs 24,104 B of statics: its TCP slot (6,320 B), its `Session`
 (6,224 B), its TLS context (552 B), one more record slot (6,912 B) and 4 KB of small region.
