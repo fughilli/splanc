@@ -149,6 +149,9 @@ int32_t lm_mesh_pose_fill(float *t, float *q, uint8_t *room, uint32_t room_cap, 
     __attribute__((weak));
 // main.cpp (the player): the frame counter's mark in littlefs.
 uint32_t lm_mesh_counter_load(uint64_t *mark) __attribute__((weak));
+// relay_main.cpp (the P4's C6 front end, whose console isn't wired on the P4 boards): the
+// mesh's console lines for the P4's console too. Null in the players and the loader.
+void lm_mesh_console_tee(const char *line) __attribute__((weak));
 uint32_t ns_mac_recv_rxv(uint8_t *out, uint32_t cap, uint8_t *rxv);
 uint32_t ns_mac_tsf(uint32_t latch);
 }
@@ -262,10 +265,17 @@ uint8_t probe_tsf(bool verbose) {
   return mode;
 }
 
+void tee(const char *line) {
+  if (lm_mesh_console_tee) lm_mesh_console_tee(line);
+}
+
 void print_heap(const char *what) {
-  Serial.printf("[mesh] heap %s free=%lu min=%lu largest=%lu\n", what, (unsigned long)esp_get_free_heap_size(),
-                (unsigned long)esp_get_minimum_free_heap_size(),
-                (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+  char line[120];
+  snprintf(line, sizeof line, "[mesh] heap %s free=%lu min=%lu largest=%lu\n", what,
+           (unsigned long)esp_get_free_heap_size(), (unsigned long)esp_get_minimum_free_heap_size(),
+           (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+  Serial.print(line);
+  tee(line);
 }
 
 // Why the last on() failed, for the app's answer (mesh_gw.rs aerr): 10 = NO_MEMORY (value:
@@ -338,8 +348,13 @@ bool on() {
       }
     }
   }
-  Serial.printf("[mesh] ok on block=%lu counter_mark=%llu create_stack_used=%lu/%lu ch=%u\n", (unsigned long)len,
-                (unsigned long long)mark, (unsigned long)create_used, (unsigned long)kTickStack, g_chan);
+  {
+    char line[140];
+    snprintf(line, sizeof line, "[mesh] ok on block=%lu counter_mark=%llu create_stack_used=%lu/%lu ch=%u\n",
+             (unsigned long)len, (unsigned long long)mark, (unsigned long)create_used, (unsigned long)kTickStack, g_chan);
+    Serial.print(line);
+    tee(line);
+  }
   print_heap("after_on");
   return true;
 }
@@ -394,6 +409,7 @@ void report(uint32_t what) {
   for (uint32_t i = 0; i < 16; i++) {
     if (!ns_mesh_report(g_mesh, what, i, reinterpret_cast<uint8_t *>(line), sizeof line, now)) break;
     Serial.printf("%s\n", line);
+    tee(line);
     delay(20);  // the console drops what the CDC buffer can't hold (TX timeout 0; r5 lost lines at 5 ms)
   }
 }
@@ -484,6 +500,7 @@ void service(bool assoc) {
   if (n) {
     buf[n] = 0;
     Serial.print(buf);
+    tee(buf);
   }
   persist();
   if (ns_mesh_get(g_mesh, 7)) off();  // left the mesh (app, console or the admin's eject)
@@ -497,6 +514,14 @@ extern "C" uint32_t lm_mesh_on_tick_stack(uint32_t (*fn)(void)) {
   esp_execute_shared_stack_function(lm_mesh::tick_lock(), lm_mesh::tick_stack(), lm_mesh::kTickStack,
                                     lm_mesh::stack_fn_trampoline);
   return lm_mesh::g_stack_ret;
+}
+
+// One MESH INFO / NB / STATS line (`what` 0 / 1 / 2, line `idx`) into `out`: its length,
+// 0 when the mesh is off or there is no such line. The front end (relay_main.cpp) sends its
+// MESH INFO to the P4's console, its own console being unwired on the P4 boards.
+extern "C" uint32_t lm_mesh_report_line(uint32_t what, uint32_t idx, char *out, uint32_t cap) {
+  if (!g_mesh || cap == 0) return 0;
+  return ns_mesh_report(g_mesh, what, idx, reinterpret_cast<uint8_t *>(out), cap, esp_timer_get_time());
 }
 
 namespace lm_mesh {

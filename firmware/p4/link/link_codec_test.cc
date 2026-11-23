@@ -115,6 +115,31 @@ static void test_bad_cobs() {
   assert(lk_cobs_decode(truncated, sizeof truncated, out) == -1);
 }
 
+// The mesh member's status (HEARTBEAT body) and a relayed control's result (REPLY to
+// LK_MESH): little-endian, exact sizes, and an empty (older) body carries no status.
+static void test_mesh_bodies() {
+  const lk_status s = {61, 200, 0x8badf00d, LK_ST_KIOSK};
+  uint8_t b[LK_STATUS_LEN];
+  lk_status_pack(&s, b);
+  assert(memcmp(b, unhex("3d000000c80000000df0ad8b01000000").data(), sizeof b) == 0);
+  lk_status got = {};
+  assert(lk_status_parse(b, sizeof b, &got));
+  assert(got.fps == 61 && got.brightness == 200 && got.firmware == 0x8badf00d && got.flags == LK_ST_KIOSK);
+  assert(!lk_status_parse(b, 0, &got));
+  assert(!lk_status_parse(b, LK_STATUS_LEN - 1, &got));
+
+  uint8_t r[LK_MESH_RESULT_LEN];
+  lk_mesh_result_pack(1, 0xfffe, r);
+  assert(memcmp(r, unhex("01feff0000").data(), sizeof r) == 0);
+  uint8_t st = 9;
+  uint32_t code = 0;
+  assert(lk_mesh_result_parse(r, sizeof r, &st, &code) && st == 1 && code == 0xfffe);
+  // A ServerMessage (an older P4 answering it as a player message) is not a result.
+  const uint8_t welcome[] = {0x0a, 0x03, 0x01, 0x02, 0x03};
+  assert(!lk_mesh_result_parse(welcome, sizeof welcome, &st, &code));
+  assert(!lk_mesh_result_parse(r, sizeof r - 1, &st, &code));
+}
+
 int main(int argc, char **argv) {
   return rr::RunCases(argc, argv, "link_codec",
                       {
@@ -124,5 +149,6 @@ int main(int argc, char **argv) {
                           {"resync_after_noise", test_resync_after_noise},
                           {"overflow_is_noise", test_overflow_is_noise},
                           {"bad_cobs", test_bad_cobs},
+                          {"mesh_bodies", test_mesh_bodies},
                       });
 }

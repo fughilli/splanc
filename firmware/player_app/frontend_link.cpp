@@ -71,6 +71,12 @@ int64_t g_stats_sent_us = 0;
 uint8_t g_ident[1 + 18 + 33];
 size_t g_ident_len = 0;
 uint32_t g_hellos = 0;
+uint8_t g_features = 0;  // LK_FE_* (frontend_link_set_features)
+
+// The P4's player status (its HEARTBEAT body), for the mesh's member broadcasts.
+lk_status g_p4_status = {};
+bool g_p4_status_valid = false;
+bool g_p4_kiosk = false;  // the last status's LK_ST_KIOSK (kept while the P4 is down)
 
 void reclaim() {
   void *arg;
@@ -117,8 +123,9 @@ void p4_log(const char *fmt, ...) {
 }
 
 void send_hello() {
-  uint8_t b[1 + 4 + 32] = {LK_OP_HELLO, LK_VERSION, 0, (uint8_t)(LK_MTU & 0xff), (uint8_t)(LK_MTU >> 8)};
-  memcpy(b + 5, esp_app_get_description()->app_elf_sha256, 32);
+  uint8_t b[LK_HELLO_FEATURES_AT + 1] = {LK_OP_HELLO, LK_VERSION, 0, (uint8_t)(LK_MTU & 0xff), (uint8_t)(LK_MTU >> 8)};
+  memcpy(b + LK_HELLO_SHA_AT, esp_app_get_description()->app_elf_sha256, 32);
+  b[LK_HELLO_FEATURES_AT] = g_features;
   send_frame(LK_LINK, 0, 0, b, sizeof b);
 }
 
@@ -147,6 +154,10 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       return;
     case LK_LINK:
       if (h.len >= 2 && p[0] == LK_OP_HELLO) memcpy(g_p4_ver, p + 1, h.len - 1 < 4 ? h.len - 1 : 4);
+      if (h.len >= 1 && p[0] == LK_OP_HEARTBEAT) {
+        g_p4_status_valid = lk_status_parse(p + 1, h.len - 1, &g_p4_status);
+        if (g_p4_status_valid) g_p4_kiosk = g_p4_status.flags & LK_ST_KIOSK;
+      }
       if (h.len >= 3 && p[0] == LK_OP_RESET && g_waiting && (uint16_t)(p[1] | p[2] << 8) == g_reply_session) {
         g_reply_reset = true;
       }
@@ -259,7 +270,10 @@ void frontend_link_set_identity(const char *mac, const char *name) {
 
 bool frontend_p4_up() { return g_up && g_p4_seen_us != 0 && esp_timer_get_time() - g_p4_seen_us < kP4TimeoutUs; }
 
-int frontend_forward(uint16_t session, const uint8_t *msg, size_t len, uint8_t *out, size_t cap, int timeout_ms) {
+namespace {
+
+// One message as `type` frames (PLAYER, or MESH), then its REPLY: frontend_forward's contract.
+int forward(uint8_t type, uint16_t session, const uint8_t *msg, size_t len, uint8_t *out, size_t cap, int timeout_ms) {
   if (!frontend_p4_up()) {
     g_stats.fwd_down++;
     if (g_up && g_p4_seen_us) {
@@ -281,7 +295,7 @@ int frontend_forward(uint16_t session, const uint8_t *msg, size_t len, uint8_t *
     const size_t n = len - off > kSendPayloadMax ? kSendPayloadMax : len - off;
     // A full send queue clears as the P4 reads; give it a moment per fragment.
     int tries = 0;
-    while (!(sent = send_frame(LK_PLAYER, off + n < len ? LK_MORE : 0, session, msg + off, n)) && tries++ < 50) {
+    while (!(sent = send_frame(type, off + n < len ? LK_MORE : 0, session, msg + off, n)) && tries++ < 50) {
       pump(pdMS_TO_TICKS(1));
     }
     off += n;
@@ -304,12 +318,44 @@ int frontend_forward(uint16_t session, const uint8_t *msg, size_t len, uint8_t *
   return g_reply_len <= cap ? (int)g_reply_len : -1;
 }
 
+}  // namespace
+
+int frontend_forward(uint16_t session, const uint8_t *msg, size_t len, uint8_t *out, size_t cap, int timeout_ms) {
+  return forward(LK_PLAYER, session, msg, len, out, cap, timeout_ms);
+}
+
+// The session id a relayed control's frames and REPLY carry: none of the wss sessions
+// (1..LM_WSS_SESSIONS) nor the BLE central's (relay_main.cpp kBleSession).
+constexpr uint16_t kMeshSession = 0x200;
+
+int frontend_forward_mesh(const uint8_t *msg, size_t len, uint32_t *code, int timeout_ms) {
+  uint8_t r[LK_MESH_RESULT_LEN + 1];
+  const int n = forward(LK_MESH, kMeshSession, msg, len, r, sizeof r, timeout_ms);
+  uint8_t st = 1;
+  if (n > 0 && lk_mesh_result_parse(r, (size_t)n, &st, code)) return st;
+  *code = n == -1 ? kMeshP4Down : n == -2 ? kMeshP4Unsent : kMeshP4Silent;
+  return 1;
+}
+
+void frontend_link_set_features(uint8_t bits) { g_features = bits; }
+
+bool frontend_p4_kiosk() { return g_p4_kiosk; }
+
+bool frontend_p4_status(uint32_t *fps, uint32_t *brightness, uint32_t *firmware) {
+  if (!g_p4_status_valid || !frontend_p4_up()) return false;
+  *fps = g_p4_status.fps;
+  *brightness = g_p4_status.brightness;
+  *firmware = g_p4_status.firmware;
+  return true;
+}
+
 void frontend_link_osc(const uint8_t *data, size_t len) {
   if (len <= kSendPayloadMax && frontend_p4_up()) send_frame(LK_OSC, 0, 0, data, len);
 }
 
 void frontend_link_log(const char *line) {
-  const size_t n = strnlen(line, 300);
+  // 700: the mesh's MESH INFO line (mesh_glue.h report) is the longest.
+  const size_t n = strnlen(line, 700);
   if (n) send_frame(LK_LOG, 0, 0, reinterpret_cast<const uint8_t *>(line), n);
 }
 

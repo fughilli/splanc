@@ -5005,6 +5005,23 @@ extern "C" void lm_link_identity(const char *mac, const char *name) {
   if (renamed) prefs.putString("name", g_device_name);
   Log().printf("[player] identity from the front end: %s \"%s\"\n", mac, g_device_name);
 }
+
+// The front end's features (its HELLO, link_transport.cpp; LK_FE_* in link_codec.h). A C6
+// front end that runs the mesh layer makes this fixture a mesh member (docs/design/mesh.md
+// §8.2): the Welcome then says "mesh", so the app shows its mesh section (the front end
+// answers get_mesh / mesh_admin itself). The P4 has no other run-time feature (flash
+// auto-suspend's is the C6 players'). Loop task; applied when it changes.
+extern "C" void lm_link_frontend_features(uint32_t bits) {
+  static int32_t applied = -1;
+  const bool mesh = bits & 1;  // LK_FE_MESH
+  if ((int32_t)mesh == applied) return;
+  applied = mesh;
+  static const char kMesh[] = "mesh";
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  lm_player_set_extra_feature(reinterpret_cast<const uint8_t *>(kMesh), mesh ? sizeof kMesh - 1 : 0);
+  xSemaphoreGive(player_mutex);
+  Log().printf("[player] front end features 0x%02x: mesh %s\n", (unsigned)bits, mesh ? "on" : "off");
+}
 #endif
 
 bool lm_module_osc_send(const uint8_t *data, size_t len) {
