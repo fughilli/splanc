@@ -909,6 +909,25 @@ rust_test(
     deps = ["//firmware/mesh"],
 )
 
+# Flash auto-suspend at run time (desk D-459, PR-41; docs/design/flash-auto-suspend.md):
+# ESP-IDF v5.5.4's spi_flash_os_func_app.c with the SPI1 lock mode chosen at run time,
+# linked ahead of the prebuilt libspi_flash.a member (--allow-multiple-definition takes the
+# first). The prebuilt SDK is built without CONFIG_SPI_FLASH_AUTO_SUSPEND, so a littlefs
+# erase disabled the cache and stalled every task for tens of ms.
+cc_library(
+    name = "flash_suspend",
+    srcs = ["flash_suspend/spi_flash_os_func_app.c"],
+    hdrs = ["flash_suspend/lm_flash_suspend.h"],
+    defines = ["LM_FLASH_SUSPEND"],
+    includes = ["flash_suspend"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["@embedded//libs/board:arduino_core"],
+    alwayslink = True,
+)
+
 [cc_binary(
     name = "player_app_netstack" + sfx,
     # SAME main.cpp as the vendor build, gated by -DLM_NETSTACK: the WiFi/WSS/mDNS/OSC
@@ -994,6 +1013,7 @@ rust_test(
     }) + select({
         # The mesh (C6 only for now: the backhaul is the C6 MAC's).
         "@embedded//platforms:is_esp32c6": [
+            ":flash_suspend",  # the SPI1 lock (flash auto-suspend, D-459)
             ":mesh_ffi",
             "//firmware/mesh/swarm:swarm_crypto",  # SHA-256/HMAC under the envelope's HKDF
         ],

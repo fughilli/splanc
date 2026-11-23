@@ -73,6 +73,9 @@
 #include "firmware/player_app/ota_app.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
+#if defined(LM_FLASH_SUSPEND)
+#include "firmware/player_app/flash_suspend/lm_flash_suspend.h"
+#endif
 #if defined(LM_SENSORS)
 #include "firmware/player_app/sensor_bus.h"  // sensor core: I2C IMU probe + task
 #endif
@@ -739,6 +742,8 @@ static FILE *fs_open(const char *path, const char *mode) {
 // "esp_littlefs ... Corrupted dir pair at {0x0, 0x1}" on the next mount. The
 // temp path is derived from the destination so writers to different keys never
 // collide (writes are serialized on this task anyway).
+// Set by every littlefs write; the effect store's cached usage is re-measured (below).
+static bool g_fs_usage_stale = true;
 static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
                            size_t more_len);
 static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
@@ -749,6 +754,7 @@ static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
 // and the .fxb it came with, without staging them together).
 static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
                            size_t more_len) {
+  const int64_t t0 = esp_timer_get_time();
   char tmp[64];
   int pn = snprintf(tmp, sizeof tmp, "%s.tmp", path);
   if (pn < 0 || (size_t)pn >= sizeof tmp) {
@@ -778,6 +784,10 @@ static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, co
     remove(tmp);
     return false;
   }
+  // Every power-loss-safe write, timed (PR-41: the HITL flash_render gate attributes late
+  // frames to flash writes with it).
+  Log().printf("[fs] wrote %s %u B us=%lu\n", path, (unsigned)len, (unsigned long)(esp_timer_get_time() - t0));
+  g_fs_usage_stale = true;
   return true;
 }
 
@@ -1372,6 +1382,15 @@ static void fs_replay(const char *path) {
 // the fx_bench hot loop's cache behaviour) doesn't move.
 static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap);
 static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n);
+// Flash writes the store hooks ask for while lm_player_handle holds the player mutex
+// (PR-41): queued, then done right after the mutex is released, before the reply goes out.
+static bool g_fs_defer = false;
+static void fs_deferred_flush();
+// littlefs usage for the effect store's space check, measured outside the player mutex
+// (esp_littlefs_info walks the filesystem: ~50 ms of flash reads, which under the mutex held
+// the render task off). Refreshed after each message that wrote, below render (PR-41).
+static size_t g_fs_total = 0, g_fs_used = 0;
+static void fs_usage_refresh();
 static void kp_fs_remove(const uint8_t *name, size_t len);
 static int32_t fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
                             size_t b_len);
@@ -1584,6 +1603,7 @@ static void poll_kiosk_config() {
 }
 
 static void poll_after_message() {
+  fs_usage_refresh();
   poll_kiosk_config();
   poll_device_rename();
   poll_color_correction();
@@ -1623,9 +1643,12 @@ static int dispatch_plain(const uint8_t *msg, size_t len) {
 #if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
   if (g_tr_cur) g_tr_cur->locked_us = tr_now();
 #endif
+  g_fs_defer = true;
   int32_t n = lm_player_handle(msg, len, now, now, tx, sizeof tx);
+  g_fs_defer = false;
   uint32_t t2 = (uint32_t)micros();
   xSemaphoreGive(player_mutex);
+  fs_deferred_flush();  // the store hooks' writes, without the render task waiting on them
   if (t1 - t0 > g_mtx_wait_max_us) g_mtx_wait_max_us = t1 - t0;
   if (t2 - t1 > g_handle_max_us) g_handle_max_us = t2 - t1;
 #if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
@@ -3388,8 +3411,11 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
   // unsharded submit_*). rx holds the whole frame.
   int64_t now = (int64_t)millis();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
+  g_fs_defer = true;
   int32_t n = lm_player_handle(rx, frame.len, now, now, tx, sizeof tx);
+  g_fs_defer = false;
   xSemaphoreGive(player_mutex);
+  fs_deferred_flush();
   poll_after_message();
   if (n > 0) {
     httpd_ws_frame_t out = {};
@@ -3990,6 +4016,22 @@ void setup() {
   // serial is disconnected.
   Serial.setTxTimeoutMs(100);
   log_drain_start();
+#if defined(LM_FLASH_SUSPEND)
+  // Flash auto-suspend (PR-41, desk D-459): before anything writes the flash, so a littlefs
+  // erase or program never stalls the render task (code keeps running from flash while the
+  // controller suspends the erase). Only on the flash it was measured on (C6FH4's XMC).
+  {
+    uint32_t jedec = 0;
+    const int fs = lm_flash_auto_suspend_enable(&jedec);
+    Log().printf("[flash] auto-suspend %s jedec=%06lx\n",
+                 fs == LM_FLASH_SUSPEND_ON                  ? "on"
+                 : fs == LM_FLASH_SUSPEND_UNSUPPORTED_FLASH ? "off (flash not supported)"
+                 : fs == LM_FLASH_SUSPEND_OLD_CHIP          ? "off (chip < v0.2)"
+                 : fs == LM_FLASH_SUSPEND_SETUP_FAILED      ? "off (setup failed)"
+                                                            : "off (no flash driver)",
+                 (unsigned long)jedec);
+  }
+#endif
   // Self-report WHY we last reset, first thing each boot. A clean power-on/USB reset is
   // expected; a PANIC/INT_WDT/TASK_WDT/BROWNOUT means the firmware actually crashed. This
   // one line disambiguates "device rebooted" from "device merely went unreachable" without
@@ -4621,9 +4663,81 @@ static bool kp_path(char *path, size_t cap, const uint8_t *name, size_t len) {
   return n > 0 && (size_t)n < cap;
 }
 
+// The deferred-write queue (g_fs_defer above): the keypoint and effect-store hooks run inside
+// lm_player_handle, with the player mutex held, and a littlefs write there (tens of ms, more
+// with a compaction) held the render task off for that long: flash auto-suspend keeps code
+// running during the erase, but not a task waiting on a lock. The hooks queue their writes and
+// removals here (in order, data copied to the heap); fs_deferred_flush does them after the
+// mutex is released, before the reply is sent. A read of a queued path is served from the
+// queue. Full queue / no heap: written in place, as before.
+struct FsOp {
+  char path[48];
+  uint8_t *data;  // nullptr: a removal
+  size_t len;
+};
+static FsOp g_fs_ops[6];
+static int g_fs_nops = 0;
+
+static const FsOp *fs_deferred_find(const char *path) {
+  for (int i = g_fs_nops - 1; i >= 0; i--) {
+    if (strcmp(g_fs_ops[i].path, path) == 0) return &g_fs_ops[i];
+  }
+  return nullptr;
+}
+
+static bool fs_defer(const char *path, const uint8_t *a, size_t a_len, const uint8_t *b, size_t b_len, bool remove_op) {
+  if (!g_fs_defer || g_fs_nops >= (int)(sizeof g_fs_ops / sizeof g_fs_ops[0])) return false;
+  FsOp &op = g_fs_ops[g_fs_nops];
+  op.data = nullptr;
+  op.len = 0;
+  if (!remove_op) {
+    op.data = static_cast<uint8_t *>(malloc(a_len + b_len ? a_len + b_len : 1));
+    if (op.data == nullptr) return false;
+    if (a_len) memcpy(op.data, a, a_len);
+    if (b_len) memcpy(op.data + a_len, b, b_len);
+    op.len = a_len + b_len;
+  }
+  snprintf(op.path, sizeof op.path, "%s", path);
+  g_fs_nops++;
+  return true;
+}
+
+static void fs_usage_refresh() {
+  if (!g_fs_usage_stale || !fs_ok) return;
+  g_fs_usage_stale = false;
+  const uint32_t prio = lm_prio_below_render();
+  size_t total = 0, used = 0;
+  if (esp_littlefs_info(kFsPartition, &total, &used) == ESP_OK) {
+    g_fs_total = total;
+    g_fs_used = used;
+  }
+  lm_prio_restore(prio);
+}
+
+static void fs_deferred_flush() {
+  if (g_fs_nops) g_fs_usage_stale = true;  // removals change it too
+  for (int i = 0; i < g_fs_nops; i++) {
+    FsOp &op = g_fs_ops[i];
+    if (op.data == nullptr) {
+      remove(op.path);
+    } else {
+      fs_write_file(op.path, op.data, op.len);
+      free(op.data);
+      op.data = nullptr;
+    }
+  }
+  g_fs_nops = 0;
+}
+
 static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap) {
   char path[48];
   if (!kp_path(path, sizeof path, name, len)) return -1;
+  if (const FsOp *op = fs_deferred_find(path)) {
+    if (op->data == nullptr || op->len == 0) return -1;
+    size_t got = op->len < cap ? op->len : cap;
+    memcpy(buf, op->data, got);
+    return (int32_t)got;
+  }
   FILE *f = fs_open(path, "rb");
   if (f == nullptr) return -1;
   size_t got = fread(buf, 1, cap, f);
@@ -4634,6 +4748,7 @@ static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t 
 static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n) {
   char path[48];
   if (!kp_path(path, sizeof path, name, len)) return false;
+  if (fs_defer(path, buf, n, nullptr, 0, false)) return true;
   fs_write_file(path, buf, n);
   FILE *f = fs_open(path, "rb");  // fs_write_file logs, not returns, a failure
   if (f == nullptr) return false;
@@ -4643,7 +4758,7 @@ static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, siz
 
 static void kp_fs_remove(const uint8_t *name, size_t len) {
   char path[48];
-  if (kp_path(path, sizeof path, name, len)) remove(path);
+  if (kp_path(path, sizeof path, name, len) && !fs_defer(path, nullptr, 0, nullptr, 0, true)) remove(path);
 }
 
 // Effect store hooks (ffi.rs lm_fxs_set_store): read / remove are the keypoint ones
@@ -4662,8 +4777,12 @@ static int32_t fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, s
                             size_t b_len) {
   char path[48];
   if (!kp_path(path, sizeof path, name, len)) return -1;
-  size_t total = 0, used = 0;
-  if (esp_littlefs_info(kFsPartition, &total, &used) == ESP_OK && total > 0) {
+  // The usage measured after the last write (fs_usage_refresh), plus what this message
+  // already queued: never a filesystem walk under the player mutex.
+  if (g_fs_usage_stale && !g_fs_defer) fs_usage_refresh();
+  size_t total = g_fs_total, used = g_fs_used;
+  for (int i = 0; i < g_fs_nops; i++) used += ((g_fs_ops[i].len + kFsBlock - 1) / kFsBlock) * kFsBlock;
+  if (total > 0) {
     // The temp copy is written before the rename frees an old record of the same slot,
     // plus one block of metadata slack.
     size_t need = ((a_len + b_len + kFsBlock - 1) / kFsBlock + 1) * kFsBlock;
@@ -4683,5 +4802,6 @@ static int32_t fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, s
       return -2;
     }
   }
+  if (fs_defer(path, a, a_len, b, b_len, false)) return 0;
   return fs_write_parts(path, a, a_len, b, b_len) ? 0 : -1;
 }

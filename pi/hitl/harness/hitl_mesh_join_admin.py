@@ -647,7 +647,7 @@ def run(args: argparse.Namespace) -> int:
                         p[d.label] = repr(e)
 
         resets = {d.label: [t for t in d.since(0) if is_reset(t)] for d in duts}
-        ok, why = verdict(phases, allow_save_late=not args.fail_on_flash_late)
+        ok, why = verdict(phases, allow_save_late=args.allow_flash_late)
         if record.get("errors"):
             ok, why = False, why + [f"phase {k} raised {v}" for k, v in record["errors"].items()]
         record.update({"phases": phases, "resets": resets, "verdict": {"pass": ok, "reasons": why}})
@@ -697,9 +697,9 @@ def main() -> int:
     ap.add_argument("--join-timeout", type=float, default=30.0)
     # D-328: 12 h grants (the gateway refuses longer ones).
     ap.add_argument("--grant-ttl-s", type=int, default=12 * 3600)
-    # Late frames next to a membership flash write (a chip-wide littlefs stall, ~1 frame at a
-    # fixture's first join; desk D-323 follow-up) are reported; this makes them fail too.
-    ap.add_argument("--fail-on-flash-late", action="store_true")
+    # Late frames next to a membership flash write fail too since flash auto-suspend (D-459);
+    # this tolerates them (still reported), e.g. for an image without it.
+    ap.add_argument("--allow-flash-late", action="store_true")
     ap.add_argument("--overlap-s", type=float, default=65.0)
     ap.add_argument("--pings", type=int, default=15)
     ap.add_argument("--rounds", type=int, default=8)

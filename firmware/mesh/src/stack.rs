@@ -701,7 +701,9 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     self.renewal_asked = Some((g.session, g.not_after));
                     on(Event::GrantRenewalDue { session: g.session, not_after: g.not_after });
                 }
-                if now_us >= *self.next_grant_us.get_or_insert(now_us) {
+                // Due, or the clock stepped back past the period (admin.rs due_ack).
+                let next = *self.next_grant_us.get_or_insert(now_us);
+                if now_us >= next || next - now_us > GRANT_EVERY_US {
                     self.next_grant_us = Some(now_us + GRANT_EVERY_US);
                     self.send_session(BROADCAST, &SessionMsg::Grant(g), false);
                     // The epoch this gateway originated goes again with the grant, for
