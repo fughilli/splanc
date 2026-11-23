@@ -405,7 +405,12 @@ async function provisionWithDevice(
   const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
   if (!target) throw new Error(`device joined but sent no usable address (${urls})`);
   setStatus(`Provisioned at ${target} — connecting…`);
-  appState.connect(target);
+  // The address may still be saved under another fixture (its DHCP lease went to
+  // this one): say who this is, so that record moves aside instead of being reused.
+  const expect: { name?: string; bleId?: string } = {};
+  if (device.name) expect.name = device.name;
+  if (device.id) expect.bleId = device.id;
+  appState.connect(target, device.name || undefined, { expect });
   // Remember which physical Bluetooth device this record is, so a later
   // re-discover can warn if a different one is picked.
   if (device.id) deviceStore.setBleId(target, device.id);

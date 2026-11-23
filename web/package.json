@@ -23,7 +23,7 @@
     "@splanc/web-auth": "link:./native-plugins/web-auth",
     "@splanc/wss-bridge": "link:./native-plugins/wss-bridge",
     "@wllama/wllama": "3.6.1",
-    "esptool-js": "^0.6.0",
+    "esptool-js": "^0.7.1",
     "jsqr": "^1.4.0",
     "web-serial-polyfill": "^1.0.15"
   },
