@@ -237,6 +237,7 @@
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release-clips.html">Feature-preview clips</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
@@ -374,6 +375,8 @@ crossfade live, and browse with a MIDI encoder.</p></li>
 or start offline.</p></li>
 <li><p><a class="reference internal" href="#managing-devices">Managing devices</a> — Connect, rename, re-discover, and forget the controllers
 you know.</p></li>
+<li><p><a class="reference internal" href="#meshing-fixtures">Meshing fixtures</a> — Link fixtures with mesh firmware so they change
+together, on the same frame.</p></li>
 <li><p><a class="reference internal" href="#flashing-firmware">Flashing firmware</a> — Commission a blank board over USB, right from the
 browser.</p></li>
 <li><p><a class="reference internal" href="#color-correction">Color correction</a> — Tune per-device gamma and white balance so colors read
@@ -730,6 +733,40 @@ scan per <strong>Slowed scan interval</strong> (15 min by default). It is off (0
 </ul>
 </section>
 </section>
+<section id="meshing-fixtures">
+<h3>Meshing fixtures<a class="headerlink" href="#meshing-fixtures" title="Link to this heading">¶</a></h3>
+<p><em>Link fixtures with mesh firmware so they change together, on the same frame.</em></p>
+<p>Fixtures with the mesh firmware (their device settings show a <strong>Mesh</strong> section) can talk to each
+other directly, with no extra hardware. Control one, and every fixture in its mesh changes on the
+same frame.</p>
+<section id="create-a-mesh">
+<h4>Create a mesh<a class="headerlink" href="#create-a-mesh" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>Open a fixture’s ⋮ device settings and tap <strong>Create a mesh</strong>.</p></li>
+<li><p>Pick the fixtures to link (any you have added to the app), then name the mesh.</p></li>
+<li><p>The app makes the mesh’s admin key and keeps it on this phone or browser, sets each fixture up in
+turn over its Wi-Fi or Bluetooth connection, and shows them joining and syncing their clocks.</p></li>
+</ul>
+</section>
+<section id="managing-a-mesh">
+<h4>Managing a mesh<a class="headerlink" href="#managing-a-mesh" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>When the app connects to a fixture in a mesh it created, it unlocks it with the stored key by
+itself.</p></li>
+<li><p><strong>Control the whole mesh</strong> sends effects, sliders, brightness and crossfades through that fixture
+to all of them. Each change lands on every fixture on the same frame; a slider being dragged
+follows within a few milliseconds and settles on the same frame when you let go.</p></li>
+<li><p><strong>Add a fixture to this mesh</strong> runs the same set-up for more fixtures.</p></li>
+<li><p>A fixture asking to join shows up with <strong>Admit</strong>. Admit only your own.</p></li>
+<li><p>Tap a member to <strong>Remove</strong> it (it leaves and can be added again) or, for a lost or given-away
+fixture, <strong>Block it for good</strong> (the mesh changes its keys).</p></li>
+<li><p><strong>Back up this mesh</strong> gives you one text with the mesh’s admin key. Keep it like a password. On
+another phone, <strong>Use a mesh from another phone</strong> adds the mesh there, so both can manage it.</p></li>
+<li><p>Without that backup only the phone or browser that created a mesh can manage it. If its data is
+cleared, reset each fixture’s mesh from its USB console (<code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">LEAVE</span></code>) and create a new one.</p></li>
+</ul>
+</section>
+</section>
 <section id="flashing-firmware">
 <h3>Flashing firmware<a class="headerlink" href="#flashing-firmware" title="Link to this heading">¶</a></h3>
 <p><em>Commission a blank board over USB, right from the browser.</em></p>
@@ -979,6 +1016,11 @@ source, and lists the open-source components the app ships.</p>
 </li>
 <li><a class="reference internal" href="#managing-devices">Managing devices</a><ul>
 <li><a class="reference internal" href="#per-device-actions">Per-device actions</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#meshing-fixtures">Meshing fixtures</a><ul>
+<li><a class="reference internal" href="#create-a-mesh">Create a mesh</a></li>
+<li><a class="reference internal" href="#managing-a-mesh">Managing a mesh</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#flashing-firmware">Flashing firmware</a><ul>

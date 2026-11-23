@@ -135,6 +135,7 @@ Use Splanc lamps in Home Assistant <docs/guides/home-assistant>
 Run your own relay with Tailscale <docs/guides/relay-tailscale>
 Build a Vive-tracked lamp <docs/guides/vive-tracker-lamp>
 docs/runbook
+Feature-preview clips <docs/release-clips>
 Roadmap <next_steps>
 ```
 
