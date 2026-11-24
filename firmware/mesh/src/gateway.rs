@@ -14,6 +14,8 @@
 //!   the inner arm and an error code.
 //! - **Member status** ([`StatusMsg`], `STATUS` port, broadcast every 10 s and on change):
 //!   firmware, uptime, heap, fps, brightness, mesh-time state and error, last error.
+//! - **Topology** ([`crate::topo::TopoMsg`], `STATUS` port next to the status): room pose and
+//!   radio neighbours, kept per member on every node.
 //! - **Aggregation** ([`Fanout`]): the gateway's member table (from adverts, status and
 //!   replies) and its pending operations; an operation completes when every expected member
 //!   answered or its timeout passed, and becomes one [`OpResult`] (the app's `MeshResult`).
@@ -22,6 +24,7 @@
 
 use crate::backhaul::NodeId;
 use crate::ports::Targets;
+use crate::topo::{Topo, TopoMsg};
 
 /// `ClientMessage` arm numbers (ledmapper.proto) the relay policy names.
 pub mod arm {
@@ -304,6 +307,8 @@ pub struct Member {
     pub seen_us: i64,
     pub status: Option<StatusMsg>,
     pub status_us: i64,
+    /// Its room pose, neighbours and hop count ([`crate::topo`]).
+    pub topo: Topo,
 }
 
 /// One relayed control the gateway is collecting answers for (or has finished).
@@ -383,9 +388,9 @@ impl<const N: usize> Fanout<N> {
             .position(|m| m.is_some_and(|m| m.node == node))
             .or_else(|| self.members.iter().position(|m| m.is_none()))
             .unwrap_or_else(|| (0..N).min_by_key(|&i| self.members[i].map_or(i64::MIN, |m| m.seen_us)).unwrap_or(0));
-        let m = self.members[i].get_or_insert(Member { node, seen_us: now_us, status: None, status_us: 0 });
+        let m = self.members[i].get_or_insert(Member { node, seen_us: now_us, status: None, status_us: 0, topo: Topo::EMPTY });
         if m.node != node {
-            *m = Member { node, seen_us: now_us, status: None, status_us: 0 };
+            *m = Member { node, seen_us: now_us, status: None, status_us: 0, topo: Topo::EMPTY };
         }
         m.seen_us = now_us;
         m
@@ -406,6 +411,23 @@ impl<const N: usize> Fanout<N> {
         let m = self.touch(now_us, node);
         m.status = Some(s);
         m.status_us = now_us;
+    }
+
+    /// A member's topology message ([`crate::topo`]).
+    pub fn on_topo(&mut self, now_us: i64, node: NodeId, t: &TopoMsg) {
+        self.touch(now_us, node).topo.apply(now_us, t);
+    }
+
+    /// Hops a status-port message from `node` took to get here (1 = a direct neighbour).
+    pub fn note_hops(&mut self, node: NodeId, hops: u8) {
+        if let Some(m) = self.members.iter_mut().flatten().find(|m| m.node == node) {
+            m.topo.hops = hops;
+        }
+    }
+
+    /// A live member's entry (its status and topology), e.g. a peer's pose.
+    pub fn member(&self, now_us: i64, node: NodeId) -> Option<&Member> {
+        self.live(now_us).find(|m| m.node == node)
     }
 
     /// Members heard within [`MEMBER_STALE_US`].

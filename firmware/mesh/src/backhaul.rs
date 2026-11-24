@@ -79,6 +79,13 @@ pub trait Backhaul {
     fn take_tx_stamp(&mut self) -> Option<TxStamp> {
         None
     }
+    /// The links to the neighbours this backhaul tracks (heard recently), for the mesh
+    /// topology ([`crate::topo`]): up to `out.len()`, strongest first; returns how many.
+    /// Backhauls that track none keep the default.
+    fn links(&self, now_us: i64, out: &mut [crate::topo::Link]) -> usize {
+        let _ = (now_us, out);
+        0
+    }
     /// Next received frame, copied into `buf` (at least `mtu()` bytes), with its metadata.
     fn recv(&mut self, buf: &mut [u8]) -> Option<RxMeta>;
     /// Whether this node may transmit now (its TDMA slot on UWB; on 802.11 whenever the TX

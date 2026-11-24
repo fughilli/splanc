@@ -96,6 +96,10 @@ void ns_mesh_control_done(void *m, uint32_t status, uint32_t code) __attribute__
 void ns_mesh_status(void *m, uint32_t fps, uint32_t heap_free, uint32_t heap_min, uint32_t brightness,
                     uint32_t uptime_s, uint32_t firmware) __attribute__((weak));
 uint32_t ns_mesh_dev_ctl(void *m, const uint8_t *inner, uint32_t len, int64_t now_us) __attribute__((weak));
+// The mesh topology (splanc_mesh::topo, mesh_gw.rs): this device's room pose (posed 0 = none;
+// q may be null = identity). An unchanged pose is a compare; a change goes out at once.
+void ns_mesh_pose(void *m, uint32_t posed, const float *t, const float *q, const uint8_t *room, uint32_t room_len)
+    __attribute__((weak));
 // Membership (M7, mesh_ffi.rs / mesh_gw.rs).
 uint32_t ns_mesh_restore(void *m, const uint8_t *state, uint32_t len, int64_t now_us) __attribute__((weak));
 int32_t ns_mesh_persist(void *m, uint8_t *out, uint32_t cap) __attribute__((weak));
@@ -127,6 +131,14 @@ void ns_mesh_conns(void *m, uint32_t ws, uint32_t ble) __attribute__((weak));
 int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint32_t *code) __attribute__((weak));
 void lm_mesh_push(uint32_t conn, uint8_t *frame, uint32_t len) __attribute__((weak));
 void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_t *firmware) __attribute__((weak));
+// The fixture's room pose for the mesh topology (the app's mesh map; later effects'
+// peer_pos), asked at the same 1 Hz point on loopTask: -1 = no pose source (nothing is
+// reported), 0 = unposed, 1 = posed: t[3] translation (m), q[4] rotation (x, y, z, w), the room
+// name in room[0..*room_len) (at most room_cap). The player (main.cpp) reads it from the
+// player core; a front end that does not run the player (the P4's C6, relay_main.cpp) fills it
+// with its P4's pose. The neighbours need no hook: the mesh reads them from its own backhaul.
+int32_t lm_mesh_pose_fill(float *t, float *q, uint8_t *room, uint32_t room_cap, uint32_t *room_len)
+    __attribute__((weak));
 // main.cpp (the player): the frame counter's mark in littlefs.
 uint32_t lm_mesh_counter_load(uint64_t *mark) __attribute__((weak));
 uint32_t ns_mac_recv_rxv(uint8_t *out, uint32_t cap, uint8_t *rxv);
@@ -441,6 +453,14 @@ void service(bool assoc) {
     if (lm_mesh_status_fill) lm_mesh_status_fill(&fps, &bright, &fw);
     ns_mesh_status(g_mesh, fps, (uint32_t)esp_get_free_heap_size(), (uint32_t)esp_get_minimum_free_heap_size(), bright,
                    (uint32_t)(snow / 1000000), fw);
+    // ... and the room pose for the topology (no pose source: none is reported).
+    if (ns_mesh_pose && lm_mesh_pose_fill) {
+      float t[3] = {0, 0, 0}, q[4] = {0, 0, 0, 1};
+      uint8_t room[17];  // the mesh keeps 16 bytes, cut on a UTF-8 boundary (one more to see it)
+      uint32_t room_len = 0;
+      int32_t posed = lm_mesh_pose_fill(t, q, room, sizeof room, &room_len);
+      if (posed >= 0) ns_mesh_pose(g_mesh, (uint32_t)posed, t, q, room, room_len > sizeof room ? sizeof room : room_len);
+    }
   }
   char buf[400];
   uint32_t n = ns_mesh_take_log(g_mesh, reinterpret_cast<uint8_t *>(buf), sizeof buf - 1);

@@ -853,6 +853,7 @@ _MESH_FFI_SYMS = [
     "ns_mesh_take_control",
     "ns_mesh_control_done",
     "ns_mesh_status",
+    "ns_mesh_pose",
     "ns_mesh_xfer",
     "ns_mesh_status_due",
     "ns_mesh_conns",
@@ -908,6 +909,9 @@ rust_test(
         "//firmware/mesh",
         "//firmware/mesh/swarm:swarm_net",
         "//firmware/netstack",
+        # The topology test decodes get_mesh pages with the host profile.
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
     ],
 )
 

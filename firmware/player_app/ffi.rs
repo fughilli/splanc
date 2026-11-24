@@ -4809,6 +4809,35 @@ pub unsafe extern "C" fn lm_fixture_pose_commit() -> bool {
     player().fixture_pose_commit()
 }
 
+/// The room pose for the mesh topology (main.cpp `lm_mesh_pose_fill`): 0 = unposed, 1 =
+/// posed with `t` (3 floats, m), `q` (4 floats, x y z w) and the room name's bytes (cut to
+/// `room_cap`) in `room`, its length in `*room_len`. Scale and the room box are not reported.
+/// A copy of a few floats: called on loopTask only when [`lm_fixture_pose_gen`] moved.
+///
+/// # Safety
+/// Single firmware thread (the task that handles messages, which is the only writer of the
+/// pose); `t` and `q` point at 3 and 4 floats, `room` at `room_cap` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fixture_pose_get(t: *mut f32, q: *mut f32, room: *mut u8, room_cap: u32, room_len: *mut u32) -> i32 {
+    *room_len = 0;
+    let Some(p) = player().fixture_pose() else { return 0 };
+    let tt = core::slice::from_raw_parts_mut(t, 3);
+    let qq = core::slice::from_raw_parts_mut(q, 4);
+    tt.copy_from_slice(&[0.0; 3]);
+    qq.copy_from_slice(&[0.0, 0.0, 0.0, 1.0]);
+    if p.r#translation.len() == 3 {
+        tt.copy_from_slice(&p.r#translation);
+    }
+    if p.r#rotation.len() == 4 {
+        qq.copy_from_slice(&p.r#rotation);
+    }
+    let name = p.r#room.as_bytes();
+    let n = name.len().min(room_cap as usize);
+    core::slice::from_raw_parts_mut(room, n).copy_from_slice(&name[..n]);
+    *room_len = n as u32;
+    1
+}
+
 /// The shared effect-time epoch (set_time_base, device-clock ms): writes it to
 /// `*epoch_ms` and returns true when one is set. The render loop then derives the
 /// effect's `time` as (now - epoch) / 1000 so fixtures animate in step.

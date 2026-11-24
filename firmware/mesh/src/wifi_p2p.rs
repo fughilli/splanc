@@ -953,6 +953,26 @@ impl Backhaul for WifiP2p {
     fn may_send(&self, _now_us: i64) -> bool {
         self.tx_len < TXQ
     }
+
+    fn links(&self, now_us: i64, out: &mut [crate::topo::Link]) -> usize {
+        let mut n = 0usize;
+        for nb in self.neighbours.iter().flatten().filter(|nb| now_us - nb.last_us < LIVE_US) {
+            let l = crate::topo::Link { node: nb.id, rssi: nb.rssi_avg(), tx_pct: crate::topo::Link::tx_pct_of(nb.tx_ok, nb.tx_fail) };
+            // Insert, strongest first (at most NEIGHBOURS: no sort needed).
+            let mut i = n.min(out.len());
+            while i > 0 && out[i - 1].rssi < l.rssi {
+                i -= 1;
+            }
+            if i >= out.len() {
+                continue;
+            }
+            let end = (n + 1).min(out.len());
+            out.copy_within(i..end - 1, i + 1);
+            out[i] = l;
+            n = end;
+        }
+        n
+    }
 }
 
 #[cfg(test)]
@@ -1255,6 +1275,32 @@ mod tests {
         assert_eq!(w.stats.rx_overflow, 2);
     }
 
+    /// The topology's neighbour list: live neighbours, strongest first, with their unicast
+    /// delivery rate; a full list keeps the strongest.
+    #[test]
+    fn links_list_live_neighbours_strongest_first() {
+        use crate::topo::{Link, TX_UNKNOWN};
+        let mut w = WifiP2p::new(P2pConfig::new(A), 6);
+        let mut b = [0u8; MTU];
+        let mut heard = |w: &mut WifiP2p, t: i64, mac: [u8; 6], id: NodeId, rssi: i8| {
+            let f = frame_from(mac, A, 1 + t as u16, false, &envelope(5, id));
+            w.on_frame(t, &f, Some(&rxv(rssi, t as u32)));
+            while w.recv(&mut b).is_some() {}
+        };
+        heard(&mut w, 1_000_000, B, 0x1130, -60);
+        heard(&mut w, 1_000_010, C, 0x2240, -35);
+        w.neighbours.iter_mut().flatten().find(|n| n.id == 0x1130).unwrap().tx_ok = 3;
+        w.neighbours.iter_mut().flatten().find(|n| n.id == 0x1130).unwrap().tx_fail = 1;
+        let mut out = [Link::EMPTY; 8];
+        let n = w.links(1_500_000, &mut out);
+        assert_eq!(&out[..n], &[Link { node: 0x2240, rssi: -35, tx_pct: TX_UNKNOWN }, Link { node: 0x1130, rssi: -60, tx_pct: 75 }]);
+        // Only room for one: the strongest.
+        let mut one = [Link::EMPTY; 1];
+        assert_eq!((w.links(1_500_000, &mut one), one[0].node), (1, 0x2240));
+        // Not heard within LIVE_US: gone.
+        assert_eq!(w.links(1_000_010 + LIVE_US, &mut out), 0);
+    }
+
     /// The reap length is word-rounded on silicon: the RX vector's sig_len (MPDU + FCS)
     /// trims the junk, so the envelope bytes come out exact; without a vector, nothing is
     /// trimmed.
@@ -1510,6 +1556,43 @@ mod tests {
         }
         assert!(got[2].contains(&(node_id_from_mac(&B), Port::Reply, b"APP!ucast".to_vec())));
         assert!(!got[0].iter().any(|g| g.2 == b"APP!ucast"));
+        // Topology (crate::topo): A and B report a pose, C none (unposed); within one period
+        // every member holds both peers' poses and their neighbour lists (not only a gateway).
+        use crate::topo::{PoseC, PoseKnown, TOPO_EVERY_US};
+        let pa = PoseKnown::Posed(PoseC::from_pose([1.0, 0.0, -2.5], Some([0.0, 0.38268343, 0.0, 0.9238795]), b"Hall"));
+        let pb = PoseKnown::Posed(PoseC::from_pose([-0.5, 1.2, 0.0], None, b"Hall"));
+        nodes[0].set_pose(pa);
+        nodes[1].set_pose(pb);
+        nodes[2].set_pose(PoseKnown::Unposed);
+        let end = t + 2_000_000;
+        while t < end {
+            t += 1_000;
+            step(&mut nodes, t, &mut got);
+        }
+        let ids: Vec<NodeId> = macs.iter().map(node_id_from_mac).collect();
+        let want = [pa, pb, PoseKnown::Unposed];
+        for (i, n) in nodes.iter().enumerate() {
+            for (j, &peer) in ids.iter().enumerate().filter(|(j, _)| *j != i) {
+                let tp = n.peer_topo(t, peer).unwrap_or_else(|| panic!("node {i} has no topology for {j}"));
+                assert_eq!(tp.pose, want[j], "node {i} sees {j}'s pose");
+                assert!(tp.pose_current() && tp.hops == 1, "node {i} -> {j}: {tp:?}");
+                let mut l: Vec<NodeId> = tp.links().iter().map(|l| l.node).collect();
+                l.sort();
+                let mut others: Vec<NodeId> = ids.iter().copied().filter(|x| *x != peer).collect();
+                others.sort();
+                assert_eq!(l, others, "node {i}: {j}'s neighbours");
+            }
+        }
+        // A pose change goes out at once, well before the next period.
+        let moved = PoseKnown::Posed(PoseC::from_pose([3.0, 0.0, 0.0], None, b"Porch"));
+        nodes[2].set_pose(moved);
+        let end = t + 500_000;
+        while t < end {
+            t += 1_000;
+            step(&mut nodes, t, &mut got);
+        }
+        assert!(500_000 < TOPO_EVERY_US);
+        assert_eq!(nodes[0].peer_topo(t, ids[2]).map(|x| x.pose), Some(moved));
         assert!(!plain_app_bytes, "an app payload went out unencrypted");
         assert!(nodes.iter().all(|n| n.node.guard.stats.bad_mic == 0 && n.node.guard.stats.opened > 0));
         // Fan-out unicasts carried the data (default policy).

@@ -28,6 +28,7 @@ use crate::blob::{BlobDone, BlobStore, Blobs, Fetch, Hash, NoBlobs, SceneMsg};
 use crate::crypto::{key_hash, DeviceKey, Entropy, KeyHash};
 use crate::envelope::{Header, MicLen};
 use crate::gateway::{self, Fanout, ReplyMsg, StatusMsg, STATUS_EVERY_US, T_STATUS};
+use crate::topo::{self, Link, PoseKnown, Topo, TopoLocal, TopoMsg, T_TOPO};
 #[cfg(feature = "open_mode")]
 use crate::guest::{FollowEvent, Follower};
 #[cfg(feature = "open_mode")]
@@ -344,6 +345,10 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     status_local: Option<StatusMsg>,
     status_sent: Option<StatusMsg>,
     next_status_us: Option<i64>,
+    /// This device's room pose and when its topology goes out ([`crate::topo`]), and the hops
+    /// of the application packet being delivered.
+    pub topo: TopoLocal,
+    rx_hops: u8,
     /// Epoch requests refused by [`EPOCH_POLICY`].
     pub epochs_refused: u32,
     /// Gateway on a signed mesh (M7): the epoch it originated still has to go out as the
@@ -452,6 +457,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(status_local, None);
         w!(status_sent, None);
         w!(next_status_us, None);
+        w!(topo, TopoLocal::new());
+        w!(rx_hops, 0);
         w!(epochs_refused, 0);
         w!(epoch_announce, false);
         w!(epochs_sent, 0);
@@ -845,6 +852,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             on(Event::PersistCounter(m));
         }
         // 6b. Member status (M5): every 10 s and on a change, once the firmware reported one.
+        let mut sent_status = false;
         if self.membership.is_member() && self.node.net.mesh.can_send() {
             if let Some(st) = self.status_local {
                 let due = self.next_status_us.is_none_or(|t| now_us >= t) || self.status_sent.is_none_or(|s| st.differs(&s));
@@ -855,8 +863,22 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                             self.status_sent = Some(st);
                             let jitter = (self.rng.u32() as i64).rem_euclid(STATUS_EVERY_US / 4);
                             self.next_status_us = Some(now_us + STATUS_EVERY_US - jitter);
+                            sent_status = true;
                         }
                     }
+                }
+            }
+        }
+        // 6c. Topology (room pose + neighbours, crate::topo): not in the same pass as a status.
+        if !sent_status && self.membership.is_member() && self.node.net.mesh.can_send() && self.topo.due(now_us) {
+            let mut links = [Link::EMPTY; topo::NEIGHBOURS];
+            let n = self.node.backhaul.links(now_us, &mut links);
+            let m = self.topo.message(now_us, &links[..n]);
+            let mut b = [0u8; topo::TOPO_MAX];
+            if let Some(len) = m.encode(&mut b) {
+                if self.node.net.send(BROADCAST, Port::Status as u8, &b[..len], false).is_some() {
+                    let jitter = (self.rng.u32() as i64).rem_euclid(topo::TOPO_EVERY_US / 4);
+                    self.topo.sent(now_us, &m, topo::TOPO_EVERY_US - jitter);
                 }
             }
         }
@@ -866,6 +888,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             if pkt.hops >= self.hops_seen.0 || now_us - self.hops_seen.1 >= DIAMETER_WINDOW_US {
                 self.hops_seen = (pkt.hops, now_us);
             }
+            self.rx_hops = pkt.hops;
             self.deliver(now_us, pkt.origin, pkt.port, &pkt.payload[..pkt.len], store, on);
         }
         // 8. Scenes (M6): the member's blobs, the gateway's share and its catch-ups.
@@ -1184,6 +1207,13 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             Port::Status if body.first() == Some(&T_STATUS) => {
                 if let Some(st) = StatusMsg::decode(body) {
                     self.fanout.on_status(now_us, origin, st);
+                    self.fanout.note_hops(origin, self.rx_hops.saturating_add(1));
+                }
+            }
+            Port::Status if body.first() == Some(&T_TOPO) => {
+                if let Some(t) = TopoMsg::decode(body) {
+                    self.fanout.on_topo(now_us, origin, &t);
+                    self.fanout.note_hops(origin, self.rx_hops.saturating_add(1));
                 }
             }
             Port::Reply if body.first() == Some(&gateway::T_REPLY) => {
@@ -1445,6 +1475,23 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// The firmware's view of this device for its status broadcasts (M5).
     pub fn set_status(&mut self, st: StatusMsg) {
         self.status_local = Some(st);
+    }
+
+    /// This device's room pose for its topology broadcasts ([`crate::topo`]); nothing goes
+    /// out until the firmware reports one (`Unposed` counts). A change goes out at once.
+    pub fn set_pose(&mut self, p: PoseKnown) {
+        self.topo.set_pose(p);
+    }
+
+    /// A peer's latest topology (room pose, neighbours, hops) as this node heard it: every
+    /// member keeps every live member's, not only the gateway.
+    pub fn peer_topo(&self, now_us: i64, node: NodeId) -> Option<&Topo> {
+        self.fanout.member(now_us, node).map(|m| &m.topo)
+    }
+
+    /// This node's own radio links (what its topology reports), strongest first.
+    pub fn links(&self, now_us: i64, out: &mut [Link]) -> usize {
+        self.node.backhaul.links(now_us, out)
     }
 
     fn send_control_with(&mut self, now_us: i64, conn: usize, h: ControlHeader, inner: &[u8]) -> Result<usize, SendError> {

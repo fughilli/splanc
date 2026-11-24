@@ -33,6 +33,7 @@ use splanc_mesh::msg::PendingJoin;
 use splanc_mesh::ports::Targets;
 use splanc_mesh::rekey::RekeyOrder;
 use splanc_mesh::stack::{EpochSource, Event, SendError, REPLY_TIMEOUT_US};
+use splanc_mesh::topo::{self, Link, PoseC, PoseKnown, Topo, TX_UNKNOWN};
 use splanc_mesh::NodeId;
 
 use crate::{Mesh, P};
@@ -193,6 +194,19 @@ impl<'a> Pb<'a> {
     /// A sint32 (zigzag).
     pub fn s(&mut self, f: u32, v: i32) {
         self.u(f, ((v << 1) ^ (v >> 31)) as u32 as u64);
+    }
+    /// A packed `repeated float` (skipped when empty).
+    pub fn f32s(&mut self, f: u32, v: &[f32]) {
+        if v.is_empty() {
+            return;
+        }
+        self.key(f, 2);
+        self.raw_varint(v.len() as u64 * 4);
+        for x in v {
+            for b in x.to_le_bytes() {
+                self.byte(b);
+            }
+        }
     }
     /// A length-delimited submessage written by `body`, in place: the body goes 6 bytes
     /// ahead (the most a key plus a length can take here) and moves back behind its header.
@@ -398,8 +412,94 @@ fn sync_code(s: SyncState) -> u64 {
     }
 }
 
-/// `ServerMessage{mesh{state}}` for connection `conn` into `out`.
-pub fn encode_state(m: &Mesh, conn: usize, now_us: i64, out: &mut [u8]) -> usize {
+/// `FixturePose{room, translation, rotation}` (scale and the room box are the host's).
+fn write_pose(w: &mut Pb<'_>, p: &PoseC) {
+    w.bytes(1, p.room());
+    w.f32s(2, &p.t_m());
+    if p.q.is_some() {
+        w.f32s(3, &p.quat());
+    }
+}
+
+/// `MeshPoseState`, and the pose when set (field `f`).
+fn write_pose_known(w: &mut Pb<'_>, f: u32, state_f: u32, p: &PoseKnown) {
+    match p {
+        PoseKnown::Unknown => {}
+        PoseKnown::Unposed => w.u(state_f, 1),
+        PoseKnown::Posed(p) => {
+            w.u(state_f, 2);
+            w.msg(f, |e| write_pose(e, p));
+        }
+    }
+}
+
+/// `repeated MeshNeighbour` (field `f`).
+fn write_links(w: &mut Pb<'_>, f: u32, links: &[Link]) {
+    for l in links {
+        w.msg(f, |e| {
+            e.u(1, l.node.into());
+            e.s(2, l.rssi.into());
+            if l.tx_pct != TX_UNKNOWN {
+                e.opt(3, Some(l.tx_pct.min(100).into()));
+            }
+        });
+    }
+}
+
+/// A member's topology fields (MeshMember 14..18).
+fn write_member_topo(e: &mut Pb<'_>, t: &Topo, now_us: i64) {
+    e.u(14, t.hops.into());
+    write_pose_known(e, 15, 18, &t.pose);
+    write_links(e, 16, t.links());
+    if t.topo_us != 0 {
+        e.opt(17, Some(((now_us - t.topo_us).max(0) / 1000).min(u32::MAX as i64) as u32));
+    }
+}
+
+/// What a `get_mesh` asked for: the topology, from which member on (GetMesh.topology,
+/// .topology_from).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TopoAsk {
+    pub from: usize,
+}
+
+/// `GetMesh{topology, topology_from}` from a whole ClientMessage frame (None: no topology).
+pub fn parse_get_mesh(frame: &[u8]) -> Option<TopoAsk> {
+    let (_, r) = client_arm(frame)?;
+    let b = &frame[r];
+    let (mut o, mut on, mut from) = (0usize, false, 0u64);
+    while o < b.len() {
+        let key = varint(b, &mut o)?;
+        match (key >> 3, key & 7) {
+            (1, 0) => on = varint(b, &mut o)? != 0,
+            (2, 0) => from = varint(b, &mut o)?,
+            (_, w) => skip(b, &mut o, w)?,
+        }
+    }
+    on.then_some(TopoAsk { from: from.min(u16::MAX as u64) as usize })
+}
+
+/// `ServerMessage{mesh{state}}` for connection `conn` into `out`. With `topo`, the members
+/// from `topo.from` on carry their topology, as many as fit the frame (the rest are left for
+/// the next page, MeshState.topology_next).
+pub fn encode_state(m: &Mesh, conn: usize, now_us: i64, out: &mut [u8], topo: Option<TopoAsk>) -> usize {
+    let Some(ask) = topo else {
+        return encode_state_page(m, conn, now_us, out, None);
+    };
+    // As many members' topology as fit: halve until the whole state does (at worst, the
+    // state without any).
+    let mut max = 16usize;
+    while max > 0 {
+        let n = encode_state_page(m, conn, now_us, out, Some((ask.from, max)));
+        if n > 0 {
+            return n;
+        }
+        max /= 2;
+    }
+    encode_state_page(m, conn, now_us, out, None)
+}
+
+fn encode_state_page(m: &Mesh, conn: usize, now_us: i64, out: &mut [u8], topo: Option<(usize, usize)>) -> usize {
     let s = &m.stack;
     let t = &s.time;
     let mut w = Pb::new(out);
@@ -415,7 +515,12 @@ pub fn encode_state(m: &Mesh, conn: usize, now_us: i64, out: &mut [u8]) -> usize
             st.u(8, sync_code(t.state));
             st.u(9, (t.err_us as i64).clamp(0, u32::MAX as i64) as u64);
             st.u(10, t.epoch.map_or(0, |e| e.gen).into());
-            for mb in s.fanout.live(now_us).filter(|mb| mb.node != s.me()) {
+            let mut next = 0usize;
+            for (k, mb) in s.fanout.live(now_us).filter(|mb| mb.node != s.me()).enumerate() {
+                let with_topo = topo.is_some_and(|(from, max)| k >= from && k < from + max);
+                if topo.is_some_and(|(from, max)| k >= from + max) && next == 0 {
+                    next = k;
+                }
                 st.msg(11, |e| {
                     e.u(1, mb.node.into());
                     if let Some(n) = s.node.backhaul.neighbour(mb.node) {
@@ -433,6 +538,9 @@ pub fn encode_state(m: &Mesh, conn: usize, now_us: i64, out: &mut [u8]) -> usize
                         e.u(11, x.time_err_us.into());
                         e.u(12, x.last_error.into());
                         e.u(13, x.last_error_op.into());
+                    }
+                    if with_topo {
+                        write_member_topo(e, &mb.topo, now_us);
                     }
                 });
             }
@@ -465,6 +573,14 @@ pub fn encode_state(m: &Mesh, conn: usize, now_us: i64, out: &mut [u8]) -> usize
             }
             st.u(24, s.sessions.synced() as u64);
             st.u(25, s.mesh_s(now_us).into());
+            // The topology (GetMesh.topology): this fixture's own, and the next page.
+            if topo.is_some() {
+                write_pose_known(st, 26, 29, &s.topo.pose);
+                let mut links = [Link::EMPTY; topo::NEIGHBOURS];
+                let n = s.links(now_us, &mut links);
+                write_links(st, 27, &links[..n]);
+                st.u(28, next as u64);
+            }
         });
     });
     if w.ok {
@@ -513,7 +629,7 @@ pub unsafe extern "C" fn ns_mesh_app(m: *mut Mesh, conn: u32, frame: *const u8, 
                 m.gw.stats.opened += 1;
                 m.log(format_args!("[mesh] gateway session open conn={conn}"));
             }
-            encode_state(m, conn, now_us, out) as i32
+            encode_state(m, conn, now_us, out, parse_get_mesh(frame)) as i32
         }
         gateway::arm::MESH_ADMIN => {
             let Some(a) = parse_admin(frame) else {
@@ -1182,6 +1298,32 @@ pub unsafe extern "C" fn ns_mesh_status(m: *mut Mesh, fps: u32, heap_free: u32, 
     m.stack.set_status(st);
 }
 
+/// This device's room pose for its topology broadcasts (splanc_mesh::topo), from the
+/// firmware's 1 Hz status pass (mesh_glue.h `lm_mesh_pose_fill`): `posed` 0 = no pose, else
+/// translation `t` (3 floats, metres), rotation `q` (4 floats x, y, z, w; null = identity)
+/// and the room name. Cheap: an unchanged pose is a compare (it goes out on a change, and
+/// once a minute).
+///
+/// # Safety
+/// `m` is the mesh; `t` (posed) points at 3 floats, `q` at 4 or is null, `room` at
+/// `room_len` bytes or is null.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_pose(m: *mut Mesh, posed: u32, t: *const f32, q: *const f32, room: *const u8, room_len: u32) {
+    let m = &mut *m;
+    let p = if posed == 0 || t.is_null() {
+        PoseKnown::Unposed
+    } else {
+        let t = core::slice::from_raw_parts(t, 3);
+        let q = (!q.is_null()).then(|| {
+            let q = core::slice::from_raw_parts(q, 4);
+            [q[0], q[1], q[2], q[3]]
+        });
+        let room = if room.is_null() { &[][..] } else { core::slice::from_raw_parts(room, room_len as usize) };
+        PoseKnown::Posed(PoseC::from_pose([t[0], t[1], t[2]], q, room))
+    };
+    m.stack.set_pose(p);
+}
+
 /// Dev image (`MESH CTL`): relay `inner` (a whole ClientMessage) to every member WITHOUT the
 /// gateway's allow-list check, collecting answers: how the HITL proves members refuse what
 /// the allow-list leaves out. Returns the op id, 0 if it could not be sent.
@@ -1434,6 +1576,131 @@ mod tests {
 
     fn hex(b: &[u8]) -> std::string::String {
         b.iter().map(|x| std::format!("{x:02x}")).collect()
+    }
+
+    /// `MeshMember{node 0x1234, hops 2, pose{room "Hall", translation [1.5, 0, -2], rotation
+    /// (90° about y)}, neighbours [{0x2001, -41, 97 %}, {0x2002, -70}], topology_ms_ago 1500,
+    /// pose_state SET}`: web/tests/meshTopology.test.ts decodes the same bytes with protobuf-es.
+    const MEMBER_TOPO_GOLDEN: &str = "08b42470029001027a260a0448616c6c120c0000c03f00000000000000c01a10000000006a05353f000000007c04353f82010708814010511861820106088240108b018801dc0b";
+
+    fn golden_topo() -> Topo {
+        let mut t = Topo::EMPTY;
+        let pose = PoseKnown::Posed(PoseC::from_pose([1.5, 0.0, -2.0], Some([0.0, 0.70710677, 0.0, 0.70710677]), b"Hall"));
+        let mut links = [Link::EMPTY; topo::NEIGHBOURS];
+        links[0] = Link { node: 0x2001, rssi: -41, tx_pct: 97 };
+        links[1] = Link { node: 0x2002, rssi: -70, tx_pct: TX_UNKNOWN };
+        t.apply(1_000_000, &splanc_mesh::topo::TopoMsg { pose, pose_gen: 1, n: 2, links });
+        t.hops = 2;
+        t
+    }
+
+    #[test]
+    fn member_topology_golden() {
+        let mut b = [0u8; 160];
+        let mut w = Pb::new(&mut b);
+        w.u(1, 0x1234);
+        write_member_topo(&mut w, &golden_topo(), 2_500_000);
+        assert!(w.ok);
+        let n = w.n;
+        assert_eq!(hex(&b[..n]), MEMBER_TOPO_GOLDEN);
+    }
+
+    #[test]
+    fn get_mesh_topology_flag() {
+        // get_mesh{} / get_mesh{topology: true} / get_mesh{topology, topology_from 5, unknown 9}
+        assert_eq!(parse_get_mesh(&[0xa2, 0x06, 0x00]), None);
+        assert_eq!(parse_get_mesh(&[0xa2, 0x06, 0x02, 0x08, 0x01]), Some(TopoAsk { from: 0 }));
+        assert_eq!(parse_get_mesh(&[0xa2, 0x06, 0x06, 0x08, 0x01, 0x10, 0x05, 0x48, 0x01]), Some(TopoAsk { from: 5 }));
+        assert_eq!(parse_get_mesh(&[0xa2, 0x06, 0x02, 0x08, 0x00]), None, "topology: false");
+        assert_eq!(parse_get_mesh(&[0xa2, 0x06, 0x02, 0x08]), None, "truncated");
+    }
+
+    /// A 16-fixture mesh's topology does not fit one 2 KB frame: get_mesh{topology} pages it
+    /// (MeshState.topology_next), every page decodes with the host profile, and together they
+    /// carry every member's pose and neighbours once; get_mesh{} is unchanged (no topology).
+    #[test]
+    fn get_mesh_topology_pages_through_a_full_mesh() {
+        // The host profile's ServerMessage is large: decode on a roomy stack.
+        std::thread::Builder::new().stack_size(64 << 20).spawn(topology_pages).unwrap().join().unwrap();
+    }
+
+    fn topology_pages() {
+        use ledmapper_pb::ledmapper_::v1_ as pb;
+        use micropb::MessageDecode;
+        let mut block = std::vec![0u8; crate::ns_mesh_size() as usize];
+        let mac = [0x8c, 0xfd, 0x49, 0x12, 0x31, 0x70];
+        let m = unsafe { crate::ns_mesh_create(block.as_mut_ptr(), crate::ns_mesh_size(), mac.as_ptr(), 1, 0, 0) };
+        let mut t = 0;
+        unsafe {
+            crate::ns_mesh_dev_provision(m, 0x5350_4C33, [7u8; 32].as_ptr(), 1, 0);
+            while t < 6_000_000 {
+                t += 5_000;
+                crate::ns_mesh_tick(m, t, 1, 1);
+            }
+            ns_mesh_pose(m, 1, [0.25f32, 1.0, 0.0].as_ptr(), core::ptr::null(), b"Living room".as_ptr(), 11);
+        }
+        let m = unsafe { &mut *m };
+        assert!(m.stack.membership.is_member());
+        let base = golden_topo();
+        for i in 0..15u16 {
+            let mb = m.stack.fanout.touch(t, 0x4000 + i);
+            mb.status = Some(StatusMsg { firmware: 0xdead_beef, uptime_s: 3600, heap_free: 52_000, heap_min: 31_000, fps: 80, brightness: 255, sync: 2, time_err_us: 40, last_error: 0, last_error_op: 0 });
+            let mut tp = base;
+            tp.n = topo::NEIGHBOURS as u8;
+            for (k, l) in tp.links.iter_mut().enumerate() {
+                *l = Link { node: 0x4000 + k as u16, rssi: -40 - k as i8, tx_pct: 90 + k as u8 };
+            }
+            tp.pose = PoseKnown::Posed(PoseC::from_pose([i as f32, 0.5, -1.0], Some([0.1, 0.2, 0.3, 0.9]), b"A long room name!"));
+            mb.topo = tp;
+        }
+        let decode = |b: &[u8]| -> pb::MeshState {
+            let mut sm = pb::ServerMessage::default();
+            sm.decode_from_bytes(b).expect("decodes");
+            match sm.msg {
+                Some(pb::ServerMessage_::Msg::Mesh(i)) => match i.info {
+                    Some(pb::MeshInfo_::Info::State(s)) => s,
+                    o => panic!("{o:?}"),
+                },
+                o => panic!("{o:?}"),
+            }
+        };
+        let mut out = [0u8; 2048];
+        let n = encode_state(m, 0, t, &mut out, None);
+        let plain = decode(&out[..n]);
+        assert_eq!(plain.members.len(), 15);
+        assert!(plain.members.iter().all(|x| x.neighbours.is_empty() && x.hops == 0 && x.pose().is_none()));
+        assert!(plain.neighbours.is_empty() && plain.topology_next == 0);
+        let mut from = 0usize;
+        let mut got = std::vec::Vec::new();
+        let mut pages = 0;
+        loop {
+            let n = encode_state(m, 0, t, &mut out, Some(TopoAsk { from }));
+            assert!(n > 0, "page from {from} does not fit");
+            let st = decode(&out[..n]);
+            pages += 1;
+            assert_eq!(st.members.len(), 15, "every page lists every member");
+            assert_eq!(st.pose_state, pb::MeshPoseState::MeshPoseSet);
+            let p = st.pose().expect("own pose");
+            assert_eq!((p.room.as_str(), &p.translation[..]), ("Living room", &[0.25f32, 1.0, 0.0][..]));
+            for mm in st.members.iter().filter(|x| !x.neighbours.is_empty()) {
+                assert_eq!((mm.hops, mm.neighbours.len(), mm.pose_state), (2, 8, pb::MeshPoseState::MeshPoseSet));
+                let pp = mm.pose().unwrap();
+                assert_eq!((pp.room.as_str(), pp.rotation.len()), ("A long room name", 4), "cut to 16 bytes");
+                assert_eq!(mm.neighbours[3].rssi, -43);
+                assert_eq!(mm.neighbours[3].tx_ok_pct(), Some(&93));
+                got.push(mm.node);
+            }
+            if st.topology_next == 0 {
+                break;
+            }
+            assert!(st.topology_next as usize > from);
+            from = st.topology_next as usize;
+        }
+        got.sort();
+        got.dedup();
+        assert_eq!(got.len(), 15, "each member's topology once");
+        assert!(pages >= 2, "a full mesh needs more than one 2 KB page");
+        std::println!("get_mesh topology: 15 members in {pages} pages");
     }
 
     #[test]

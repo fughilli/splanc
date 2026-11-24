@@ -415,6 +415,9 @@ fn main() -> std::io::Result<()> {
         (".ledmapper.v1.MeshState.device_key", 65, true),
         (".ledmapper.v1.MeshState.pending", 8, false),
         (".ledmapper.v1.MeshState.groups", 8, false),
+        // The mesh topology (the app's mesh map): mesh_gw.rs encodes it.
+        (".ledmapper.v1.MeshMember.neighbours", 8, false),
+        (".ledmapper.v1.MeshState.neighbours", 8, false),
     ] {
         if firmware {
             g.configure(field, Config::new().skip(true));
@@ -428,6 +431,8 @@ fn main() -> std::io::Result<()> {
         g.configure(".ledmapper.v1.MeshInfo.result", Config::new().skip(true));
         g.configure(".ledmapper.v1.MeshInfo.state", Config::new().skip(true));
         g.configure(".ledmapper.v1.MeshInfo.admin", Config::new().skip(true));
+        g.configure(".ledmapper.v1.MeshMember.pose", Config::new().skip(true));
+        g.configure(".ledmapper.v1.MeshState.pose", Config::new().skip(true));
     }
 
     g.compile_fdset_file(&args[1], &args[2])
