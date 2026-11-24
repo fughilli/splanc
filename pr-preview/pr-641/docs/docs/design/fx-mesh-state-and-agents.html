@@ -532,15 +532,20 @@ two-fixture HITL gate: N agents in, N agents out after 1000 hand-offs.</p></li>
 <li><p><strong>Preview mesh mode</strong> and the AI prompt.</p></li>
 </ol>
 </section>
-<section id="open">
-<h2>Open<a class="headerlink" href="#open" title="Link to this heading">¶</a></h2>
+<section id="decisions-owner-desk-2026-11-23">
+<h2>Decisions (owner desk, 2026-11-23)<a class="headerlink" href="#decisions-owner-desk-2026-11-23" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p><strong>The default for plain <code class="docutils literal notranslate"><span class="pre">state</span></code></strong> (Part 1): local (recommended) or restored.</p></li>
-<li><p><strong>Hand-off guarantee</strong> (Part 2): two-phase (recommended, no duplicates) or one-phase (no
-invisible gap, rare duplicates).</p></li>
-<li><p>Should peers include fixtures running a <strong>different effect</strong> in the same room (for
-example, so an agent can fly into an ambient lamp and change its look)? That would need
-a cross-effect message schema. Recommendation: same effect only for now.</p></li>
+<li><p><strong>Plain <code class="docutils literal notranslate"><span class="pre">state</span></code> stays local</strong> (Part 1); <code class="docutils literal notranslate"><span class="pre">shared</span> <span class="pre">state</span></code> opts in. Built in #641.</p></li>
+<li><p><strong>D-509: two-phase hand-off</strong> (Part 2). HITL gate: N agents in = N agents out after 1000
+hand-offs.</p></li>
+<li><p><strong>D-510: every mesh member is a peer</strong>, not only fixtures running the same effect. So
+<code class="docutils literal notranslate"><span class="pre">peer_*</span></code> lists all members, and messages reach fixtures running other effects: each
+effect must check what it receives (for example a tag in <code class="docutils literal notranslate"><span class="pre">a.w</span></code>, or the sender’s effect
+hash in <code class="docutils literal notranslate"><span class="pre">Msg</span></code>). The “same effect only” filter in <em>Limits and safety</em> above is replaced by
+this; delivery to a fixture whose effect has no <code class="docutils literal notranslate"><span class="pre">receive()</span></code> is dropped and bounced.</p></li>
+<li><p><strong>D-506 / D-507:</strong> a state’s initial value is constants only, and <code class="docutils literal notranslate"><span class="pre">init()</span></code> reads the same
+as <code class="docutils literal notranslate"><span class="pre">update()</span></code> (#636). A catch-up restore must win over <code class="docutils literal notranslate"><span class="pre">init()</span></code>: <code class="docutils literal notranslate"><span class="pre">init()</span></code> runs at load,
+before the catch-up’s <code class="docutils literal notranslate"><span class="pre">set_fx_state</span></code> is handled, never after it.</p></li>
 </ul>
 </section>
 </section>
@@ -598,7 +603,7 @@ a cross-effect message schema. Recommendation: same effect only for now.</p></li
 </ul>
 </li>
 <li><a class="reference internal" href="#plan">Plan</a></li>
-<li><a class="reference internal" href="#open">Open</a></li>
+<li><a class="reference internal" href="#decisions-owner-desk-2026-11-23">Decisions (owner desk, 2026-11-23)</a></li>
 </ul>
 </li>
 </ul>
