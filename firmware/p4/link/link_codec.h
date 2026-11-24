@@ -59,7 +59,7 @@ enum {
   // console isn't wired on the P4 boards), handled there as if typed on it: "MESH …"
   // (the mesh runs on the front end: MESH LEAVE is the physical-access recovery) and
   // "WIFI …". Payload: op, then the line's bytes (no newline).
-  LK_OP_CONSOLE = 6,
+  LK_OP_CONSOLE = 9,  // 6-8 are taken by #645 (TIME, TIMEBASE, STAGED)
 };
 
 // The front end's HELLO (front end -> P4): op, version, 0, MTU (LE), its image's ELF
