@@ -567,7 +567,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// A connection holding a signing session, if any (the console's epochs go out under it).
     pub fn signing_conn(&self) -> Option<usize> {
-        (0..admin::MAX_CONNECTIONS).find(|&c| self.signing_session(c))
+        // Live connections first; then the grant an app left behind (D-534).
+        (0..admin::MAX_CONNECTIONS).chain(core::iter::once(admin::DETACHED)).find(|&c| self.signing_session(c))
     }
 
     /// The `mesh_follow` device setting (§7.2).

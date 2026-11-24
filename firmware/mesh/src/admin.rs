@@ -39,10 +39,12 @@ pub const ADMIN_SECRET_LEN: usize = 16;
 pub const UNLOCK_LOCKOUT_US: i64 = 2_000_000;
 /// Connections a gateway tracks (wss slots + BLE).
 pub const MAX_CONNECTIONS: usize = 8;
-/// The slot a gateway's grant moves to when the app connection that unlocked it goes away
-/// ([`AdminGate::detach`]). No app connection has this index: only the gateway's own
-/// catch-ups and epoch announcements (`MeshStack::signing_conn`) use it.
-pub const DETACHED: usize = MAX_CONNECTIONS - 1;
+/// Where a gateway's grant goes when the app connection that unlocked it goes away
+/// ([`AdminGate::detach`]): past the connection slots (`unlock` / `open_envelope` refuse
+/// any index >= [`MAX_CONNECTIONS`]), backed by its own field, so no connection (the dev
+/// console's included) can hold or overwrite it. Only the gateway's own catch-ups and
+/// epoch announcements (`MeshStack::signing_conn`) use it.
+pub const DETACHED: usize = MAX_CONNECTIONS;
 /// Per-recipient command MAC: 2-byte node id + 6-byte MAC.
 pub const MAC_LEN: usize = 6;
 pub const ENTRY_LEN: usize = 2 + MAC_LEN;
@@ -609,12 +611,14 @@ pub enum UnlockError {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AdminGate {
     unlocked: [Option<u32>; MAX_CONNECTIONS],
+    /// The session of the last app connection that dropped while signing ([`DETACHED`]).
+    detached: Option<u32>,
     lockout_until_us: Option<i64>,
 }
 
 impl AdminGate {
     pub const fn new() -> AdminGate {
-        AdminGate { unlocked: [None; MAX_CONNECTIONS], lockout_until_us: None }
+        AdminGate { unlocked: [None; MAX_CONNECTIONS], detached: None, lockout_until_us: None }
     }
 
     /// `mesh_unlock{grant}` on connection `conn`: the app signed a grant for this gateway.
@@ -666,6 +670,9 @@ impl AdminGate {
     }
 
     pub fn session(&self, conn: usize) -> Option<u32> {
+        if conn == DETACHED {
+            return self.detached;
+        }
         self.unlocked.get(conn).copied().flatten()
     }
 
@@ -675,7 +682,9 @@ impl AdminGate {
 
     /// A connection opened or dropped: it is never unlocked.
     pub fn connection_changed(&mut self, conn: usize) {
-        if let Some(u) = self.unlocked.get_mut(conn) {
+        if conn == DETACHED {
+            self.detached = None;
+        } else if let Some(u) = self.unlocked.get_mut(conn) {
             *u = None;
         }
     }
@@ -683,11 +692,11 @@ impl AdminGate {
     /// Connection `conn` dropped, but its grant stays good: move its session to the
     /// [`DETACHED`] slot (replacing what was there). The connection itself is locked.
     pub fn detach(&mut self, conn: usize) {
-        if conn == DETACHED || conn >= MAX_CONNECTIONS {
+        if conn >= MAX_CONNECTIONS {
             return;
         }
         if let Some(s) = self.unlocked[conn].take() {
-            self.unlocked[DETACHED] = Some(s);
+            self.detached = Some(s);
         }
     }
 }
@@ -712,6 +721,26 @@ mod tests {
         assert_eq!(g.session(DETACHED), Some(78), "the newest replaces it");
         g.detach(DETACHED);
         assert_eq!(g.session(DETACHED), Some(78), "detaching the detached slot is a no-op");
+        g.connection_changed(DETACHED);
+        assert_eq!(g.session(DETACHED), None);
+    }
+
+    #[test]
+    fn the_detached_session_shares_no_connection_slot() {
+        // Every connection index, the dev console's (the last) included, is its own slot:
+        // a detach never unlocks one, and opening one never touches the detached session.
+        assert!(DETACHED >= MAX_CONNECTIONS);
+        let mut g = AdminGate::new();
+        g.unlocked[1] = Some(77);
+        g.detach(1);
+        for c in 0..MAX_CONNECTIONS {
+            assert!(!g.is_unlocked(c), "connection {c} is not unlocked by a detach");
+        }
+        g.open_envelope(MAX_CONNECTIONS - 1).unwrap();
+        assert_eq!(g.session(DETACHED), Some(77), "the console's envelope leaves it alone");
+        g.detach(MAX_CONNECTIONS - 1);
+        assert_eq!(g.session(DETACHED), Some(crate::ports::SESSION_ENVELOPE), "a later detach replaces it (still never a connection)");
+        assert!(g.open_envelope(DETACHED).is_err(), "no connection can open the detached index");
     }
 
     fn grant(signer: &AdminSigner, gw: &HostKey, session: u32, not_after: u32) -> Grant {
