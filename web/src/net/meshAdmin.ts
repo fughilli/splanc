@@ -106,7 +106,16 @@ export async function waitForMember(
 ): Promise<MeshStateInfo> {
   const deadline = Date.now() + (opts.timeoutMs ?? 20_000);
   for (;;) {
-    const s = await c.getMesh();
+    // A fixture that is turning its mesh on can be slow to answer one poll (a P4 lamp's
+    // C6 front end builds the mesh and saves its state meanwhile): a timed-out poll is
+    // retried until the deadline rather than failing a join that is going fine.
+    let s: MeshStateInfo;
+    try {
+      s = await c.getMesh();
+    } catch (e) {
+      if ((e as Error)?.name !== "RequestTimeoutError" || Date.now() > deadline || opts.aborted?.()) throw e;
+      continue;
+    }
     opts.onState?.(s);
     if (isMemberOf(s, meshId)) return s;
     if (Date.now() > deadline || opts.aborted?.()) return s;

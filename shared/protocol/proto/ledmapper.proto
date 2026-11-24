@@ -1287,6 +1287,10 @@ message ClientMessage {
     // Mesh membership and administration (mesh M7): join or leave a mesh, unlock the
     // admin session with a signed grant, admit, revoke, eject. Reply: mesh.admin.
     MeshAdmin mesh_admin = 101;
+    // A deck's `shared state` values, carried by a mesh catch-up so a fixture that
+    // rejoins continues where the gateway's effect is (docs/design/fx-mesh-state-and-agents.md).
+    // No reply.
+    SetFxState set_fx_state = 102;
     // Lamp power: on/off, its ON/OFF transitions, the touch sensor
     // (docs/design/lamp-power.md).
     SetPower set_power = 130;
@@ -1588,6 +1592,22 @@ message MeshEject {
   bytes key_hash = 2;
 }
 
+// The `shared state` of one deck's effect (docs/design/fx-mesh-state-and-agents.md):
+// a mesh catch-up sends it after the effect, and the member restores the values when
+// its own copy of the effect has the same state layout (`layout_hash`, from the
+// compiled program). The member then advances the next update() by the time since
+// the snapshot, so an integrated phase lands where the gateway's is.
+message SetFxState {
+  // 0 = deck A, 1 = deck B.
+  uint32 deck = 1;
+  // ledmapper_fx_vm Program::layout_hash of the effect the values belong to.
+  fixed32 layout_hash = 2;
+  // Effect `time` (seconds) of the frame the snapshot was taken after.
+  float time = 3;
+  // The shared slots' raw 32-bit words, little-endian, in the program's footer order.
+  bytes words = 4;
+}
+
 message MeshAdmin {
   oneof op {
     MeshProvision provision = 1;
@@ -1618,6 +1638,9 @@ enum MeshAdminError {
   MESH_ADMIN_BAD_ORDER = 8;
   // Not available on this fixture (no device key, the mesh is not built in).
   MESH_ADMIN_UNSUPPORTED = 9;
+  // The mesh could not turn on: not enough free memory on the fixture (MeshAdminResult.value:
+  // the bytes it needed in one block).
+  MESH_ADMIN_NO_MEMORY = 10;
 }
 
 message MeshAdminResult {

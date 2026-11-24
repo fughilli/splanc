@@ -42,10 +42,20 @@ pub mod arm {
     pub const GET_MESH: u32 = 100;
     /// Membership and administration (mesh M7): never relayed.
     pub const MESH_ADMIN: u32 = 101;
+    /// A deck's `shared state` (a catch-up's state blob; docs/design/fx-mesh-state-and-agents.md).
+    pub const SET_FX_STATE: u32 = 102;
 }
 
 /// The arms a member dispatches from the mesh (module docs).
-pub const RELAYED: [u32; 6] = [arm::SUBMIT_EFFECT, arm::SET_EFFECT, arm::SET_UNIFORMS, arm::SET_BRIGHTNESS, arm::SET_CROSSFADE, arm::BLEND_KEYPOINTS];
+pub const RELAYED: [u32; 7] = [
+    arm::SUBMIT_EFFECT,
+    arm::SET_EFFECT,
+    arm::SET_UNIFORMS,
+    arm::SET_BRIGHTNESS,
+    arm::SET_CROSSFADE,
+    arm::BLEND_KEYPOINTS,
+    arm::SET_FX_STATE,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refuse {

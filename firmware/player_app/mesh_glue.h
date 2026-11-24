@@ -87,6 +87,8 @@ int32_t ns_mesh_app(void *m, uint32_t conn, const uint8_t *frame, uint32_t len, 
                     uint32_t cap, const uint8_t **inner, uint32_t *inner_len) __attribute__((weak));
 // With the mesh off (no block): get_mesh -> state{on: false}, mesh_send -> NO_MESH, else -2.
 int32_t ns_mesh_app_off(const uint8_t *frame, uint32_t len, uint8_t *out, uint32_t cap) __attribute__((weak));
+int32_t ns_mesh_admin_refuse(const uint8_t *frame, uint32_t len, uint8_t *out, uint32_t cap, uint32_t error, uint32_t value)
+    __attribute__((weak));
 void ns_mesh_gw_local_done(void *m, uint32_t status) __attribute__((weak));
 void ns_mesh_app_time_base(void *m, uint32_t conn) __attribute__((weak));
 void ns_mesh_conn_closed(void *m, uint32_t conn) __attribute__((weak));
@@ -188,13 +190,10 @@ struct BelowRender {
   }
 };
 
-// Stack for building the MeshStack in place: ns_mesh_create's worst path is 19.6 KB (the
-// ELF call graph, long calls included; MeshStack::init_in 11.3 KB + NetOf::new 4 KB + ...),
-// x 1.3. A short-lived task, so loopTask's 12 KB never sees it; high-water in MESH ON's reply.
-constexpr uint32_t kCreateStack = 26 * 1024;
 // The tick's own stack, after the mesh in its heap block (zero RAM while off): its worst
 // path is 10.75 KB (swarm's settings-bundle HMAC under NetOf::poll), which on top of
-// netstack_loop's ~1.9 KB would overflow loopTask's 12 KB. x 1.3.
+// netstack_loop's ~1.9 KB would overflow loopTask's 12 KB. x 1.3. MESH ON builds the mesh on
+// it too (ns_mesh_create, ~3.2 KB in place; it ran on a separate 26 KB task before).
 constexpr uint32_t kTickStack = 14 * 1024;
 
 uint32_t block_len() { return (ns_mesh_size() + 15u) & ~15u; }
@@ -205,6 +204,11 @@ void tick_on_stack() { ns_mesh_tick_staged(g_mesh); }
 // at a time: 1 Mb/s frames are ~2.5 ms each with the ACK).
 constexpr int64_t kPumpBudgetUs = 3000;
 
+// MESH ON builds the mesh on the tick's own stack (the tail of the heap block, idle until
+// the first tick): ns_mesh_create builds every field in place in a frame of its own, so its
+// worst path fits there. Before, it ran on a short-lived 26 KB task, which needed ~71 KB of
+// free heap at once (block + task stack) and failed on a player with less (SilviasLamp: a
+// 67.5 KB largest block, "no 26624-byte create stack").
 struct CreateJob {
   uint8_t *block;
   uint32_t len;
@@ -213,16 +217,17 @@ struct CreateJob {
   uint64_t mark;
   int64_t now_us;
   void *result;
-  uint32_t stack_hwm;
-  volatile bool done;
 };
-
-void create_task(void *arg) {
-  CreateJob *j = static_cast<CreateJob *>(arg);
+CreateJob *g_create_job = nullptr;
+void create_on_stack() {
+  CreateJob *j = g_create_job;
   j->result = ns_mesh_create(j->block, j->len, j->mac, j->ch, j->mark, j->now_us);
-  j->stack_hwm = uxTaskGetStackHighWaterMark(nullptr);
-  j->done = true;
-  vTaskDelete(nullptr);
+}
+// Bytes of the painted region [s, s + n) that were written (the stack grows down from s + n).
+uint32_t painted_used(const uint8_t *s, uint32_t n) {
+  uint32_t i = 0;
+  while (i < n && s[i] == 0xA5) i++;
+  return n - i;
 }
 
 // Mesh time (M4) maps RX-vector stamps onto esp_timer through the MAC's µs counter. Probe
@@ -257,7 +262,13 @@ void print_heap(const char *what) {
                 (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
+// Why the last on() failed, for the app's answer (mesh_gw.rs aerr): 10 = NO_MEMORY (value:
+// the bytes it needed in one block), 9 = UNSUPPORTED (not built in, or the build refused).
+uint32_t g_on_fail_err = 0, g_on_fail_value = 0;
+
 bool on() {
+  g_on_fail_err = 9;
+  g_on_fail_value = 0;
   if (g_mesh) {
     Serial.printf("[mesh] ok on (already)\n");
     return true;
@@ -276,6 +287,9 @@ bool on() {
   }
   if (!block) {
     Serial.printf("[mesh] fail on: no %lu-byte block\n", (unsigned long)len);
+    print_heap("on_failed");
+    g_on_fail_err = 10;
+    g_on_fail_value = len;
     return false;
   }
   uint64_t mark = 0;
@@ -287,15 +301,12 @@ bool on() {
   j.ch = g_chan;
   j.mark = mark;
   j.now_us = esp_timer_get_time();
-  TaskHandle_t h = nullptr;
-  if (xTaskCreate(create_task, "meshnew", kCreateStack, &j, uxTaskPriorityGet(nullptr), &h) != pdPASS) {
-    vSemaphoreDelete(lock);
-    free(block);
-    Serial.printf("[mesh] fail on: no %lu-byte create stack\n", (unsigned long)kCreateStack);
-    return false;
-  }
-  while (!j.done) vTaskDelay(1);
-  vTaskDelay(2);  // let the idle task reap the create task's stack before the heap report
+  uint8_t *stack = block + block_len();
+  memset(stack, 0xA5, kTickStack);
+  g_create_job = &j;
+  esp_execute_shared_stack_function(lock, stack, kTickStack, create_on_stack);
+  g_create_job = nullptr;
+  const uint32_t create_used = painted_used(stack, kTickStack);
   if (!j.result) {
     vSemaphoreDelete(lock);
     free(block);
@@ -321,8 +332,8 @@ bool on() {
       }
     }
   }
-  Serial.printf("[mesh] ok on block=%lu counter_mark=%llu create_stack_used=%lu ch=%u\n", (unsigned long)len,
-                (unsigned long long)mark, (unsigned long)(kCreateStack - j.stack_hwm), g_chan);
+  Serial.printf("[mesh] ok on block=%lu counter_mark=%llu create_stack_used=%lu/%lu ch=%u\n", (unsigned long)len,
+                (unsigned long long)mark, (unsigned long)create_used, (unsigned long)kTickStack, g_chan);
   print_heap("after_on");
   return true;
 }

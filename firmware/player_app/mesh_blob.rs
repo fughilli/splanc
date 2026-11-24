@@ -319,7 +319,7 @@ pub struct Share {
 }
 
 /// Frames a scene dispatches (an effect and a state blob's few frames).
-pub const DQ: usize = 6;
+pub const DQ: usize = 8;
 
 /// How a scene's dispatches end: its log line and its answer to the gateway.
 #[derive(Clone, Copy)]

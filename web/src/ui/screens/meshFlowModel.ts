@@ -18,6 +18,8 @@ export function provisionFailureText(code: string, fallback: string): string {
       return "It already belongs to a mesh made on another phone. Remove it there first, or reset its mesh from its USB console (MESH LEAVE).";
     case "MESH_ADMIN_UNSUPPORTED":
       return "This fixture can't join a mesh (its firmware has no device key yet). Update it, then try again.";
+    case "MESH_ADMIN_NO_MEMORY":
+      return "It doesn't have enough free memory to turn its mesh on. Restart it and try again; if it still fails, its firmware needs an update.";
     case "MESH_ADMIN_BUSY":
     case "MESH_ADMIN_LOCKED_OUT":
       return "It was busy. Try again in a moment.";

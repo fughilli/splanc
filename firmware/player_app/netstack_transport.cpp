@@ -2031,7 +2031,7 @@ int netstack_sessions_open() {
 }
 
 // The mesh gateway (mesh M5, mesh_gw.rs) for main.cpp's lm_ws_dispatch: -2 = not a mesh arm
-// (or the mesh is off: the player core answers error{unsupported}), >= 0 = the reply in out,
+// (the player core answers it), >= 0 = the reply in out,
 // -3 = dispatch *inner too and answer with its reply (then lm_mesh_app_done).
 extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uint8_t *out, size_t cap,
                                const uint8_t **inner, uint32_t *inner_len) {
@@ -2043,7 +2043,13 @@ extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uin
     // join persists the state; leave erases it and turns the mesh off again).
     if (r != -4) return r;
     lm_mesh::BelowRender below;  // building the mesh (PR-40)
-    if (!lm_mesh::on()) return -2;  // the player core answers error{unsupported}
+    if (!lm_mesh::on()) {
+      // Say why (NO_MEMORY with the bytes it needed, or UNSUPPORTED), as a mesh_admin
+      // result: falling through to the player core answered a bare error{unsupported}.
+      return ns_mesh_admin_refuse ? ns_mesh_admin_refuse(in, (uint32_t)len, out, (uint32_t)cap,
+                                                         lm_mesh::g_on_fail_err, lm_mesh::g_on_fail_value)
+                                  : -2;
+    }
   }
   return ns_mesh_app(g_mesh, conn, in, (uint32_t)len, esp_timer_get_time(), out, (uint32_t)cap, inner, inner_len);
 }

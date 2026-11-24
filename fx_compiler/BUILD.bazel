@@ -145,6 +145,18 @@ rust_test(
     ],
 )
 
+# `shared state` (docs/design/fx-mesh-state-and-agents.md): the .fxb footer and the
+# VM's snapshot / restore of exactly the shared slots (a mesh rejoin).
+rust_test(
+    name = "shared_state_test",
+    srcs = ["tests/shared_state.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
 # The Halloween play-mode effect pack (web/src/halloween/presets.ts): every
 # preset compiles warning-free and renders (never all-black) on the real VM.
 rust_test(

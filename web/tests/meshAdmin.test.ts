@@ -241,7 +241,36 @@ test("provision, unlock on connect, and a refused re-provision", async () => {
   foreign.adminKey = new Uint8Array(65);
   await assert.rejects(provisionFixture(foreign, rec, site), (e: unknown) => e instanceof MeshAdminFailure && e.code === "MESH_ADMIN_LOCKED");
   assert.match(provisionFailureText("MESH_ADMIN_LOCKED", ""), /another phone/);
+  assert.match(provisionFailureText("MESH_ADMIN_NO_MEMORY", ""), /enough free memory/);
 });
+
+test("waitForMember rides out a poll that times out while the mesh turns on", async () => {
+  let calls = 0;
+  const slow = {
+    async getMesh() {
+      calls += 1;
+      if (calls === 1) {
+        const e = new Error("timed out after 5000 ms waiting for mesh");
+        e.name = "RequestTimeoutError";
+        throw e;
+      }
+      return { on: true, member: true, meshId: 7, node: 0x9878, phase: 3 };
+    },
+  } as unknown as Parameters<typeof waitForMember>[0];
+  const s = await waitForMember(slow, 7, { timeoutMs: 1000, intervalMs: 1 });
+  assert.equal(calls, 2);
+  assert.ok(isMemberOf(s, 7));
+});
+
+test("waitForMember passes on other errors", async () => {
+  const broken = {
+    async getMesh() {
+      throw new Error("socket closed");
+    },
+  } as unknown as Parameters<typeof waitForMember>[0];
+  await assert.rejects(waitForMember(broken, 7, { timeoutMs: 1000 }), /socket closed/);
+});
+
 
 test("a grant from another admin key is refused", async () => {
   const store = new MeshStore();

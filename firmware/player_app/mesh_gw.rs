@@ -706,6 +706,23 @@ pub unsafe extern "C" fn ns_mesh_app_off(frame: *const u8, len: u32, out: *mut u
     app_off(frame, out)
 }
 
+/// The answer to a `mesh_admin` provision / leave when the mesh could not turn on for it
+/// (`error`: an `aerr` code; `value`: what it needed, e.g. the block's bytes), so the app
+/// sees why instead of the player core's generic `unsupported`. -2 if `frame` is not a
+/// `mesh_admin`.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_admin_refuse(frame: *const u8, len: u32, out: *mut u8, cap: u32, error: u32, value: u32) -> i32 {
+    let frame = core::slice::from_raw_parts(frame, len as usize);
+    let out = core::slice::from_raw_parts_mut(out, cap as usize);
+    match client_arm(frame) {
+        Some((gateway::arm::MESH_ADMIN, _)) => {
+            let op = parse_admin(frame).map_or(0, |a| a.op);
+            encode_admin(out, op, error, value, None) as i32
+        }
+        _ => -2,
+    }
+}
+
 fn app_off(frame: &[u8], out: &mut [u8]) -> i32 {
     match client_arm(frame) {
         Some((gateway::arm::GET_MESH, _)) => {
@@ -756,6 +773,7 @@ pub mod aerr {
     pub const BUSY: u32 = 7;
     pub const BAD_ORDER: u32 = 8;
     pub const UNSUPPORTED: u32 = 9;
+    pub const NO_MEMORY: u32 = 10;
 }
 
 /// A parsed `MeshAdmin`: its op, and the op's fields by number (varints in `v`, bytes in
@@ -1511,6 +1529,11 @@ mod tests {
         let ad = [0xaa, 0x06, 6, 0x1a, 4, 0x08, 5, 0x12, 0];
         let n = app_off(&ad, &mut out) as usize;
         assert_eq!(&out[..n], &[0xba, 0x03, 6, 0x1a, 4, 0x08, 3, 0x10, aerr::NO_MESH as u8]);
+        // The mesh could not turn on for a provision: the answer says why (NO_MEMORY and the
+        // bytes it needed), not the player core's bare error{unsupported}.
+        let n = unsafe { ns_mesh_admin_refuse(frame.as_ptr(), frame.len() as u32, out.as_mut_ptr(), out.len() as u32, aerr::NO_MEMORY, 59232) } as usize;
+        assert_eq!(hex(&out[..n]), "ba030a1a080801100a18e0ce03");
+        assert_eq!(unsafe { ns_mesh_admin_refuse([0xa2, 0x06, 0x00].as_ptr(), 3, out.as_mut_ptr(), out.len() as u32, aerr::NO_MEMORY, 0) }, -2, "get_mesh");
         // ServerMessage{mesh{admin{op 2, error BAD_GRANT}}}.
         let n = encode_admin(&mut out, op::UNLOCK, aerr::BAD_GRANT, 0, None);
         assert_eq!(hex(&out[..n]), "ba03061a0408021004");

@@ -357,8 +357,9 @@ pub extern "C" fn ns_mesh_size() -> u32 {
 
 /// Build the mesh in `block` (`ns_mesh_size()` bytes, any alignment) for this node's `mac`
 /// on channel `channel`; `counter_mark` is the persisted frame-counter mark (0 if none).
-/// Returns the mesh, or null. Its frames are large: the transport runs this on a
-/// short-lived task with a big stack (not loopTask's 12 KB).
+/// Returns the mesh, or null. Built in place, field by field, it needs ~10 KB of stack
+/// (above loopTask's headroom): the transport runs it on the tick's stack in the same
+/// block, which is idle until the first tick.
 #[no_mangle]
 pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8, channel: u8, counter_mark: u64, now_us: i64) -> *mut Mesh {
     if block.is_null() || (len as usize) < core::mem::size_of::<Mesh>() + ALIGN {
@@ -378,68 +379,85 @@ pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8
         return core::ptr::null_mut();
     }
     use core::ptr::addr_of_mut as f;
-    f!((*p).radio).write(Mac { pwr: 0x14 });
-    f!((*p).rule).write(ChannelRule::default());
+    put(f!((*p).radio), || Mac { pwr: 0x14 });
+    put(f!((*p).rule), || ChannelRule::default());
     f!((*p).scratch).write_bytes(0, 1);
     f!((*p).rxv).write_bytes(0, 1);
-    f!((*p).block).write(block);
-    f!((*p).on_us).write(now_us);
-    f!((*p).provisioned_us).write(None);
-    f!((*p).member_us).write(None);
-    f!((*p).paused_us).write(0);
-    f!((*p).pause_since).write(None);
-    f!((*p).last_tick_us).write(0);
-    f!((*p).tick_max_us).write(0);
-    f!((*p).tick_n).write(0);
-    f!((*p).test).write(TestJob::default());
+    put(f!((*p).block), || block);
+    put(f!((*p).on_us), || now_us);
+    put(f!((*p).provisioned_us), || None);
+    put(f!((*p).member_us), || None);
+    put(f!((*p).paused_us), || 0);
+    put(f!((*p).pause_since), || None);
+    put(f!((*p).last_tick_us), || 0);
+    put(f!((*p).tick_max_us), || 0);
+    put(f!((*p).tick_n), || 0);
+    put(f!((*p).test), || TestJob::default());
     for i in 0..TEST_PEERS {
-        f!((*p).test_rx[i]).write(None);
+        put(f!((*p).test_rx[i]), || None);
     }
-    f!((*p).controls).write(0);
-    f!((*p).packets).write(0);
-    f!((*p).counter_writes).write(0);
-    f!((*p).counter_fail).write(0);
-    f!((*p).camp_reported).write(0);
+    put(f!((*p).controls), || 0);
+    put(f!((*p).packets), || 0);
+    put(f!((*p).counter_writes), || 0);
+    put(f!((*p).counter_fail), || 0);
+    put(f!((*p).camp_reported), || 0);
     f!((*p).log).write_bytes(0, 1);
-    f!((*p).log_len).write(0);
-    f!((*p).aux).write([0; 2]);
-    f!((*p).staged).write((0, 0, 0));
-    f!((*p).ap_bssid).write([0; 6]);
-    f!((*p).ap_last_s).write(0);
-    f!((*p).tsf_mode).write(0);
-    f!((*p).tb_mine).write(None);
-    f!((*p).tb_gen).write(None);
-    f!((*p).tb_next_us).write(0);
-    f!((*p).tb_writes).write(0);
-    f!((*p).tb_busy).write(0);
-    f!((*p).tb_originated).write(0);
-    f!((*p).tb_align).write(false);
-    f!((*p).tstat_next_us).write(0);
-    f!((*p).last_state).write(SyncState::Unsynced);
+    put(f!((*p).log_len), || 0);
+    put(f!((*p).aux), || [0; 2]);
+    put(f!((*p).staged), || (0, 0, 0));
+    put(f!((*p).ap_bssid), || [0; 6]);
+    put(f!((*p).ap_last_s), || 0);
+    put(f!((*p).tsf_mode), || 0);
+    put(f!((*p).tb_mine), || None);
+    put(f!((*p).tb_gen), || None);
+    put(f!((*p).tb_next_us), || 0);
+    put(f!((*p).tb_writes), || 0);
+    put(f!((*p).tb_busy), || 0);
+    put(f!((*p).tb_originated), || 0);
+    put(f!((*p).tb_align), || false);
+    put(f!((*p).tstat_next_us), || 0);
+    put(f!((*p).last_state), || SyncState::Unsynced);
     mesh_gw::Gw::init_in(f!((*p).gw));
-    f!((*p).gw_local_op).write(0);
-    f!((*p).tb_app).write(None);
-    f!((*p).tb_refused).write(0);
+    put(f!((*p).gw_local_op), || 0);
+    put(f!((*p).tb_app), || None);
+    put(f!((*p).tb_refused), || 0);
     f!((*p).xfer).write_bytes(0, 1);
-    f!((*p).conns).write(0);
-    f!((*p).status_us).write(i64::MIN / 2);
-    f!((*p).dirty).write(false);
-    f!((*p).persist).write(false);
-    f!((*p).want_off).write(false);
-    f!((*p).crypto_us_max).write(0);
-    f!((*p).crypto_us_last).write(0);
-    f!((*p).owner_token).write(None);
-    f!((*p).blobs).write(mesh_blob::Slots::new());
-    f!((*p).bs).write(mesh_blob::BlobState::new());
+    put(f!((*p).conns), || 0);
+    put(f!((*p).status_us), || i64::MIN / 2);
+    put(f!((*p).dirty), || false);
+    put(f!((*p).persist), || false);
+    put(f!((*p).want_off), || false);
+    put(f!((*p).crypto_us_max), || 0);
+    put(f!((*p).crypto_us_last), || 0);
+    put(f!((*p).owner_token), || None);
+    put(f!((*p).blobs), || mesh_blob::Slots::new());
+    put(f!((*p).bs), || mesh_blob::BlobState::new());
     p
 }
 
-/// The stack, built in place at `dst` (`MeshStack::init_in`: no by-value copies of it).
+/// The stack, built in place at `dst` (`MeshStack::init_in_with`: the backhaul and the
+/// device key are built in their slots too, and no field is a by-value copy on the stack).
 #[inline(never)]
 unsafe fn build_stack(dst: *mut Stack, me: NodeId, mac: [u8; 6], channel: u8, counter_mark: u64) -> bool {
-    let w = WifiP2p::new(P2pConfig::new(mac), channel);
     let cfg = StackConfig { counter_mark, ..StackConfig::default() };
-    MeshStack::init_in(dst, me, mac, w, DevKey::load(&mac), EspRng, cfg).is_ok()
+    MeshStack::init_in_with(dst, me, mac, |p| put_backhaul(p, mac, channel), |p| put_devkey(p, &mac), EspRng, cfg).is_ok()
+}
+
+/// `f()` into `dst` from a frame of its own (see `splanc_mesh::stack`'s `put`): the stack a
+/// field-by-field build needs is its largest field's.
+#[inline(never)]
+unsafe fn put<T>(dst: *mut T, f: impl FnOnce() -> T) {
+    dst.write(f())
+}
+
+#[inline(never)]
+unsafe fn put_backhaul(p: *mut WifiP2p, mac: [u8; 6], channel: u8) {
+    p.write(WifiP2p::new(P2pConfig::new(mac), channel));
+}
+
+#[inline(never)]
+unsafe fn put_devkey(p: *mut DevKey, mac: &[u8; 6]) {
+    p.write(DevKey::load(mac));
 }
 
 /// The persisted mesh state (`/lfs/mesh.bin`, `len` bytes) at `MESH ON` (M7): the device is

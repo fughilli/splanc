@@ -564,6 +564,9 @@ pub struct Compiler {
     n_uniform_slots: u8,
     n_state: u8,
     n_locals: u8,
+    // `shared state` declarations (slot, width): the .fxb's shared-state footer
+    // (FLAG_SHARED_STATE).
+    shared_state: Vec<(u8, u8)>,
     // FX debugger symbol table (cur_fn above names each entry's function).
     dbg_syms: Vec<DebugSym>,
     // const pool (raw 32-bit words: f32 bits, or i32/Q16.16 bit patterns)
@@ -783,6 +786,7 @@ impl Compiler {
             n_uniform_slots: 0,
             n_state: 0,
             n_locals: 0,
+            shared_state: Vec::new(),
             dbg_syms: Vec::new(),
             consts: Vec::new(),
             code: Vec::new(),
@@ -983,7 +987,14 @@ impl Compiler {
             match self.cur().clone() {
                 Tok::Eof => break,
                 Tok::Ident(kw) if kw == "uniform" => self.uniform_decl()?,
-                Tok::Ident(kw) if kw == "state" => self.state_decl()?,
+                Tok::Ident(kw) if kw == "state" => self.state_decl(false)?,
+                Tok::Ident(kw) if kw == "shared" => {
+                    self.advance(); // 'shared'
+                    if !matches!(self.cur(), Tok::Ident(k) if k == "state") {
+                        return self.err("`shared` qualifies a state declaration: `shared state float phase;`");
+                    }
+                    self.state_decl(true)?
+                }
                 Tok::Ident(kw) if kw == "export" => self.export_decl()?,
                 Tok::Ident(kw) if kw == "buffer" => self.buffer_decl()?,
                 Tok::Ident(kw) if kw == "texture" => self.texture_decl()?,
@@ -1434,7 +1445,10 @@ impl Compiler {
     }
 
     // state float phase;   state Agent agents[16];   (arrays allowed here)
-    fn state_decl(&mut self) -> Result<(), Diagnostic> {
+    /// `state T name;`, or `shared state T name;` (`shared`): a mesh rejoin copies a
+    /// shared declaration from the gateway's VM (docs/design/fx-mesh-state-and-agents.md);
+    /// plain state is this fixture's own and starts from zero.
+    fn state_decl(&mut self, shared: bool) -> Result<(), Diagnostic> {
         self.advance(); // 'state'
         let tyname = self.eat_ident()?;
         let base_ty = self
@@ -1458,6 +1472,9 @@ impl Compiler {
         self.expect_sym(';')?;
         let w = self.ty_width(ty);
         let slot = self.alloc_state(w)?;
+        if shared {
+            self.shared_state.push((slot, w));
+        }
         self.note_sym("state", &name, slot, w);
         if let Some(at) = init_at {
             self.state_inits.push((slot, ty, at, name.clone()));
@@ -4199,6 +4216,9 @@ impl Compiler {
         if has_memo {
             flags |= FLAG_MEMO;
         }
+        if !self.shared_state.is_empty() {
+            flags |= FLAG_SHARED_STATE;
+        }
         b.extend_from_slice(b"FXB1");
         b.push(FXB_FORMAT_VERSION);
         b.push(flags); // flags
@@ -4246,6 +4266,17 @@ impl Compiler {
             b.push(report.led_cache_words);
             b.push(report.led_cache_groups.len() as u8);
             b.extend_from_slice(&report.led_cache_groups);
+        }
+        // Optional shared-state footer (FLAG_SHARED_STATE), read from the END of the
+        // file (fx_vm::Program::shared_state): (slot, width) × n, then n. At the end
+        // so nothing before it moves: firmware that predates it ignores the flag and
+        // the trailing bytes, and runs the effect as before (no restore).
+        if !self.shared_state.is_empty() {
+            for &(slot, w) in &self.shared_state {
+                b.push(slot);
+                b.push(w);
+            }
+            b.push(self.shared_state.len() as u8);
         }
         let mut warnings = self.lint.warnings;
         warnings.extend(self.perf_warnings);
@@ -4869,6 +4900,9 @@ const FLAG_DRIVER: u8 = 0x10;
 /// `prep_entry(u16) words(u8) n_groups(u8) group_end(u8) × n_groups` — follows
 /// the buffer table (the variance pass's per-frame prep + per-LED cache).
 const FLAG_MEMO: u8 = 0x20;
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_SHARED_STATE): a `shared state` footer at the
+/// end of the file — `(slot u8, width u8) × n, n u8`.
+const FLAG_SHARED_STATE: u8 = 0x40;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;

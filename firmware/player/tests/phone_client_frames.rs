@@ -119,6 +119,7 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::LoadStoredEffect(_)
         | CMsg::DeleteStoredEffect(_)
         | CMsg::MeshAdmin(_)
+        | CMsg::SetFxState(_)
         | CMsg::SetPower(_)
         | CMsg::GetPower(_)
         | CMsg::SetPowerConfig(_)
@@ -224,6 +225,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::LoadStoredEffect(_) => "load_stored_effect",
         CMsg::DeleteStoredEffect(_) => "delete_stored_effect",
         CMsg::MeshAdmin(_) => "mesh_admin",
+        CMsg::SetFxState(_) => "set_fx_state",
         CMsg::SetPower(_) => "set_power",
         CMsg::GetPower(_) => "get_power",
         CMsg::SetPowerConfig(_) => "set_power_config",
