@@ -34,6 +34,7 @@ import {
   deriveLedTopology,
   warningsFeedback,
   type FxCompiled,
+  type FxDiagnostic,
   type FxUniform,
   type LedTopology,
 } from "../../fx/preview";
@@ -47,6 +48,15 @@ import { deviceHasEffectStore, storeErrorText } from "../../net/effectStore";
 import { sceneUniformValues, type EffectScene } from "../../effects/scene";
 import { highlight } from "../../effects/editor/highlight";
 import { formatFx } from "../../effects/editor/format";
+import {
+  closeBraceEdit,
+  diagnosticsHtml,
+  indentEdit,
+  newlineEdit,
+  rowColAt,
+  type Mark,
+  type TextEdit,
+} from "../../effects/editor/editing";
 import { complete, type CompletionItem } from "../../effects/editor/completions";
 import {
   CONTINUE_NOTE,
@@ -136,6 +146,8 @@ import type { Router, Screen } from "../app/router";
 
 const COMPILE_DEBOUNCE_MS = 300;
 const SAVE_DEBOUNCE_MS = 800;
+/** Apple keyboards label the format shortcut ⌘⇧F; everything else Ctrl+Shift+F. */
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /** window.localStorage, or null where touching it throws (blocked storage). */
 function safeLocalStorage(): Storage | null {
@@ -341,15 +353,133 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   codeEl.spellcheck = false;
   codeEl.autocapitalize = "off";
   codeEl.setAttribute("autocomplete", "off");
-  codeWrap.append(backdrop, codeEl);
+  // Diagnostics layer (D-501): the same text, transparent, drawn over the
+  // highlighted backdrop and under the textarea — a tinted band on every line
+  // with an error / warning and a red / yellow squiggle under its span. It
+  // takes no pointer events; hovering is hit-tested against its spans' boxes.
+  const diagLayer = document.createElement("pre");
+  diagLayer.className = "fxedit-diaglayer";
+  diagLayer.setAttribute("aria-hidden", "true");
+  const diagTip = document.createElement("div");
+  diagTip.className = "fxdiag-tip";
+  diagTip.id = `fxdiag-tip-${Math.random().toString(36).slice(2)}`;
+  diagTip.setAttribute("role", "tooltip");
+  diagTip.style.display = "none";
+  codeWrap.append(backdrop, diagLayer, codeEl, diagTip);
+  let marks: Mark[] = [];
 
   function paintHighlight(): void {
     backdropCode.innerHTML = highlight(codeEl.value);
+    paintDiagnostics();
+  }
+  function paintDiagnostics(): void {
+    diagLayer.innerHTML = diagnosticsHtml(codeEl.value, marks);
+    diagLayer.scrollTop = codeEl.scrollTop;
+    diagLayer.scrollLeft = codeEl.scrollLeft;
   }
   function syncScroll(): void {
     backdrop.scrollTop = codeEl.scrollTop;
     backdrop.scrollLeft = codeEl.scrollLeft;
+    diagLayer.scrollTop = codeEl.scrollTop;
+    diagLayer.scrollLeft = codeEl.scrollLeft;
     if (popupOpen) positionPopup();
+    hideDiagTip();
+  }
+
+  /** Show the tooltip for squiggle `sq` (a `.fxdiag-sq` in the layer). */
+  function showDiagTip(sq: HTMLElement): void {
+    const m = marks[Number(sq.dataset["i"])];
+    if (!m) return hideDiagTip();
+    diagTip.replaceChildren();
+    const head = document.createElement("span");
+    head.className = `fxdiag-tip-sev fxdiag-tip-sev--${m.severity}`;
+    head.textContent = m.severity === "error" ? "Error" : "Warning";
+    const body = document.createElement("span");
+    body.textContent = m.msg.replace(/^warning:\s*/, "");
+    diagTip.append(head, body);
+    diagTip.style.display = "";
+    // Below the span, flipped above it when that would leave the pane.
+    const wrap = codeWrap.getBoundingClientRect();
+    const r = sq.getBoundingClientRect();
+    const tipH = diagTip.offsetHeight;
+    const below = r.bottom - wrap.top + 4;
+    const top = below + tipH > wrap.height && r.top - wrap.top - tipH - 4 >= 0 ? r.top - wrap.top - tipH - 4 : below;
+    const left = Math.max(4, Math.min(r.left - wrap.left, wrap.width - diagTip.offsetWidth - 4));
+    diagTip.style.top = `${top}px`;
+    diagTip.style.left = `${left}px`;
+    codeEl.setAttribute("aria-describedby", diagTip.id);
+  }
+  function hideDiagTip(): void {
+    if (diagTip.style.display === "none") return;
+    diagTip.style.display = "none";
+    codeEl.removeAttribute("aria-describedby");
+  }
+  /** The squiggle under a viewport point (the whole line's height counts). */
+  function squiggleAt(x: number, y: number): HTMLElement | null {
+    for (const sq of diagLayer.querySelectorAll<HTMLElement>(".fxdiag-sq")) {
+      for (const r of sq.getClientRects()) {
+        if (x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 2 && y <= r.bottom + 2) return sq;
+      }
+    }
+    return null;
+  }
+  /** The squiggle the caret sits in (keyboard / touch users get the tooltip too). */
+  function squiggleAtCaret(): HTMLElement | null {
+    if (marks.length === 0 || codeEl.selectionStart !== codeEl.selectionEnd) return null;
+    const caret = codeEl.selectionStart;
+    let off = 0;
+    // Walk the layer's text nodes to find the span containing the caret offset.
+    const walker = document.createTreeWalker(diagLayer, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const len = (n.textContent ?? "").replace(/\u200b/g, "").length;
+      const sq = n.parentElement?.closest<HTMLElement>(".fxdiag-sq") ?? null;
+      if (sq && caret >= off && caret <= off + len) return sq;
+      off += len;
+      if (off > caret) break;
+    }
+    return null;
+  }
+  let hoverRaf = 0;
+  codeEl.addEventListener("mousemove", (ev) => {
+    if (marks.length === 0) return;
+    if (hoverRaf) cancelAnimationFrame(hoverRaf);
+    hoverRaf = requestAnimationFrame(() => {
+      hoverRaf = 0;
+      const sq = squiggleAt(ev.clientX, ev.clientY);
+      if (sq) showDiagTip(sq);
+      else hideDiagTip();
+    });
+  });
+  codeEl.addEventListener("mouseleave", hideDiagTip);
+
+  /** Replace the compiler marks (errors, then warnings) and repaint them. */
+  function setMarks(errors: readonly FxDiagnostic[], warnings: readonly FxDiagnostic[]): void {
+    marks = [
+      ...errors.map((d) => ({ ...d, severity: "error" as const })),
+      ...warnings.map((d) => ({ ...d, severity: "warning" as const })),
+    ];
+    hideDiagTip();
+    paintDiagnostics();
+  }
+
+  /** Apply a TextEdit through the browser's editing pipeline, so it lands on
+   * the undo stack (Ctrl/Cmd+Z) like typing does; `input` then repaints,
+   * recompiles and saves. Falls back to setRangeText where execCommand is gone. */
+  function applyEdit(e: TextEdit): void {
+    codeEl.setSelectionRange(e.from, e.to);
+    const want = codeEl.value.slice(0, e.from) + e.text + codeEl.value.slice(e.to);
+    let ok = false;
+    try {
+      ok = e.text === "" ? document.execCommand("delete") : document.execCommand("insertText", false, e.text);
+    } catch {
+      ok = false;
+    }
+    if (!ok || codeEl.value !== want) {
+      codeEl.value = want;
+      codeEl.dispatchEvent(new Event("input"));
+    }
+    codeEl.setSelectionRange(e.selStart, e.selEnd);
+    updateCursorPos();
   }
 
   // -- autocomplete popup ---------------------------------------------------
@@ -509,6 +639,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // caret is no longer at the token the popup was opened for, dismiss it — we
   // don't reopen here to avoid a popup on every click; typing reopens it.
   function onSelectionChange(): void {
+    if (document.activeElement === codeEl) {
+      updateCursorPos();
+      const sq = squiggleAtCaret();
+      if (sq) showDiagTip(sq);
+      else hideDiagTip();
+    }
     if (!popupOpen) return;
     if (document.activeElement !== codeEl) return closePopup();
     const caret = codeEl.selectionEnd;
@@ -569,7 +705,16 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   statusEl.className = "fxedit-status";
   const statusText = document.createElement("span");
   statusText.className = "fxedit-status-text";
-  statusEl.append(statusText);
+  // Cursor readout (D-501), `row : col`, at the right end of the status line.
+  const cursorPos = document.createElement("span");
+  cursorPos.className = "fxedit-cursorpos";
+  cursorPos.title = "Line : column";
+  statusEl.append(statusText, cursorPos);
+  function updateCursorPos(): void {
+    const { row, col } = rowColAt(codeEl.value, codeEl.selectionEnd);
+    cursorPos.textContent = `${row} : ${col}`;
+    cursorPos.setAttribute("aria-label", `Line ${row}, column ${col}`);
+  }
 
   // -- FUG-11 budget bar ----------------------------------------------------
   // The color-coded fraction of the frame budget the current program consumes,
@@ -1118,7 +1263,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   const miFormat = document.createElement("button");
   miFormat.type = "button";
   miFormat.className = "fxedit-menu-item";
-  miFormat.textContent = "Format code";
+  const miFormatLabel = document.createElement("span");
+  miFormatLabel.textContent = "Format code";
+  const miFormatKbd = document.createElement("kbd");
+  miFormatKbd.className = "fxedit-menu-kbd";
+  miFormatKbd.textContent = IS_MAC ? "⌘⇧F" : "Ctrl+Shift+F";
+  miFormat.append(miFormatLabel, miFormatKbd);
   miFormat.addEventListener("click", () => {
     formatCode();
     closeMenu();
@@ -1170,7 +1320,6 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const caret = codeEl.selectionStart ?? 0;
     let before = 0;
     for (let i = 0; i < caret; i++) if (!/\s/.test(old[i]!)) before++;
-    codeEl.value = next;
     let seen = 0;
     let pos = next.length;
     if (before === 0) {
@@ -1183,11 +1332,9 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         }
       }
     }
-    codeEl.setSelectionRange(pos, pos);
-    paintHighlight();
+    // One undoable edit (Ctrl/Cmd+Z restores the unformatted text).
+    applyEdit({ from: 0, to: old.length, text: next, selStart: pos, selEnd: pos });
     syncScroll();
-    scheduleCompile();
-    scheduleSave();
     toast("Formatted");
   }
   menuWrap.appendChild(menu);
@@ -1429,6 +1576,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
 
     const warnings = r.warnings ?? [];
     renderDiagnostics([...r.diagnostics, ...warnings]);
+    setMarks(r.ok ? [] : r.diagnostics, warnings);
     if (!r.ok && r.compilerUnavailable !== undefined) {
       // The compiler couldn't be downloaded (retried in the background; the
       // status listener recompiles when it lands): a network problem, not an
@@ -2354,18 +2502,54 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     scheduleCompile();
     scheduleSave();
     schedulePopup();
+    updateCursorPos();
   });
   codeEl.addEventListener("scroll", syncScroll);
+  // Escape, then Tab, leaves the editor (Tab indents otherwise, so keyboard
+  // users still have a way out — the convention code editors use).
+  let tabLeaves = false;
   codeEl.addEventListener("keydown", (ev) => {
     if (popupKeydown(ev)) {
       ev.preventDefault();
       ev.stopPropagation();
       return;
     }
-    // Shift+Alt+F → auto-format (VS Code convention).
-    if (ev.altKey && ev.shiftKey && (ev.key === "F" || ev.key === "f")) {
+    if (ev.isComposing) return;
+    hideDiagTip();
+    const isF = ev.code === "KeyF" || ev.key === "F" || ev.key === "f";
+    // Cmd+Shift+F (Mac) / Ctrl+Shift+F → auto-format; Shift+Alt+F (VS Code) too.
+    if (isF && ev.shiftKey && (ev.metaKey || ev.ctrlKey || ev.altKey)) {
       ev.preventDefault();
       formatCode();
+      return;
+    }
+    if (ev.key === "Escape") {
+      tabLeaves = true;
+      return;
+    }
+    const plain = !ev.metaKey && !ev.ctrlKey && !ev.altKey;
+    if (ev.key === "Tab" && plain) {
+      if (tabLeaves) {
+        tabLeaves = false;
+        return; // default: move focus
+      }
+      ev.preventDefault();
+      const e = indentEdit(codeEl.value, codeEl.selectionStart, codeEl.selectionEnd, ev.shiftKey);
+      if (e) applyEdit(e);
+      return;
+    }
+    tabLeaves = false;
+    if (ev.key === "Enter" && plain && !ev.shiftKey) {
+      ev.preventDefault();
+      applyEdit(newlineEdit(codeEl.value, codeEl.selectionStart, codeEl.selectionEnd));
+      return;
+    }
+    if (ev.key === "}" && plain) {
+      const e = closeBraceEdit(codeEl.value, codeEl.selectionStart, codeEl.selectionEnd);
+      if (e) {
+        ev.preventDefault();
+        applyEdit(e);
+      }
     }
   });
   codeEl.addEventListener("keyup", (ev) => {

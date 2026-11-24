@@ -39,6 +39,26 @@ vec3 shade(Led led) {
 }
 """
 
+# D-501 diagnostics: an unknown identifier (an error: a red band + squiggle, its
+# tooltip shown by hovering the squiggle) and a rate x time phase (a warning).
+ERROR_FX = """\
+uniform float speed : 0.0 .. 2.0 = 0.4;
+
+vec3 shade(Led led) {
+    float t = fract(led.pos.x + 0.25);
+    return vec3(t, 0.0, bogus);
+}
+"""
+
+WARNING_FX = """\
+uniform float speed : 0.0 .. 2.0 = 0.4;
+
+vec3 shade(Led led) {
+    float t = fract(led.pos.x - time * speed);
+    return vec3(t, 0.2, 0.6);
+}
+"""
+
 SCENARIOS = [
     # Every dock's tab strip and pane header: the tabs (one joined control) and the Move /
     # Hide pane buttons, and the strips beside each other across a divider.
@@ -71,5 +91,34 @@ SCENARIOS = [
         ],
         root=".uniform-panel",
         expect=".uniform-panel .upanel-mat",
+    ),
+    # The code pane with a compile error: the line band, the squiggle and its tooltip,
+    # and the row : col readout at the right of the status line.
+    Scenario(
+        "editor-04-code-error",
+        "#/effects",
+        steps=TO_EDITOR
+        + [
+            ("fill", "textarea.fxedit-code", ERROR_FX),
+            ("wait_for", ".fxdiag-sq--error", 30000),
+            ("hover", ".fxdiag-sq--error"),
+            ("wait_for", ".fxdiag-tip", 4000),
+        ],
+        root=".fxedit-editor",
+        expect=".fxdiag-tip",
+    ),
+    # A lint warning (yellow band + squiggle), caret moved by the keyboard.
+    Scenario(
+        "editor-05-code-warning",
+        "#/effects",
+        steps=TO_EDITOR
+        + [
+            ("fill", "textarea.fxedit-code", WARNING_FX),
+            ("wait_for", ".fxdiag-sq--warning", 30000),
+            ("press", "textarea.fxedit-code", "Control+Home"),
+            ("press", "textarea.fxedit-code", "ArrowDown"),
+        ],
+        root=".fxedit-editor",
+        expect=".fxdiag-sq--warning",
     ),
 ]
