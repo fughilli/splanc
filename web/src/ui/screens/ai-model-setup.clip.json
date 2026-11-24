@@ -6,7 +6,7 @@
   "prs": [548],
   "route": "#/settings/ai",
   "framing": ["phone"],
-  "theme": "light",
+  "theme": "dark",
   "steps": [
     {
       "click": "button:has-text('Model setup')",

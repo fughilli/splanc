@@ -64,11 +64,20 @@ OVERLAY_JS = """
   if (window.__clip) return;
   const css = `
   #__clip_finger { position: fixed; left: 0; top: 0; width: 34px; height: 34px; margin: -17px 0 0 -17px;
-    border-radius: 50%; background: rgba(255,255,255,.55); border: 2px solid rgba(20,20,30,.45);
-    box-shadow: 0 2px 10px rgba(0,0,0,.35); pointer-events: none; z-index: 2147483647; opacity: 0;
-    transition: transform .45s cubic-bezier(.3,.7,.3,1), opacity .25s; }
-  #__clip_finger.down { background: rgba(255,255,255,.8); scale: .78;
-    transition: transform .45s cubic-bezier(.3,.7,.3,1), opacity .25s, scale .12s; }
+    border-radius: 50%; background: rgba(255,255,255,.6); box-shadow: 0 2px 12px rgba(0,0,0,.28);
+    pointer-events: none; z-index: 2147483647; opacity: 0;
+    /* Position with the translate property and depress with scale: the two compose as
+       translate(scale(p)), so the press shrinks the dot in place. (Scaling an element whose
+       position is in transform also scales that translation, so the dot jumped toward the
+       top-left corner on every tap and sprang back.) */
+    transition: translate .45s cubic-bezier(.3,.7,.3,1), opacity .25s, scale .14s ease-out,
+      background-color .14s; }
+  #__clip_finger.down { background: rgba(255,255,255,.85); scale: .82; }
+  /* The tap pulse: a filled disc that grows out of the dot and fades (no stroke). */
+  #__clip_finger::after { content: ''; position: absolute; inset: 0; border-radius: 50%;
+    background: rgba(255,255,255,.45); opacity: 0; scale: 1; pointer-events: none; }
+  #__clip_finger.pulse::after { animation: __clip_pulse .5s ease-out; }
+  @keyframes __clip_pulse { from { opacity: .7; scale: 1; } to { opacity: 0; scale: 2.3; } }
   #__clip_caption { position: fixed; left: 50%; top: 14px; translate: -50% 0; max-width: calc(100% - 32px);
     padding: 8px 14px; border-radius: 999px; background: rgba(15,15,22,.86); color: #fff;
     font: 600 15px/1.3 system-ui, sans-serif; pointer-events: none; z-index: 2147483647;
@@ -80,12 +89,15 @@ OVERLAY_JS = """
     window.__clip = {
       move(x, y) {
         if (f.style.opacity !== '1') {  // appearing: jump there, then fade in (no fly-in from the corner)
-          f.style.transition = 'none'; f.style.transform = `translate(${x}px, ${y + 40}px)`;
+          f.style.transition = 'none'; f.style.translate = `${x}px ${y + 40}px`;
           void f.offsetWidth; f.style.transition = '';
         }
-        f.style.opacity = '1'; f.style.transform = `translate(${x}px, ${y}px)`;
+        f.style.opacity = '1'; f.style.translate = `${x}px ${y}px`;
       },
-      press(on) { f.classList.toggle('down', on); },
+      press(on) {
+        f.classList.toggle('down', on);
+        if (on) { f.classList.remove('pulse'); void f.offsetWidth; f.classList.add('pulse'); }
+      },
       hide() { f.style.opacity = '0'; },
       caption(t) { c.textContent = t || ''; c.style.opacity = t ? '1' : '0'; },
     };
@@ -263,7 +275,11 @@ def run_step(page, step: dict, *, show: bool) -> None:
             """([sel, by, dur]) => new Promise((done) => {
               const el = sel === 'page' ? document.scrollingElement : document.querySelector(sel);
               if (!el) return done(false);
-              const y0 = el.scrollTop, t0 = performance.now();
+              // Ease over the distance the element can actually travel, so a scroll that
+              // would overrun the end still eases out at the end instead of hitting it.
+              const y0 = el.scrollTop, max = Math.max(0, el.scrollHeight - el.clientHeight);
+              by = Math.max(-y0, Math.min(max - y0, by));
+              const t0 = performance.now();
               const ease = (t) => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
               const tick = (now) => {
                 const t = dur ? Math.min(1, (now - t0) / dur) : 1;

@@ -164,7 +164,7 @@ def parse_spec(obj: Any, path: str) -> ClipSpec:
     known = {
         "schema", "id", "title", "summary", "route", "demo", "framing", "theme", "prs",
         "storage", "fixtures", "setup", "steps", "poster_at", "tail_ms", "app_version",
-        "drafted", "note",
+        "drafted", "note", "why_not_phone_dark",
     }  # fmt: skip
     extra = set(obj) - known
     if extra:
@@ -196,6 +196,14 @@ def parse_spec(obj: Any, path: str) -> ClipSpec:
     theme = obj.get("theme", "dark")
     if theme not in THEMES:
         raise SpecError(f"{path}: theme is one of {THEMES}")
+    # Owner rule: previews are phone, dark theme. Desktop framing or the light theme needs a
+    # stated reason (a desktop-only feature, or a light-theme feature).
+    why = obj.get("why_not_phone_dark", "")
+    if (framing != ["phone"] or theme != "dark") and not (isinstance(why, str) and why.strip()):
+        raise SpecError(
+            f"{path}: previews are phone + dark; desktop framing or the light theme needs "
+            "'why_not_phone_dark' saying why this feature needs it"
+        )
     prs = obj.get("prs", [])
     if not isinstance(prs, list) or not all(isinstance(p, int) and p > 0 for p in prs):
         raise SpecError(f"{path}: prs is a list of PR numbers")

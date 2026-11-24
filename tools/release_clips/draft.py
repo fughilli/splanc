@@ -37,8 +37,9 @@ A clip script is ONE JSON object:
   "prs": [123],
   "route": "#/maps",                  // hash route the demo starts on
   "demo": "",                         // optional ?demo= scenarios, comma-joined
-  "framing": ["phone"],               // "phone" (390x844) and/or "desktop" (1280x800)
-  "theme": "dark",                    // "dark" | "light"
+  "framing": ["phone"],               // always ["phone"] unless the feature is desktop-only
+  "theme": "dark",                    // always "dark" unless the feature is about the light theme
+                                      // (either exception needs "why_not_phone_dark": "<reason>")
   "storage": {},                      // optional localStorage seeds (string values)
   "setup": [],                        // optional steps run BEFORE recording starts
   "steps": [ ... ]                    // recorded steps, 5-15 s in total

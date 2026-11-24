@@ -60,6 +60,8 @@ class ClipSpecTest(unittest.TestCase):
             (spec(steps=[{"wait": 6000}] * 4), "at most 15s"),
             (spec(title="x" * 61), "60 characters"),
             (spec(extra=1), "unknown keys"),
+            (spec(framing=["phone", "desktop"]), "why_not_phone_dark"),
+            (spec(theme="light"), "why_not_phone_dark"),
         ]
         for obj, msg in cases:
             path = (
@@ -70,6 +72,13 @@ class ClipSpecTest(unittest.TestCase):
             with self.subTest(msg=msg), self.assertRaises(clipspec.SpecError) as cm:
                 clipspec.parse_spec(obj, path)
             self.assertIn(msg, str(cm.exception))
+
+    def test_desktop_or_light_with_a_reason(self):
+        s = clipspec.parse_spec(
+            spec(framing=["desktop"], theme="light", why_not_phone_dark="desktop-only shortcut"),
+            "web/src/x/demo-clip.clip.json",
+        )
+        self.assertEqual((s.framing, s.theme), (["desktop"], "light"))
 
     def test_a_scroll_step_with_a_wait_is_a_scroll(self):
         s = clipspec.parse_spec(
