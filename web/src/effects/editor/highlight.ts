@@ -1,7 +1,7 @@
 /**
  * Lightweight syntax highlighter for the GLSL-ish effect language — no heavy
  * editor dependency (no CodeMirror; it complicates the pnpm/bazel build). The
- * editor screen layers a transparent <textarea> над a <pre><code> backdrop and
+ * editor screen layers a transparent <textarea> over a <pre><code> backdrop and
  * feeds this tokenizer on every input, keeping the two scroll-synced.
  *
  * The vocabulary (keywords, types, built-ins) is derived from lang-spec.ts so it
@@ -10,7 +10,7 @@
  * theme via CSS tokens (see .fxhl-* in app.css).
  */
 
-import { BUILTINS, KEYWORDS, TYPES } from "./lang-spec";
+import { BUILTINS, CONTEXTS, DRIVER_BUILTINS, KEYWORDS, TYPES } from "./lang-spec";
 
 // Keywords vs. types: KEYWORDS from lang-spec mixes control words and type
 // names, so split them for distinct colouring. Type names come from TYPES
@@ -18,9 +18,12 @@ import { BUILTINS, KEYWORDS, TYPES } from "./lang-spec";
 const TYPE_WORDS = new Set<string>(TYPES.map((t) => t.name));
 const KEYWORD_WORDS = new Set<string>(KEYWORDS.filter((k) => !TYPE_WORDS.has(k)));
 // Built-in function names, parsed from the "name(args)" signatures in lang-spec.
-const BUILTIN_WORDS = new Set<string>(BUILTINS.map((b) => b.sig.slice(0, b.sig.indexOf("("))));
-// Read-only context globals highlighted as constants.
-const CONTEXT_WORDS = new Set(["time", "dt", "frame", "led", "imu", "true", "false"]);
+const BUILTIN_WORDS = new Set<string>(
+  [...BUILTINS, ...DRIVER_BUILTINS].map((b) => b.sig.slice(0, b.sig.indexOf("("))),
+);
+// Read-only context globals (time, dt, frame, led, imu, room) and the bool literals,
+// highlighted as constants.
+const CONTEXT_WORDS = new Set<string>([...CONTEXTS.map((c) => c.name), "true", "false"]);
 
 function escapeHtml(s: string): string {
   return s
@@ -35,7 +38,7 @@ function span(cls: string, text: string): string {
 
 /**
  * Tokenize `src` to highlighted HTML. A single left-to-right scan handles line
- * (`//`) and block (`/* *\/`) comments, strings, numbers, identifiers (routed to
+ * (`//`) comments, strings, numbers, identifiers (routed to
  * keyword/type/builtin/context/plain), and passes punctuation/whitespace through
  * escaped. A trailing newline is preserved so the backdrop's last line matches
  * the textarea's height exactly.
@@ -58,22 +61,13 @@ export function highlight(src: string): string {
       i = j;
       continue;
     }
-    // block comment
-    if (c === "/" && src[i + 1] === "*") {
-      let j = i + 2;
-      while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j++;
-      j = Math.min(n, j + 2);
-      out += span("comment", src.slice(i, j));
-      i = j;
-      continue;
-    }
+    // (No block comments: the compiler has only `//` ones, so `/* */` stays plain
+    // text rather than looking like a comment that compiles.)
     // string
     if (c === '"') {
       let j = i + 1;
-      while (j < n && src[j] !== '"') {
-        if (src[j] === "\\") j++;
-        j++;
-      }
+      // The compiler has no escapes: a string runs to the next `"`.
+      while (j < n && src[j] !== '"') j++;
       j = Math.min(n, j + 1);
       out += span("str", src.slice(i, j));
       i = j;
