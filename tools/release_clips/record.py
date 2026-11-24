@@ -36,10 +36,17 @@ from typing import Optional
 from clipspec import MAX_SECONDS, ClipSpec
 
 VIEWPORTS = {
-    # (css viewport, device scale, output widths: mp4/webm, gif)
-    "phone": ({"width": 390, "height": 844}, 2, 600, 280),
-    "desktop": ({"width": 1280, "height": 800}, 1, 1120, 560),
+    # (css viewport, device scale, output widths: mp4/webm, gif). The MP4/WebM keep the
+    # screencast's native device pixels (owner D-503: at least HD), so the short side is
+    # >= 720: phone 780x1688, desktop 1920x1200. The GIF stays small for GitHub.
+    "phone": ({"width": 390, "height": 844}, 2, 780, 320),
+    "desktop": ({"width": 1280, "height": 800}, 1.5, 1920, 640),
 }
+
+# Output frame rates (D-503): the videos are constant 30 fps (each screencast frame held
+# until the next, then resampled), the GIF 15 fps.
+VIDEO_FPS = 30
+GIF_FPS = 15
 
 # Before the app boots: no first-run hint, no splash, no AI hint bubble (they
 # would overlay the demo), and the clip's theme.
@@ -361,7 +368,7 @@ def record_take(browser, base_url: str, spec: ClipSpec, framing: str, work: str)
         run_step(page, step, show=False)
     frames_dir = os.path.join(work, f"{spec.id}-{framing}")
     os.makedirs(frames_dir, exist_ok=True)
-    w, h = viewport["width"] * scale, viewport["height"] * scale
+    w, h = round(viewport["width"] * scale), round(viewport["height"] * scale)
     rec = Recorder(page, frames_dir, w, h)
     rec.start()
     page.wait_for_timeout(450)  # a still beat before the first action
@@ -419,15 +426,16 @@ def encode_take(take: Take, out_dir: str) -> dict:
     inp = ["-f", "concat", "-safe", "0", "-i", src]
     scale = f"scale={width}:-2:flags=lanczos"
     mp4 = os.path.join(out_dir, stem + ".mp4")
-    _ff([*inp, "-vf", f"fps=30,{scale},format=yuv420p", "-c:v", "libx264", "-preset", "slow",
-         "-crf", "27", "-profile:v", "high", "-tune", "animation", "-movflags", "+faststart",
-         "-an", mp4])  # fmt: skip
+    _ff([*inp, "-vf", f"fps={VIDEO_FPS},{scale}:out_range=tv,format=yuv420p",
+         "-c:v", "libx264", "-preset", "slow", "-crf", "27", "-profile:v", "high",
+         "-tune", "animation", "-movflags", "+faststart",
+         "-fps_mode", "cfr", "-r", str(VIDEO_FPS), "-an", mp4])  # fmt: skip
     webm = os.path.join(out_dir, stem + ".webm")
-    _ff([*inp, "-vf", f"fps=30,{scale}", "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "40",
+    _ff([*inp, "-vf", f"fps={VIDEO_FPS},{scale}", "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "40",
          "-row-mt", "1", "-deadline", "good", "-cpu-used", "4", "-an", webm])  # fmt: skip
     gif = os.path.join(out_dir, stem + ".gif")
     _ff([*inp, "-vf",
-         f"fps=10,scale={gif_width}:-1:flags=lanczos,split[a][b];"
+         f"fps={GIF_FPS},scale={gif_width}:-1:flags=lanczos,split[a][b];"
          "[a]palettegen=max_colors=64:stats_mode=diff[p];"
          "[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle",
          "-loop", "0", gif])  # fmt: skip
@@ -448,11 +456,24 @@ def encode_take(take: Take, out_dir: str) -> dict:
         "width": vw,
         "height": vh,
         "duration": round(duration, 2),
+        "fps": VIDEO_FPS,
+        "capture_fps": capture_fps(take.frames),
         "bytes": {
             k: os.path.getsize(os.path.join(out_dir, v))
             for k, v in (("mp4", mp4), ("webm", webm), ("gif", gif), ("poster", poster))
         },
     }
+
+
+def capture_fps(frames: list) -> float:
+    """The rate the screencast delivered while the screen was changing: the median gap
+    between frames that came within 100 ms of each other (a still screen sends none, so
+    its gaps say nothing about the capture). Below the output rate, motion repeats
+    frames in the constant-rate video."""
+    gaps = sorted(b.ts - a.ts for a, b in zip(frames, frames[1:]) if 0 < b.ts - a.ts < 0.1)
+    if not gaps:
+        return 0.0
+    return round(1 / gaps[len(gaps) // 2], 1)
 
 
 def _probe_size(jpg: str) -> tuple[int, int]:
@@ -530,7 +551,8 @@ def record_all(
                         v = encode_take(take, out_dir)
                         entry["variants"].append(v)
                         print(
-                            f"  {spec.id}/{framing}: {v['duration']:.1f}s, {len(take.frames)} frames, "
+                            f"  {spec.id}/{framing}: {v['width']}x{v['height']} {v['duration']:.1f}s, "
+                            f"{len(take.frames)} frames (capture {v['capture_fps']} fps in motion), "
                             f"mp4 {v['bytes']['mp4'] // 1024} KB, gif {v['bytes']['gif'] // 1024} KB "
                             f"({time.time() - t:.0f}s)",
                             file=sys.stderr,

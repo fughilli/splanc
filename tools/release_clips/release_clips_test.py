@@ -301,6 +301,27 @@ class RecordHelpersTest(unittest.TestCase):
         self.assertIn("duration 1.5000", text)
         self.assertIn("duration 1.0000", text)
 
+    def test_hd_30fps_outputs(self):
+        import record
+
+        # Owner D-503: at least HD (short side >= 720) at a constant 30 fps; GIF >= 15 fps.
+        for framing, (vp, scale, width, _gif) in record.VIEWPORTS.items():
+            native_w = round(vp["width"] * scale)
+            height = round(vp["height"] * scale * width / native_w)
+            self.assertGreaterEqual(min(width, height), 720, framing)
+            self.assertLessEqual(width, native_w, f"{framing}: upscaled")
+        self.assertGreaterEqual(round(1280 * record.VIEWPORTS["desktop"][1]), 1920)
+        self.assertEqual(record.VIDEO_FPS, 30)
+        self.assertGreaterEqual(record.GIF_FPS, 15)
+
+    def test_capture_fps_ignores_still_gaps(self):
+        import record
+
+        ts = [0.0, 0.033, 0.066, 0.1, 2.0, 2.034, 2.067, 5.0]
+        frames = [record.Frame(t, "") for t in ts]
+        self.assertAlmostEqual(record.capture_fps(frames), 30.3, delta=0.5)
+        self.assertEqual(record.capture_fps(frames[:1]), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
