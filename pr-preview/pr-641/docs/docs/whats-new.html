@@ -331,6 +331,21 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="november-2026">
 <h2>November 2026<a class="headerlink" href="#november-2026" title="Link to this heading">¶</a></h2>
+<section id="effect-language-state-initial-values-and-init">
+<h3>Effect language: state initial values and <code class="docutils literal notranslate"><span class="pre">init()</span></code><a class="headerlink" href="#effect-language-state-initial-values-and-init" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">float</span> <span class="pre">level</span> <span class="pre">=</span> <span class="pre">0.5;</span></code></strong> gives a state variable its starting value
+(scalars, vectors, matrices). The value is a constant (<code class="docutils literal notranslate"><span class="pre">0.5</span></code>, <code class="docutils literal notranslate"><span class="pre">vec3(0.1,</span> <span class="pre">0.2,</span> <span class="pre">0.3)</span></code>);
+starting values that come from a uniform or <code class="docutils literal notranslate"><span class="pre">time</span></code> go in <code class="docutils literal notranslate"><span class="pre">init()</span></code>. A state
+without one still starts at zero.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">init()</span> <span class="pre">{</span> <span class="pre">...</span> <span class="pre">}</span></code></strong> runs once when the effect loads, before the first
+<code class="docutils literal notranslate"><span class="pre">update()</span></code>: seed arrays and agents there instead of a hand-rolled
+<code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">bool</span> <span class="pre">inited;</span></code> flag.</p></li>
+<li><p>Plain bytecode, no firmware update needed: it runs the same on the device,
+the JIT and the editor preview, on old firmware too.</p></li>
+<li><p>Details: <a class="reference internal" href="../EFFECTS.html#state-initialisation"><span class="std std-ref">EFFECTS.md § State initialisation</span></a>.</p></li>
+</ul>
+</section>
 <section id="effects-stored-on-the-device">
 <h3>Effects stored on the device<a class="headerlink" href="#effects-stored-on-the-device" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -1086,6 +1101,7 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#november-2026">November 2026</a><ul>
+<li><a class="reference internal" href="#effect-language-state-initial-values-and-init">Effect language: state initial values and <code class="docutils literal notranslate"><span class="pre">init()</span></code></a></li>
 <li><a class="reference internal" href="#effects-stored-on-the-device">Effects stored on the device</a></li>
 </ul>
 </li>

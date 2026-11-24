@@ -420,7 +420,7 @@ Every recording starts from a fresh browser profile.</p></li>
 <span class="w">  </span><span class="nt">&quot;prs&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">558</span><span class="p">],</span>
 <span class="w">  </span><span class="nt">&quot;route&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;#/maps&quot;</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;demo&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;framing&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;phone&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;desktop&quot;</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;framing&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;phone&quot;</span><span class="p">],</span>
 <span class="w">  </span><span class="nt">&quot;theme&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;dark&quot;</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;storage&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{},</span>
 <span class="w">  </span><span class="nt">&quot;fixtures&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{},</span>
@@ -460,30 +460,33 @@ Every recording starts from a fresh browser profile.</p></li>
 <td><p><code class="docutils literal notranslate"><span class="pre">?demo=</span></code> scenarios, comma-joined</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">framing</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">phone</span></code> (390×844 at 2×) and/or <code class="docutils literal notranslate"><span class="pre">desktop</span></code> (1280×800)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">phone</span></code> (390×844 at 2×). Add <code class="docutils literal notranslate"><span class="pre">desktop</span></code> (1280×800) only for a desktop-only feature, with <code class="docutils literal notranslate"><span class="pre">why_not_phone_dark</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">theme</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">dark</span></code> or <code class="docutils literal notranslate"><span class="pre">light</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dark</span></code>. Use <code class="docutils literal notranslate"><span class="pre">light</span></code> only for a light-theme feature, with <code class="docutils literal notranslate"><span class="pre">why_not_phone_dark</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">storage</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">why_not_phone_dark</span></code></p></td>
+<td><p>Required with desktop framing or the light theme: why this feature needs it</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">storage</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">localStorage</span></code> seeds (string values), applied before the app boots</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fixtures</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fixtures</span></code></p></td>
 <td><p>Served path → repo file, layered over the built app (<code class="docutils literal notranslate"><span class="pre">&quot;/whatsnew/index.json&quot;:</span> <span class="pre">&quot;web/src/…/index.json&quot;</span></code>)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">setup</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">setup</span></code></p></td>
 <td><p>Steps run before recording starts (not in the clip)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">steps</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">steps</span></code></p></td>
 <td><p>The recorded steps</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">poster_at</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">poster_at</span></code></p></td>
 <td><p>Seconds into the clip for the poster frame (default: the last frame)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tail_ms</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tail_ms</span></code></p></td>
 <td><p>Hold on the final frame (default 900)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">app_version</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">app_version</span></code></p></td>
 <td><p>Make a local (non-release) build report this version. Use it for update-only UI such as the What’s new sparkle</p></td>
 </tr>
 </tbody>
