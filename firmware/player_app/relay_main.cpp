@@ -123,7 +123,7 @@ struct {
   uint32_t forwarded, unavailable, local, mesh_app, mesh_ctl, mesh_ctl_failed;
   uint32_t staged, stage_late, stage_refused, stage_unsent, loaded, load_refused, fx_fetches, kiosk_refused;
   // The lamp as gateway: mesh_send inners run on the P4; reassembled mesh_sends from it.
-  uint32_t gw_local, gw_uploads;
+  uint32_t gw_local, gw_uploads, gw_stale;
 } g_stats;
 // The lowest free internal heap seen since the last status line (sampled every loop).
 uint32_t g_heap_window_min = UINT32_MAX;
@@ -212,6 +212,17 @@ void poll_gateway() {
   uint8_t *frame = nullptr;
   size_t len = 0;
   if (!frontend_take_gateway(&session, &frame, &len)) return;
+  // Only the connection that holds the mesh: a share needs an unlocked gateway session,
+  // which only a mesh arm on this connection opens (mesh_conn). A frame from a session
+  // that has closed since (or never used a mesh arm) is dropped: through mesh_conn it
+  // would look like a takeover and end the live owner's unlock.
+  const bool live = session == kBleSession ? improv_ble_central_connected()
+                                           : session == g_mesh_ws_owner && g_mesh_ws_owner != 0 && !g_mesh_ws_closed;
+  if (!live) {
+    g_stats.gw_stale++;
+    free(frame);
+    return;
+  }
   g_stats.gw_uploads++;
   const int n = mesh_app(session, frame, len);
   free(frame);
@@ -765,12 +776,13 @@ void log_status() {
     if (g_stats.mesh_app || g_stats.mesh_ctl || lm_mesh_on_now()) {
       snprintf(line, sizeof line,
                "[relay] mesh app=%u ctl=%u ctl_failed=%u kiosk_refused=%u staged=%u late=%u refused=%u unsent=%u "
-               "loaded=%u load_refused=%u fx=%s%u/%u fetches=%u gw_local=%u gw_uploads=%u\n",
+               "loaded=%u load_refused=%u fx=%s%u/%u fetches=%u gw_local=%u gw_uploads=%u gw_stale=%u\n",
                (unsigned)g_stats.mesh_app, (unsigned)g_stats.mesh_ctl, (unsigned)g_stats.mesh_ctl_failed,
                (unsigned)g_stats.kiosk_refused, (unsigned)g_stats.staged, (unsigned)g_stats.stage_late,
                (unsigned)g_stats.stage_refused, (unsigned)g_stats.stage_unsent, (unsigned)g_stats.loaded,
                (unsigned)g_stats.load_refused, fx_current() ? "" : "stale:", (unsigned)g_fx_len, (unsigned)g_fx_gen,
-               (unsigned)g_stats.fx_fetches, (unsigned)g_stats.gw_local, (unsigned)g_stats.gw_uploads);
+               (unsigned)g_stats.fx_fetches, (unsigned)g_stats.gw_local, (unsigned)g_stats.gw_uploads,
+               (unsigned)g_stats.gw_stale);
       Log().print(line);
       frontend_link_log(line);
       if (frontend_mesh_time_stats(line, sizeof line - 1) > 0) {
