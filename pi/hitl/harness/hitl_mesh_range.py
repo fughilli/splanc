@@ -122,19 +122,30 @@ def _bring_up(args: argparse.Namespace, stack: ExitStack, record: dict) -> list[
         d.send(f"PROV {ssid} {psk}", secret=True)
         d.ip = _wait_lease(d, m, args.lease_timeout)
         _log(f"{d.label} ({d.res._unit}) leased {d.ip}")
+    args.wifi = (ssid, psk)
+    args.fxb_bytes = fxb
+    if not args.mesh_first:
+        _effect(duts, args)
+    time.sleep(args.settle)
+    record["units"] = {d.label: {"unit": d.res._unit, "ip": d.ip} for d in duts}
+    return duts
+
+
+def _effect(duts: list[RangeDut], args: argparse.Namespace) -> bool:
+    """A map + an effect on every DUT over wss; True if one rebooted (LED buffers resized)."""
+    rebooted = False
+    ssid, psk = args.wifi
     for d in duts:
         with d.res.forward(d.ip, 443) as port:
-            asyncio.run(_load_effect(f"wss://localhost:{port}/ws", fxb, args.leds))
+            asyncio.run(_load_effect(f"wss://localhost:{port}/ws", args.fxb_bytes, args.leds))
         if not d.alive():
             _log(f"{d.label}: rebooted to resize its LED buffers; bridge restarted")
+            rebooted = True
             m0 = d.mark()
             _start_bridge(d, args.bridge_seconds)
             d.send(f"PROV {ssid} {psk}", secret=True)
             d.ip = _wait_lease(d, m0, args.lease_timeout)
-    time.sleep(args.settle)
-    record["units"] = {d.label: {"unit": d.res._unit, "ip": d.ip} for d in duts}
-    args.wifi = (ssid, psk)
-    return duts
+    return rebooted
 
 
 def _key(duts: list[RangeDut], args: argparse.Namespace, mesh_id: str, site: str) -> dict:
@@ -191,7 +202,13 @@ def run_gate(args: argparse.Namespace) -> int:
         start = {d.label: d.mark() for d in duts}
         mesh_id = f"{secrets.randbits(31) | 1:08x}"
         try:
-            ids = _key(duts, args, mesh_id, secrets.token_hex(32))
+            site = secrets.token_hex(32)
+            ids = _key(duts, args, mesh_id, site)
+            if args.mesh_first:
+                # MESH ON needs one ~45 KB contiguous block an effect load can take (MESH ON first).
+                if _effect(duts, args):
+                    ids = _key(duts, args, mesh_id, site)
+                time.sleep(args.settle)
             record["ids"] = ids
             mk = {d.label: d.mark() for d in duts}
             time.sleep(args.render_seconds)
@@ -362,6 +379,11 @@ def main() -> int:
         default=os.environ.get("MESH_FXB_RUNFILE", "_main/pi/hitl/harness/plasmaHueFixed.fxb"),
     )
     ap.add_argument("--no-flash", action="store_true")
+    ap.add_argument(
+        "--mesh-first",
+        action="store_true",
+        help="MESH ON before loading the effect (its block needs contiguous heap)",
+    )
     ap.add_argument("--leds", type=int, default=60)
     ap.add_argument("--render-seconds", type=float, default=30.0)
     ap.add_argument("--range-seconds", type=float, default=60.0, help="gate: wait for estimates")
