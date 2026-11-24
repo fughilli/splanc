@@ -69,9 +69,12 @@ pub const TURN_MAX_US: i64 = 22;
 pub const RTT_WINDOW_RAW: i64 = 1_000;
 /// The drift fit needs its points spread over at least this (µs).
 pub const FIT_SPAN_US: i64 = 10_000;
-/// The zero-range RTT measured on the bench (hitl-rig-1, both devices in phase state 39, at
-/// a short unmeasured distance): 1407.5 raw, x16.
-pub const DEFAULT_K_RAW_X16: i32 = 22_520;
+/// The zero-range RTT on the bench (hitl-rig-1, a short unmeasured distance) with both
+/// devices forced into phase state 41 ([`RangeConfig::force_phase`], S2 r3: 1423.4-1424.4
+/// raw): 1424.0 raw, x16. Uncalibrated until D-520 / D-521.
+pub const DEFAULT_K_RAW_X16: i32 = 22_784;
+/// The same with both devices left in their boot state 39 (no force): 1407.5 raw, x16.
+pub const K39_RAW_X16: i32 = 22_520;
 /// Message bytes: header + REPORT_MAX records.
 pub const MSG_MAX: usize = 4 + REPORT_MAX * REC_LEN;
 const REC_LEN: usize = 12;
@@ -184,11 +187,15 @@ pub struct RangeConfig {
     pub calibrated: bool,
     pub period_us: i64,
     pub burst: u8,
+    /// On enable, force this device's tick phase into state 41 (a Wi-Fi baseband reset
+    /// pulse, `ftm::force_phase`; S2): every forced device then shares one pair constant
+    /// instead of a per-boot 39/41 draw. Off: the boot's state, flagged as before.
+    pub force_phase: bool,
 }
 
 impl Default for RangeConfig {
     fn default() -> Self {
-        RangeConfig { enabled: false, k_raw_x16: DEFAULT_K_RAW_X16, calibrated: false, period_us: PERIOD_US, burst: BURST }
+        RangeConfig { enabled: false, k_raw_x16: DEFAULT_K_RAW_X16, calibrated: false, period_us: PERIOD_US, burst: BURST, force_phase: true }
     }
 }
 
@@ -212,6 +219,8 @@ pub struct RangeStats {
     /// Drift fits made / skipped (span too short or too few points).
     pub fits: u32,
     pub no_fit: u32,
+    /// Phase forces done.
+    pub forced: u32,
 }
 
 /// A responder's record: what it sends back.
@@ -452,19 +461,109 @@ fn slope_ppb(pts: &[(i64, i64)]) -> Option<i64> {
     Some((sxy * 1_562_500 / sxx) as i64)
 }
 
-/// The ranging state of one node ([`crate::wifi_p2p::WifiP2p::ranging`]).
+/// The per-neighbour records and estimates (~4 KB): not part of [`Ranging`], so ranging
+/// off costs the mesh nothing. The firmware allocates one when ranging is turned on and
+/// frees it when it is turned off ([`Ranging::attach`], [`Ranging::detach`]).
 #[derive(Clone, Copy, Debug)]
+pub struct PeerTable {
+    pub peers: [Option<Peer>; PEERS],
+}
+
+impl PeerTable {
+    pub const fn new() -> PeerTable {
+        PeerTable { peers: [None; PEERS] }
+    }
+}
+
+impl Default for PeerTable {
+    fn default() -> Self {
+        PeerTable::new()
+    }
+}
+
+/// The ranging state of one node ([`crate::wifi_p2p::WifiP2p::ranging`]): settings,
+/// counters and this device's phase vote inline (~130 bytes), the per-neighbour table
+/// attached only while ranging is on.
+#[derive(Debug)]
 pub struct Ranging {
     pub cfg: RangeConfig,
     pub stats: RangeStats,
     pub vote: PhaseVote,
-    pub peers: [Option<Peer>; PEERS],
+    table: Option<&'static mut PeerTable>,
     rng: u32,
+    /// A phase force is wanted (the backhaul does it once its TX is idle).
+    pub force_pending: bool,
 }
 
 impl Ranging {
     pub fn new(seed: u32) -> Ranging {
-        Ranging { cfg: RangeConfig::default(), stats: RangeStats::default(), vote: PhaseVote::default(), peers: [None; PEERS], rng: seed | 1 }
+        Ranging { cfg: RangeConfig::default(), stats: RangeStats::default(), vote: PhaseVote::default(), table: None, rng: seed | 1, force_pending: false }
+    }
+
+    /// Ranging is on: enabled, with a table.
+    pub fn on(&self) -> bool {
+        self.cfg.enabled && self.table.is_some()
+    }
+
+    /// Give ranging its table (cleared). Returns the previous one, if any, for freeing.
+    pub fn attach(&mut self, t: &'static mut PeerTable) -> Option<&'static mut PeerTable> {
+        *t = PeerTable::new();
+        self.table.replace(t)
+    }
+
+    /// Take the table back (ranging off), for freeing.
+    pub fn detach(&mut self) -> Option<&'static mut PeerTable> {
+        self.cfg.enabled = false;
+        self.force_pending = false;
+        self.table.take()
+    }
+
+    pub fn has_table(&self) -> bool {
+        self.table.is_some()
+    }
+
+    /// The ranged neighbours (none without a table).
+    pub fn peers(&self) -> &[Option<Peer>] {
+        match &self.table {
+            Some(t) => &t.peers,
+            None => &[],
+        }
+    }
+
+    fn peers_mut(&mut self) -> &mut [Option<Peer>] {
+        match &mut self.table {
+            Some(t) => &mut t.peers,
+            None => &mut [],
+        }
+    }
+
+    /// Turn ranging on or off; on (with [`RangeConfig::force_phase`]) asks for a phase force.
+    pub fn set_enabled(&mut self, on: bool) {
+        if on && !self.cfg.enabled && self.cfg.force_phase {
+            self.force_pending = true;
+        }
+        self.cfg.enabled = on;
+        if !on {
+            self.force_pending = false;
+        }
+    }
+
+    /// The backhaul forced this device's phase: what was measured before is another state's,
+    /// so the vote and every link's RTTs start over (neighbours learn the new state from our
+    /// next message).
+    pub fn on_forced(&mut self) {
+        self.force_pending = false;
+        self.stats.forced += 1;
+        self.vote = PhaseVote::default();
+        for p in self.peers_mut().iter_mut().flatten() {
+            p.hist_n = 0;
+            p.hist_head = 0;
+            p.rx_n = 0;
+            p.rx_head = 0;
+            p.tx_n = 0;
+            p.tx_head = 0;
+            p.est = None;
+        }
     }
 
     fn rand(&mut self) -> u32 {
@@ -481,29 +580,32 @@ impl Ranging {
     }
 
     pub fn peer(&self, id: NodeId) -> Option<&Peer> {
-        self.peers.iter().flatten().find(|p| p.id == id)
+        self.peers().iter().flatten().find(|p| p.id == id)
     }
 
+    /// The table entry for `id`, made (replacing the stalest) if new. Callers check
+    /// [`Ranging::on`] first: there is a table.
     fn peer_mut(&mut self, now_us: i64, id: NodeId) -> &mut Peer {
-        let i = match self.peers.iter().position(|p| p.is_some_and(|p| p.id == id)) {
+        let i = match self.peers().iter().position(|p| p.is_some_and(|p| p.id == id)) {
             Some(i) => i,
             None => {
-                let i = self.peers.iter().position(|p| p.is_none()).unwrap_or_else(|| (0..PEERS).min_by_key(|&i| self.peers[i].map_or(i64::MIN, |p| p.last_us)).unwrap_or(0));
+                let ps = self.peers();
+                let i = ps.iter().position(|p| p.is_none()).unwrap_or_else(|| (0..ps.len()).min_by_key(|&i| ps[i].map_or(i64::MIN, |p| p.last_us)).unwrap_or(0));
                 // The first burst a random part of a period away: peers that met together
                 // never probe in step.
                 let j = (self.rand() as i64).rem_euclid(self.cfg.period_us.max(1));
-                self.peers[i] = Some(Peer::new(id, now_us, now_us + j / 4));
+                self.peers_mut()[i] = Some(Peer::new(id, now_us, now_us + j / 4));
                 i
             }
         };
-        let p = self.peers[i].as_mut().unwrap();
+        let p = self.peers_mut()[i].as_mut().unwrap();
         p.last_us = now_us;
         p
     }
 
     /// Make sure a live neighbour is ranged (the backhaul calls this for each one).
     pub fn track(&mut self, now_us: i64, id: NodeId) {
-        if self.cfg.enabled && self.peer(id).is_none() {
+        if self.on() && self.peer(id).is_none() {
             self.peer_mut(now_us, id);
         }
     }
@@ -511,7 +613,7 @@ impl Ranging {
     /// A unicast from `from` to us that our MAC ACKed (first copy, OFDM, received clean):
     /// its RX vector holds t2 and our ACK's t3. `air_us`: the frame's airtime.
     pub fn on_rx(&mut self, now_us: i64, from: NodeId, seq: u16, rxv: &[u8], air_us: u32) {
-        if !self.cfg.enabled {
+        if !self.on() {
             return;
         }
         let Some(r) = RxFtm::decode(rxv) else { return };
@@ -532,7 +634,7 @@ impl Ranging {
     /// Our first-attempt unicast to `to` was ACKed: `words` are the TX queue's stamp words
     /// ([`TxFtm::decode`]), `air_us` the frame's airtime.
     pub fn on_tx(&mut self, now_us: i64, to: NodeId, seq: u16, words: [u32; 3], air_us: u32) {
-        if !self.cfg.enabled {
+        if !self.on() {
             return;
         }
         let t = TxFtm::decode(words);
@@ -553,7 +655,7 @@ impl Ranging {
 
     /// A ranging message from neighbour `from`.
     pub fn on_msg(&mut self, now_us: i64, from: NodeId, body: &[u8]) {
-        if !self.cfg.enabled {
+        if !self.on() {
             return;
         }
         let Some(m) = RangeMsg::decode(body) else {
@@ -646,7 +748,7 @@ impl Ranging {
         }
         self.stats = st;
         let est = self.estimate(now_us, from);
-        if let Some(p) = self.peers.iter_mut().flatten().find(|p| p.id == from) {
+        if let Some(p) = self.peers_mut().iter_mut().flatten().find(|p| p.id == from) {
             p.est = est;
             p.est_us = now_us;
         }
@@ -657,7 +759,7 @@ impl Ranging {
     fn estimate(&mut self, now_us: i64, id: NodeId) -> Option<LinkRange> {
         let phase_self = self.phase();
         let (k_x16, cal) = (self.cfg.k_raw_x16 as i64, self.cfg.calibrated);
-        let p = self.peers.iter().flatten().find(|p| p.id == id)?;
+        let p = self.peers().iter().flatten().find(|p| p.id == id)?;
         let mut xs = [0i32; HIST];
         let mut newest_age = i64::MAX;
         let mut n = 0usize;
@@ -727,13 +829,13 @@ impl Ranging {
     /// burst (only when `idle`: the backhaul has nothing else queued). `live(id)`: the
     /// neighbour is still heard. Returns the destination and the message length in `out`.
     pub fn poll(&mut self, now_us: i64, idle: bool, live: &dyn Fn(NodeId) -> bool, out: &mut [u8]) -> Option<(NodeId, usize)> {
-        if !self.cfg.enabled {
+        if !self.on() {
             return None;
         }
         let phase = self.phase();
         // Reports.
-        for i in 0..PEERS {
-            let Some(p) = self.peers[i].as_mut() else { continue };
+        for i in 0..self.peers().len() {
+            let Some(p) = self.peers_mut()[i].as_mut() else { continue };
             let (n, oldest) = p.unreported(now_us);
             if n == 0 || now_us - p.last_report_us < REPORT_GAP_US || !live(p.id) {
                 continue;
@@ -764,9 +866,9 @@ impl Ranging {
             return None;
         }
         let (period, burst) = (self.cfg.period_us.max(1), self.cfg.burst.max(1));
-        for i in 0..PEERS {
+        for i in 0..self.peers().len() {
             let jitter = (self.rand() as i64).rem_euclid(period / 4 + 1);
-            let Some(p) = self.peers[i].as_mut() else { continue };
+            let Some(p) = self.peers_mut()[i].as_mut() else { continue };
             if !live(p.id) {
                 continue;
             }
@@ -846,6 +948,8 @@ mod tests {
         fn new(ppm: i64, rtt_raw: i64) -> Pair {
             let mut a = Ranging::new(1);
             let mut b = Ranging::new(2);
+            a.attach(table());
+            b.attach(table());
             a.cfg.enabled = true;
             b.cfg.enabled = true;
             Pair { a, b, t_us: 1_000_000, seq: 100, ppb: ppm * 1000, rtt_raw, phase_b: 41 }
@@ -880,6 +984,10 @@ mod tests {
                 None => false,
             }
         }
+    }
+
+    fn table() -> &'static mut PeerTable {
+        Box::leak(Box::new(PeerTable::new()))
     }
 
     /// The simulator's stamps decode back to themselves.
@@ -989,6 +1097,7 @@ mod tests {
     #[test]
     fn bursts_probe_idle_links() {
         let mut r = Ranging::new(9);
+        r.attach(table());
         r.cfg.enabled = true;
         r.track(0, B);
         let mut out = [0u8; MSG_MAX];
@@ -1014,6 +1123,7 @@ mod tests {
         assert!(wants[BURST as usize - 1]);
         // A dead neighbour is not probed.
         let mut r2 = Ranging::new(9);
+        r2.attach(table());
         r2.cfg.enabled = true;
         r2.track(0, B);
         for t in (0..PERIOD_US).step_by(1000) {
@@ -1038,11 +1148,47 @@ mod tests {
         assert_eq!(p.b.peer(A).unwrap().phase_peer, Phase::Low);
     }
 
+    /// Enabling asks for one phase force; the force resets the vote and the links.
+    #[test]
+    fn force_phase_on_enable_resets_the_links() {
+        let mut p = Pair::new(49, DEFAULT_K_RAW_X16 as i64 / 16 + 4);
+        assert!(!p.a.force_pending, "Pair::new sets cfg.enabled directly");
+        let mut r = Ranging::new(3);
+        r.set_enabled(true);
+        assert!(r.force_pending);
+        r.set_enabled(false);
+        assert!(!r.force_pending);
+        r.cfg.force_phase = false;
+        r.set_enabled(true);
+        assert!(!r.force_pending, "force off: the boot's state");
+        for _ in 0..REPORT_MIN {
+            p.exchange(200);
+        }
+        assert!(p.deliver_b_to_a());
+        assert!(p.a.link(p.t_us, B).is_some());
+        assert_eq!(p.b.phase(), Phase::High);
+        p.a.on_forced();
+        p.b.on_forced();
+        assert_eq!((p.a.link(p.t_us, B), p.b.phase(), p.a.stats.forced), (None, Phase::Unknown, 1));
+    }
+
     /// The table lives in the mesh's heap block (allocated on MESH ON only): keep it small.
     #[test]
     fn ram_stays_small() {
+        // Inline in the mesh block (always, while the mesh is on): small.
         let n = core::mem::size_of::<Ranging>();
-        assert!(n <= 4_400, "Ranging is {n} bytes");
+        assert!(n <= 192, "Ranging is {n} bytes");
+        // The table, allocated only while ranging is on.
+        let t = core::mem::size_of::<PeerTable>();
+        assert!(t <= 4_400, "PeerTable is {t} bytes");
+        // Without a table nothing records, even if enabled.
+        let mut r = Ranging::new(1);
+        r.cfg.enabled = true;
+        assert!(!r.on());
+        r.on_rx(0, B, 1, &[0u8; 92], 200);
+        assert_eq!(r.stats.rx_bad, 0);
+        assert!(r.attach(table()).is_none());
+        assert!(r.on() && r.detach().is_some() && !r.on() && !r.cfg.enabled);
     }
 
     #[test]

@@ -29,8 +29,10 @@
 //   MESH TIME                     mesh time (M4): state, offset, stamps, TSF mapping; one line per peer
 //   MESH RANGE                    link ranging (mesh-ftm.md): this device's phase state + counters, one
 //                                 line per neighbour (range_mm, sigma_mm, n, phase_self/peer, cal)
-//   MESH RANGE on|off | k <raw x16> | cal 0|1 | period <ms>   ranging on/off (off by default),
-//                                 zero-range constant K, K calibrated, re-measure period
+//   MESH RANGE on|off | k <raw x16> | cal 0|1 | period <ms> | forcecfg 0|1 | force
+//                                 ranging on/off (off by default), zero-range constant K, K
+//                                 calibrated, re-measure period, force the FTM phase state (41)
+//                                 on enable (default 1) / again now
 //   MESH EPOCH <ms>|clear         originate a show epoch <ms> after mesh-time now (tests; the app's
 //                                 set_time_base on this device does the same)
 //   MESH TSF 0|1|2  MESH TB <ms>  TSF read mode (floor / raw / latched) / time beacon period (0 off)
@@ -633,6 +635,8 @@ bool console(const char *line) {
     else if (!strncmp(v, "k ", 2)) ok = ns_mesh_set(g_mesh, 8, strtoul(v + 2, nullptr, 0));
     else if (!strncmp(v, "cal ", 4)) ok = ns_mesh_set(g_mesh, 9, strtoul(v + 4, nullptr, 0));
     else if (!strncmp(v, "period ", 7)) ok = ns_mesh_set(g_mesh, 10, strtoul(v + 7, nullptr, 0));
+    else if (!strncmp(v, "forcecfg ", 9)) ok = ns_mesh_set(g_mesh, 11, strtoul(v + 9, nullptr, 0));
+    else if (!strcmp(v, "force")) ok = ns_mesh_set(g_mesh, 12, 1);
     Serial.printf("[mesh] %s range %s\n", ok ? "ok" : "?", v);
   } else if (!strncmp(a, "TB ", 3)) {
     Serial.printf("[mesh] %s tb\n", ns_mesh_set(g_mesh, 6, strtoul(a + 3, nullptr, 0)) ? "ok" : "?");

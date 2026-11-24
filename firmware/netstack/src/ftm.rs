@@ -127,6 +127,25 @@ impl RxFtm {
     }
 }
 
+/// Pulse the Wi-Fi baseband's reset to put this device's tick phase into the 41 state
+/// ([`PHASE_HIGH`]) without a reboot (S2, hitl-rig-1: 39 -> 41 in 5 of 5 JTAG pulses, 41
+/// stayed 41 in 11 of 11, the link and its calibration survived). Every device forced the
+/// same way shares one pair constant. False (nothing done) while `queue` has a frame armed:
+/// call it again later. A frame being received at that instant is lost, nothing more.
+///
+/// # Safety
+/// MMIO; the MAC must be initialized.
+pub unsafe fn force_phase(queue: usize) -> bool {
+    use crate::regs::{mmio, modem_syscon as ms};
+    if crate::tx::TxRing::<4>::arm_pending(queue) {
+        return false;
+    }
+    let v = mmio::read32(ms::RST_CONF);
+    mmio::write32(ms::RST_CONF, v | ms::RST_WIFIBB);
+    mmio::write32(ms::RST_CONF, v & !ms::RST_WIFIBB);
+    true
+}
+
 /// The two phase states seen on silicon (39 is the lower-offset one).
 pub const PHASE_LOW: u8 = 39;
 pub const PHASE_HIGH: u8 = 41;

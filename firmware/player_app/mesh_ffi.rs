@@ -73,6 +73,10 @@ extern "C" {
     fn ns_mac_send_p2p(frame: *const u8, len: u32, queue: u32, rate: u32, pwr: u32, flags: u32) -> u32;
     fn ns_mac_tx_done(queue: u32, pmd: *mut u32) -> u32;
     fn ns_mac_tx_ftm(queue: u32, out: *mut u32);
+    fn ns_phy_force_tick_phase(queue: u32) -> u32;
+    // ESP-IDF heap: ranging's table while ranging is on (not in the mesh block).
+    fn heap_caps_aligned_alloc(align: usize, size: usize, caps: u32) -> *mut u8;
+    fn heap_caps_free(p: *mut u8);
     // netstack_transport.cpp: the shared TX pacing (the STA path's g_tx_busy_until_us).
     fn lm_mesh_tx_idle() -> u32;
     fn lm_mesh_tx_hold(us: u32);
@@ -143,6 +147,9 @@ impl Radio for Mac {
         let mut w = [0u32; 3];
         unsafe { ns_mac_tx_ftm(QUEUE, w.as_mut_ptr()) };
         Some(w)
+    }
+    fn force_phase(&mut self) -> bool {
+        unsafe { ns_phy_force_tick_phase(QUEUE) != 0 }
     }
 }
 
@@ -605,6 +612,7 @@ pub unsafe extern "C" fn ns_mesh_destroy(m: *mut Mesh) -> *mut u8 {
     let b = (*m).block;
     // The transport took back any staged frame first (lm_fx_stage_cancel).
     (*m).blobs.free_all();
+    range_enable(&mut *m, false);
     core::ptr::drop_in_place(m);
     b
 }
@@ -1149,7 +1157,8 @@ pub unsafe extern "C" fn ns_mesh_dev_forge(m: *mut Mesh, kind: u32, data: *const
 /// Settings: `what` 0 = group policy (0 bcast, 1 unicast), 1 = broadcast rate code,
 /// 2 = unicast rate code, 3 = tries, 4 = TX power byte, 5 = TSF read mode (0 floor, 1 raw,
 /// 2 latched), 6 = time beacon period (ms, 0 off), 7 = link ranging on/off, 8 = its zero-range
-/// constant K (raw units x 16), 9 = K is calibrated (1/0), 10 = the ranging period (ms).
+/// constant K (raw units x 16), 9 = K is calibrated (1/0), 10 = the ranging period (ms),
+/// 11 = force the FTM phase state on enable (1/0), 12 = force it again now.
 /// Returns 1 if applied.
 #[no_mangle]
 pub unsafe extern "C" fn ns_mesh_set(m: *mut Mesh, what: u32, v: u32) -> u32 {
@@ -1165,13 +1174,43 @@ pub unsafe extern "C" fn ns_mesh_set(m: *mut Mesh, what: u32, v: u32) -> u32 {
         // The time beacon period (ms; 0: off).
         6 if v <= 10_000 => m.stack.set_time_beacon_us(v as i64 * 1000),
         // Link ranging (splanc_mesh::ranging): off by default.
-        7 => m.stack.node.backhaul.ranging.cfg.enabled = v != 0,
+        7 => return range_enable(m, v != 0) as u32,
         8 if (1..=64_000).contains(&v) => m.stack.node.backhaul.ranging.cfg.k_raw_x16 = v as i32,
         9 => m.stack.node.backhaul.ranging.cfg.calibrated = v != 0,
         10 if (500..=600_000).contains(&v) => m.stack.node.backhaul.ranging.cfg.period_us = v as i64 * 1000,
+        // 11: force the phase on enable (1/0); 12: force it again now (when TX is idle).
+        11 => m.stack.node.backhaul.ranging.cfg.force_phase = v != 0,
+        12 => m.stack.node.backhaul.ranging.force_pending = true,
         _ => return 0,
     }
     1
+}
+
+/// `MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL`.
+const CAPS_INTERNAL: u32 = (1 << 2) | (1 << 11);
+
+/// Link ranging on (its ~4 KB table from the heap, so ranging off costs the mesh nothing)
+/// or off (the table freed). False if the table cannot be allocated.
+fn range_enable(m: &mut Mesh, on: bool) -> bool {
+    use splanc_mesh::ranging::PeerTable;
+    let r = &mut m.stack.node.backhaul.ranging;
+    if on {
+        if !r.has_table() {
+            let p = unsafe { heap_caps_aligned_alloc(core::mem::align_of::<PeerTable>(), core::mem::size_of::<PeerTable>(), CAPS_INTERNAL) } as *mut PeerTable;
+            if p.is_null() {
+                return false;
+            }
+            unsafe { p.write(PeerTable::new()) };
+            r.attach(unsafe { &mut *p });
+        }
+        r.set_enabled(true);
+    } else {
+        r.set_enabled(false);
+        if let Some(t) = r.detach() {
+            unsafe { heap_caps_free(t as *mut PeerTable as *mut u8) };
+        }
+    }
+    true
 }
 
 /// Start a test stream: `n` packets of `len` bytes on `port` (17 = REPLY, 18 = STATUS) to
@@ -1309,7 +1348,7 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
             let (c, t, v) = (&r.cfg, &r.stats, &r.vote);
             write!(
                 w,
-                "[mesh] range self on={} phase={} votes={}/{}/{} k_x16={} cal={} period_ms={} rx_recs={} tx_recs={} rx_bad={} tx_bad={} probes={} reports={} reports_in={} bad_msgs={} matched={} exch={} rejected={} fits={} no_fit={}",
+                "[mesh] range self on={} phase={} votes={}/{}/{} k_x16={} cal={} period_ms={} force={} forced={} force_pending={} rx_recs={} tx_recs={} rx_bad={} tx_bad={} probes={} reports={} reports_in={} bad_msgs={} matched={} exch={} rejected={} fits={} no_fit={}",
                 c.enabled as u8,
                 r.phase().ticks(),
                 v.low,
@@ -1318,6 +1357,9 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
                 c.k_raw_x16,
                 c.calibrated as u8,
                 c.period_us / 1000,
+                c.force_phase as u8,
+                t.forced,
+                r.force_pending as u8,
                 t.rx_recs,
                 t.tx_recs,
                 t.rx_bad,
@@ -1336,7 +1378,7 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
         (5, i) => {
             // One line per ranged neighbour: its LinkRange (or none yet).
             let r = &b.ranging;
-            let Some(p) = r.peers.iter().flatten().nth(i as usize - 1) else { return false };
+            let Some(p) = r.peers().iter().flatten().nth(i as usize - 1) else { return false };
             let l = r.link(now, p.id);
             write!(
                 w,
@@ -1481,6 +1523,16 @@ mod stubs {
     }
     #[no_mangle]
     extern "C" fn ns_mac_tx_ftm(_: u32, _: *mut u32) {}
+    #[no_mangle]
+    extern "C" fn ns_phy_force_tick_phase(_: u32) -> u32 {
+        1
+    }
+    #[no_mangle]
+    extern "C" fn heap_caps_aligned_alloc(align: usize, size: usize, _: u32) -> *mut u8 {
+        unsafe { std::alloc::alloc_zeroed(std::alloc::Layout::from_size_align(size, align).unwrap()) }
+    }
+    #[no_mangle]
+    extern "C" fn heap_caps_free(_: *mut u8) {} // tests leak it
     #[no_mangle]
     extern "C" fn lm_mesh_tx_idle() -> u32 {
         1

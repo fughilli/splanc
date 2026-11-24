@@ -838,6 +838,13 @@ pub extern "C" fn ns_mac_tx_ftm(queue: u32, out: *mut u32) {
     }
 }
 
+/// Force the FTM tick-phase state (41) with a baseband reset pulse (`ftm::force_phase`):
+/// 1 if done, 0 if `queue` has a frame armed (try again later).
+#[no_mangle]
+pub extern "C" fn ns_phy_force_tick_phase(queue: u32) -> u32 {
+    unsafe { ledmapper_netstack::ftm::force_phase(queue as usize) as u32 }
+}
+
 /// TX completion status from a PMD word: 0 = OK, 5 = ACK timeout, else the raw code.
 #[no_mangle]
 pub extern "C" fn ns_p2p_tx_status(pmd: u32) -> u32 {

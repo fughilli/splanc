@@ -132,6 +132,11 @@ pub trait Radio {
     fn tx_ftm(&mut self) -> Option<[u32; 3]> {
         None
     }
+    /// Force the FTM tick phase ([`ledmapper_netstack::ftm::force_phase`]); false if not
+    /// done (a frame is armed, or this MAC cannot).
+    fn force_phase(&mut self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -710,6 +715,10 @@ impl WifiP2p {
     /// Call every loop pass; never blocks.
     pub fn pump(&mut self, now_us: i64, radio: &mut dyn Radio) {
         self.now_us = self.now_us.max(now_us);
+        // Ranging's phase force, between frames (nothing of ours in flight).
+        if self.ranging.force_pending && self.cur.is_none() && radio.tx_idle(now_us) && radio.force_phase() {
+            self.ranging.on_forced();
+        }
         for _ in 0..3 {
             if self.settle(now_us, radio) {
                 return;
@@ -791,7 +800,7 @@ impl WifiP2p {
                 self.stamp = Some(st);
                 self.stats.time_stamped += 1;
             }
-            if outcome == Some(TxResult::Ok) && c.attempt == 1 && self.ranging.cfg.enabled && self.tx_len > 0 {
+            if outcome == Some(TxResult::Ok) && c.attempt == 1 && self.ranging.on() && self.tx_len > 0 {
                 self.range_tx(t, c, radio);
             }
         } else if self.tx_len > 0 && self.txq[self.tx_head].stamp {
@@ -905,7 +914,7 @@ impl WifiP2p {
         let dup = if ours { self.learn(reap_us, &p, h.src, rssi) } else { false };
         // Ranging: a first copy of a unicast to us, which our MAC ACKed (its RX vector holds
         // t2 and our ACK's t3), received clean as legacy OFDM.
-        if ours && self.ranging.cfg.enabled && p.da == self.cfg.mac && !p.retry {
+        if ours && self.ranging.on() && p.da == self.cfg.mac && !p.retry {
             if let (Some(v), Some(raw)) = (v, rxv) {
                 if v.bb_format == p2p::BB_FORMAT_11G && v.rx_state == 0 && v.rxend_state == 0 {
                     self.ranging.on_rx(reap_us, h.src, p.seq, raw, p2p::airtime_us(frame.len(), v.rate_kbps()));
@@ -1020,7 +1029,7 @@ impl Backhaul for WifiP2p {
     }
 
     fn range_out(&mut self, now_us: i64, out: &mut [u8]) -> Option<(NodeId, usize)> {
-        if !self.ranging.cfg.enabled {
+        if !self.ranging.on() {
             return None;
         }
         for n in self.neighbours.iter().flatten() {

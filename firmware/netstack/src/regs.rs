@@ -74,6 +74,15 @@ pub mod mmio {
 
 /// Register banks in the ESP32-C6 MODEM block. Every WiFi PHY/MAC register lives
 /// in the `0x600A_xxxx` range.
+/// MODEM_SYSCON (`0x600A_9800`): the modem's clock gates and block resets.
+pub mod modem_syscon {
+    /// `MODEM_SYSCON_MODEM_RST_CONF`.
+    pub const RST_CONF: usize = 0x600A_9810;
+    /// The Wi-Fi baseband's reset (bit 8). A pulse leaves the TX/RX tick phase in the FTM
+    /// "41" state on every device (docs/design/mesh-ftm.md §7, S2), with the link up.
+    pub const RST_WIFIBB: u32 = 1 << 8;
+}
+
 pub mod banks {
     // PHY RF / analog / gain / power-detect / bias, plus the PBUS-adjacent regs.
     pub const PHY_RF: usize = 0x600A_0000;

@@ -107,3 +107,17 @@ def test_fit_recovers_k_per_state_and_slope():
 
 def test_coax_equivalent():
     assert abs(coax_equivalent_m(0.7, 0.7) - 1.0) < 1e-12
+
+
+def test_gate_checks_the_phase_force():
+    r = _gate(PEER, BA)
+    forced = SELF.replace("period_ms=10000", "period_ms=10000 force=1 forced=1 force_pending=0")
+    r.self_a, _ = parse([forced])
+    assert r.self_a.phase == 41
+    assert verdict(r)[0]
+    r.self_b, _ = parse([forced.replace("phase=41", "phase=39")])
+    ok, why = verdict(r)
+    assert not ok and any("after the force" in w for w in why)
+    r.self_b, _ = parse([forced.replace("forced=1", "forced=0")])
+    ok, why = verdict(r)
+    assert not ok and any("never done" in w for w in why)

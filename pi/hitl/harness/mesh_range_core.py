@@ -153,6 +153,14 @@ def verdict(r: GateResult) -> tuple[bool, list[str]]:
                 f"phase states disagree: A says self/peer {r.ab.phase_self}/{r.ab.phase_peer}, "
                 f"B says {r.ba.phase_self}/{r.ba.phase_peer}"
             )
+    # Phase force (S2): a device that forces must have done it and sit in state 41.
+    for d, me in (("a", r.self_a), ("b", r.self_b)):
+        if me is None or me.counters.get("force") != 1:
+            continue
+        if me.counters.get("forced", 0) < 1:
+            why.append(f"{d}: phase force wanted but never done")
+        elif me.phase != 41:
+            why.append(f"{d}: phase {me.phase} after the force (expected 41)")
     for d, on in r.render_on.items():
         off = r.render_off.get(d, {})
         if not on.get("windows") or not off.get("windows"):
