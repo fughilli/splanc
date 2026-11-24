@@ -10,7 +10,8 @@ use ledmapper_player_ffi::kiosk_ffi::{
     self as k, apply, classify, decode, encode, lm_kiosk_apply_runtime, lm_kiosk_build_push, lm_kiosk_console,
     lm_kiosk_enabled, lm_kiosk_encode_attract, lm_kiosk_gate, lm_kiosk_gen, lm_kiosk_msg_locked,
     lm_kiosk_push_done, lm_kiosk_record, lm_kiosk_reverted, lm_kiosk_seed, lm_kiosk_take_capture, lm_kiosk_tick,
-    remaining_s, Class, Request, DEFAULT_CONFIG, RECORD_LEN, SRC_BLE, SRC_WSS, TICK_PUSH, TICK_REVERT,
+    lm_kiosk_drop, lm_kiosk_tick_conns, lm_kiosk_unlocked, remaining_s, Class, Request, DEFAULT_CONFIG, RECORD_LEN, SRC_BLE, SRC_LINK2,
+    SRC_LINK3, SRC_WSS, TICK_PUSH, TICK_REVERT,
 };
 use ledmapper_player_ffi::{lm_fx_shade, lm_fx_update, lm_player_handle, lm_player_init, FEATURES};
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
@@ -318,6 +319,34 @@ fn kiosk_flow() {
     assert_eq!(err_code(rename(b, now)), "kiosk_locked");
     assert!(matches!(rename(w, now), Some(SMsg::Welcome(_))));
     assert!(!unsafe { lm_kiosk_msg_locked() }, "the owner's ops persist");
+    // The P4's further front-end link sessions: each its own connection and unlock (the P4
+    // reports them to the C6, which answers the mesh arms on unlocked sessions only).
+    let (l2, l3) = (SRC_LINK2, SRC_LINK3);
+    let all = 1 << w | 1 << b | 1 << l2 | 1 << l3;
+    unsafe { lm_kiosk_tick_conns(now, all) };
+    assert!(unsafe { lm_kiosk_unlocked(w) && !lm_kiosk_unlocked(b) && !lm_kiosk_unlocked(l2) });
+    assert!(!get(l2, now).r#owner_unlocked);
+    assert_eq!(err_code(rename(l2, now)), "kiosk_locked");
+    assert!(status(unlock(l2, now, "boo")).r#owner_unlocked);
+    assert!(unsafe { lm_kiosk_unlocked(l2) && !lm_kiosk_unlocked(l3) });
+    assert!(matches!(rename(l2, now), Some(SMsg::Welcome(_))));
+    assert_eq!(err_code(rename(l3, now)), "kiosk_locked");
+    // Its session ends (the front end's LK_OP_RESET): locked again; the others keep theirs.
+    unsafe { lm_kiosk_tick_conns(now, all & !(1 << l2)) };
+    assert!(unsafe { !lm_kiosk_unlocked(l2) && lm_kiosk_unlocked(w) });
+    unsafe { lm_kiosk_tick_conns(now, all) };
+    assert!(!unsafe { lm_kiosk_unlocked(l2) }, "a session that reopens starts locked");
+    assert_eq!(err_code(rename(l2, now)), "kiosk_locked");
+    // A reset session's unlock ends at once, before any tick (its id may be reused next).
+    assert!(status(unlock(l3, now, "boo")).r#owner_unlocked);
+    unsafe { lm_kiosk_drop(l3) };
+    assert!(unsafe { !lm_kiosk_unlocked(l3) });
+    assert_eq!(err_code(rename(l3, now)), "kiosk_locked");
+    unsafe { lm_kiosk_drop(0) };
+    unsafe { lm_kiosk_drop(200) };
+    // The plain tick (the C6 players) leaves the link sessions alone.
+    unsafe { lm_kiosk_tick(now, true, true) };
+    assert!(unsafe { lm_kiosk_unlocked(w) });
     // The timer is held while the owner is unlocked.
     assert_eq!(unsafe { lm_kiosk_tick(now + 60_000, true, true) }, 0);
     now += 60_000;

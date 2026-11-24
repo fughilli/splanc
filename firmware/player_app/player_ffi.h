@@ -629,6 +629,9 @@ int32_t lm_power_console(const uint8_t *line, size_t len, uint32_t now_ms, uint8
 #define LM_KIOSK_SRC_INTERNAL 0
 #define LM_KIOSK_SRC_WSS 1
 #define LM_KIOSK_SRC_BLE 2
+// The P4 player's second and third front-end link sessions (link_transport.cpp).
+#define LM_KIOSK_SRC_LINK2 3
+#define LM_KIOSK_SRC_LINK3 4
 #define LM_KIOSK_RECORD_LEN 112
 #define LM_KIOSK_TICK_REVERT 1u
 #define LM_KIOSK_TICK_PUSH 2u
@@ -656,6 +659,12 @@ int32_t lm_kiosk_encode_attract(uint32_t which, uint8_t *out, size_t cap);
 void lm_kiosk_apply_runtime(void);
 // Every loop pass: LM_KIOSK_TICK_* bits.
 uint32_t lm_kiosk_tick(uint32_t now_ms, bool wss_open, bool ble_connected);
+// The same with several connections (the P4): bit `src` of open_mask = open.
+uint32_t lm_kiosk_tick_conns(uint32_t now_ms, uint32_t open_mask);
+// Connection `src` is owner-unlocked now.
+bool lm_kiosk_unlocked(uint8_t src);
+// Connection `src` ended: its unlock ends now (the P4's front-end session reset).
+void lm_kiosk_drop(uint8_t src);
 void lm_kiosk_reverted(uint32_t now_ms);
 int32_t lm_kiosk_build_push(uint8_t src, uint32_t now_ms, uint8_t *out, size_t cap);
 void lm_kiosk_push_done(void);

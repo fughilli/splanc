@@ -516,7 +516,7 @@ with its safe pins. **Level shifting** to 5 V (for example 2 × 74HCT245) is a b
 | off | size | field | |
 | --- | --- | --- | --- |
 | 0 | 1 | `ver` | link protocol version (major) |
-| 1 | 1 | `type` | `PLAYER` (ClientMessage bytes), `REPLY` / `PUSH` (ServerMessage bytes), `LINK` (link control), `BULK` (chunked stream), `LOG` (P4 console lines), `OSC`, `MESH` (a ClientMessage the mesh relayed to this fixture, §4.3.2) |
+| 1 | 1 | `type` | `PLAYER` (ClientMessage bytes), `REPLY` / `PUSH` (ServerMessage bytes), `LINK` (link control), `BULK` (chunked stream), `LOG` (P4 console lines), `OSC`, `MESH` (a ClientMessage the mesh relayed to this fixture, §4.3.2), `MESH_REQ` (the front end's mesh asking the P4: stage a shared effect, forget it, its persisted effect frame) |
 | 2 | 1 | `lane` | 0 = live, 1 = bulk |
 | 3 | 1 | `flags` | `MORE` (fragment follows), `ACK_REQ` |
 | 4 | 2 | `session` | which C6 client session (wss socket or GATT); replies are routed by it |
@@ -575,7 +575,12 @@ buffer bugs. It costs about 1 µs per KB on either core [E].
   `fxb_format`). That way the C6 can answer `hello` from cache for a few hundred ms during a P4
   restart.
 - `HEARTBEAT`. The P4's carries the player status a mesh member broadcasts (fps, brightness,
-  firmware hash) and its kiosk flag (16 B, `lk_status`); older images send it empty.
+  firmware hash), its kiosk flag and which sessions its owner has unlocked, its time base with
+  the `TIMEBASE` it last applied, and a counter of `/lfs/fx.pb` writes (36 B, `lk_status`; 16 B
+  from step-2 images, empty from older ones).
+- `TIME` (C6 to P4 and back: a clock ping, answered at once) and `TIMEBASE` (C6 to P4: the
+  mesh's time base in the P4's clock), for mesh time (§4.3.2). `STAGED` (P4 to C6): a staged
+  shared effect was loaded or refused.
 - `RESET` (resync).
 - `NAME` (device name push, C6 to P4).
 - `STATS` (counts and errors for the status line).
@@ -795,7 +800,9 @@ the SDIO link down and reopens it (`relinks=`); every third failed attempt reset
 **Still to do:** async forwarding (a reply table keyed by session and request id, so a slow
 P4 reply doesn't hold up the other session), and pub/sub pushes (every subscribed session
 instead of the one that spoke last). Every client is one source to the player, for the kiosk
-unlock too (decided 2026-11-08).
+unlock too (decided 2026-11-08): the P4 gates each front-end session as a connection of its own
+(wss session 1, the BLE central, wss sessions 2 and 3: `kiosk_ffi` `SRC_*`), opened by its first
+message and ended by the front end's `RESET` for it, which drops its unlock at once.
 
 ### 4.3.2 The front end as a mesh member
 
@@ -809,9 +816,15 @@ on the players.
   auto-suspend is on, so a littlefs erase never stalls the SDIO slave. The mesh's own lines
   (its log, `MESH INFO` every 10 s) go to the P4's console as `[c6] [mesh] ...`, the C6's
   console not being wired on these boards. While the P4's kiosk is on (its `HEARTBEAT` flag) the
-  front end refuses `get_mesh` / `mesh_admin`, as a locked C6 player's kiosk gate does (no
-  per-session kiosk unlock for them yet). With several wss sessions, the one that last used a
-  mesh arm owns the mesh's wss connection; another taking it over ends the owner's unlock.
+  front end refuses `get_mesh` / `mesh_admin` on a session the owner has not unlocked, as a C6
+  player's kiosk gate does; an unlocked session administers the mesh as on a C6 player (D-505).
+  The P4 says which sessions are unlocked (`LK_ST_UNLOCKED_*`), and sends a `HEARTBEAT` before
+  the reply to anything that changed it, so a client's `get_mesh` right after its
+  `kiosk_unlock` passes. A session that ends here counts as locked at once: its `RESET` goes
+  out before anything else of that session's, and its bit is ignored until the P4 reports it
+  clear. While the P4 is down a kiosk stays locked. With several wss sessions, the one that
+  last used a mesh arm owns the mesh's wss connection; another taking it over ends the owner's
+  unlock.
 - **Control relayed to this fixture** goes to the P4 as a `MESH` frame, and the P4 answers a
   5-byte result (`lk_mesh_result`: status, code) on the same session. The P4 dispatches it as a
   C6 player dispatches a member's relayed control (`lm_mesh_member_dispatch`: no kiosk gate, no
@@ -821,14 +834,34 @@ on the players.
   broadcasts them for the fixture (0s while the P4 is down).
 - **Welcome.** The front end's `HELLO` ends with a feature byte (`LK_FE_MESH`); the P4 then adds
   `mesh` to its Welcome, so the app shows the mesh section.
+- **Mesh time on the P4's clock** (`firmware/p4/link/link_mesh.h`, host-tested). The front end
+  pings the P4 (`TIME`) every 500 ms and keeps the C6↔P4 offset of the fastest of the last 8
+  round trips (the error is at most half that round trip; `[c6] [link] mt off_us= rtt_us=`).
+  The mesh maps its show epoch onto a time base as on a C6 player (`lm_mesh_tb`), but here into
+  a mirror, in the C6's clock, that its tick reads and writes without touching the link. The
+  front end sends it to the P4 as `TIMEBASE` (the P4's clock: the whole state with a running
+  shift total, so a lost or repeated one is harmless), again when the offset moves past
+  0.75 ms, and again when it is not echoed in 300 ms. The P4 applies it once per seq under its
+  player mutex (time base, the queued `apply_at` changes' shift, frame alignment). A time base
+  the app sets on the P4 comes back in its `HEARTBEAT` and is a change to the mesh, as on a C6
+  player. Until the P4's state is in (after each time it comes up) the mesh is told "busy".
+- **Effect sharing (M6).** The mesh keeps its blobs on the C6. A shared effect is staged on the
+  P4 (`MESH_REQ` stage: id, `apply_at`, the frame), which keeps its own copy in PSRAM, so its
+  render task loads it on the same grid frame as every member, on a 16 KB load stack (its own
+  5 KB is too shallow; the C6 players use the mesh's tick stack). The P4 reports the load or
+  refusal (`STAGED`), and the mesh's slot is a held blob again. A P4 that restarts loses what it
+  staged: those count as refused. The P4's persisted effect frame (`/lfs/fx.pb`) is copied to the
+  C6 while the mesh is on, fetched again whenever the P4's write counter moves, so a member that
+  already shows a shared effect does not fetch it and a catch-up does not reload it.
 - **RAM.** The mesh's heap block (the stack and its 14 KB tick stack) comes out of the front end's
   heap, ~134.6 KB at its all-time minimum with 2 sessions; turning it on also takes a 26 KB
-  create-task stack for a moment.
+  create-task stack for a moment. With the mesh on, the copy of the P4's effect frame adds its
+  size (at most 4.5 KB), and fetching it 10 KB for a moment.
 
-Not yet (the next step): mesh time on the P4's render clock (a C6↔P4 clock offset, so `apply_at`
-and scenes land on the same frame on every member; the front end keeps the mapped time base
-for itself meanwhile), effect sharing (M6: a shared effect loads on arrival, through the relayed
-control), and the gateway's `mesh_send` (the P4 still answers it with `error{unsupported}`).
+Not yet (the next step): the gateway role, the app's `mesh_send` through this fixture (the P4
+still answers it with `error{unsupported}`): routing it to the mesh, sharded `mesh_send` uploads
+reassembled on the P4 and handed to the C6's mesh, a catch-up's scene and deck B from the P4,
+and `set_time_base` noted for desk #79.
 
 ### 4.4 Pin map and conflicts
 

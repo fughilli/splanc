@@ -1149,6 +1149,7 @@ cc_binary(
         ":relay_ffi",
         "//firmware/mesh/swarm:swarm_crypto",  # SHA-256/HMAC under the envelope's HKDF
         "//firmware/p4/link:link_codec",
+        "//firmware/p4/link:link_mesh",
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:preferences",
     ],
@@ -1597,6 +1598,7 @@ cc_binary(
         "//firmware/ota:ota_ffi_hdr",
         "//firmware/ota:ota_key",
         "//firmware/p4/link:link_codec",
+        "//firmware/p4/link:link_mesh",
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:preferences",
     ] + P4_PLAYER_MODULES,
@@ -1664,6 +1666,7 @@ cc_binary(
         "//firmware/p4/c6flash:c6_bundle_frontend_res",
         "//firmware/p4/c6flash:c6_flasher",
         "//firmware/p4/link:link_codec",
+        "//firmware/p4/link:link_mesh",
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:preferences",
     ] + P4_PLAYER_MODULES,
