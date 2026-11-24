@@ -1898,8 +1898,14 @@ An independent track. Nothing in the mesh depends on it.
 The C6 supports 802.11mc FTM (initiator as a station, responder as an AP), with an erratum:
 revisions v0.0 and v0.1 cannot be initiators (WIFI-9686). FTM is typically 1–2 m indoors. It
 runs inside the vendor Wi-Fi stack, which our netstack replaces, so using it means either
-reverse-engineering its fine timestamps or a vendor-stack ranging mode. Noted as a fallback,
-not planned.
+reverse-engineering its fine timestamps or a vendor-stack ranging mode.
+
+**Spike result ([mesh-ftm.md](mesh-ftm.md)): conditional go.** The timestamps are found and
+work under our netstack (per-queue registers `0x600A54F0..F8` for t1/t4, RX-vector bytes
+11-15/34-35/76-80 for t2/t3; 1.5625 ns units). One exchange has a σ of 0.3-0.7 m and the
+mean of 16 has a σ of 0.07-0.2 m, with the bias flat across rate, length, power and
+direction. A per-boot offset of up to 2.6 m, tied to a per-device clock-phase state, blocks
+absolute ranges until spike S2 fixes it.
 
 ### 13.3 What a self-built CS needs
 

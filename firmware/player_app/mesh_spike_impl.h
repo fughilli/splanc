@@ -26,7 +26,10 @@
 //   MESH TX k=v ...                start a transmit job (keys below), MESH STOP ends it
 //       da=bc|<mac>  n=<frames>  iv=<us between frames>  len=<body bytes>
 //       rate=<MAC rate index, hex ok>  pwr=<power byte>  ack=0|1  tries=<attempts>
-//       tag=<0-255>  type=probe|ping  dbg=<frames to trace>
+//       tag=<0-255>  type=probe|ping|ftm  dbg=<frames to trace>
+//       type=ftm: unicast + ACK; the sender logs "[mesh] ftmtx" (t1/t4 raw registers), the
+//       receiver "[mesh] ftmrx" (its 92-byte RX vector: t2, and t3 = its ACK's TX)
+//   MESH PEEK <addr> <n>           n (<= 64) words of peripheral registers from addr
 //   MESH STATS | MESH RESET        per-sender RX stats + the TX job's results / clear them
 //   MESH RXV <n>                   hex-dump the next n probes' 92-byte RX vectors
 //   MESH BLEADV 0|1                stop / restart BLE advertising (coex diagnostic)
@@ -89,6 +92,13 @@ namespace mspike {
 
 constexpr uint8_t kKindProbe = 0xF3;  // p2p::KIND_LINK_PROBE
 constexpr uint8_t kProbe = 1, kPing = 2, kPong = 3;
+// FTM spike (/workspace/.claude/ftm, mesh.md §13.2): a unicast ACKed probe whose sender logs
+// the MAC's per-queue TX/ACK-RX fine timestamps (t1, t4) and whose receiver logs its RX vector
+// (t2 = frame RX, t3 = our ACK's TX). The host joins the two by seq and computes the RTT.
+constexpr uint8_t kFtm = 4;
+// Per-TX-queue timestamp block (libpp lmac_record_txtime): 0x600A54F0 - q*0x74 = t1 µs,
+// +4 = t1 80 MHz tick [6:0] | t4 µs [31:14], +8 = t4 tick [6:0] | t4 fine [17:7] | t4 µs [13:0] at [31:18].
+constexpr uintptr_t kTxTsBase = 0x600A54F0;
 constexpr uint32_t kQueue = 0;
 constexpr int kBodyMin = 24;
 constexpr int kMaxBody = 1400;
@@ -135,6 +145,7 @@ struct Job {
   uint32_t compl_n;
   uint32_t dbg_left;
   uint32_t pongs;
+  uint32_t ftm_seq;  // the probe seq in flight (kFtm)
 };
 
 struct Cost {  // µs per call
@@ -259,6 +270,21 @@ uint32_t send_frame(Job &j, uint8_t *frame, uint32_t flen, uint8_t rate, bool ac
       if (!ack) return 0;  // can't tell: count it as not confirmed
       continue;
     }
+    if (j.type == kFtm) {
+      auto rd = [](uintptr_t r) { return *reinterpret_cast<volatile uint32_t *>(r); };
+      const uintptr_t b = kTxTsBase - kQueue * 0x74;
+      Serial.printf("[mesh] ftmtx tag=%u seq=%lu a=%u st=%lu dt=%lu w0=%08lx w1=%08lx w2=%08lx pmd=%08lx mus=%08lx\n",
+                    j.tag, (unsigned long)j.ftm_seq, a, (unsigned long)st, (unsigned long)dt,
+                    (unsigned long)rd(b), (unsigned long)rd(b + 4), (unsigned long)rd(b + 8), (unsigned long)pmd,
+                    (unsigned long)rd(0x600AD000));
+      if (j.dbg_left) {  // the whole per-queue block (0x74 bytes below +0x10), for the register map
+        char hex[40 * 9 + 1];
+        int o = 0;
+        for (uintptr_t r = b - 0x74 + 0x10; r < b + 0x10; r += 4) o += sprintf(hex + o, "%08lx ", (unsigned long)rd(r));
+        Serial.printf("[mesh] ftmblk seq=%lu base=%08lx %s\n", (unsigned long)j.ftm_seq,
+                      (unsigned long)(b - 0x74 + 0x10), hex);
+      }
+    }
     j.status_hist[st & 0xf]++;
     j.compl_n++;
     j.compl_us_sum += dt;
@@ -291,6 +317,7 @@ void build_and_send(Job &j, uint8_t type, const uint8_t *da, uint32_t pseq, uint
   s.seal.add(now_us() - t0);
   uint32_t flen = el ? ns_p2p_encode(da, OUR_MAC, kKindProbe, s.env, el, s.frame, sizeof s.frame) : 0;
   if (!flen) return;
+  j.ftm_seq = pseq;
   uint32_t used = send_frame(j, s.frame, flen, rate, ack, tries, j.pwr ? j.pwr : 0x14);
   if (type == kPong) return;  // replies don't count toward the job
   j.frames++;
@@ -397,8 +424,9 @@ void start_job(const char *args) {
     else if (!strcmp(k, "tries")) j.tries = (uint8_t)strtoul(v, nullptr, 0);
     else if (!strcmp(k, "tag")) j.tag = (uint8_t)strtoul(v, nullptr, 0);
     else if (!strcmp(k, "dbg")) j.dbg_left = strtoul(v, nullptr, 0);
-    else if (!strcmp(k, "type")) j.type = strcmp(v, "ping") == 0 ? kPing : kProbe;
+    else if (!strcmp(k, "type")) j.type = !strcmp(v, "ping") ? kPing : !strcmp(v, "ftm") ? kFtm : kProbe;
   }
+  if (j.type == kFtm && !j.bcast) j.ack = true;  // t3/t4 are the ACK's
   if (j.bcast) j.ack = false;  // group frames are never ACKed
   if (j.tries < 1) j.tries = 1;
   if (j.tries > 8) j.tries = 8;
@@ -523,6 +551,12 @@ bool mesh_spike_rx(uint8_t *rx, uint32_t n, const uint8_t *rxv) {
     pe->last_t = t_tx;
     pe->last_pseq = pseq;
     pe->have_last = true;
+  }
+  if (p[0] == kFtm && have_v) {
+    char hex[92 * 2 + 1];
+    for (int i = 0; i < 92; i++) sprintf(hex + 2 * i, "%02x", rxv[i]);
+    Serial.printf("[mesh] ftmrx tag=%u seq=%lu retry=%u lag=%ld rxv=%s\n", p[2], (unsigned long)pseq, f.retry,
+                  (long)(int32_t)(t_reap - v.timestamp_us), hex);
   }
   if (p[0] == kPing && memcmp(f.da, OUR_MAC, 6) == 0) {
     // Echo it straight back, unicast with ACK + retries, at the ping's rate.
@@ -666,6 +700,22 @@ bool mesh_spike_console(const char *line) {
     s.acks_seen = 0;
     s.seal = s.open = Cost{};
     Serial.printf("[mesh] ok reset\n");
+  } else if (!strncmp(a, "PEEK ", 5)) {
+    // MESH PEEK <addr> <n>: n words from addr (FTM spike: register map on silicon).
+    char *e = nullptr;
+    uintptr_t addr = strtoul(a + 5, &e, 0) & ~3u;
+    uint32_t n = e ? strtoul(e, nullptr, 0) : 1;
+    if (n > 64) n = 64;
+    if (addr < 0x60000000u || addr >= 0x600D0000u) n = 0;  // peripheral space only
+    for (uint32_t i = 0; i < n; i += 8) {
+      char hex[8 * 9 + 1];
+      int o = 0;
+      for (uint32_t k = i; k < n && k < i + 8; k++)
+        o += sprintf(hex + o, "%08lx ", (unsigned long)*reinterpret_cast<volatile uint32_t *>(addr + 4 * k));
+      Serial.printf("[mesh] peek %08lx %s\n", (unsigned long)(addr + 4 * i), hex);
+      delay(5);
+    }
+    Serial.printf("[mesh] ok peek\n");
   } else if (!strncmp(a, "RXV ", 4)) {
     s.rxv_dump = strtoul(a + 4, nullptr, 0);
     Serial.printf("[mesh] ok rxv=%lu\n", (unsigned long)s.rxv_dump);

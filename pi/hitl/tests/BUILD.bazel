@@ -39,6 +39,7 @@ py_test(
         "test_effect_store_core.py",
         "test_flash_render_core.py",
         "test_frontend_relay_core.py",
+        "test_ftm_spike_core.py",
         "test_fx_bench.py",
         "test_fx_debug_core.py",
         "test_hardware_config_pattern.py",
