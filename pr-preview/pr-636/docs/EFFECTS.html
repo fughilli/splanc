@@ -356,7 +356,7 @@ by the web app at runtime. The authoring/preview/upload flow:</p>
 <section id="the-language">
 <h2>The language<a class="headerlink" href="#the-language" title="Link to this heading">¶</a></h2>
 <p>A program is plain text with two entry points, plus an optional one-time setup:</p>
-<div class="highlight-glsl notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="n">init</span><span class="p">();</span><span class="w">              </span><span class="c1">// optional: runs once, before the first update()</span>
+<div class="highlight-glsl notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="n">init</span><span class="p">();</span><span class="w">              </span><span class="c1">// optional: runs once, when the effect loads</span>
 <span class="kt">void</span><span class="w"> </span><span class="n">update</span><span class="p">();</span><span class="w">            </span><span class="c1">// runs once per frame; may write `state`</span>
 <span class="kt">vec3</span><span class="w"> </span><span class="n">shade</span><span class="p">(</span><span class="n">Led</span><span class="w"> </span><span class="n">led</span><span class="p">);</span><span class="w">      </span><span class="c1">// runs once per LED; returns linear RGB in 0..1</span>
 </pre></div>
@@ -459,8 +459,9 @@ model. Per LED a <code class="docutils literal notranslate"><span class="pre">ma
 <li><p><strong>State</strong> — <code class="docutils literal notranslate"><span class="pre">state</span></code> variables persist across frames; written by <code class="docutils literal notranslate"><span class="pre">update()</span></code>
 (and <code class="docutils literal notranslate"><span class="pre">init()</span></code>), read-only in <code class="docutils literal notranslate"><span class="pre">shade()</span></code>. Good for phases/integrators. A state
 starts at zero unless it has an initial value: <code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">float</span> <span class="pre">level</span> <span class="pre">=</span> <span class="pre">0.5;</span></code>
-(scalars, vectors and matrices; set arrays and structs in <code class="docutils literal notranslate"><span class="pre">init()</span></code>).</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">init()</span></code></strong> — optional; runs once before the first <code class="docutils literal notranslate"><span class="pre">update()</span></code>. See
+(scalars, vectors and matrices; a compile-time constant; set arrays and
+structs, and anything computed from uniforms or time, in <code class="docutils literal notranslate"><span class="pre">init()</span></code>).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">init()</span></code></strong> — optional; runs once when the effect loads. See
 <a class="reference internal" href="#state-initialisation">State initialisation</a>.</p></li>
 <li><p><strong>Buffers</strong> — <code class="docutils literal notranslate"><span class="pre">buffer</span> <span class="pre">vec3</span> <span class="pre">trail;</span></code> is a hidden per-LED buffer (one element per
 LED) that persists across frames. Indexed <code class="docutils literal notranslate"><span class="pre">trail[led.idx]</span></code>; unlike <code class="docutils literal notranslate"><span class="pre">state</span></code> it
@@ -536,29 +537,49 @@ produces a readable op listing (exposed to the editor as <code class="docutils l
 </section>
 <section id="state-initialisation">
 <h3>State initialisation<a class="headerlink" href="#state-initialisation" title="Link to this heading">¶</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">float</span> <span class="pre">x</span> <span class="pre">=</span> <span class="pre">expr;</span></code> and <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">init()</span> <span class="pre">{</span> <span class="pre">...</span> <span class="pre">}</span></code> both run <strong>once, before the
-first <code class="docutils literal notranslate"><span class="pre">update()</span></code></strong> whenever the effect’s state starts fresh:</p>
+<p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">float</span> <span class="pre">x</span> <span class="pre">=</span> <span class="pre">expr;</span></code> and <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">init()</span> <span class="pre">{</span> <span class="pre">...</span> <span class="pre">}</span></code> both run <strong>once, when the
+effect loads</strong>, before its first <code class="docutils literal notranslate"><span class="pre">update()</span></code>:</p>
 <ol class="arabic simple">
-<li><p>every state initial value, in declaration order (an initial value may read
-uniforms, <code class="docutils literal notranslate"><span class="pre">time</span></code>/<code class="docutils literal notranslate"><span class="pre">dt</span></code>/<code class="docutils literal notranslate"><span class="pre">frame</span></code> and the state declared above it, like
-<code class="docutils literal notranslate"><span class="pre">update()</span></code> code; a state it can’t see yet is a compile error);</p></li>
+<li><p>every state initial value, in declaration order;</p></li>
 <li><p>then <code class="docutils literal notranslate"><span class="pre">init()</span></code>’s body (loops, arrays, structs, helper calls, <code class="docutils literal notranslate"><span class="pre">return;</span></code>);</p></li>
-<li><p>then that frame’s <code class="docutils literal notranslate"><span class="pre">update()</span></code> body, then <code class="docutils literal notranslate"><span class="pre">shade()</span></code> as usual.</p></li>
+<li><p>then, each frame, <code class="docutils literal notranslate"><span class="pre">update()</span></code> and <code class="docutils literal notranslate"><span class="pre">shade()</span></code> as usual.</p></li>
 </ol>
-<p>“Starts fresh” is every load of the program: a deploy or push, a boot (the
-resumed effect), loading it onto the other deck for a crossfade (it initialises
-on that deck’s first frame), and in the editor every recompile of the preview. Uniform changes,
-keypoint recalls and morphs do <strong>not</strong> re-run it, and a deck that is parked
-(off screen, not rendering) keeps its state and does not re-initialise when it
-comes back. A state without an initial value is zero, exactly as before.</p>
-<p>The compiler lowers this to plain bytecode — no new opcode and no <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>
-format change: a hidden state flag guards an init block in front of
-<code class="docutils literal notranslate"><span class="pre">update()</span></code> (or a driver’s <code class="docutils literal notranslate"><span class="pre">poll()</span></code>), so it runs identically on the VM, the JIT,
-the browser preview and firmware that predates the feature. After the first
-frame it costs three ops per frame (none per LED). The flag is set before the
-block runs, so an <code class="docutils literal notranslate"><span class="pre">init()</span></code> that exceeds the instruction budget is cut off once
-(like a long <code class="docutils literal notranslate"><span class="pre">update()</span></code>) rather than retried every frame. Programs that use
-neither feature compile to exactly the bytecode they did before.</p>
+<p><strong>An initial value is a compile-time constant</strong> (D-506): literals and constant
+maths over them, including vector/matrix constructors, casts and the pure maths
+built-ins (<code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">vec3</span> <span class="pre">c</span> <span class="pre">=</span> <span class="pre">vec3(0.1,</span> <span class="pre">0.2,</span> <span class="pre">0.3)</span> <span class="pre">*</span> <span class="pre">2.0;</span></code>, <code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">float</span> <span class="pre">a</span> <span class="pre">=</span> <span class="pre">sin(0.5);</span></code>).
+Anything that reads the effect’s inputs (a uniform, <code class="docutils literal notranslate"><span class="pre">time</span></code>/<code class="docutils literal notranslate"><span class="pre">dt</span></code>/<code class="docutils literal notranslate"><span class="pre">frame</span></code>,
+<code class="docutils literal notranslate"><span class="pre">led.*</span></code>, another state, a helper function, textures, topology, I2C) is a compile
+error that points at that name and says to move it into <code class="docutils literal notranslate"><span class="pre">init()</span></code>:</p>
+<div class="highlight-glsl notranslate"><div class="highlight"><pre><span></span><span class="k">uniform</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">start</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mf">1.0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.25</span><span class="p">;</span>
+<span class="n">state</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">ph</span><span class="p">;</span><span class="w">                    </span><span class="c1">// not `= start` (an error)</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">init</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">ph</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">start</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w">        </span><span class="c1">// init() reads uniforms, time/dt/frame and state</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">init()</span></code> reads what <code class="docutils literal notranslate"><span class="pre">update()</span></code> reads (D-507): uniforms, <code class="docutils literal notranslate"><span class="pre">time</span></code>/<code class="docutils literal notranslate"><span class="pre">dt</span></code>/<code class="docutils literal notranslate"><span class="pre">frame</span></code> and
+state. On the device it runs at load, so it sees the load moment’s <code class="docutils literal notranslate"><span class="pre">time</span></code> and
+<code class="docutils literal notranslate"><span class="pre">frame</span></code> and <code class="docutils literal notranslate"><span class="pre">dt</span> <span class="pre">=</span> <span class="pre">0</span></code>; a host that has no load hook (see below) runs it at the
+start of the first <code class="docutils literal notranslate"><span class="pre">update()</span></code> and it sees that frame’s values.</p>
+<p>“Loads” is every load of the program: a deploy or push, a boot (the resumed
+effect), loading it onto the other deck for a crossfade, and in the editor every
+recompile of the preview. Uniform changes, keypoint recalls and morphs do
+<strong>not</strong> re-run it, and a deck that is parked (off screen, not rendering) keeps
+its state and does not re-initialise when it comes back. A state without an
+initial value is zero, exactly as before.</p>
+<p><strong>Ordering with a restore.</strong> Init is tied to the load, not to the first frame:
+anything that writes the state after the load (a mesh catch-up restoring
+<code class="docutils literal notranslate"><span class="pre">shared</span> <span class="pre">state</span></code> from the gateway) wins over it, and the first <code class="docutils literal notranslate"><span class="pre">update()</span></code> does not
+re-run init on top of the restored values.</p>
+<p>The compiler lowers this to plain bytecode, with no new opcode: a hidden state
+flag guards an init block in front of <code class="docutils literal notranslate"><span class="pre">update()</span></code> (or a driver’s
+<code class="docutils literal notranslate"><span class="pre">poll()</span></code>), and the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> sets flags bit <code class="docutils literal notranslate"><span class="pre">FLAG_INIT</span></code> (0x80, no extra bytes). The
+firmware runs the init code when it loads the effect (<code class="docutils literal notranslate"><span class="pre">Vm::run_init</span></code>). A host
+that doesn’t (the browser preview, a driver, firmware that predates the flag)
+gets it from the guard on its first <code class="docutils literal notranslate"><span class="pre">update()</span></code> instead, so it runs the same on
+the VM, the JIT and the preview. After that it costs three ops per frame (none
+per LED). The flag is set before the init runs, so an <code class="docutils literal notranslate"><span class="pre">init()</span></code> that exceeds the
+instruction budget is cut off once (like a long <code class="docutils literal notranslate"><span class="pre">update()</span></code>) rather than retried
+every frame. Programs that use neither feature compile to exactly the bytecode
+they did before.</p>
 </section>
 </section>
 <section id="execution-model">

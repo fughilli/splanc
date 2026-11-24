@@ -93,6 +93,19 @@ highlighter, the completion source, the AI prompt, and any docs never drift.
 
 ### Inline diagnostics from the compiler
 
+> **As built (D-501, 2026-11).** The editor is a transparent `<textarea>` over a
+> highlighted `<pre>` (no CodeMirror; see highlight.ts), so diagnostics are drawn
+> by a third layer between them: the same text, transparent, with a tinted band
+> on each line with an error / warning and a red / yellow wavy underline under
+> the span (`effects/editor/editing.ts` `diagnosticsHtml`). The compiler still
+> reports one `{line, col, msg}` per diagnostic (1-based); the span is the token
+> starting there, or the last token before it when the position is whitespace /
+> end of line. Hovering a squiggle — or the caret inside one — shows the message.
+> The same module carries the keyboard editing (Tab / Shift+Tab indent and
+> outdent at a 4-space stop, Enter auto-indent by parse depth, the electric `}`,
+> ⌘⇧F / Ctrl+Shift+F format) and the `row : col` readout in the status line.
+> The CodeMirror plan below is kept for its reasoning.
+
 The compiler is the single source of truth for correctness — the editor does
 **no** semantic checking of its own. Wire CM6's `linter` to the wasm compiler:
 
