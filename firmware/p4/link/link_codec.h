@@ -40,7 +40,31 @@ enum {
   // (no kiosk gate, no push target, no sharded upload). Answered by a REPLY on the same
   // session carrying an lk_mesh_result.
   LK_MESH = 8,
+  // A request of the front end's mesh layer to the P4 player (docs/design/mesh.md §8.2, M6):
+  // payload[0] is an LK_MQ_*; answered by a REPLY on the same session.
+  LK_MESH_REQ = 9,
 };
+
+// The session ids the front end uses besides its wss sessions (1..LM_WSS_SESSIONS): the BLE
+// central's player messages, and the mesh's own frames (LK_MESH, LK_MESH_REQ).
+enum {
+  LK_SESSION_BLE = 0x100,
+  LK_SESSION_MESH = 0x200,
+};
+
+// LK_MESH_REQ payload[0].
+enum {
+  // Stage a shared effect for the first frame at/after its show-clock time (main.cpp
+  // lm_mesh_stage on the P4): op, id (u32), apply_at_ms (u32), then the submit_effect
+  // frame. REPLY: lk_stage_result. The P4 keeps its own copy until it reports the load
+  // (LK_OP_STAGED with the same id).
+  LK_MQ_STAGE = 1,
+  // Forget what is staged (the mesh turns off). REPLY: empty.
+  LK_MQ_CANCEL = 2,
+  // The persisted deck-A effect frame (/lfs/fx.pb). REPLY: its bytes (empty: none).
+  LK_MQ_EFFECT_FILE = 3,
+};
+enum { LK_STAGE_HDR = 9, LK_STAGE_RESULT_LEN = 5 };
 
 // Header `flags`.
 enum {
@@ -55,7 +79,18 @@ enum {
   LK_OP_RESET = 3,
   LK_OP_NAME = 4,
   LK_OP_STATS = 5,
+  // A clock ping (front end -> P4): op, t (i64 LE, the front end's esp_timer µs). The P4
+  // answers at once: op, the same t, then its own esp_timer µs (i64). The front end keeps
+  // the C6 <-> P4 offset from the fastest round trips (link_mesh.h lk_clock).
+  LK_OP_TIME = 6,
+  // The time base the mesh maps its show epoch onto, in the P4's clock (front end -> P4):
+  // op, then lk_timebase. The P4 echoes the seq it applied in its HEARTBEAT.
+  LK_OP_TIMEBASE = 7,
+  // A staged effect was loaded or refused (P4 -> front end): op, id (u32), result (1
+  // loaded, 2 refused).
+  LK_OP_STAGED = 8,
 };
+enum { LK_TIME_PING_LEN = 9, LK_TIME_PONG_LEN = 17, LK_STAGED_LEN = 6 };
 
 // The front end's HELLO (front end -> P4): op, version, 0, MTU (LE), its image's ELF
 // SHA-256, then one byte of LK_FE_* feature bits (absent from older front ends: none).
@@ -70,17 +105,53 @@ enum {
 // The P4's HEARTBEAT body (P4 -> front end; empty from older P4 images): the player status a
 // mesh member broadcasts (mesh_glue.h lm_mesh_status_fill) and the P4's own state the front
 // end acts on (LK_ST_*), u32 LE each.
+// Since step 3 the body goes on (LK_STATUS_EXT_LEN): the P4's time base (its clock), the
+// TIMEBASE seq and shift total it applied last, and a counter of /lfs/fx.pb writes.
 typedef struct {
   uint32_t fps;
   uint32_t brightness;
   uint32_t firmware;  // FNV-1a of the P4's version string
   uint32_t flags;     // LK_ST_*
+  // Extension (has_ext): absent from step-2 P4 images.
+  int64_t tb_epoch_ms;     // the P4's time base (its millis()), when LK_TB_SET
+  uint16_t tb_seq;         // the last LK_OP_TIMEBASE it applied
+  uint16_t tb_flags;       // LK_TB_*
+  int32_t tb_shift_total;  // that TIMEBASE's shift_total
+  uint32_t fx_gen;         // bumped by every write of the persisted effect (/lfs/fx.pb)
+  bool has_ext;
 } lk_status;
-enum { LK_STATUS_LEN = 16 };
+enum { LK_STATUS_LEN = 16, LK_STATUS_EXT_LEN = 36 };
 enum {
   // Kiosk mode is on (docs/design/kiosk-mode.md): the front end refuses the mesh arms it
-  // answers itself, as a locked C6 player's kiosk gate does.
+  // answers itself on a session the owner has not unlocked, as a C6 player's kiosk gate.
   LK_ST_KIOSK = 1 << 0,
+  // The session is owner-unlocked (kiosk_unlock on it; the P4's kiosk gate is per session):
+  // the BLE central, and wss sessions 1..3 (lk_unlock_bit).
+  LK_ST_UNLOCKED_BLE = 1 << 1,
+  LK_ST_UNLOCKED_WS1 = 1 << 2,
+};
+
+// The LK_ST_UNLOCKED_* bit of front-end session `session` (0: none, never unlocked).
+static inline uint32_t lk_unlock_bit(uint16_t session) {
+  if (session == LK_SESSION_BLE) return LK_ST_UNLOCKED_BLE;
+  if (session >= 1 && session <= 3) return (uint32_t)LK_ST_UNLOCKED_WS1 << (session - 1);
+  return 0;
+}
+
+// LK_OP_TIMEBASE body: the whole state (not a delta), so a lost or repeated one is harmless.
+// shift_total is the running sum of the shifts (ms) the queued apply_at changes take with
+// the time base (mesh time slewed under them, or the C6 <-> P4 offset moved): the P4 shifts
+// them by its difference to the last total it applied.
+typedef struct {
+  uint16_t seq;
+  uint16_t flags;    // LK_TB_*
+  int64_t epoch_ms;  // the P4's clock (millis())
+  int32_t shift_total;
+} lk_timebase;
+enum { LK_TIMEBASE_LEN = 16 };
+enum {
+  LK_TB_SET = 1 << 0,    // a time base (else none)
+  LK_TB_ALIGN = 1 << 1,  // frames phase-aligned to it (main.cpp g_tb_align)
 };
 
 static inline void lk_put32(uint8_t *o, uint32_t v) {
@@ -93,19 +164,75 @@ static inline uint32_t lk_get32(const uint8_t *p) {
   return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
-static inline void lk_status_pack(const lk_status *s, uint8_t out[LK_STATUS_LEN]) {
+static inline void lk_put64(uint8_t *o, int64_t v) {
+  lk_put32(o, (uint32_t)(uint64_t)v);
+  lk_put32(o + 4, (uint32_t)((uint64_t)v >> 32));
+}
+static inline int64_t lk_get64(const uint8_t *p) {
+  return (int64_t)((uint64_t)lk_get32(p) | (uint64_t)lk_get32(p + 4) << 32);
+}
+
+// The whole (extended) body, LK_STATUS_EXT_LEN bytes.
+static inline void lk_status_pack(const lk_status *s, uint8_t out[LK_STATUS_EXT_LEN]) {
   lk_put32(out, s->fps);
   lk_put32(out + 4, s->brightness);
   lk_put32(out + 8, s->firmware);
   lk_put32(out + 12, s->flags);
+  lk_put64(out + 16, s->tb_epoch_ms);
+  out[24] = (uint8_t)s->tb_seq;
+  out[25] = (uint8_t)(s->tb_seq >> 8);
+  out[26] = (uint8_t)s->tb_flags;
+  out[27] = (uint8_t)(s->tb_flags >> 8);
+  lk_put32(out + 28, (uint32_t)s->tb_shift_total);
+  lk_put32(out + 32, s->fx_gen);
 }
-// `p`/`n`: the HEARTBEAT body after its op byte. False when it carries no status.
+// `p`/`n`: the HEARTBEAT body after its op byte. False when it carries no status; a step-2
+// body (16 B) parses with has_ext false and the extension zeroed.
 static inline bool lk_status_parse(const uint8_t *p, size_t n, lk_status *s) {
   if (n < LK_STATUS_LEN) return false;
   s->fps = lk_get32(p);
   s->brightness = lk_get32(p + 4);
   s->firmware = lk_get32(p + 8);
   s->flags = lk_get32(p + 12);
+  s->has_ext = n >= LK_STATUS_EXT_LEN;
+  s->tb_epoch_ms = s->has_ext ? lk_get64(p + 16) : 0;
+  s->tb_seq = s->has_ext ? (uint16_t)(p[24] | p[25] << 8) : 0;
+  s->tb_flags = s->has_ext ? (uint16_t)(p[26] | p[27] << 8) : 0;
+  s->tb_shift_total = s->has_ext ? (int32_t)lk_get32(p + 28) : 0;
+  s->fx_gen = s->has_ext ? lk_get32(p + 32) : 0;
+  return true;
+}
+
+static inline void lk_timebase_pack(const lk_timebase *t, uint8_t out[LK_TIMEBASE_LEN]) {
+  out[0] = (uint8_t)t->seq;
+  out[1] = (uint8_t)(t->seq >> 8);
+  out[2] = (uint8_t)t->flags;
+  out[3] = (uint8_t)(t->flags >> 8);
+  lk_put64(out + 4, t->epoch_ms);
+  lk_put32(out + 12, (uint32_t)t->shift_total);
+}
+// `p`/`n`: the TIMEBASE body after its op byte.
+static inline bool lk_timebase_parse(const uint8_t *p, size_t n, lk_timebase *t) {
+  if (n < LK_TIMEBASE_LEN) return false;
+  t->seq = (uint16_t)(p[0] | p[1] << 8);
+  t->flags = (uint16_t)(p[2] | p[3] << 8);
+  t->epoch_ms = lk_get64(p + 4);
+  t->shift_total = (int32_t)lk_get32(p + 12);
+  return true;
+}
+
+// The REPLY to LK_MQ_STAGE: the P4's lm_mesh_stage result (1 staged, 0 its time has passed
+// or there is no time base: dispatch it now, -1 refused), then the id of an earlier staged
+// frame it replaced (0: none).
+static inline void lk_stage_result_pack(int8_t r, uint32_t replaced_id, uint8_t out[LK_STAGE_RESULT_LEN]) {
+  out[0] = (uint8_t)r;
+  lk_put32(out + 1, replaced_id);
+}
+static inline bool lk_stage_result_parse(const uint8_t *p, size_t n, int8_t *r, uint32_t *replaced_id) {
+  if (n != LK_STAGE_RESULT_LEN) return false;
+  *r = (int8_t)p[0];
+  if (*r < -1 || *r > 1) return false;
+  *replaced_id = lk_get32(p + 1);
   return true;
 }
 

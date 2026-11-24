@@ -118,15 +118,54 @@ static void test_bad_cobs() {
 // The mesh member's status (HEARTBEAT body) and a relayed control's result (REPLY to
 // LK_MESH): little-endian, exact sizes, and an empty (older) body carries no status.
 static void test_mesh_bodies() {
-  const lk_status s = {61, 200, 0x8badf00d, LK_ST_KIOSK};
-  uint8_t b[LK_STATUS_LEN];
+  lk_status s = {61, 200, 0x8badf00d, LK_ST_KIOSK};
+  uint8_t b[LK_STATUS_EXT_LEN];
   lk_status_pack(&s, b);
-  assert(memcmp(b, unhex("3d000000c80000000df0ad8b01000000").data(), sizeof b) == 0);
+  assert(memcmp(b, unhex("3d000000c80000000df0ad8b01000000").data(), LK_STATUS_LEN) == 0);
   lk_status got = {};
-  assert(lk_status_parse(b, sizeof b, &got));
+  // A step-2 P4's 16-byte body: the status, no extension.
+  assert(lk_status_parse(b, LK_STATUS_LEN, &got));
   assert(got.fps == 61 && got.brightness == 200 && got.firmware == 0x8badf00d && got.flags == LK_ST_KIOSK);
+  assert(!got.has_ext && got.tb_seq == 0 && got.fx_gen == 0);
   assert(!lk_status_parse(b, 0, &got));
   assert(!lk_status_parse(b, LK_STATUS_LEN - 1, &got));
+
+  // Step 3's extension: the time base (negative epochs too), the TIMEBASE echo, fx.pb's counter.
+  s.flags = LK_ST_KIOSK | lk_unlock_bit(2) | lk_unlock_bit(LK_SESSION_BLE);
+  s.tb_epoch_ms = -2;
+  s.tb_seq = 0x1234;
+  s.tb_flags = LK_TB_SET | LK_TB_ALIGN;
+  s.tb_shift_total = -5;
+  s.fx_gen = 7;
+  lk_status_pack(&s, b);
+  assert(memcmp(b, unhex("3d000000c80000000df0ad8b0b000000feffffffffffffff34120300fbffffff07000000").data(),
+                sizeof b) == 0);
+  assert(lk_status_parse(b, sizeof b, &got) && got.has_ext);
+  assert(got.tb_epoch_ms == -2 && got.tb_seq == 0x1234 && got.tb_flags == (LK_TB_SET | LK_TB_ALIGN));
+  assert(got.tb_shift_total == -5 && got.fx_gen == 7);
+  assert((got.flags & lk_unlock_bit(2)) && (got.flags & LK_ST_UNLOCKED_BLE) && !(got.flags & lk_unlock_bit(1)));
+  // Session ids without an unlock bit: the mesh's own, and wss sessions past 3.
+  assert(lk_unlock_bit(LK_SESSION_MESH) == 0 && lk_unlock_bit(4) == 0 && lk_unlock_bit(0) == 0);
+  assert(lk_unlock_bit(1) == LK_ST_UNLOCKED_WS1 && lk_unlock_bit(3) == LK_ST_UNLOCKED_WS1 << 2);
+
+  lk_timebase t = {7, LK_TB_SET, 1700000000123LL, -3};
+  uint8_t tb[LK_TIMEBASE_LEN];
+  lk_timebase_pack(&t, tb);
+  assert(memcmp(tb, unhex("070001007b68e5cf8b010000fdffffff").data(), sizeof tb) == 0);
+  lk_timebase tg = {};
+  assert(lk_timebase_parse(tb, sizeof tb, &tg));
+  assert(tg.seq == 7 && tg.flags == LK_TB_SET && tg.epoch_ms == 1700000000123LL && tg.shift_total == -3);
+  assert(!lk_timebase_parse(tb, sizeof tb - 1, &tg));
+
+  uint8_t sr[LK_STAGE_RESULT_LEN];
+  lk_stage_result_pack(-1, 0x01020304, sr);
+  assert(memcmp(sr, unhex("ff04030201").data(), sizeof sr) == 0);
+  int8_t sres = 0;
+  uint32_t rid = 0;
+  assert(lk_stage_result_parse(sr, sizeof sr, &sres, &rid) && sres == -1 && rid == 0x01020304);
+  sr[0] = 2;
+  assert(!lk_stage_result_parse(sr, sizeof sr, &sres, &rid));
+  assert(!lk_stage_result_parse(sr, sizeof sr - 1, &sres, &rid));
 
   uint8_t r[LK_MESH_RESULT_LEN];
   lk_mesh_result_pack(1, 0xfffe, r);

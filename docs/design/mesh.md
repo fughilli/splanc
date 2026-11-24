@@ -1633,7 +1633,8 @@ The radiolarians may run live shows from the bridge, so the bridge path is **Pha
 - **Time base across the link.** The P4 owns the renderer clock and the time base; the C6 owns
   mesh time. The C6 keeps a C6↔P4 clock offset (a `time_sync_ping` round trip over SDIO every
   few seconds: sub-ms, symmetric) and converts `TIME_BASE` into the P4's clock before
-  forwarding `SetTimeBase`. `apply_at_ms` is in time-base ms and needs no conversion.
+  forwarding `SetTimeBase`. `apply_at_ms` is in time-base ms and needs no conversion. Built as
+  link frames of their own (`TIME`, `TIMEBASE`; `docs/design/p4-c6-split.md` §4.3.2).
 - **BLE → mesh is Phase 1** (sites without Wi-Fi), so `kModeMesh` (radio up, no AP) is Phase 1
   too, and the BLE coex rules of §4.3 apply to whichever fixture the phone is connected to.
 - **The WLEDs are on the P4's Ethernet** (owner). `p4-ethernet-ddp.md` drives WLED boards over

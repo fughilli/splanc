@@ -37,5 +37,29 @@ enum : uint32_t { kMeshP4Down = 0xfff0, kMeshP4Unsent = 0xfff1, kMeshP4Silent = 
 bool frontend_p4_status(uint32_t *fps, uint32_t *brightness, uint32_t *firmware);
 // Whether the P4 last said its kiosk mode is on (LK_ST_KIOSK; kept while the P4 is down).
 bool frontend_p4_kiosk();
+// A session (wss, or LK_SESSION_BLE) ended here: the P4 hears it (LK_OP_RESET, sent before
+// anything else of that session's), and its kiosk unlock counts as gone at once.
+void frontend_link_session_closed(uint16_t session);
+// Whether the P4 says session `session` is kiosk-unlocked by its owner (LK_ST_UNLOCKED_*):
+// the mesh arms answered here pass a kiosk on such a session only. False while the P4 is down.
+bool frontend_p4_unlocked(uint16_t session);
+// Mesh time on the P4's clock (link_mesh.h): main.cpp lm_mesh_tb's contract, in this chip's
+// clock, mirrored onto the P4. -1 (busy) until the P4's state is in and the offset known.
+int32_t frontend_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t shift_ms);
+// Effect sharing (mesh M6) on the P4: stage `frame` (LK_MQ_STAGE, id ours) and its result
+// (*r: 1 staged, 0 late, -1 refused; *replaced_id: an earlier one it replaced, 0 none); 0 ok,
+// -1 when the link gave no answer. Forget what is staged. The persisted deck-A frame into
+// `out` (its length, 0 none, -1 no answer or too big). The P4's LK_OP_STAGED reports, in order.
+int frontend_mesh_stage(uint32_t id, uint32_t apply_at_ms, const uint8_t *frame, size_t len, int8_t *r,
+                        uint32_t *replaced_id);
+void frontend_mesh_cancel();
+int frontend_mesh_effect_file(uint8_t *out, size_t cap);
+bool frontend_take_staged(uint32_t *id, uint8_t *r);
+// How many times the P4 has come up (a new value: it restarted, and lost what it staged).
+uint32_t frontend_p4_ups();
+// The P4's count of /lfs/fx.pb writes (its HEARTBEAT). False while down or unknown.
+bool frontend_p4_fx_gen(uint32_t *gen);
+// One "[link] mt ..." line: the clock offset and the time-base mirror.
+int frontend_mesh_time_stats(char *buf, size_t cap);
 // One "[link] ..." status fragment.
 int frontend_link_stats(char *buf, size_t cap);
