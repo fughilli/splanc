@@ -1085,11 +1085,20 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     }
 
     /// Send the epoch this gateway originated as its session's signed `TIME_BASE`.
-    /// Send this gateway's show epoch now, if it originated one (a catch-up goes right
-    /// after it, so the member's clock is on the mesh's before the scene's state lands).
-    pub fn announce_epoch_now(&mut self, now_us: i64) {
-        if self.time.epoch.is_some_and(|e| e.origin == self.me()) && self.node.net.mesh.can_send() {
-            self.announce_epoch(now_us);
+    /// A catch-up's show epoch, to `node` only, right before its scene: the member's clock
+    /// is then on the mesh's when the scene's state lands. The epoch this gateway holds,
+    /// whoever originated it (a member takes any epoch the admin session signs): the
+    /// gateway that started it may be the fixture that just rebooted. Unicast, so a
+    /// gateway holding an older epoch can't move the rest of the mesh back.
+    pub fn announce_epoch_to(&mut self, now_us: i64, node: NodeId) {
+        let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else { return };
+        if !self.node.net.mesh.can_send() {
+            return;
+        }
+        let mut b = [0u8; ShowEpoch::LEN];
+        let Some(n) = e.encode(&mut b) else { return };
+        if self.send_admin(now_us, conn, Port::TimeBase, &b[..n], Some(&[node])).is_ok() {
+            self.epochs_sent += 1;
         }
     }
 

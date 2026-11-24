@@ -577,7 +577,7 @@ fn catch_up(m: &mut Mesh, node: NodeId, now_us: i64) {
     let Some(t) = Targets::nodes(&[node]) else { return };
     // The show epoch first: a member that just rebooted has none yet, and the scene's
     // `shared state` restore measures its lag on the show clock.
-    m.stack.announce_epoch_now(now_us);
+    m.stack.announce_epoch_to(now_us, node);
     let flags = SceneMsg::APPLY | SceneMsg::NOW | SceneMsg::CATCH_UP | SceneMsg::WANT_REPLY;
     let op = CATCH_UP_OP | u32::from(node);
     let Some(msg) = SceneMsg::new(op, flags, 0, t, &blobs[..n]) else { return };
