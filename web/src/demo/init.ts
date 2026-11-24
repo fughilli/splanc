@@ -26,6 +26,13 @@
  *                Its topology (the mesh map, #/mesh/topology) places all three in the room.
  *   meshtopo   — `mesh` plus two more fixtures for the mesh map: one with no room
  *                position, two hops away, and one on older firmware (no topology).
+ *   meshsim    — (with `device`) simulated closed-mesh fixtures (demo/meshSim.ts):
+ *                Living Room, Kitchen, Porch Arch and Stair Rail on mesh firmware, in
+ *                no mesh, so "Create a mesh" (#/mesh/new) runs end to end.
+ *   meshadmin  — `meshsim` with Living Room, Kitchen and Porch Arch already in a mesh
+ *                this app created, and Stair Rail asking to join (Admit, remove, block).
+ *   meshall    — `meshadmin` without the joiner and with "Control the whole mesh" on: an
+ *                effect change reports each member's answer (mesh M6 effect sharing).
  *   discovered — fixtures heard on the network (net/discovery.ts): two new ones
  *                ("Porch Arch", "Stair Rail") and a known "Kitchen" at a new
  *                address, so the lists show "On this network".
@@ -82,6 +89,11 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("newfixture")) setupNewFixture();
   const play = [...scenarios].find((s) => s === "play" || s.startsWith("play-"));
   if (play) void setupPlayDemo(play);
+  // Last: it wraps the (possibly fxstub'd) effect upload for whole-mesh control.
+  if (scenarios.has("meshsim") || scenarios.has("meshadmin") || scenarios.has("meshall")) {
+    const admin = scenarios.has("meshadmin") || scenarios.has("meshall");
+    void import("./meshSim").then((m) => m.setupMeshSim({ admin, all: scenarios.has("meshall") }));
+  }
 }
 
 /** The compiler wasm isn't served by the static screenshot server: answer the
