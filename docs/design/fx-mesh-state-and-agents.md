@@ -177,11 +177,16 @@ prompt documents the API and the `shared state` rule.
    two-fixture HITL gate: N agents in, N agents out after 1000 hand-offs.
 4. **Preview mesh mode** and the AI prompt.
 
-## Open
+## Decisions (owner desk, 2026-11-23)
 
-- **The default for plain `state`** (Part 1): local (recommended) or restored.
-- **Hand-off guarantee** (Part 2): two-phase (recommended, no duplicates) or one-phase (no
-  invisible gap, rare duplicates).
-- Should peers include fixtures running a **different effect** in the same room (for
-  example, so an agent can fly into an ambient lamp and change its look)? That would need
-  a cross-effect message schema. Recommendation: same effect only for now.
+- **Plain `state` stays local** (Part 1); `shared state` opts in. Built in #641.
+- **D-509: two-phase hand-off** (Part 2). HITL gate: N agents in = N agents out after 1000
+  hand-offs.
+- **D-510: every mesh member is a peer**, not only fixtures running the same effect. So
+  `peer_*` lists all members, and messages reach fixtures running other effects: each
+  effect must check what it receives (for example a tag in `a.w`, or the sender's effect
+  hash in `Msg`). The "same effect only" filter in *Limits and safety* above is replaced by
+  this; delivery to a fixture whose effect has no `receive()` is dropped and bounced.
+- **D-506 / D-507:** a state's initial value is constants only, and `init()` reads the same
+  as `update()` (#636). A catch-up restore must win over `init()`: `init()` runs at load,
+  before the catch-up's `set_fx_state` is handled, never after it.
