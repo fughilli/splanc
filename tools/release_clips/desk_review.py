@@ -60,7 +60,9 @@ class Api:
         )
         data = json.dumps(body).encode() if body is not None else None
         r = urllib.request.Request(url, data=data, method=method)
-        r.add_header("Authorization", f"Bearer {self.token}")
+        # Unredirected: artifact downloads 302 to a signed blob URL that rejects (401)
+        # any Authorization header, and urllib would otherwise forward ours.
+        r.add_unredirected_header("Authorization", f"Bearer {self.token}")
         r.add_header("Accept", "application/vnd.github+json")
         r.add_header("User-Agent", "splanc-release-review")
         if data is not None:
