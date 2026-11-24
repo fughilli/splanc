@@ -31,14 +31,15 @@ source ──fx_compiler(wasm)──▶ .fxb ──┬─▶ FxPreview (fx_vm wa
 
 ## The language
 
-A program is plain text with two entry points:
+A program is plain text with two entry points, plus an optional one-time setup:
 
 ```glsl
+void init();              // optional: runs once, when the effect loads
 void update();            // runs once per frame; may write `state`
 vec3 shade(Led led);      // runs once per LED; returns linear RGB in 0..1
 ```
 
-`shade` is required; `update` is optional. There is no recursion, and every `for`
+`shade` is required; `update` and `init` are optional. There is no recursion, and every `for`
 loop must have a compile-time-bounded trip count (the VM enforces a per-frame
 instruction budget — see [Execution model](#execution-model)).
 
@@ -100,8 +101,13 @@ opcode):
   model. Per LED a `mat4 * vec4` is 16 multiplies + 12 adds: pre-multiply in
   `update()` where you can.
 
-- **State** — `state` variables persist across frames; written by `update()`,
-  read-only in `shade()`. Good for phases/integrators.
+- **State** — `state` variables persist across frames; written by `update()`
+  (and `init()`), read-only in `shade()`. Good for phases/integrators. A state
+  starts at zero unless it has an initial value: `state float level = 0.5;`
+  (scalars, vectors and matrices; a compile-time constant; set arrays and
+  structs, and anything computed from uniforms or time, in `init()`).
+- **`void init()`** — optional; runs once when the effect loads. See
+  [State initialisation](#state-initialisation).
 - **Buffers** — `buffer vec3 trail;` is a hidden per-LED buffer (one element per
   LED) that persists across frames. Indexed `trail[led.idx]`; unlike `state` it
   _may_ be written from `shade()` (each LED owns its slot). Ideal for
@@ -178,6 +184,57 @@ AI and the agent's `compile_effect` / `deploy_effect`.
 The compiler entry point is `compile(src) -> Result<Compiled, Vec<Diagnostic>>`
 where `Compiled { fxb: Vec<u8>, uniforms: Vec<UniformInfo>, warnings, .. }`; `disassemble(fxb)`
 produces a readable op listing (exposed to the editor as `fx_disassemble`).
+
+### State initialisation
+
+`state float x = expr;` and `void init() { ... }` both run **once, when the
+effect loads**, before its first `update()`:
+
+1. every state initial value, in declaration order;
+2. then `init()`'s body (loops, arrays, structs, helper calls, `return;`);
+3. then, each frame, `update()` and `shade()` as usual.
+
+**An initial value is a compile-time constant** (D-506): literals and constant
+maths over them, including vector/matrix constructors, casts and the pure maths
+built-ins (`state vec3 c = vec3(0.1, 0.2, 0.3) * 2.0;`, `state float a = sin(0.5);`).
+Anything that reads the effect's inputs (a uniform, `time`/`dt`/`frame`,
+`led.*`, another state, a helper function, textures, topology, I2C) is a compile
+error that points at that name and says to move it into `init()`:
+
+```glsl
+uniform float start : 0.0 .. 1.0 = 0.25;
+state float ph;                    // not `= start` (an error)
+void init() { ph = start; }        // init() reads uniforms, time/dt/frame and state
+```
+
+`init()` reads what `update()` reads (D-507): uniforms, `time`/`dt`/`frame` and
+state. On the device it runs at load, so it sees the load moment's `time` and
+`frame` and `dt = 0`; a host that has no load hook (see below) runs it at the
+start of the first `update()` and it sees that frame's values.
+
+"Loads" is every load of the program: a deploy or push, a boot (the resumed
+effect), loading it onto the other deck for a crossfade, and in the editor every
+recompile of the preview. Uniform changes, keypoint recalls and morphs do
+**not** re-run it, and a deck that is parked (off screen, not rendering) keeps
+its state and does not re-initialise when it comes back. A state without an
+initial value is zero, exactly as before.
+
+**Ordering with a restore.** Init is tied to the load, not to the first frame:
+anything that writes the state after the load (a mesh catch-up restoring
+`shared state` from the gateway) wins over it, and the first `update()` does not
+re-run init on top of the restored values.
+
+The compiler lowers this to plain bytecode, with no new opcode: a hidden state
+flag guards an init block in front of `update()` (or a driver's
+`poll()`), and the `.fxb` sets flags bit `FLAG_INIT` (0x80, no extra bytes). The
+firmware runs the init code when it loads the effect (`Vm::run_init`). A host
+that doesn't (the browser preview, a driver, firmware that predates the flag)
+gets it from the guard on its first `update()` instead, so it runs the same on
+the VM, the JIT and the preview. After that it costs three ops per frame (none
+per LED). The flag is set before the init runs, so an `init()` that exceeds the
+instruction budget is cut off once (like a long `update()`) rather than retried
+every frame. Programs that use neither feature compile to exactly the bytecode
+they did before.
 
 ## Execution model
 

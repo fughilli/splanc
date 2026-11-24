@@ -142,6 +142,21 @@ pub(crate) fn lower_body(
     };
     let func_start = e.out.len();
     e.prologue();
+    // Blocks are laid out in pc order, so the body falls into the LOWEST
+    // reachable pc. An entry that is not the lowest (the compiler's init block,
+    // D-500, sits after the update() code it jumps into) is entered through a
+    // jump instead.
+    if pcs.first() != Some(&entry) {
+        let word = e.out.len();
+        e.push(jal(ZERO, 0));
+        e.fixups.push(Fixup {
+            word,
+            target: entry,
+            is_jal: true,
+            budget: false,
+            epi: false,
+        });
+    }
     for &pc in &pcs {
         e.pc_word.insert(pc, e.out.len());
         if let Some(&n) = block_ops.get(&pc) {
