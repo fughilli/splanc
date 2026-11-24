@@ -345,3 +345,13 @@ test("TS re-encode of every golden decodes back to the same object", () => {
     }
   }
 });
+
+test("a provision answer's provisioner token decodes to 16 bytes (D-324)", () => {
+  // The firmware's MeshAdminResult: op 1 (provision), OK, the token as bytes field 4.
+  const tok = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
+  const wire = encodeServer({ type: "mesh", admin: { op: 1, error: "MESH_ADMIN_OK", provisionerToken: tok } } as never);
+  const back = decodeServer(wire) as unknown as { admin?: { provisionerToken?: unknown } };
+  const got = back.admin?.provisionerToken;
+  assert.ok(got instanceof Uint8Array, `a Uint8Array, not ${typeof got}`);
+  assert.deepEqual([...(got as Uint8Array)], [...tok]);
+});
