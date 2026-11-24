@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "device_cert.h"
+#include "player_ffi.h"
 #include "improv_ble.h"
 #include "tls_region.h"
 
@@ -54,9 +55,16 @@ uint32_t device_cert_gen_ms() { return 0; }
 void tls_region_install() {}
 const TlsRegionStats &tls_region_stats() { return g_tls; }
 
-// The mesh gateway (mesh M5) is the C6 players' (netstack_transport.cpp); the P4 has no
-// mesh radio: its player core answers mesh_send / get_mesh with error{unsupported}.
-extern "C" int32_t lm_mesh_app(uint32_t, const uint8_t *, size_t, uint8_t *, size_t, const uint8_t **, uint32_t *) {
+// The mesh gateway (mesh M5) is the front end's: it runs the mesh layer and answers
+// get_mesh / mesh_admin / mesh_send itself. A mesh_send reassembled here from UploadChunk
+// windows (an effect shared through this lamp) goes back to it (LK_GATEWAY), which then
+// answers the app on the same session; this message's own reply is empty. Without a link
+// (the UART bridge build, or the front end down) the player core answers it.
+extern "C" bool lm_link_gateway(const uint8_t *msg, size_t len) __attribute__((weak));
+extern "C" int32_t lm_mesh_app(uint32_t, const uint8_t *in, size_t len, uint8_t *, size_t, const uint8_t **,
+                               uint32_t *) {
+  constexpr int32_t kArmMeshSend = 99;
+  if (lm_link_gateway && lm_envelope_arm(in, len) == kArmMeshSend && lm_link_gateway(in, len)) return 0;
   return -2;
 }
 extern "C" void lm_mesh_app_done(uint32_t) {}

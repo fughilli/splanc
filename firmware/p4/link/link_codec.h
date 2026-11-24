@@ -43,6 +43,10 @@ enum {
   // A request of the front end's mesh layer to the P4 player (docs/design/mesh.md §8.2, M6):
   // payload[0] is an LK_MQ_*; answered by a REPLY on the same session.
   LK_MESH_REQ = 9,
+  // P4 -> front end: a mesh_send the P4 reassembled from UploadChunk windows (an effect
+  // shared with the whole mesh through this lamp): the mesh layer is the front end's, so
+  // it answers it, on the same session (header `session`). Payload: the ClientMessage.
+  LK_GATEWAY = 10,
 };
 
 // The session ids the front end uses besides its wss sessions (1..LM_WSS_SESSIONS): the BLE
@@ -63,6 +67,15 @@ enum {
   LK_MQ_CANCEL = 2,
   // The persisted deck-A effect frame (/lfs/fx.pb). REPLY: its bytes (empty: none).
   LK_MQ_EFFECT_FILE = 3,
+  // The gateway's catch-up (the lamp as gateway): this player's look as a state blob,
+  // main.cpp lm_mesh_scene_frames (uniforms, brightness, crossfade, shared state).
+  // REPLY: the frames (empty: none).
+  LK_MQ_SCENE = 4,
+  // The gateway's catch-up: deck B's loaded effect frame. REPLY: its bytes (empty: none).
+  LK_MQ_DECKB = 5,
+  // A share's check before it is distributed (lm_fx_check_effect): op, then the
+  // submit_effect frame. REPLY: one byte, 0 it would load, 1 bad_fxb, 2 effect_too_large.
+  LK_MQ_CHECK = 6,
 };
 enum { LK_STAGE_HDR = 9, LK_STAGE_RESULT_LEN = 5 };
 

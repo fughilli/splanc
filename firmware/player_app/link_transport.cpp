@@ -56,6 +56,11 @@ extern "C" int32_t lm_mesh_stage(const uint8_t *frame, uint32_t len, uint32_t ap
 extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame);
 extern "C" void lm_mesh_staged_cancel();
 extern "C" uint32_t lm_mesh_effect_file(uint8_t *buf, uint32_t cap);
+// The lamp as the mesh's gateway (main.cpp / ffi.rs): its look for a catch-up, deck B's
+// frame, and a share's check.
+extern "C" int32_t lm_mesh_scene_frames(uint8_t *out, uint32_t cap);
+extern "C" const uint8_t *lm_mesh_deckb_frame(uint32_t *len);
+extern "C" uint32_t lm_fx_check_effect(const uint8_t *frame, size_t len);
 extern "C" int32_t lm_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t shift_ms);
 // main.cpp (LM_LINK): one player message from a front-end session, gated as connection
 // `src` (the P4's kiosk unlock is per session); the mesh's time base applied in one go
@@ -157,6 +162,7 @@ struct {
   uint32_t rx_frames, rx_noise, rx_bytes, tx_frames, tx_bytes, too_big, dispatched;
   uint32_t sdio_err, relinks;  // failed ESSL calls; links torn down + reopened (SDIO)
   uint32_t staged, stage_late, stage_refused, tb_applied, time_pings;
+  uint32_t gateway;  // reassembled mesh_sends handed to the front end's mesh (LK_GATEWAY)
 } g_stats;
 
 bool host_alive(int64_t now) { return g_host_seen_us != 0 && now - g_host_seen_us < kLinkTimeoutUs; }
@@ -313,6 +319,18 @@ void send_link(uint8_t op, const uint8_t *body, size_t n) {
   if (n) memcpy(p + 1, body, n);
   send_msg(LK_LINK, 0, p, 1 + n);
 }
+
+#if defined(LM_LINK_SDIO)
+// A reassembled mesh_send (link_stubs.cpp lm_mesh_app): the front end's mesh answers it,
+// on the session it came in on (LK_GATEWAY). False while the front end is down. SDIO only:
+// over the UART the host bridge plays the front end and has no mesh.
+extern "C" bool lm_link_gateway(const uint8_t *msg, size_t len) {
+  if (!g_up || g_session == 0) return false;
+  send_msg(LK_GATEWAY, g_session, msg, len);
+  g_stats.gateway++;
+  return true;
+}
+#endif
 
 void send_hello() {
   // ver major, ver minor, MTU (LE).
@@ -488,6 +506,24 @@ void on_mesh_req(uint16_t session, const uint8_t *msg, size_t len) {
       g_n_staged = 0;
       send_msg(LK_REPLY, session, nullptr, 0);
       return;
+    case LK_MQ_SCENE: {
+      // The gateway's catch-up: this player's look (lm_mesh_scene_frames takes the mutex).
+      uint8_t b[768];
+      const int32_t n = lm_mesh_scene_frames(b, sizeof b);
+      send_msg(LK_REPLY, session, b, n > 0 ? (size_t)n : 0);
+      return;
+    }
+    case LK_MQ_DECKB: {
+      uint32_t n = 0;
+      const uint8_t *f = lm_mesh_deckb_frame(&n);
+      send_msg(LK_REPLY, session, f, f ? n : 0);
+      return;
+    }
+    case LK_MQ_CHECK: {
+      const uint8_t r = len > 1 ? (uint8_t)lm_fx_check_effect(msg + 1, len - 1) : 1;
+      send_msg(LK_REPLY, session, &r, 1);
+      return;
+    }
     case LK_MQ_EFFECT_FILE: {
       const uint32_t n = lm_mesh_effect_file(nullptr, 0);
       uint8_t *b = n ? static_cast<uint8_t *>(heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) : nullptr;

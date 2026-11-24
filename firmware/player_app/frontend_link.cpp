@@ -65,6 +65,7 @@ size_t g_push_len = 0;
 
 struct {
   uint32_t rx, tx, bad, tx_full, pushes, forwarded, timeouts, fwd_down, fwd_unsent;
+  uint32_t gw_in, gw_dropped;  // reassembled mesh_sends from the P4 (LK_GATEWAY)
 } g_stats;
 int64_t g_stats_sent_us = 0;
 
@@ -154,6 +155,46 @@ void send_hello() {
   send_frame(LK_LINK, 0, 0, b, sizeof b);
 }
 
+// A mesh_send the P4 reassembled (LK_GATEWAY), for the loop to hand to the mesh
+// (frontend_take_gateway). One at a time: the app sends the next upload after this one's
+// answer. Heap only while one is in flight.
+constexpr size_t kGatewayCap = 12 * 1024;  // splanc_mesh::blob::BLOB_MAX + the envelope
+uint8_t *g_gw = nullptr;
+size_t g_gw_len = 0;
+uint16_t g_gw_session = 0;
+bool g_gw_ready = false;
+bool g_gw_overflow = false;
+
+void gateway_rx(const lk_header &h, const uint8_t *p) {
+  if (g_gw_ready) {
+    g_stats.gw_dropped++;  // the loop hasn't taken the last one: the app retries
+    return;
+  }
+  if (g_gw == nullptr) {
+    g_gw = static_cast<uint8_t *>(malloc(kGatewayCap));
+    g_gw_len = 0;
+    g_gw_overflow = g_gw == nullptr;
+  }
+  if (g_gw && g_gw_len + h.len <= kGatewayCap) {
+    memcpy(g_gw + g_gw_len, p, h.len);
+    g_gw_len += h.len;
+  } else {
+    g_gw_overflow = true;
+  }
+  if (h.flags & LK_MORE) return;
+  if (g_gw_overflow) {
+    g_stats.gw_dropped++;
+    free(g_gw);
+    g_gw = nullptr;
+    g_gw_len = 0;
+    g_gw_overflow = false;
+    return;
+  }
+  g_gw_session = h.session;
+  g_gw_ready = true;
+  g_stats.gw_in++;
+}
+
 void on_frame(const lk_header &h, const uint8_t *p) {
   g_stats.rx++;
   g_p4_seen_us = esp_timer_get_time();
@@ -207,6 +248,9 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       return;
     case LK_OSC:
       netstack_osc_send(p, h.len);  // the P4's own OSC out (e.g. the tracker's poses)
+      return;
+    case LK_GATEWAY:
+      gateway_rx(h, p);
       return;
     case LK_LOG:
       printf("[p4] %.*s", (int)h.len, (const char *)p);
@@ -482,6 +526,42 @@ void frontend_mesh_cancel() {
   const uint8_t m[] = {LK_MQ_CANCEL};
   uint8_t res[4];
   if (frontend_p4_up()) forward(LK_MESH_REQ, kMeshSession, m, sizeof m, res, sizeof res, 500);
+}
+
+bool frontend_take_gateway(uint16_t *session, uint8_t **frame, size_t *len) {
+  if (!g_gw_ready) return false;
+  *session = g_gw_session;
+  *frame = g_gw;
+  *len = g_gw_len;
+  g_gw = nullptr;
+  g_gw_len = 0;
+  g_gw_ready = false;
+  return true;
+}
+
+int frontend_mesh_scene(uint8_t *out, size_t cap) {
+  const uint8_t m[] = {LK_MQ_SCENE};
+  const int n = forward(LK_MESH_REQ, kMeshSession, m, sizeof m, out, cap, 300);
+  if (n == 0 && !g_reply_done) return -1;
+  return n;
+}
+
+int frontend_mesh_deckb(uint8_t *out, size_t cap) {
+  const uint8_t m[] = {LK_MQ_DECKB};
+  const int n = forward(LK_MESH_REQ, kMeshSession, m, sizeof m, out, cap, 1000);
+  if (n == 0 && !g_reply_done) return -1;
+  return n;
+}
+
+uint32_t frontend_mesh_check(const uint8_t *frame, size_t len) {
+  uint8_t *m = static_cast<uint8_t *>(malloc(1 + len));
+  if (!m) return 1;
+  m[0] = LK_MQ_CHECK;
+  memcpy(m + 1, frame, len);
+  uint8_t r = 1;
+  const int n = forward(LK_MESH_REQ, kMeshSession, m, 1 + len, &r, 1, 1000);
+  free(m);
+  return n == 1 ? r : 1;  // no answer: refused (bad_fxb), never shared unchecked
 }
 
 int frontend_mesh_effect_file(uint8_t *out, size_t cap) {
