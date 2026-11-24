@@ -19,6 +19,7 @@
 // SHA-256 in the C6's HELLO, and flashes it over SDIO when it doesn't (//firmware/p4/c6flash).
 #include <driver/uart.h>
 #include <driver/uart_vfs.h>
+#include <soc/uart_pins.h>
 #if defined(LM_LINK_SDIO)
 #include <driver/sdmmc_host.h>
 #include <esp_serial_slave_link/essl.h>
@@ -498,7 +499,64 @@ bool netstack_service_due(void) {
   return now - g_polled_us >= 1000 || now - g_hb_sent_us >= kHeartbeatUs;
 }
 
+// The P4's USB console (the SDIO build; the UART build's UART0 carries the link). Lines
+// for what the front end owns go there (LK_OP_CONSOLE): "MESH …" (the mesh runs on the C6:
+// MESH LEAVE is how a P4 lamp leaves a mesh without the admin key) and "WIFI …". The rest
+// ("kiosk off", "POWER …") are the player's own (main.cpp netstack_console_hook).
+static void poll_console() {
+  static char line[128];
+  static uint8_t n = 0;
+  static bool ready = false;
+  if (!ready) {
+    // UART0 is the console behind the board's USB serial chip. Read it through the UART
+    // driver (installed RX-only here if nothing installed it: TX stays the console's).
+    ready = true;
+    const bool had = uart_is_driver_installed(UART_NUM_0);
+    const bool ok = had || uart_driver_install(UART_NUM_0, 512, 0, 0, nullptr, 0) == ESP_OK;
+    // The ROM console only routes TX: give UART0 its RX pin (the one esptool talks to).
+    const bool pin = uart_set_pin(UART_NUM_0, UART_PIN_NO_CHANGE, U0RXD_GPIO_NUM, UART_PIN_NO_CHANGE,
+                                  UART_PIN_NO_CHANGE) == ESP_OK;
+    printf("[link] console input on UART0 (rx gpio %d): %s%s\n", (int)U0RXD_GPIO_NUM,
+           had ? "driver already installed" : ok ? "driver installed" : "driver FAILED", pin ? "" : ", rx pin FAILED");
+  }
+  uint8_t buf[64];
+  for (;;) {
+    const int got = uart_read_bytes(UART_NUM_0, buf, sizeof buf, 0);
+    if (got <= 0) break;
+    for (int k = 0; k < got; k++) {
+      const int c = buf[k];
+      // A reset glitches the line (a stray byte at boot): control bytes never start a command.
+      if (c < 0x20 && c != '\n' && c != '\r') continue;
+      if (c != '\n' && c != '\r') {
+        if (n < sizeof line - 1) {
+          line[n++] = (char)c;
+        } else {
+          n = 0;  // an oversized line: dropped
+        }
+        continue;
+      }
+      if (n == 0) continue;
+      line[n] = '\0';
+      if (strncmp(line, "MESH ", 5) == 0 || strncmp(line, "WIFI ", 5) == 0) {
+        if (g_up) {
+          uint8_t p[1 + sizeof line];
+          p[0] = LK_OP_CONSOLE;
+          memcpy(p + 1, line, n);
+          send_msg(LK_LINK, 0, p, 1 + n);
+          printf("[link] console -> front end: %s\n", line);
+        } else {
+          printf("[link] console: the front end is down; '%s' not sent\n", line);
+        }
+      } else {
+        netstack_console_hook(line, n);
+      }
+      n = 0;
+    }
+  }
+}
+
 void netstack_loop(void) {
+  poll_console();
   if (!g_up) {
     if (g_msg) sdio_retry();
     return;

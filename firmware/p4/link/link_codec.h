@@ -55,6 +55,11 @@ enum {
   LK_OP_RESET = 3,
   LK_OP_NAME = 4,
   LK_OP_STATS = 5,
+  // P4 -> front end: one console line typed on the P4's USB console (the front end's own
+  // console isn't wired on the P4 boards), handled there as if typed on it: "MESH …"
+  // (the mesh runs on the front end: MESH LEAVE is the physical-access recovery) and
+  // "WIFI …". Payload: op, then the line's bytes (no newline).
+  LK_OP_CONSOLE = 6,
 };
 
 // The front end's HELLO (front end -> P4): op, version, 0, MTU (LE), its image's ELF

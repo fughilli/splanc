@@ -2127,6 +2127,27 @@ int netstack_net_stats(char *buf, size_t cap) {
 // Weak default for the app's console hook (netstack_transport.h): the loader has none.
 __attribute__((weak)) void netstack_console_hook(const char *, size_t) {}
 
+// A console line queued by netstack_console_inject (a P4 lamp's front end: the P4 forwards
+// MESH / WIFI lines over the link), read ahead of the serial bytes by the console below.
+static char g_inject[130];
+static uint8_t g_inject_len = 0, g_inject_at = 0;
+
+bool netstack_console_inject(const char *line, size_t len) {
+  if (g_inject_at < g_inject_len || len == 0 || len > sizeof g_inject - 1) return false;
+  memcpy(g_inject, line, len);
+  g_inject[len] = '\n';
+  g_inject_len = (uint8_t)(len + 1);
+  g_inject_at = 0;
+  return true;
+}
+
+static bool console_available() { return g_inject_at < g_inject_len || Serial.available() > 0; }
+
+static int console_read() {
+  if (g_inject_at < g_inject_len) return (uint8_t)g_inject[g_inject_at++];
+  return Serial.read();
+}
+
 void netstack_prepare_restart() {
   // OTA-specific (docs/design/ota.md): before a PLANNED restart (the app <-> loader
   // handoff, booting an installed app) say goodbye now — the same sequence-numbered
@@ -3227,8 +3248,8 @@ void netstack_loop() {
   if (PLAYER_MODE) {
     static char pbuf[128];
     static uint8_t plen = 0;
-    while (Serial.available() > 0) {
-      int c = Serial.read();
+    while (console_available()) {
+      int c = console_read();
       if (c < 0) break;
       if (c == '\n' || c == '\r') {
         pbuf[plen] = '\0';

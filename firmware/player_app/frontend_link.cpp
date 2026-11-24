@@ -24,6 +24,7 @@
 
 #include "firmware/p4/link/link_codec.h"
 #include "netstack_transport.h"
+#include "netstack_transport.h"
 
 namespace {
 
@@ -161,6 +162,8 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       if (h.len >= 3 && p[0] == LK_OP_RESET && g_waiting && (uint16_t)(p[1] | p[2] << 8) == g_reply_session) {
         g_reply_reset = true;
       }
+      // A line typed on the P4's console (MESH …, WIFI …): run as if typed on this one.
+      if (h.len >= 2 && p[0] == LK_OP_CONSOLE) netstack_console_inject(reinterpret_cast<const char *>(p + 1), h.len - 1);
       return;
     case LK_OSC:
       netstack_osc_send(p, h.len);  // the P4's own OSC out (e.g. the tracker's poses)

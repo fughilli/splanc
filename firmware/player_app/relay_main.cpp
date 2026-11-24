@@ -684,6 +684,10 @@ void netstack_console_hook(const char *line, size_t len) {
     return;
   }
   Serial.printf("%s\n", reply);
+  // And the P4's console, where a forwarded WIFI line came from (its lines end in "\n").
+  char t[sizeof reply + 2];
+  snprintf(t, sizeof t, "%s\n", reply);
+  frontend_link_log(t);
 }
 
 void setup() {
