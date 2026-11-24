@@ -17,7 +17,7 @@ import { Button, Sheet, Switch, confirmDialog, icon, toast } from "../kit";
 import type { MeshAdminOp, MeshAdminResultInfo, MeshStateInfo } from "../../net/mesh";
 import { admitPending, ejectMember, ensureUnlocked, leaveMesh, revokeMembers, MeshAdminFailure } from "../../net/meshAdmin";
 import { meshStore, type MeshRecord } from "../../store/meshStore";
-import { lastMeshResult, meshSignerLookup, onMeshResults } from "../../store/meshSession";
+import { lastMeshResult, meshSignerLookup, onMeshResults, rememberMeshAll } from "../../store/meshSession";
 import { meshResultSummary, meshSectionModel, nodeLabel, type MeshMemberRow, type MeshResultSummary, type MeshSectionModel } from "./meshModel";
 import { installMeshStyles } from "./meshUi.css";
 import { toHex } from "../../net/meshKeys";
@@ -27,6 +27,8 @@ export interface MeshSectionClient {
   meshAdmin(op: MeshAdminOp, timeoutMs?: number): Promise<MeshAdminResultInfo>;
   readonly meshAll: boolean;
   setMeshAll(on: boolean): void;
+  /** The fixture's welcome (its MAC keys the remembered whole-mesh switch). */
+  readonly welcome?: { mac?: string } | null;
 }
 
 export interface MeshSectionOpts {
@@ -271,6 +273,7 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
       label: "Control the whole mesh",
       onChange: (v) => {
         client.setMeshAll(v);
+        rememberMeshAll(client.welcome?.mac, v);
         opts.onChange?.(v);
       },
     });

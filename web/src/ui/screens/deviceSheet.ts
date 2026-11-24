@@ -14,15 +14,23 @@
  * its own row below it (D-72).
  *
  * The connected fixture's row leads on with one primary "Choose an effect" (the
- * Effects tab), so connecting here is never a dead end. A known fixture that was
- * looked for and not found says what to do about it: a network move needs Wi-Fi
- * set up again over Bluetooth, never a reflash (the same copy as the Effects
- * tab's fixture card), with a "Set up Wi-Fi again" action.
+ * Effects tab), so connecting here is never a dead end. Known fixtures that were
+ * looked for and not found go in a collapsed "Inactive" section at the bottom, with
+ * ONE note on what to do (a network move needs Wi-Fi set up again over Bluetooth,
+ * never a reflash) and one "Set up Wi-Fi again" action, not a note per row.
+ *
+ * Meshes (mesh M7, meshStore): the fixtures of a mesh this app administers are listed
+ * under their gateway (the connected member, else one on the network), in a
+ * collapsible "Mesh members" group, rather than as separate top-level rows.
+ *
+ * Each row connects and disconnects with a plug icon button (accent: connect, red:
+ * disconnect, grey and pulsing: connecting).
  *
  * Each row's 3-dots (⋮) menu opens a detail popup with the recorded LAN address,
  * MAC, Bluetooth name (rows don't repeat the address: it clips on a phone), the editable display name (reflected to the device — and
- * its Bluetooth advertisement — on connect), and Forget. Delete lives in there,
- * not as a one-tap top-level button, so it can't be hit by accident.
+ * its Bluetooth advertisement — on connect), Update firmware (the connected fixture,
+ * over Wi-Fi) and Forget. Delete lives in there, not as a one-tap top-level button, so
+ * it can't be hit by accident.
  */
 
 import { firmwareCardFields, type FirmwareCardFields } from "../../buildInfo";
@@ -52,6 +60,7 @@ import { PowerSection } from "./powerSection";
 import { deviceHasPower } from "../../power/power";
 import { deviceHasKiosk } from "../../net/kiosk";
 import { isBleUrl } from "../../net/bleTransport";
+import { meshStore, type MeshRecord } from "../../store/meshStore";
 
 let openHandle: { close: () => void } | null = null;
 
@@ -63,6 +72,9 @@ const CONN_ANIM_MS = 1200;
 /** The open device list's re-render (the mesh switch changes its connected line). */
 let rerenderList: (() => void) | null = null;
 
+/** The meshes this app administers (meshStore is async; loaded when the sheet opens). */
+let meshes: MeshRecord[] = [];
+
 export function openDeviceSheet(): void {
   if (openHandle) return; // already open — don't stack
   let unsubDev: () => void = () => {};
@@ -70,6 +82,7 @@ export function openDeviceSheet(): void {
   let unsubProbe: () => void = () => {};
   let unsubFound: () => void = () => {};
   let stopDiscovery: () => void = () => {};
+  let unsubMesh: () => void = () => {};
 
   const sheet = Sheet("Devices", {
     onClose: () => {
@@ -78,6 +91,7 @@ export function openDeviceSheet(): void {
       unsubProbe();
       unsubFound();
       stopDiscovery();
+      unsubMesh();
       openHandle = null;
       rerenderList = null;
     },
@@ -99,7 +113,108 @@ export function openDeviceSheet(): void {
   // Fixtures on the network appear by themselves while the sheet is open.
   unsubFound = discovery.subscribe(rerender);
   stopDiscovery = discovery.start();
+  const loadMeshes = (): void => {
+    void meshStore
+      .list()
+      .then((m) => {
+        meshes = m;
+        if (openHandle === sheet) rerender();
+      })
+      .catch(() => undefined);
+  };
+  unsubMesh = meshStore.subscribe(loadMeshes);
+  loadMeshes();
   rerender();
+}
+
+/** A mesh shown as a group: its gateway's row, the other saved members under it. */
+interface MeshGroup {
+  mesh: MeshRecord;
+  gateway: KnownDevice;
+  members: KnownDevice[];
+}
+
+/** Group the saved devices by the meshes this app administers. The gateway is the
+ * connected member, else one heard on the network, else the first. A device is in one
+ * group at most (the newest mesh that lists it); a mesh with one saved device is not a
+ * group. */
+export function meshGroups(
+  devices: readonly KnownDevice[],
+  records: readonly MeshRecord[],
+  activeId: string | null,
+  reachable: (id: string) => boolean,
+): MeshGroup[] {
+  const byId = new Map(devices.map((d) => [d.id, d] as const));
+  const taken = new Set<string>();
+  const groups: MeshGroup[] = [];
+  const newestFirst = [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  for (const mesh of newestFirst) {
+    const devs: KnownDevice[] = [];
+    for (const m of mesh.members) {
+      const d = byId.get(m.deviceId);
+      if (d && !taken.has(d.id) && !devs.includes(d)) devs.push(d);
+    }
+    if (devs.length < 2) continue;
+    const gateway = devs.find((d) => d.id === activeId) ?? devs.find((d) => reachable(d.id)) ?? devs[0]!;
+    for (const d of devs) taken.add(d.id);
+    groups.push({ mesh, gateway, members: devs.filter((d) => d !== gateway) });
+  }
+  return groups;
+}
+
+/** Which collapsible sections the user opened (per browser; a convenience only). */
+const OPEN_KEY = "ledmapper.deviceSheet.open";
+function readOpen(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(OPEN_KEY) ?? "[]") as string[]);
+  } catch {
+    return new Set();
+  }
+}
+function writeOpen(s: Set<string>): void {
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify([...s]));
+  } catch {
+    /* storage blocked: the section just starts collapsed next time */
+  }
+}
+
+/** A collapsible section (collapsed until opened; remembered by `key`): a header button
+ * with a chevron, a label and a count, over its body. */
+function collapsible(key: string, label: string, count: number, body: HTMLElement, cls: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = `device-collapse ${cls}`;
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "folder-header device-collapse-head";
+  const chev = icon("chevron");
+  chev.classList.add("folder-chevron");
+  const name = document.createElement("span");
+  name.className = "folder-header-name";
+  name.textContent = label;
+  const n = document.createElement("span");
+  n.className = "folder-count";
+  n.textContent = String(count);
+  header.append(chev, name, n);
+  body.classList.add("device-collapse-body");
+  const open = readOpen();
+  let isOpen = open.has(key);
+  const apply = (): void => {
+    header.classList.toggle("folder-header--collapsed", !isOpen);
+    header.setAttribute("aria-expanded", String(isOpen));
+    body.classList.toggle("folder-hidden", !isOpen);
+  };
+  apply();
+  header.addEventListener("click", () => {
+    isOpen = !isOpen;
+    const s = readOpen();
+    if (isOpen) s.add(key);
+    else s.delete(key);
+    writeOpen(s);
+    apply();
+  });
+  wrap.append(header, body);
+  return wrap;
 }
 
 function render(): HTMLElement {
@@ -172,22 +287,40 @@ function render(): HTMLElement {
   // MAC-suffix disambiguator so a user with two "Kitchen"s can tell them apart.
   const nameCounts = new Map<string, number>();
   for (const d of devices) nameCounts.set(d.label, (nameCounts.get(d.label) ?? 0) + 1);
-  appendGrouped(
-    wrap,
-    devices,
-    (dev) => dev.folder,
-    (dev) =>
-      deviceRow(
-        dev,
-        dev.id === activeId,
-        status,
-        deviceProber.isReachable(dev.id) || found.matched.has(dev.id),
-        (nameCounts.get(dev.label) ?? 0) > 1,
-        found.matched.get(dev.id),
-        deviceProber.hasProbed(dev.id),
-      ),
-    { scope: "devices" },
-  );
+  const reachable = (id: string): boolean => deviceProber.isReachable(id) || found.matched.has(id);
+  const rowOf = (dev: KnownDevice): HTMLElement =>
+    deviceRow(
+      dev,
+      dev.id === activeId,
+      status,
+      reachable(dev.id),
+      (nameCounts.get(dev.label) ?? 0) > 1,
+      found.matched.get(dev.id),
+      deviceProber.hasProbed(dev.id),
+    );
+  // Looked for and not found (not the connected one, not a Bluetooth-only one).
+  const inactive = (dev: KnownDevice): boolean =>
+    dev.id !== activeId && !reachable(dev.id) && !isBleUrl(dev.wssUrl) && deviceProber.hasProbed(dev.id);
+
+  // Mesh members sit under their gateway's row; a group whose gateway is inactive is
+  // inactive as a whole.
+  const groups = meshGroups(devices, meshes, activeId, reachable);
+  const groupOf = new Map(groups.map((g) => [g.gateway.id, g] as const));
+  const inGroup = new Set(groups.flatMap((g) => g.members.map((m) => m.id)));
+  const rowOrGroup = (dev: KnownDevice): HTMLElement => {
+    const g = groupOf.get(dev.id);
+    if (!g) return rowOf(dev);
+    const box = document.createElement("div");
+    box.className = "device-mesh";
+    const members = document.createElement("div");
+    members.className = "device-mesh-members";
+    for (const m of g.members) members.append(rowOf(m));
+    const label = g.mesh.name ? `Mesh members · ${g.mesh.name}` : "Mesh members";
+    box.append(rowOf(dev), collapsible(`mesh:${g.mesh.meshId}`, label, g.members.length, members, "device-mesh-group"));
+    return box;
+  };
+  const top = devices.filter((d) => !inGroup.has(d.id));
+  appendGrouped(wrap, top.filter((d) => !inactive(d)), (dev) => dev.folder, rowOrGroup, { scope: "devices" });
 
   // -- fixtures found on the network that aren't in the list yet.
   if (found.fresh.length > 0) {
@@ -197,22 +330,35 @@ function render(): HTMLElement {
     wrap.append(cap, FoundList(found.fresh));
   }
 
-  // -- the connected device's own firmware update (over Wi-Fi). Shown whenever the
-  // active device can take one (welcome feature "ota") or sits in its updater; the
-  // flash sheet then checks for the legacy layout that needs a one-time USB update.
-  const w = appState.client?.welcome;
-  if (w && ((w.features ?? []).includes("ota") || inLoader(w))) {
-    const name = deviceStore.get(activeId ?? "")?.label || w.deviceName || "this device";
-    const upd = Button({
-      label: inLoader(w) ? `Update firmware — ${name} is in its updater` : "Update firmware",
-      icon: "chip",
-      ...(inLoader(w) ? { variant: "primary" as const } : {}),
-      block: true,
-      onClick: () => void import("./flashSheet").then((m) => m.openFlashSheet()),
+  // -- known fixtures that weren't found: one collapsed section, one note.
+  const away = top.filter(inactive);
+  if (away.length > 0) {
+    const body = document.createElement("div");
+    body.className = "device-inactive-list";
+    const note = document.createElement("div");
+    note.className = "device-stale";
+    const p = document.createElement("p");
+    p.className = "device-stale-text";
+    p.textContent =
+      "These weren't found on this network. Check they're plugged in and on the same Wi-Fi as " +
+      "this phone. Moved one to a different Wi-Fi? Set it up again over Bluetooth. No need to flash it again.";
+    const again = Button({
+      label: "Set up Wi-Fi again",
+      icon: "bluetooth",
+      variant: "quiet",
+      onClick: () => {
+        // Straight into "Set up a new fixture" (Bluetooth → Wi-Fi): pick the new
+        // network, then the fixture in the Bluetooth list.
+        openHandle?.close();
+        openAddDevice("ble");
+      },
     });
-    upd.classList.add("device-update-fw");
-    upd.title = `Update ${name}'s firmware over Wi-Fi`;
-    wrap.append(upd);
+    again.classList.add("device-stale-act");
+    again.title = "Set up a fixture's Wi-Fi again over Bluetooth";
+    note.append(p, again);
+    body.append(note);
+    for (const d of away) body.append(rowOrGroup(d));
+    wrap.append(collapsible("inactive", "Inactive", away.length, body, "device-inactive"));
   }
 
   // -- connect / flash: the same two labelled actions as the welcome screen.
@@ -275,7 +421,7 @@ function deviceRow(
   // No IP in the subtitle: next to the row's buttons it clips on a phone. The
   // address is in the ⋮ details (and the tooltip).
   const base = isActive
-    ? connectedMeta(status)
+    ? connectedMeta(status) + (appState.client?.welcome && inLoader(appState.client.welcome) ? " · in its updater: update it from ⋮" : "")
     : isReachable
       ? "on this network"
       : stale
@@ -293,7 +439,13 @@ function deviceRow(
   const btns = document.createElement("div");
   btns.className = "device-btns";
   if (fullyConnected) {
-    btns.append(rowAction("Disconnect", "Disconnect", () => appState.disconnect(), "quiet"));
+    btns.append(
+      IconButton("plug-off", {
+        title: "Disconnect",
+        className: "device-disconnect",
+        onClick: () => appState.disconnect(),
+      }),
+    );
   } else if (isActive) {
     // Active but not fully connected yet (connecting, syncing clock, or awaiting
     // cert trust): a gray, pulsing plug so it reads as in-progress. Tap cancels.
@@ -311,19 +463,19 @@ function deviceRow(
     // A device heard on the network connects at the address it was heard at
     // (it may have moved since this record was made).
     const url = found?.url ?? dev.wssUrl;
-    btns.append(rowAction("Connect", "Connect", () => appState.connect(url, dev.label)));
+    btns.append(plug("Connect", () => appState.connect(url, dev.label)));
   } else if (isBleUrl(dev.wssUrl) && dev.lanUrl) {
     // Reached over Bluetooth before, with a known Wi-Fi address: going back to
     // Wi-Fi is one tap, not a re-add by IP (#444 — the BLE fallback used to swallow
     // the device's Wi-Fi record).
     const lanUrl = dev.lanUrl;
     btns.append(
-      rowAction("Wi-Fi", `Connect over Wi-Fi (${hostOfUrl(lanUrl)})`, () => appState.connect(lanUrl, dev.label)),
-      rowAction("Find", "Find over Bluetooth", () => bleRediscover(dev), "quiet"),
+      plug(`Connect over Wi-Fi (${hostOfUrl(lanUrl)})`, () => appState.connect(lanUrl, dev.label)),
+      IconButton("ble-search", { title: "Find over Bluetooth", onClick: () => bleRediscover(dev) }),
     );
   } else if (!stale) {
     // Reached only over Bluetooth before: find it there again.
-    btns.append(rowAction("Find", "Find over Bluetooth", () => bleRediscover(dev), "quiet"));
+    btns.append(IconButton("ble-search", { title: "Find over Bluetooth", onClick: () => bleRediscover(dev) }));
   }
   // The 3-dots menu opens the device config (rename, folder, color correction,
   // and Forget). Delete lives in there rather than as a top-level trash button,
@@ -347,44 +499,15 @@ function deviceRow(
     row.classList.add("device-row--lead");
     row.append(next);
   }
-  // Looked for and not found: say what to do, not just a grey dot (D-219). The
-  // same copy as the Effects tab's fixture card.
-  if (stale && probed) {
-    row.classList.add("device-row--stale");
-    const note = document.createElement("div");
-    note.className = "device-stale";
-    const p = document.createElement("p");
-    p.className = "device-stale-text";
-    p.textContent =
-      "Check it's plugged in and on the same Wi-Fi as this phone. Moved it to a different " +
-      "Wi-Fi? Set it up again over Bluetooth. No need to flash it again.";
-    const again = Button({
-      label: "Set up Wi-Fi again",
-      icon: "bluetooth",
-      variant: "quiet",
-      onClick: () => {
-        // Straight into "Set up a new fixture" (Bluetooth → Wi-Fi): pick the new
-        // network, then the fixture in the Bluetooth list.
-        openHandle?.close();
-        openAddDevice("ble");
-      },
-    });
-    again.classList.add("device-stale-act");
-    again.title = `Set up ${dev.label}'s Wi-Fi again over Bluetooth`;
-    note.append(p, again);
-    row.append(note);
-  }
   return row;
 }
 
-/** A small labelled row button; `title` names the action in full (tooltip,
- * accessible name). */
-function rowAction(label: string, title: string, onClick: () => void, variant?: "quiet"): HTMLButtonElement {
-  const b = Button({ label, onClick, ...(variant ? { variant } : {}) });
-  b.classList.add("device-act");
-  b.title = title;
+/** The row's connect button: an accent plug; `title` names the action in full
+ * (tooltip, accessible name). */
+function plug(title: string, onClick: () => void): HTMLButtonElement {
+  const b = IconButton("plug", { title, className: "device-connect", onClick });
   b.setAttribute("aria-label", title);
-  return b;
+  return b as HTMLButtonElement;
 }
 
 function connectedMeta(status = appState.status): string {
@@ -533,7 +656,23 @@ function openDeviceDetail(dev: KnownDevice): void {
   const divider = document.createElement("hr");
   divider.className = "device-detail-divider";
 
+  // The connected fixture's firmware update over Wi-Fi (welcome feature "ota", or it
+  // sits in its updater); the flash sheet checks for a layout that needs USB once.
+  const w = isActive ? appState.client?.welcome : undefined;
+  const canUpdate = !!w && ((w.features ?? []).includes("ota") || inLoader(w));
   const actionGrid = ActionGrid([
+      ...(canUpdate
+        ? [
+            {
+              label: "Update firmware",
+              icon: "chip" as const,
+              onClick: () => {
+                sheet.close();
+                void import("./flashSheet").then((m) => m.openFlashSheet());
+              },
+            },
+          ]
+        : []),
       {
         label: "Gamma",
         icon: "gamma",

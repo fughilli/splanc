@@ -27,7 +27,8 @@ import { discovery, type FoundFixture } from "../src/net/discovery";
 import { IMPROV_SERVICE } from "../src/net/improv";
 import { deviceStore } from "../src/store/deviceStore";
 import { appState } from "../src/ui/app/state";
-import { openDeviceSheet } from "../src/ui/screens/deviceSheet";
+import { meshGroups, openDeviceSheet } from "../src/ui/screens/deviceSheet";
+import type { MeshRecord } from "../src/store/meshStore";
 import {
   FakeLan,
   advance,
@@ -102,10 +103,16 @@ test("the device list marks which known devices answer on this network [rr:PR-13
   assert.equal(row("Kitchen").querySelector(".device-url")!.getAttribute("title"), "10.0.0.41", "the address is a tooltip");
   assert.deepEqual(rowState("Porch"), { dot: "offline", meta: "Can't reach it" });
   buttonTitled("Connect", row("Kitchen")); // a reachable device offers a LAN connect…
-  // …an unreachable one says what to do, and offers Wi-Fi set-up over Bluetooth.
-  assert.match(row("Porch").querySelector(".device-stale-text")!.textContent, /No need to flash it again/);
-  buttonTitled("Set up Porch's Wi-Fi again over Bluetooth", row("Porch"));
-  assert.equal(row("Kitchen").querySelector(".device-stale"), null, "a reachable one has no note");
+  // …an unreachable one moves to the collapsed Inactive section, which says once what to
+  // do and offers Wi-Fi set-up over Bluetooth (no note per row).
+  const inactive = all(".device-inactive")[0]!;
+  assert.ok(row("Porch").closest(".device-inactive") === inactive, "Porch is under Inactive");
+  assert.equal(row("Kitchen").closest(".device-inactive"), null, "Kitchen is not");
+  assert.ok(inactive.querySelector(".device-collapse-body")!.classList.contains("folder-hidden"), "Inactive starts collapsed");
+  assert.equal(all(".device-stale-text").length, 1, "one note for the section");
+  assert.match(inactive.querySelector(".device-stale-text")!.textContent, /No need to flash it again/);
+  buttonTitled("Set up a fixture's Wi-Fi again over Bluetooth", inactive);
+  assert.equal(row("Porch").querySelector(".device-stale"), null, "no note on the row itself");
   assert.equal(lan.liveTo("10.0.0.41") + lan.liveTo("10.0.0.42"), 0, "probe sockets are closed again");
 });
 
@@ -158,7 +165,7 @@ test("Set up Wi-Fi again on an unreachable device opens the Bluetooth set-up she
   await advance(10_500);
   await settle();
 
-  buttonTitled("Set up Cellar's Wi-Fi again over Bluetooth", row("Cellar")).click();
+  buttonTitled("Set up a fixture's Wi-Fi again over Bluetooth", all(".device-inactive")[0]!).click();
   await settle();
   assert.ok(
     all(".k-sheet-head h2").some((h) => h.textContent === "Set up a new fixture"),
@@ -249,4 +256,35 @@ test("the device sheet has one labelled Connect and a separate Flash button, no 
   const actions = all(".connect-actions .k-btn").map((b) => b.textContent.trim());
   assert.deepEqual(actions, ["Connect a fixture", "Flash a new device"]);
   assert.equal(all(".device-add .k-iconbtn").length, 0, "no unlabeled icon buttons");
+});
+
+test("mesh members are grouped under their gateway: the connected one, else one on the network", () => {
+  const a = known("10.0.0.71", "58:E6:C5:00:00:71", "Silvia");
+  const b = known("10.0.0.72", "58:E6:C5:00:00:72", "Pixie");
+  const c = known("10.0.0.73", "58:E6:C5:00:00:73", "Calvin");
+  const lone = known("10.0.0.74", "58:E6:C5:00:00:74", "Shed");
+  const mesh = (meshId: number, createdAt: string, ids: string[]): MeshRecord =>
+    ({
+      meshId,
+      name: `m${meshId}`,
+      createdAt,
+      adminPublic: new Uint8Array(65),
+      keyEpoch: 1,
+      revVersion: 0,
+      members: ids.map((deviceId, i) => ({ deviceId, label: "", node: i + 1, keyHash: "" })),
+      revoked: [],
+    }) as MeshRecord;
+  const devs = deviceStore.list();
+  const newer = mesh(2, "2026-11-23T13:56:00Z", [a, b]);
+  const older = mesh(1, "2026-11-23T11:00:00Z", [a, c]); // Silvia left it: the newest mesh wins
+  const solo = mesh(3, "2026-11-01T00:00:00Z", [lone]);
+
+  const g = meshGroups(devs, [older, newer, solo], b, () => false);
+  assert.equal(g.length, 1, "a device is in one group; a one-device mesh is no group");
+  assert.equal(g[0]!.mesh.meshId, 2);
+  assert.equal(g[0]!.gateway.id, b, "the connected member is the gateway");
+  assert.deepEqual(g[0]!.members.map((d) => d.id), [a]);
+
+  const h = meshGroups(devs, [newer], null, (id) => id === b);
+  assert.equal(h[0]!.gateway.id, b, "else a member heard on the network");
 });

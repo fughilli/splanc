@@ -128,6 +128,9 @@ class AppState {
       /** The cert is known trusted (the cert page just confirmed it): see
        * ClientOptions.trustedBefore. Otherwise derived from the device store. */
       trustedBefore?: boolean;
+      /** Who the caller knows is at `wssUrl` (Improv: the device it just provisioned),
+       * so a saved record that is another fixture moves aside (deviceStore.upsert). */
+      expect?: { name?: string; bleId?: string };
     },
   ): void {
     // Release the current connection without probing the device it frees yet: when it
@@ -143,7 +146,7 @@ class AppState {
       this.setStatus({ state: "offline", text: "offline", certUrl: null, error: "Reconnect over Bluetooth" });
       return;
     }
-    const dev = deviceStore.upsert(wssUrl, label);
+    const dev = deviceStore.upsert(wssUrl, label, opts?.expect);
     deviceStore.setActive(dev.id);
     // A different device was freed: probe it now (it is no longer the active one). Not
     // when it is this same player under another record (an older spelling of its

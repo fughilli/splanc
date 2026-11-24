@@ -3057,6 +3057,43 @@ input.device-name-input {
 .device-row--stale .device-url {
   color: var(--err);
 }
+/* The row's plug: accent to connect, red to disconnect. */
+.k-iconbtn.device-connect {
+  background: var(--accent);
+  color: #fff;
+}
+.k-iconbtn.device-connect:hover {
+  background: var(--accent);
+  filter: brightness(1.12);
+}
+.k-iconbtn.device-disconnect {
+  background: var(--err);
+  color: #fff;
+}
+.k-iconbtn.device-disconnect:hover {
+  background: var(--err);
+  filter: brightness(1.12);
+}
+/* A mesh: the gateway's row, its members in a collapsible group under it. */
+.device-mesh-group .device-collapse-head {
+  padding-left: calc(10px + var(--sp-3));
+  font-size: var(--f-caption);
+}
+.device-mesh-members {
+  padding-left: calc(10px + var(--sp-3));
+  border-left: 2px solid var(--border, rgba(127, 127, 127, 0.25));
+  margin-left: 4px;
+}
+/* Inactive: fixtures that weren't found, collapsed at the bottom with one note. */
+.device-inactive {
+  margin-top: var(--sp-3);
+}
+.device-inactive .device-url {
+  color: var(--text-dim);
+}
+.device-inactive-list > .device-stale {
+  padding: var(--sp-2) 0;
+}
 /* Connecting: gray plug that breathes, with a slash "wave" sweeping across —
    reads as in-progress, before it settles to the red disconnect. */
 .k-iconbtn.device-connecting {

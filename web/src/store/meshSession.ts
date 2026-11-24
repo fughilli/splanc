@@ -69,6 +69,37 @@ const renewing = new WeakSet<object>();
  * every (re)connect, the background ones included: an admin session belongs to one
  * connection, so a reconnected client must unlock again. Subscribing and the renewal loop
  * happen once per client. */
+/** "Control the whole mesh", remembered per fixture (by its MAC) so a reconnect or a
+ * new app session keeps sending effects and sliders to every member. Unset: on, once
+ * the connection is unlocked as a mesh this app administers. */
+const MESH_ALL_KEY = "ledmapper.meshAll";
+function meshAllPrefs(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(MESH_ALL_KEY) ?? "{}") as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+export function meshAllPref(mac: string | undefined): boolean {
+  return mac ? meshAllPrefs()[mac.toUpperCase()] ?? true : true;
+}
+export function rememberMeshAll(mac: string | undefined, on: boolean): void {
+  if (!mac) return;
+  try {
+    const p = meshAllPrefs();
+    p[mac.toUpperCase()] = on;
+    localStorage.setItem(MESH_ALL_KEY, JSON.stringify(p));
+  } catch {
+    /* storage blocked: the switch still works for this connection */
+  }
+}
+
+interface MeshAllClient {
+  readonly welcome?: { mac?: string } | null;
+  readonly meshAll?: boolean;
+  setMeshAll?(on: boolean): void;
+}
+
 export function unlockMeshOnConnect(client: MeshAdminClient & ResultClient & object, isCurrent: () => boolean): void {
   if (!subscribed.has(client)) {
     subscribed.add(client);
@@ -79,7 +110,16 @@ export function unlockMeshOnConnect(client: MeshAdminClient & ResultClient & obj
     });
   }
   void meshStore.load().catch(() => undefined);
-  const once = (): Promise<unknown> => ensureUnlocked(client, meshSignerLookup).catch(() => false);
+  const once = (): Promise<unknown> =>
+    ensureUnlocked(client, meshSignerLookup)
+      .then((ok) => {
+        // Unlocked as the gateway of a mesh this app administers: route live control
+        // the way this fixture was last used (whole mesh unless switched off).
+        const c = client as MeshAllClient;
+        if (ok && c.setMeshAll && !c.meshAll && meshAllPref(c.welcome?.mac)) c.setMeshAll(true);
+        return ok;
+      })
+      .catch(() => false);
   if (renewing.has(client)) {
     if (isCurrent()) void once();
     return;
