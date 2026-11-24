@@ -1180,8 +1180,12 @@ pub unsafe extern "C" fn ns_mesh_conns(m: *mut Mesh, ws: u32, ble: u32) {
 pub unsafe extern "C" fn ns_mesh_conn_closed(m: *mut Mesh, conn: u32) {
     let m = &mut *m;
     let c = conn as usize;
+    let signing = m.stack.signing_session(c);
     if m.stack.gate.is_unlocked(c) {
-        m.log(format_args!("[mesh] gateway session closed conn={c}"));
+        m.log(format_args!(
+            "[mesh] gateway session closed conn={c}{}",
+            if signing { " (its grant kept for catch-ups)" } else { "" }
+        ));
     }
     m.stack.connection_changed(c);
 }

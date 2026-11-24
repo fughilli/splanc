@@ -39,6 +39,10 @@ pub const ADMIN_SECRET_LEN: usize = 16;
 pub const UNLOCK_LOCKOUT_US: i64 = 2_000_000;
 /// Connections a gateway tracks (wss slots + BLE).
 pub const MAX_CONNECTIONS: usize = 8;
+/// The slot a gateway's grant moves to when the app connection that unlocked it goes away
+/// ([`AdminGate::detach`]). No app connection has this index: only the gateway's own
+/// catch-ups and epoch announcements (`MeshStack::signing_conn`) use it.
+pub const DETACHED: usize = MAX_CONNECTIONS - 1;
 /// Per-recipient command MAC: 2-byte node id + 6-byte MAC.
 pub const MAC_LEN: usize = 6;
 pub const ENTRY_LEN: usize = 2 + MAC_LEN;
@@ -675,6 +679,17 @@ impl AdminGate {
             *u = None;
         }
     }
+
+    /// Connection `conn` dropped, but its grant stays good: move its session to the
+    /// [`DETACHED`] slot (replacing what was there). The connection itself is locked.
+    pub fn detach(&mut self, conn: usize) {
+        if conn == DETACHED || conn >= MAX_CONNECTIONS {
+            return;
+        }
+        if let Some(s) = self.unlocked[conn].take() {
+            self.unlocked[DETACHED] = Some(s);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -684,6 +699,20 @@ mod tests {
     use crate::host_keys::{AdminSigner, HostKey, TestRng};
 
     const MESH: u32 = 0xA1B2_C3D4;
+
+    #[test]
+    fn a_dropped_connection_s_session_detaches() {
+        let mut g = AdminGate::new();
+        g.unlocked[1] = Some(77);
+        g.detach(1);
+        assert_eq!(g.session(1), None, "the connection itself is locked");
+        assert_eq!(g.session(DETACHED), Some(77), "the grant's session is kept for catch-ups");
+        g.unlocked[2] = Some(78);
+        g.detach(2);
+        assert_eq!(g.session(DETACHED), Some(78), "the newest replaces it");
+        g.detach(DETACHED);
+        assert_eq!(g.session(DETACHED), Some(78), "detaching the detached slot is a no-op");
+    }
 
     fn grant(signer: &AdminSigner, gw: &HostKey, session: u32, not_after: u32) -> Grant {
         signer.grant(MESH, session, 1, gw.public_key(), not_after)

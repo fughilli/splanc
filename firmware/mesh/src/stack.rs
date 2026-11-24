@@ -1084,6 +1084,14 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     }
 
     /// Send the epoch this gateway originated as its session's signed `TIME_BASE`.
+    /// Send this gateway's show epoch now, if it originated one (a catch-up goes right
+    /// after it, so the member's clock is on the mesh's before the scene's state lands).
+    pub fn announce_epoch_now(&mut self, now_us: i64) {
+        if self.time.epoch.is_some_and(|e| e.origin == self.me()) && self.node.net.mesh.can_send() {
+            self.announce_epoch(now_us);
+        }
+    }
+
     fn announce_epoch(&mut self, now_us: i64) {
         let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else {
             self.epoch_announce = false;
@@ -1482,7 +1490,16 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// Connection `conn` opened or closed: whatever session it held is gone.
     pub fn connection_changed(&mut self, conn: usize) {
-        self.gate.connection_changed(conn);
+        // The app went away, but the grant it unlocked is still good (members keep its
+        // session until it expires). Keep it on the detached slot so this gateway still
+        // catches up a member that reboots or rejoins, and re-announces its show epoch,
+        // while no app is connected. Nothing else can use that slot; a new unlock
+        // replaces the gateway session, and the old one then signs nothing.
+        if conn != admin::DETACHED && self.signing_session(conn) {
+            self.gate.detach(conn);
+        } else {
+            self.gate.connection_changed(conn);
+        }
     }
 
     /// A member's answer to relayed control `op_id` from `gateway` (ACKed unicast, desk #70).
