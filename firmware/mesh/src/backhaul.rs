@@ -28,6 +28,9 @@ pub enum TxClass {
     /// carry the first attempt's stamp), whose completion the backhaul stamps
     /// ([`Backhaul::take_tx_stamp`]).
     Time,
+    /// A ranging message ([`crate::ranging`]): one hop, ACKed unicast (the ACK is the
+    /// exchange), never a fan-out.
+    Range,
 }
 
 /// When a frame went out on this node's clock (µs): armed, and done (the midpoint of the
@@ -85,6 +88,22 @@ pub trait Backhaul {
     fn links(&self, now_us: i64, out: &mut [crate::topo::Link]) -> usize {
         let _ = (now_us, out);
         0
+    }
+    /// Link ranging ([`crate::ranging`]) on backhauls with fine timestamps: the next probe
+    /// or stamp report to send (its destination and length in `out`, at most
+    /// [`crate::ranging::MSG_MAX`] bytes). Backhauls that cannot range keep the defaults.
+    fn range_out(&mut self, now_us: i64, out: &mut [u8]) -> Option<(NodeId, usize)> {
+        let _ = (now_us, out);
+        None
+    }
+    /// A ranging message from neighbour `from`.
+    fn range_in(&mut self, now_us: i64, from: NodeId, body: &[u8]) {
+        let _ = (now_us, from, body);
+    }
+    /// The measured range to neighbour `node` (this node ranged it).
+    fn link_range(&self, now_us: i64, node: NodeId) -> Option<crate::ranging::LinkRange> {
+        let _ = (now_us, node);
+        None
     }
     /// Next received frame, copied into `buf` (at least `mtu()` bytes), with its metadata.
     fn recv(&mut self, buf: &mut [u8]) -> Option<RxMeta>;

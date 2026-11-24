@@ -25,6 +25,7 @@
 use ledmapper_netstack::p2p;
 
 use crate::backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass, TxStamp};
+use crate::ranging::{LinkRange, Ranging};
 use crate::envelope::Header;
 
 /// Envelope bytes per frame (§5.2: 250-byte bodies, short airtime at 1 Mb/s).
@@ -67,6 +68,11 @@ pub fn airtime_us(rate: u8, bytes: usize) -> u32 {
         k => k,
     };
     p2p::airtime_us(bytes, kbps)
+}
+
+/// Legacy OFDM (the rates whose stamps carry fine timing; DSSS/CCK's do not).
+pub fn is_ofdm(rate: u8) -> bool {
+    !matches!(p2p::rate_kbps(rate), 0 | 1_000 | 2_000 | 5_500 | 11_000)
 }
 
 /// SIFS + the peer's ACK (10 bytes) at the response rate for `rate`, µs.
@@ -118,6 +124,12 @@ pub trait Radio {
     /// This node's clock read now (µs), for completion stamps: the caller's `now_us` can be
     /// a whole tick old. None: use the caller's.
     fn now_us(&mut self) -> Option<i64> {
+        None
+    }
+    /// The TX queue's FTM stamp words (t1, t4: [`ledmapper_netstack::ftm::TxFtm`]) of the
+    /// frame [`Radio::tx_done`] just reported ACKed; read only while ranging is on. None:
+    /// this MAC has none.
+    fn tx_ftm(&mut self) -> Option<[u32; 3]> {
         None
     }
 }
@@ -253,6 +265,8 @@ struct Current {
     /// When this attempt was armed, and the last poll that still saw it in flight.
     armed_us: i64,
     poll_us: i64,
+    /// The rate code this attempt went out at (ranging's airtime check).
+    rate: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -482,6 +496,8 @@ pub struct WifiP2p {
     /// beacon's completion, until taken.
     pub last_tx: TxStamp,
     stamp: Option<TxStamp>,
+    /// Link ranging ([`crate::ranging`]): off by default (`ranging.cfg.enabled`).
+    pub ranging: Ranging,
 }
 
 impl WifiP2p {
@@ -508,6 +524,7 @@ impl WifiP2p {
             now_us: 0,
             last_tx: TxStamp::default(),
             stamp: None,
+            ranging: Ranging::new(seed.rotate_left(16)),
         }
     }
 
@@ -699,7 +716,7 @@ impl WifiP2p {
             }
             if self.cur.is_none() {
                 let Some(t) = self.next_target(now_us) else { return };
-                self.cur = Some(Current { target: t, attempt: 1, inflight: false, deadline_us: 0, not_before_us: now_us, armed_us: 0, poll_us: 0 });
+                self.cur = Some(Current { target: t, attempt: 1, inflight: false, deadline_us: 0, not_before_us: now_us, armed_us: 0, poll_us: 0, rate: 0 });
             }
             let mut c = self.cur.unwrap();
             if now_us < c.not_before_us || !radio.tx_idle(now_us) {
@@ -738,6 +755,7 @@ impl WifiP2p {
             radio.hold(now_us, air + 100);
             let armed = radio.now_us().unwrap_or(now_us);
             c.inflight = true;
+            c.rate = rate;
             c.armed_us = armed;
             c.poll_us = armed;
             c.deadline_us = now_us + air as i64 + COMPLETION_SLACK_US;
@@ -773,11 +791,29 @@ impl WifiP2p {
                 self.stamp = Some(st);
                 self.stats.time_stamped += 1;
             }
+            if outcome == Some(TxResult::Ok) && c.attempt == 1 && self.ranging.cfg.enabled && self.tx_len > 0 {
+                self.range_tx(t, c, radio);
+            }
         } else if self.tx_len > 0 && self.txq[self.tx_head].stamp {
             self.stats.time_lost += 1;
         }
         self.finish(now_us, c, outcome);
         false
+    }
+
+    /// A first-attempt unicast was ACKed: its stamps are a half-exchange (OFDM only: DSSS
+    /// stamps carry no fine timing).
+    fn range_tx(&mut self, now_us: i64, c: Current, radio: &mut dyn Radio) {
+        let Target::Mac { mac, nb } = c.target else { return };
+        if !is_ofdm(c.rate) {
+            return;
+        }
+        let Some(id) = nb.or_else(|| self.nb_index(&mac)).and_then(|i| self.neighbours[i]).map(|n| n.id) else { return };
+        let Some(words) = radio.tx_ftm() else { return };
+        let s = &self.txq[self.tx_head];
+        let len = s.len as usize;
+        let seq = u16::from_le_bytes([s.buf[22], s.buf[23]]) >> 4;
+        self.ranging.on_tx(now_us, id, seq, words, airtime_us(c.rate, len));
     }
 
     fn finish(&mut self, now_us: i64, mut c: Current, outcome: Option<TxResult>) {
@@ -867,6 +903,15 @@ impl WifiP2p {
         // Learn the neighbour from every frame of our mesh (overheard unicasts included).
         let ours = self.cfg.mesh_id.is_none_or(|m| m == h.mesh_id);
         let dup = if ours { self.learn(reap_us, &p, h.src, rssi) } else { false };
+        // Ranging: a first copy of a unicast to us, which our MAC ACKed (its RX vector holds
+        // t2 and our ACK's t3), received clean as legacy OFDM.
+        if ours && self.ranging.cfg.enabled && p.da == self.cfg.mac && !p.retry {
+            if let (Some(v), Some(raw)) = (v, rxv) {
+                if v.bb_format == p2p::BB_FORMAT_11G && v.rx_state == 0 && v.rxend_state == 0 {
+                    self.ranging.on_rx(reap_us, h.src, p.seq, raw, p2p::airtime_us(frame.len(), v.rate_kbps()));
+                }
+            }
+        }
         // A unicast to another neighbour is still a mesh frame (the flood): hearing a
         // neighbour's relay is what cancels our own (the swarm's relay rule), so it goes up
         // too; the mesh's dedup drops what it already has.
@@ -972,6 +1017,29 @@ impl Backhaul for WifiP2p {
             n = end;
         }
         n
+    }
+
+    fn range_out(&mut self, now_us: i64, out: &mut [u8]) -> Option<(NodeId, usize)> {
+        if !self.ranging.cfg.enabled {
+            return None;
+        }
+        for n in self.neighbours.iter().flatten() {
+            if now_us - n.last_us < LIVE_US {
+                self.ranging.track(now_us, n.id);
+            }
+        }
+        let idle = self.tx_len == 0 && self.cur.is_none();
+        let nbs = &self.neighbours;
+        let live = |id: NodeId| nbs.iter().flatten().any(|n| n.id == id && now_us - n.last_us < LIVE_US);
+        self.ranging.poll(now_us, idle, &live, out)
+    }
+
+    fn range_in(&mut self, now_us: i64, from: NodeId, body: &[u8]) {
+        self.ranging.on_msg(now_us, from, body);
+    }
+
+    fn link_range(&self, now_us: i64, node: NodeId) -> Option<LinkRange> {
+        self.ranging.link(now_us, node)
     }
 }
 

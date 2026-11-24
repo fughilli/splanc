@@ -72,6 +72,7 @@ extern "C" {
     // wifi_sta_ffi (the netstack's MAC).
     fn ns_mac_send_p2p(frame: *const u8, len: u32, queue: u32, rate: u32, pwr: u32, flags: u32) -> u32;
     fn ns_mac_tx_done(queue: u32, pmd: *mut u32) -> u32;
+    fn ns_mac_tx_ftm(queue: u32, out: *mut u32);
     // netstack_transport.cpp: the shared TX pacing (the STA path's g_tx_busy_until_us).
     fn lm_mesh_tx_idle() -> u32;
     fn lm_mesh_tx_hold(us: u32);
@@ -137,6 +138,11 @@ impl Radio for Mac {
     }
     fn now_us(&mut self) -> Option<i64> {
         Some(unsafe { esp_timer_get_time() })
+    }
+    fn tx_ftm(&mut self) -> Option<[u32; 3]> {
+        let mut w = [0u32; 3];
+        unsafe { ns_mac_tx_ftm(QUEUE, w.as_mut_ptr()) };
+        Some(w)
     }
 }
 
@@ -1142,7 +1148,9 @@ pub unsafe extern "C" fn ns_mesh_dev_forge(m: *mut Mesh, kind: u32, data: *const
 
 /// Settings: `what` 0 = group policy (0 bcast, 1 unicast), 1 = broadcast rate code,
 /// 2 = unicast rate code, 3 = tries, 4 = TX power byte, 5 = TSF read mode (0 floor, 1 raw,
-/// 2 latched), 6 = time beacon period (ms, 0 off). Returns 1 if applied.
+/// 2 latched), 6 = time beacon period (ms, 0 off), 7 = link ranging on/off, 8 = its zero-range
+/// constant K (raw units x 16), 9 = K is calibrated (1/0), 10 = the ranging period (ms).
+/// Returns 1 if applied.
 #[no_mangle]
 pub unsafe extern "C" fn ns_mesh_set(m: *mut Mesh, what: u32, v: u32) -> u32 {
     let m = &mut *m;
@@ -1156,6 +1164,11 @@ pub unsafe extern "C" fn ns_mesh_set(m: *mut Mesh, what: u32, v: u32) -> u32 {
         5 if v <= 2 => m.tsf_mode = v as u8,
         // The time beacon period (ms; 0: off).
         6 if v <= 10_000 => m.stack.set_time_beacon_us(v as i64 * 1000),
+        // Link ranging (splanc_mesh::ranging): off by default.
+        7 => m.stack.node.backhaul.ranging.cfg.enabled = v != 0,
+        8 if (1..=64_000).contains(&v) => m.stack.node.backhaul.ranging.cfg.k_raw_x16 = v as i32,
+        9 => m.stack.node.backhaul.ranging.cfg.calibrated = v != 0,
+        10 if (500..=600_000).contains(&v) => m.stack.node.backhaul.ranging.cfg.period_us = v as i64 * 1000,
         _ => return 0,
     }
     1
@@ -1290,6 +1303,55 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
                 adv.map_or(0, |a| a.channel),
             )
         }
+        (5, 0) => {
+            // Link ranging (splanc_mesh::ranging): this device's state and counters.
+            let r = &b.ranging;
+            let (c, t, v) = (&r.cfg, &r.stats, &r.vote);
+            write!(
+                w,
+                "[mesh] range self on={} phase={} votes={}/{}/{} k_x16={} cal={} period_ms={} rx_recs={} tx_recs={} rx_bad={} tx_bad={} probes={} reports={} reports_in={} bad_msgs={} matched={} exch={} rejected={} fits={} no_fit={}",
+                c.enabled as u8,
+                r.phase().ticks(),
+                v.low,
+                v.high,
+                v.other,
+                c.k_raw_x16,
+                c.calibrated as u8,
+                c.period_us / 1000,
+                t.rx_recs,
+                t.tx_recs,
+                t.rx_bad,
+                t.tx_bad,
+                t.probes,
+                t.reports,
+                t.reports_in,
+                t.bad_msgs,
+                t.matched,
+                t.exchanges,
+                t.rejected,
+                t.fits,
+                t.no_fit,
+            )
+        }
+        (5, i) => {
+            // One line per ranged neighbour: its LinkRange (or none yet).
+            let r = &b.ranging;
+            let Some(p) = r.peers.iter().flatten().nth(i as usize - 1) else { return false };
+            let l = r.link(now, p.id);
+            write!(
+                w,
+                "[mesh] range id={:04x} range_mm={} sigma_mm={} n={} age_ms={} phase_self={} phase_peer={} cal={} ppb={}",
+                p.id,
+                l.map_or(i32::MIN, |l| l.range_mm),
+                l.map_or(0, |l| l.sigma_mm),
+                l.map_or(0, |l| l.n),
+                l.map_or(-1, |l| l.age_ms as i64),
+                r.phase().ticks(),
+                p.phase_peer.ticks(),
+                l.is_some_and(|l| l.calibrated) as u8,
+                p.ppb.map_or(i64::MIN, |x| x as i64),
+            )
+        }
         (2, 0) => {
             let t = &b.stats;
             write!(
@@ -1417,6 +1479,8 @@ mod stubs {
     extern "C" fn ns_mac_tx_done(_: u32, _: *mut u32) -> u32 {
         1
     }
+    #[no_mangle]
+    extern "C" fn ns_mac_tx_ftm(_: u32, _: *mut u32) {}
     #[no_mangle]
     extern "C" fn lm_mesh_tx_idle() -> u32 {
         1

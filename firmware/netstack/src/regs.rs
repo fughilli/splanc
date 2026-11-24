@@ -129,6 +129,10 @@ pub mod mac {
     // (state/error bits read from offsets +0x0/+0x8/+0x14).
     pub const TXQ_STATUS_BASE: usize = 0x600A_54E0;
     pub const TXQ_STATUS_STRIDE: usize = 0x74; // subtracted per queue index
+    // Per-queue FTM timestamp words at `0x600a54f0 - queue*0x74` (+0, +4, +8): the last
+    // ACKed frame's TX stamp (t1) and its ACK's RX stamp (t4), latched by the MAC with no
+    // enable (libpp `lmac_record_txtime`; decode in `ftm::TxFtm`).
+    pub const TXQ_FTM_BASE: usize = 0x600A_54F0;
 
     // TX duration/rate config words and the global TXQ enable.
     pub const TX_CONF0: usize = 0x600A_40F8; // &0xffff | 0x0500_0000
