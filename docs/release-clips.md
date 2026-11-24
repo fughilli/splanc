@@ -92,7 +92,7 @@ Clips are published, so they must never show real data:
   "prs": [558],
   "route": "#/maps",
   "demo": "",
-  "framing": ["phone", "desktop"],
+  "framing": ["phone"],
   "theme": "dark",
   "storage": {},
   "fixtures": {},
@@ -105,23 +105,24 @@ Clips are published, so they must never show real data:
 }
 ```
 
-| Field         | Meaning                                                                                                        |
-| ------------- | -------------------------------------------------------------------------------------------------------------- |
-| `id`          | `[a-z0-9-]`, 2–48 characters; also the file name and the asset names                                           |
-| `title`       | Up to 60 characters. Shown on the clip in the card and as its heading on GitHub                                |
-| `summary`     | Up to 240 characters. One or two plain sentences under the clip                                                |
-| `prs`         | PRs this clip shows. It is included when any of them is in the release (or the script changed)                 |
-| `route`       | Hash route the recording starts on, e.g. `#/settings/ai`                                                       |
-| `demo`        | `?demo=` scenarios, comma-joined                                                                               |
-| `framing`     | `phone` (390×844 at 2×) and/or `desktop` (1280×800)                                                            |
-| `theme`       | `dark` or `light`                                                                                              |
-| `storage`     | `localStorage` seeds (string values), applied before the app boots                                             |
-| `fixtures`    | Served path → repo file, layered over the built app (`"/whatsnew/index.json": "web/src/…/index.json"`)         |
-| `setup`       | Steps run before recording starts (not in the clip)                                                            |
-| `steps`       | The recorded steps                                                                                             |
-| `poster_at`   | Seconds into the clip for the poster frame (default: the last frame)                                           |
-| `tail_ms`     | Hold on the final frame (default 900)                                                                          |
-| `app_version` | Make a local (non-release) build report this version. Use it for update-only UI such as the What's new sparkle |
+| Field                | Meaning                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `id`                 | `[a-z0-9-]`, 2–48 characters; also the file name and the asset names                                           |
+| `title`              | Up to 60 characters. Shown on the clip in the card and as its heading on GitHub                                |
+| `summary`            | Up to 240 characters. One or two plain sentences under the clip                                                |
+| `prs`                | PRs this clip shows. It is included when any of them is in the release (or the script changed)                 |
+| `route`              | Hash route the recording starts on, e.g. `#/settings/ai`                                                       |
+| `demo`               | `?demo=` scenarios, comma-joined                                                                               |
+| `framing`            | `phone` (390×844 at 2×). Add `desktop` (1280×800) only for a desktop-only feature, with `why_not_phone_dark`   |
+| `theme`              | `dark`. Use `light` only for a light-theme feature, with `why_not_phone_dark`                                  |
+| `why_not_phone_dark` | Required with desktop framing or the light theme: why this feature needs it                                    |
+| `storage`            | `localStorage` seeds (string values), applied before the app boots                                             |
+| `fixtures`           | Served path → repo file, layered over the built app (`"/whatsnew/index.json": "web/src/…/index.json"`)         |
+| `setup`              | Steps run before recording starts (not in the clip)                                                            |
+| `steps`              | The recorded steps                                                                                             |
+| `poster_at`          | Seconds into the clip for the poster frame (default: the last frame)                                           |
+| `tail_ms`            | Hold on the final frame (default 900)                                                                          |
+| `app_version`        | Make a local (non-release) build report this version. Use it for update-only UI such as the What's new sparkle |
 
 Steps (selectors are Playwright selectors: CSS, `:has-text('…')`, `>>`):
 
