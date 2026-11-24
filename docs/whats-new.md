@@ -8,9 +8,11 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 ### Effect language: state initial values and `init()`
 
 - **`state float level = 0.5;`** gives a state variable its starting value
-  (scalars, vectors, matrices). A state without one still starts at zero.
-- **`void init() { ... }`** runs once before the first `update()` after the
-  effect loads: seed arrays and agents there instead of a hand-rolled
+  (scalars, vectors, matrices). The value is a constant (`0.5`, `vec3(0.1, 0.2, 0.3)`);
+  starting values that come from a uniform or `time` go in `init()`. A state
+  without one still starts at zero.
+- **`void init() { ... }`** runs once when the effect loads, before the first
+  `update()`: seed arrays and agents there instead of a hand-rolled
   `state bool inited;` flag.
 - Plain bytecode, no firmware update needed: it runs the same on the device,
   the JIT and the editor preview, on old firmware too.

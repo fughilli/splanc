@@ -148,7 +148,7 @@ UNIFORM SYNTAX (expose the interesting parameters as uniforms with sensible rang
 - dropdown: uniform int mode : {"fire","ice"} = 0;
 - toggle:   uniform bool invert = false;
 
-STATE: \`state\` variables persist across frames — written by update(), read-only in shade(). Use them for phases/integrators. They start at zero, or at an initial value (\`state float level = 0.5;\`, scalars/vectors). Optional \`void init() { ... }\` runs once before the first update() — seed arrays/structs there.
+STATE: \`state\` variables persist across frames — written by update(), read-only in shade(). Use them for phases/integrators. They start at zero, or at an initial value that is a compile-time constant (\`state float level = 0.5;\`, \`state vec3 c = vec3(0.1, 0.2, 0.3);\`; never a uniform, time or another state). Optional \`void init() { ... }\` runs once when the effect loads — seed arrays/structs and anything computed from uniforms there.
 
 RATE CONTROLS — A COMMON BUG, NEVER DO IT: a uniform that sets a speed/rate/frequency must NOT multiply \`time\` inside a phase (\`fract(led.s - time * speed)\`, \`sin(time * rate)\`). \`time * speed\` rescales ALL the elapsed time, so moving the slider jumps the phase by Δspeed × time — after minutes of uptime the effect stutters wildly while the knob moves. Integrate each rate in update() as its OWN \`state\` phase, wrapped with fract so float precision stays bounded:
   state float ph;                                  // one phase per rate uniform

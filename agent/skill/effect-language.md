@@ -120,7 +120,9 @@ a `dot` per LED (`examples/plane_slice_pose.fx`).
 
 - `state float x;` — per-frame state; written by `update()`, read-only in `shade()`.
   Starts at zero, or at an initial value: `state float level = 0.5;` (scalar /
-  vector / matrix; may read uniforms and state declared above it).
+  vector / matrix). The initial value must be a compile-time constant (literals,
+  maths over them, `vec3(...)`); a uniform, `time` or another state there is an
+  error: set those in `init()`.
 - `void init() { ... }` — optional; runs once before the first `update()` after
   the effect loads (after the initial values). Seed arrays / structs here
   instead of a hand-rolled `state bool inited;` flag.

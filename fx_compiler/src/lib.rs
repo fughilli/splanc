@@ -597,17 +597,19 @@ pub struct Compiler {
     trigger_last: HashMap<String, u8>,
     poll_entry: u16,
     /// `state T x = expr;` initialisers (D-500), in declaration order: the
-    /// slot, type, token index of `expr`, and how many `state` names were
-    /// declared before this one (the initialiser only sees those). Compiled
-    /// into the init block (see [`Compiler::emit_init_block`]).
-    state_inits: Vec<(u8, Ty, usize, usize)>,
-    /// Every `state` name in declaration order (initialiser scoping).
-    state_names: Vec<String>,
+    /// slot, type, token index of `expr` and the state's name. Compiled into
+    /// the init block (see [`Compiler::emit_init_block`]).
+    state_inits: Vec<(u8, Ty, usize, String)>,
     /// `void init() { ... }` (D-500): the token index of its `{`. Its body is
     /// compiled into the init block after the program's other declarations.
     init_body: Option<usize>,
     /// While compiling init()'s body: the `return;` jumps to patch to its end.
     init_returns: Option<Vec<usize>>,
+    /// While compiling a state initial value (D-506): it must be a compile-time
+    /// constant, so anything that reads the program's inputs is an error.
+    const_init: bool,
+    /// The init block was emitted: the `.fxb` gets [`FLAG_INIT`].
+    has_init: bool,
     // FUG-125: run the bytecode optimizer in `finish`. Off only for the
     // differential test harness / instruction-count measurements.
     optimize: bool,
@@ -795,9 +797,10 @@ impl Compiler {
             trigger_last: HashMap::new(),
             poll_entry: NO_ENTRY,
             state_inits: Vec::new(),
-            state_names: Vec::new(),
             init_body: None,
             init_returns: None,
+            const_init: false,
+            has_init: false,
             optimize,
             memo,
             lint: lint::Lint::default(),
@@ -1457,9 +1460,8 @@ impl Compiler {
         let slot = self.alloc_state(w)?;
         self.note_sym("state", &name, slot, w);
         if let Some(at) = init_at {
-            self.state_inits.push((slot, ty, at, self.state_names.len()));
+            self.state_inits.push((slot, ty, at, name.clone()));
         }
-        self.state_names.push(name.clone());
         self.syms.insert(name, Sym { kind: SymKind::State, slot, ty });
         Ok(())
     }
@@ -1514,21 +1516,28 @@ impl Compiler {
     /// poll()) entry becomes
     ///
     /// ```text
-    /// E:  LoadState done      ; hidden flag, 0 when the state is fresh
+    /// E:  LoadState done 1    ; hidden flag, 0 when the state is fresh
     ///     BrFalse I
-    ///     Jmp update          ; (Ret 0 when there is no update())
-    /// I:  done = 1
-    ///     state initialisers, in declaration order
+    /// U:  Jmp update          ; (Ret 0 when there is no update())
+    /// I:  PushConst 1; StoreState done 1
+    /// S:  state initial values, in declaration order (constants, D-506)
     ///     init() body         ; its `return;` jumps to R
-    /// R:  Jmp update          ; (Ret 0)
+    /// R:  LoadState done 1
+    ///     BrFalse X
+    ///     Jmp update          ; (Ret 0)
+    /// X:  Ret 0               ; entered at S by the host: stop here
     /// ```
     ///
-    /// So it runs on the first update() after the state starts at zero — every
-    /// effect load (and the editor preview's every recompile) — on every
-    /// execution path that runs the bytecode (VM, JIT, preview, old firmware:
-    /// it is plain existing opcodes, no format change), costing three ops per
-    /// frame afterwards. The flag is set first, so an init that blows the
-    /// instruction budget is not retried every frame (the effect keeps running).
+    /// The `.fxb` carries [`FLAG_INIT`]: a host runs from `S` (with `done`
+    /// still 0, so it stops at `X`) when it loads the effect
+    /// (`fx_vm::Vm::run_init`, which then sets `done`), so init happens at load, before anything
+    /// else touches the state (a mesh catch-up's `shared state` restore must win
+    /// over it). A host that doesn't (older firmware, a bare `run_update`) still
+    /// gets it from the guard on its first update(), so every execution path
+    /// that runs the bytecode (VM, JIT, preview, old firmware) initialises once.
+    /// Steady state costs three ops per frame. The flag is set first, so an init
+    /// that blows the instruction budget is not retried every frame (the effect
+    /// keeps running).
     fn emit_init_block(&mut self) -> Result<(), Diagnostic> {
         use fx_vm_op::*;
         if self.state_inits.is_empty() && self.init_body.is_none() {
@@ -1551,25 +1560,19 @@ impl Compiler {
         self.emit_continue(target);
         let rel = (self.code.len() as isize - (patch_init + 2) as isize) as i16;
         self.code[patch_init..patch_init + 2].copy_from_slice(&rel.to_le_bytes());
+        // I: done = 1 (the lazy path), then S.
         self.push_const(1.0f32.to_bits());
         self.emit(STORE_STATE);
         self.emit(done);
         self.emit(1);
-        for (slot, ty, at, n_before) in self.state_inits.clone() {
-            // An initialiser sees the state declared above it, not itself or
-            // anything below (those are still zero when it runs).
-            let hidden: Vec<(String, Sym)> = self.state_names[n_before..]
-                .iter()
-                .filter_map(|n| self.syms.remove(n).map(|s| (n.clone(), s)))
-                .collect();
+        for (slot, ty, at, name) in self.state_inits.clone() {
             self.p = at;
+            self.const_init = true;
             let r = self.expr().and_then(|t| self.coerce(t, ty));
-            for (n, s) in hidden {
-                self.syms.insert(n, s);
-            }
+            self.const_init = false;
             r?;
             let taint = std::mem::take(&mut self.lint.taint);
-            self.lint.vars.insert(self.state_names[n_before].clone(), taint);
+            self.lint.vars.insert(name, taint);
             let w = self.ty_width(ty);
             self.emit(STORE_STATE);
             self.emit(slot);
@@ -1590,14 +1593,56 @@ impl Compiler {
             let syms = &self.syms;
             self.lint.vars.retain(|n, _| syms.contains_key(n));
         }
+        // R: continue into update() on the lazy path; stop when entered at S.
+        self.emit(LOAD_STATE);
+        self.emit(done);
+        self.emit(1);
+        self.emit(BR_FALSE);
+        let patch_x = self.code.len();
+        self.emit_u16(0);
         self.emit_continue(target);
+        let rel = (self.code.len() as isize - (patch_x + 2) as isize) as i16;
+        self.code[patch_x..patch_x + 2].copy_from_slice(&rel.to_le_bytes());
+        self.emit(RET);
+        self.emit(0);
         if is_driver {
             self.poll_entry = entry;
         } else {
             self.update_entry = entry;
         }
+        self.has_init = true;
         self.p = save_p;
         Ok(())
+    }
+
+    /// D-506: a `state` initial value is a compile-time constant (literals,
+    /// constant maths over them, vector/matrix constructors and casts). This is
+    /// the error for the input `id` (the token at `at`) it read instead.
+    fn not_constant<T>(&self, at: usize, what: String) -> Result<T, Diagnostic> {
+        let (_, line, col) = &self.lx_toks[at.min(self.lx_toks.len() - 1)];
+        Err(Diagnostic {
+            line: *line,
+            col: *col,
+            msg: format!(
+                "a state's initial value must be a compile-time constant, and {what}; \
+                 set it in `void init() {{ ... }}` instead (init() may read uniforms, time and state)"
+            ),
+        })
+    }
+
+    /// Why identifier `id` (not a call) is not a compile-time constant.
+    fn non_const_ident(&self, id: &str) -> String {
+        match id {
+            "time" | "dt" | "frame" => format!("`{id}` changes every frame"),
+            "led" | "imu" | "room" => format!("`{id}.*` is not known at compile time"),
+            _ => match self.syms.get(id).map(|s| s.kind) {
+                Some(SymKind::Uniform) => format!("`{id}` is a uniform"),
+                Some(SymKind::State) => format!("`{id}` is a state (initial values can't read state)"),
+                Some(SymKind::Buffer) => format!("`{id}` is a buffer"),
+                Some(SymKind::Local) => format!("`{id}` is a variable"),
+                None => format!("`{id}` is not a constant"),
+            },
+        }
     }
 
     /// The init block's exit: jump into the program's own update() / poll(), or
@@ -1857,7 +1902,7 @@ impl Compiler {
             Tok::Ident(kw) if kw == "return" => {
                 self.advance();
                 if self.init_returns.is_some() {
-                    // init(): `return;` leaves the init block (patched to its end).
+                    // init(): `return;` leaves the init code (patched to its end).
                     if *self.cur() != Tok::Sym(';') {
                         return self.err("init() returns nothing");
                     }
@@ -3122,6 +3167,9 @@ impl Compiler {
                 self.expect_sym(')')?;
                 Ok(t)
             }
+            Tok::Ident(id) if self.const_init && (id == "led" || id == "imu" || id == "room") => {
+                self.not_constant(self.p, self.non_const_ident(&id))
+            }
             Tok::Ident(id) if id == "led" || id == "imu" || id == "room" => {
                 // namespace access: led.pos / led.idx / imu.accel ... (further
                 // swizzles like led.pos.x are then handled by postfix()).
@@ -3134,6 +3182,9 @@ impl Compiler {
                 self.advance();
                 if *self.cur() == Tok::Sym('(') {
                     return self.call(&id);
+                }
+                if self.const_init {
+                    return self.not_constant(self.p - 1, self.non_const_ident(&id));
                 }
                 if let Some(sym) = self.syms.get(&id).copied() {
                     // Buffer element read: `buf[i]` -> LoadBuf, result = elem type.
@@ -3208,6 +3259,14 @@ impl Compiler {
     }
 
     fn call(&mut self, name: &str) -> Result<Ty, Diagnostic> {
+        if self.const_init && Self::ty_from_ident(name).is_none() && !CONST_BUILTINS.contains(&name) {
+            let what = if self.funcs.contains_key(name) {
+                format!("`{name}()` is a helper function call")
+            } else {
+                format!("`{name}()` is not a constant function")
+            };
+            return self.not_constant(self.p - 1, what);
+        }
         self.expect_sym('(')?;
         // Trigger ops take the trigger's NAME.
         if name == "fired" || name == "fire" {
@@ -4133,6 +4192,9 @@ impl Compiler {
         if is_driver {
             flags |= FLAG_DRIVER;
         }
+        if self.has_init {
+            flags |= FLAG_INIT;
+        }
         let has_memo = report.led_cache_words > 0 || report.prep_entry != NO_ENTRY;
         if has_memo {
             flags |= FLAG_MEMO;
@@ -4786,6 +4848,20 @@ const FLAG_USES_UV: u8 = 0x04;
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_USES_ROOM): the program reads the room
 /// frame (`led.room` / `room.min` / `room.max`).
 const FLAG_USES_ROOM: u8 = 0x08;
+/// Built-ins that are pure maths, allowed in a `state` initial value (D-506):
+/// no device, topology, texture, trigger or I2C input.
+const CONST_BUILTINS: &[&str] = &[
+    "sin", "cos", "tan", "abs", "sign", "floor", "ceil", "fract", "sqrt", "exp", "log", "min", "max",
+    "pow", "mod", "step", "atan2", "clamp", "mix", "smoothstep", "dot", "cross", "length", "normalize",
+    "distance", "hsv2rgb", "hash", "palette", "palette0", "palette1", "palette2", "transpose", "transform",
+];
+
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_INIT): the update() (driver: poll())
+/// entry starts with the init guard `LoadState done 1; BrFalse I`, and `I` is
+/// `PushConst; StoreState done 1`, followed by the init code a host runs at
+/// load ([`Compiler::emit_init_block`]).
+const FLAG_INIT: u8 = 0x80;
+
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_DRIVER): a sensor driver whose poll()
 /// entry sits in the shade slot and whose manifest is the export table.
 const FLAG_DRIVER: u8 = 0x10;

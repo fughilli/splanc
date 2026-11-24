@@ -622,6 +622,16 @@ pub const FLAG_DRIVER: u8 = 0x10;
 ///    per frame. Hosts that don't bind one run the original code unchanged.
 /// (0x10 is FUG-107's [`FLAG_DRIVER`].)
 pub const FLAG_MEMO: u8 = 0x20;
+/// flags bit (D-500): the program has state initial values / `void init()`. Its
+/// update() entry (a driver's: poll()) starts with the init guard
+/// `LoadState done 1; BrFalse I`; `I` is `PushConst 1; StoreState done 1` (the
+/// first-update path), and the init code follows it. That code ends by
+/// re-testing `done`: still 0 (entered past `I` by [`Vm::run_init`]) it returns,
+/// else it continues into update(). A host runs it when it loads the program, so
+/// init happens at load, before anything else writes the state; a host that
+/// doesn't still gets it from the guard on the first update(). No extra bytes:
+/// a host that predates the flag ignores it.
+pub const FLAG_INIT: u8 = 0x80;
 /// Most memo words one program may request per LED (the validity mask is one
 /// bit per word, at most 4 bytes).
 pub const LED_CACHE_MAX_WORDS: usize = 32;
@@ -1628,7 +1638,60 @@ impl Vm {
         frame: &Frame,
         budget: &Budget,
     ) -> (Outcome, Counters) {
-        if prog.update_entry == NO_ENTRY {
+        self.run_frame_code(prog, frame, budget, prog.update_entry)
+    }
+
+    /// The init code of a [`FLAG_INIT`] program: `(done flag slot, entry)`,
+    /// or `None` when it has none (or the guard isn't where the flag says).
+    pub fn init_entry(prog: &Program) -> Option<(usize, usize)> {
+        if prog.flags & FLAG_INIT == 0 || prog.flags & FLAG_DRIVER != 0 {
+            return None;
+        }
+        let code = prog.code;
+        let e = prog.update_entry as usize;
+        if code.get(e) != Some(&(Op::LoadState as u8)) || code.get(e + 2) != Some(&1) {
+            return None;
+        }
+        if code.get(e + 3) != Some(&(Op::BrFalse as u8)) {
+            return None;
+        }
+        let rel = i16::from_le_bytes([*code.get(e + 4)?, *code.get(e + 5)?]) as isize;
+        let i = (e as isize + 6 + rel) as usize;
+        let done = code[e + 1];
+        if code.get(i) != Some(&(Op::PushConst as u8))
+            || code.get(i + 3) != Some(&(Op::StoreState as u8))
+            || code.get(i + 4) != Some(&done)
+            || code.get(i + 5) != Some(&1)
+        {
+            return None;
+        }
+        let s = i + 6;
+        (s < code.len() && (done as usize) < prog.n_state as usize).then_some((done as usize, s))
+    }
+
+    /// D-500: run the program's state initial values and `void init()` now — call
+    /// it when the program is loaded into this VM (fresh state, uniforms set),
+    /// before anything else writes the state, so a later restore (a mesh
+    /// catch-up's `shared state`) wins over init and the first update() doesn't
+    /// re-run it. `frame` is what init() reads as time/dt/frame. Returns false
+    /// (and runs nothing) when the program has no init or it already ran; such a
+    /// program initialises on its first update() instead.
+    pub fn run_init(&mut self, prog: &Program, frame: &Frame, budget: &Budget) -> bool {
+        let Some((done, s)) = Self::init_entry(prog) else { return false };
+        if self.state[done] != 0.0 {
+            return false;
+        }
+        // Entered past the `done = 1` store, the init code returns at its end
+        // instead of continuing into update(). Then mark it done (also when the
+        // budget cut it off: it is not retried every frame).
+        self.run_frame_code(prog, frame, budget, s as u16);
+        self.state[done] = 1.0;
+        true
+    }
+
+    /// Run frame-level code (update(), or the init code) from `entry`.
+    fn run_frame_code(&mut self, prog: &Program, frame: &Frame, budget: &Budget, entry: u16) -> (Outcome, Counters) {
+        if entry == NO_ENTRY {
             return (Outcome::Ok, Counters::default());
         }
         let led = Led::default();
@@ -1666,7 +1729,7 @@ impl Vm {
             &mut self.stack,
             &mut self.locals,
             &mut self.call_stack,
-            prog.update_entry as usize,
+            entry as usize,
             budget,
             self.jit_blocks,
             self.jit_len,

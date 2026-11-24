@@ -197,10 +197,11 @@ fn make_ctx(
 /// D-500: state initial values + init() (an init block in front of update()).
 const INIT_STATE: &str = r#"uniform float speed : 0.0 .. 5.0 = 1.0;
 uniform float start : 0.0 .. 1.0 = 0.25;
-state float ph = start;
-state vec3 tint = vec3(0.2, 0.6, 1.0);
+state float ph;
+state vec3 tint = vec3(0.2, 0.6, 1.0) * 0.5;
 state float gain;
 void init() {
+  ph = start;
   gain = 0.5 + start;
   if (gain > 2.0) {
     return;

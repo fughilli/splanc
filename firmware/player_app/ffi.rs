@@ -5363,6 +5363,22 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     (*p).arena_len = alen;
     (&mut (*addr_of_mut!(FX_ARENA)))[off..off + alen].fill(0);
     bind_arena(p);
+    // D-500: state initial values + init() run here, at load (fresh state, uniforms
+    // at their defaults), not lazily in the first update(): anything that writes the
+    // state after the load (a mesh catch-up's `shared state` restore) then wins, and
+    // the first frame's guard skips init. Before the JIT patch, on the parsed bytes.
+    if let Some(vm) = (*p).vm.as_mut() {
+        let f = FxFrame {
+            time: FX_F_TIME,
+            dt: 0.0,
+            frame: FX_F_FRAME,
+            led_count: FX_F_LEDS,
+            time_fix: FX_F_TIME_FIX,
+            ..Default::default()
+        };
+        FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
+        vm.run_init(&prog, &f, &fx_budget());
+    }
     if d == DECK_A_IDX {
         // FUG-125: build the on-device JIT (patches JitCall into the resident
         // bytes + installs the segment table). Re-parse from the resident copy so

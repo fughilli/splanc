@@ -92,18 +92,139 @@ fn init_runs_once_before_update() {
 }
 
 #[test]
-fn initialisers_run_in_order_then_init() {
+fn initialisers_run_then_init_reads_uniforms_and_state() {
+    // D-507: init() reads uniforms and the initialised state like update().
     let src = format!(
         "uniform float start : 0.0 .. 10.0 = 4.0;
-         state float a = start;
-         state float b = a * 3.0;
-         state float c = 1.0;
-         void init() {{ c = b + a; }}
+         state float a = 2.0;
+         state float b;
+         void init() {{ b = start * a; a = a + 1.0; }}
          {SHADE}"
     );
-    assert_eq!(both(&src, 1, "a"), vec![4.0], "an initialiser may read a uniform");
-    assert_eq!(both(&src, 1, "b"), vec![12.0], "and the state declared above it");
-    assert_eq!(both(&src, 1, "c"), vec![16.0], "init() runs after every initialiser");
+    assert_eq!(both(&src, 1, "a"), vec![3.0], "init() runs after the initial values");
+    assert_eq!(both(&src, 1, "b"), vec![8.0], "init() may read a uniform");
+}
+
+#[test]
+fn constant_initialisers_are_accepted() {
+    // D-506: literals, constant maths over them, constructors, casts and pure
+    // built-ins.
+    let src = format!(
+        "state float a = 0.5 * 3.0 - (1.0 / 4.0);
+         state float b = -2.0;
+         state vec3 c = vec3(0.1, 0.2, 0.3) * 2.0;
+         state vec2 d = vec2(1.0);
+         state int n = 3 + 4 * 2;
+         state float e = sin(0.0) + clamp(2.0, 0.0, 1.0) + max(0.25, 0.125);
+         state float f = float(7);
+         state bool g = true;
+         state vec3 h = hsv2rgb(0.0, 0.0, 1.0);
+         state float k = vec3(1.0, 2.0, 3.0).y;
+         state fixed q = fixed(0.5);
+         {SHADE}"
+    );
+    assert_eq!(both(&src, 1, "a"), vec![1.25]);
+    assert_eq!(both(&src, 1, "b"), vec![-2.0]);
+    assert_eq!(both(&src, 1, "c"), vec![0.2, 0.4, 0.6]);
+    assert_eq!(both(&src, 1, "d"), vec![1.0, 1.0]);
+    assert_eq!(both(&src, 1, "n")[0].to_bits(), 11);
+    assert_eq!(both(&src, 1, "e"), vec![1.25]);
+    assert_eq!(both(&src, 1, "f"), vec![7.0]);
+    assert_eq!(both(&src, 1, "g"), vec![1.0]);
+    assert_eq!(both(&src, 1, "h"), vec![1.0, 1.0, 1.0]);
+    assert_eq!(both(&src, 1, "k"), vec![2.0]);
+    assert_eq!(both(&src, 1, "q")[0].to_bits(), 0x8000);
+}
+
+#[test]
+fn non_constant_initialisers_are_rejected_at_the_input() {
+    // D-506: anything that reads the program's inputs is an error that points at
+    // the offending token (line, col) and suggests init().
+    let pre = "uniform float speed : 0.0 .. 5.0 = 1.0;
+texture vec3 img(4, 4);
+state float early = 1.0;
+float twice(float v) { return v * 2.0; }
+";
+    for (decl, at, what) in [
+        ("state float x = speed * 2.0;", "speed", "is a uniform"),
+        ("state float x = 1.0 + time;", "time", "changes every frame"),
+        ("state float x = dt;", "dt", "changes every frame"),
+        ("state float x = float(frame);", "frame", "changes every frame"),
+        ("state float x = twice(1.0);", "twice", "helper function"),
+        ("state float x = early + 1.0;", "early", "is a state"),
+        ("state float x = x + 1.0;", "x + 1.0", "is a state"),
+        ("state vec3 x = led.pos;", "led", "not known at compile time"),
+        ("state vec3 x = sample(img, vec2(0.5));", "sample", "not a constant function"),
+        ("state float x = seg_len(0);", "seg_len", "not a constant function"),
+        ("state vec3 x = vec3(0.0, speed, 1.0);", "speed", "is a uniform"),
+    ] {
+        let src = format!("{pre}{decl}\n{SHADE}");
+        let d = match compile(&src) {
+            Ok(_) => panic!("compiled: {decl}"),
+            Err(d) => d[0].clone(),
+        };
+        assert!(d.msg.contains("compile-time constant"), "{decl}: {}", d.msg);
+        assert!(d.msg.contains(what), "{decl}: {}", d.msg);
+        assert!(d.msg.contains("void init()"), "{decl}: {}", d.msg);
+        assert_eq!(d.line, 5, "{decl}");
+        let col = decl.find(at).unwrap() as u32 + 1;
+        assert_eq!(d.col, col, "{decl}: points at `{at}`");
+    }
+    // Still the plain error for a name that doesn't exist.
+    let d = compile(&format!("state vec3 c = nope;\n{SHADE}")).err().unwrap();
+    assert!(d[0].msg.contains("not a constant"), "{}", d[0].msg);
+}
+
+#[test]
+fn run_init_runs_at_load_and_a_later_restore_wins() {
+    // The firmware runs init when it loads the effect (Vm::run_init), before a
+    // mesh catch-up restores `shared state` (#641): the restore must win, and
+    // the first update() must not re-run init over it.
+    let src = format!(
+        "uniform float start : 0.0 .. 10.0 = 4.0;
+         state float ph = 0.25;
+         state float mine;
+         void init() {{ mine = start; }}
+         void update() {{ ph = ph + dt; }}
+         {SHADE}"
+    );
+    for opt in [false, true] {
+        let c = build(&src, opt);
+        let prog = Program::parse(&c.fxb).unwrap();
+        assert!(Vm::init_entry(&prog).is_some(), "FLAG_INIT + guard found (opt={opt})");
+        let mut vm = Vm::new();
+        for u in &c.uniforms {
+            vm.set_uniform(u.slot as usize, &u.default);
+        }
+        let budget = ledmapper_fx_vm::Budget::default();
+        assert!(vm.run_init(&prog, &Frame::default(), &budget), "ran at load");
+        assert_eq!(state(&c, &vm, "ph"), vec![0.25]);
+        assert_eq!(state(&c, &vm, "mine"), vec![4.0]);
+        assert!(!vm.run_init(&prog, &Frame::default(), &budget), "only once");
+        // The restore: another fixture's phase.
+        let ph = c.symbols.iter().find(|s| s.name == "ph").unwrap().slot as usize;
+        vm.state[ph] = 7.0;
+        vm.run_update(&prog, &Frame { dt: 0.5, ..Default::default() });
+        assert_eq!(state(&c, &vm, "ph"), vec![7.5], "the restored value survived the first update()");
+        assert_eq!(state(&c, &vm, "mine"), vec![4.0]);
+    }
+}
+
+#[test]
+fn run_init_is_a_no_op_without_init() {
+    let src = format!("state float a; void update() {{ a = a + dt; }} {SHADE}");
+    let c = build(&src, true);
+    let prog = Program::parse(&c.fxb).unwrap();
+    assert!(Vm::init_entry(&prog).is_none());
+    assert!(!Vm::new().run_init(&prog, &Frame::default(), &ledmapper_fx_vm::Budget::default()));
+    // A user `if (s) { helper(); }` at the top of update() is not mistaken for
+    // the init guard (no FLAG_INIT).
+    let src = format!(
+        "state float s; float h() {{ return 1.0; }}
+         void update() {{ if (s > 0.5) {{ s = h(); }} }} {SHADE}"
+    );
+    let c = build(&src, false);
+    assert!(Vm::init_entry(&Program::parse(&c.fxb).unwrap()).is_none());
 }
 
 #[test]
@@ -188,12 +309,13 @@ fn rejects_bad_init_declarations() {
     assert!(err("void init() { } void init() { }").contains("twice"));
     assert!(err("void init() { return 1.0; }").contains("returns nothing"));
     assert!(err("state float xs[4] = 1.0;").contains("init()"));
-    assert!(err("state float a = b; state float b = 1.0;").contains("unknown identifier"));
-    assert!(err("state float a = a + 1.0;").contains("unknown identifier"));
+    assert!(err("state float a = b; state float b = 1.0;").contains("compile-time constant"));
+    assert!(err("state float a = a + 1.0;").contains("compile-time constant"));
     assert!(err("state float a = ;").contains("initial value"));
     // An initialiser's own error points at it.
     let d = compile(&format!("state float a = 1.0;\nstate vec3 c = nope;\n{SHADE}")).err().unwrap();
     assert_eq!(d[0].line, 2);
+    assert_eq!(d[0].col, 16);
 }
 
 #[test]
