@@ -8,11 +8,15 @@ a real tap in the real UI; the harness reads only the DUTs' serial consoles (the
 non-resetting bridge), never a second wss to a fixture the app holds (a fixture takes one
 wss client).
 
-  setup        reserve, flash :esp32c6_netstack_meshdev, PROV onto the rig AP, map + effect
+  setup        reserve, flash :esp32c6_netstack_meshdev, PROV onto the rig AP, map + effect,
+               room poses for b and c (set_fixture_pose, commit=false), none for a
   create       Device ▸ Mesh ▸ "Create a mesh": intro, pick a+b+c, name, set up (each is
                provisioned by the app), joined; the browser-signed grant unlocks a
                (`[mesh] unlock ... -> ok`), b and c sync the session
   control      "Control the whole mesh" on
+  topology     Mesh ▸ "Show the mesh map": the three fixtures, their radio links, b and c
+               at the room poses the setup gave them (RAM only), a placed from its links;
+               the "Hops" colouring; a fixture's sheet opened by tapping it on the map
   effect       a new effect with uniforms (~2 KB fxb) typed into the editor and pushed:
                every DUT loads it on one frame (AP-beacon clock); the Mesh section's
                "Last change sent to the mesh" lists all three as reached
@@ -64,6 +68,8 @@ from mesh_app_e2e_core import (
     late_report,
     late_summary,
     mt_same_frame,
+    topology_ok,
+    topology_view,
     unlocks,
     verdict,
 )
@@ -108,6 +114,38 @@ def _chromium(p):
 # The effect editor's regions, each checked on its own (editor_scenarios.py): the pane
 # strips, and the floating toolbar.
 EDITOR_REGIONS = (".fxlayout-edgetabs, .fxlayout-tabs, .fxpane-head", ".fxedit-drawer")
+
+
+# Room poses for the mesh map (the topology step): b and c on one bench, a without one.
+# commit=false: RAM only, the rig's DUTs are shared (a reboot drops them).
+POSES = {
+    "b": {
+        "room": "Rig bench",
+        "translation": [1.2, 0.8, 0.0],
+        "rotation": [0.0, 0.3826834, 0.0, 0.9238795],
+    },
+    "c": {"room": "Rig bench", "translation": [-0.6, 1.4, 0.9]},
+}
+
+# The mesh map's fixture rows (#/mesh/topology): name, detail line, node id, placed in the room.
+TOPO_ROWS_JS = (
+    "() => [...document.querySelectorAll('.mtopo-member')].map(b => ({"
+    " name: (b.querySelector('.mesh-member-name') || {}).textContent || '',"
+    " detail: (b.querySelector('.mesh-member-detail') || {}).textContent || '',"
+    " node: Number(b.dataset.node), placed: !b.querySelector('.mtopo-dot--hollow') }))"
+)
+
+
+async def _set_pose(ws_url: str, pose: dict | None) -> None:
+    """set_fixture_pose (or clear) on one fixture, live only."""
+    from hitl_led_timing import _connect_ws, _rpc, _ssl_ctx
+
+    sock = await _connect_ws(ws_url, _ssl_ctx(ws_url))
+    async with sock:
+        await _rpc(sock, {"type": "hello", "client": "mesh_app_e2e", "app_version": "1"}, "welcome")
+        msg = {"type": "set_fixture_pose", "commit": False}
+        msg.update({"pose": pose} if pose else {"clear": True})
+        await _rpc(sock, msg, "welcome")
 
 
 class App:
@@ -429,6 +467,7 @@ def run(args: argparse.Namespace) -> int:
             lease(d, m)
         for d in duts:
             asyncio.run(_load_effect(d.url, tint, args.leds))
+            asyncio.run(_set_pose(d.url, POSES.get(d.label)))
         time.sleep(args.settle)  # the harness's own connections closed; slots re-listening
         record["units"] = {d.label: {"unit": d.res._unit, "ip": d.ip} for d in duts}
 
@@ -640,6 +679,61 @@ def run(args: argparse.Namespace) -> int:
                 s["ok"] = s["switch"] == "true"
 
             need("control")
+            with step("topology") as s:
+                app.open_device_sheet()
+                app.click(".mesh-section button:has-text('Show the mesh map')")
+                app.wait(".mesh-topo-view", 20_000)
+                t0 = time.monotonic()
+                why: list[str] = ["not read"]
+                v: dict = {}
+                rows: list[dict] = []
+                # Members report their topology within a status period (10 s) of joining.
+                while True:
+                    rows = page.evaluate(TOPO_ROWS_JS) or []
+                    v = topology_view(app.text(".mtopo-status"), rows)
+                    ok, why = topology_ok(v, 3, 2)
+                    if ok or time.monotonic() - t0 > args.topology_timeout:
+                        break
+                    page.wait_for_timeout(2000)
+                s["converged_s"] = round(time.monotonic() - t0, 1)
+                s["view"] = v
+                s["rows"] = rows
+                s["note"] = app.text(".mtopo-note")
+                page.wait_for_timeout(800)
+                app.shot("mesh-map")
+                app.click(".mtopo-seg button[data-colouring='hops']")
+                page.wait_for_timeout(400)
+                app.shot("mesh-map-hops")
+                app.click(".mtopo-seg button[data-colouring='signal']")
+                # Tap b where the map drew it: its sheet, with its room position and links.
+                b_row = next((r for r in rows if label("b") in r["name"]), None)
+                pos = page.evaluate(
+                    "() => JSON.parse(document.querySelector('.mesh-topo-view').dataset.nodes || '{}')"
+                )
+                tapped = False
+                if b_row and str(b_row["node"]) in pos:
+                    x, y = pos[str(b_row["node"])]
+                    page.locator(".mesh-topo-view").first.click(position={"x": x, "y": y})
+                    try:
+                        app.wait(".mtopo-sheet", 5_000)
+                        tapped = True
+                    except Exception:  # noqa: BLE001
+                        pass
+                if not tapped and b_row:
+                    app.click(f".mtopo-member[data-node='{b_row['node']}']")
+                    app.wait(".mtopo-sheet", 10_000)
+                s["tapped_on_map"] = tapped
+                s["sheet"] = app.text(".mtopo-sheet")
+                app.shot("mesh-map-node")
+                app.close_sheets()
+                fails = list(why)
+                if "Rig bench" not in s["sheet"] or "Link to" not in s["sheet"]:
+                    fails.append(f"node sheet: {s['sheet'][:200]!r}")
+                if not tapped:
+                    fails.append("tapping the node on the map did not open its sheet")
+                s["fail"] = "; ".join(fails) or None
+                s["ok"] = not fails
+
             st: dict = {}
 
             def push_effect(s: dict, name: str) -> None:
@@ -757,14 +851,24 @@ def run(args: argparse.Namespace) -> int:
                 s["members_after_2s"] = app.text(".mesh-members")
                 app.shot("device-sheet-after-eject")
                 # The section re-reads the mesh every 3 s: how long until c is off the list?
-                n_rows = 3
-                while time.monotonic() - t_ej < args.eject_list_timeout:
+                # Count at least once: on a loaded host the 2 s wait, the sheet and the
+                # screenshot alone can outlast the timeout, and an uncounted list is not a
+                # listed fixture (r1 of #640 failed so with c already off the list).
+                while True:
                     n_rows = page.locator(".mesh-members .mesh-member").count()
-                    if n_rows <= 2:
+                    if n_rows <= 2 or time.monotonic() - t_ej >= args.eject_list_timeout:
                         break
                     page.wait_for_timeout(1000)
                 s["members"] = app.text(".mesh-members")
                 s["listed_s"] = round(time.monotonic() - t_ej, 1)
+                # Every member list in the page (where a stray row comes from).
+                s["lists"] = page.evaluate(
+                    "() => [...document.querySelectorAll('.mesh-members')].map(l => ({"
+                    " where: [...(function* (e) { for (; e && e !== document.body;"
+                    " e = e.parentElement) yield e.className || e.tagName; })(l)].slice(0, 6),"
+                    " hidden: !!l.closest('[hidden]') || l.getClientRects().length === 0,"
+                    " rows: [...l.querySelectorAll('.mesh-member')].map(b => b.innerText.split('\\n')[0]) }))"
+                )
                 app.shot("device-sheet-after-eject-settled")
                 s["c_phase"] = info(c).get("phase")
                 s["ok"] = bool(line) and n_rows <= 2
@@ -1029,6 +1133,9 @@ def main() -> int:
     ap.add_argument("--catchup-timeout", type=float, default=60.0)
     ap.add_argument("--lease-timeout", type=float, default=90.0)
     ap.add_argument("--settle", type=float, default=4.0)
+    ap.add_argument(
+        "--topology-timeout", type=float, default=45.0, help="s for the mesh map to converge"
+    )
     ap.add_argument("--bridge-seconds", type=float, default=3600.0)
     ap.add_argument("--skip-flash", action="store_true", help="the DUTs already run the image")
     ap.add_argument("--strict-late", action="store_true", help="any late frame outside boot fails")

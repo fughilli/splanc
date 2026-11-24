@@ -7,6 +7,11 @@ runs: the app makes its WebCrypto admin key, tries each fixture over wss, and la
 "some fixtures didn't join" step with its retry, which is what a phone off the fixtures'
 network sees. The joined states and the device sheet's Mesh section need a live mesh
 fixture: they are unit-tested (web/tests/meshAdmin.test.ts) and checked on real lamps.
+
+The mesh map (#/mesh/topology) runs on the app's `?demo=device,meshtopo` seam: a connected
+"Living Room" gateway with four others (two placed in the room, one unplaced two hops out,
+one on older firmware), its node sheet opened from the fixture list, and the "Hops" link
+colouring.
 """
 
 from __future__ import annotations
@@ -68,5 +73,48 @@ SCENARIOS = [
         seed=SEED,
         steps=TO_UNREACHABLE,
         expect=btn("Try the failed ones again"),
+    ),
+]
+
+# The mesh map (#/mesh/topology) on the demo mesh.
+TOPO = [("wait_for", ".mtopo-member", 15000), ("wait", 400)]
+SCENARIOS += [
+    Scenario(
+        "mesh-10-topology",
+        "#/mesh/topology",
+        search="?demo=device,meshtopo",
+        steps=TOPO,
+        expect=".mesh-topo-view",
+    ),
+    Scenario(
+        "mesh-11-topology-hops",
+        "#/mesh/topology",
+        search="?demo=device,meshtopo",
+        steps=TOPO + [("click", '.mtopo-seg button[data-colouring="hops"]'), ("wait", 300)],
+        expect='.mtopo-seg button.on[data-colouring="hops"]',
+    ),
+    Scenario(
+        "mesh-12-topology-node",
+        "#/mesh/topology",
+        search="?demo=device,meshtopo",
+        steps=TOPO + [("click", '.mtopo-member[data-node="21191"]'), ("wait", 500)],
+        root=".k-sheet",
+        expect=".mtopo-sheet",
+    ),
+    # The device sheet's Mesh section with its way into the map.
+    Scenario(
+        "mesh-13-section-map-entry",
+        "#/maps",
+        search="?demo=device,meshtopo",
+        steps=[
+            ("wait_for", ".tab[data-tab=device]", 15000),
+            ("click", ".tab[data-tab=device]"),
+            ("wait_for", ".k-sheet button[title=Options]", 15000),
+            ("click", ".k-sheet button[title=Options]"),
+            ("wait_for", 'button:has-text("Show the mesh map")', 15000),
+        ],
+        # The detail sheet only (the device list sheet stays open under it).
+        root=".k-sheet:has(.mesh-section)",
+        expect='button:has-text("Show the mesh map")',
     ),
 ]

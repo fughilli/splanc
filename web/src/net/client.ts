@@ -85,6 +85,8 @@ import {
 import { LiveControl, applyAt } from "./liveControl";
 import {
   meshAdminMessage,
+  meshTopologyRequest,
+  readMeshTopology,
   meshResultError,
   meshLargeSender,
   meshRoute,
@@ -1414,6 +1416,18 @@ export class LedMapperClient {
     const r = (await this.request({ type: "get_mesh" } as unknown as ClientMessage, "mesh", timeoutMs)) as unknown as MeshInfoMessage;
     this.meshState_ = r.state ?? {};
     return this.meshState_;
+  }
+
+  /** The mesh with its topology (the mesh map): every member's room pose, hops and radio
+   * neighbours, and this fixture's own; read in as many pages as the mesh needs. Older
+   * firmware answers a plain state (no topology fields). */
+  async getMeshTopology(timeoutMs = 5000): Promise<MeshStateInfo> {
+    const s = await readMeshTopology(async (from) => {
+      const r = (await this.request(meshTopologyRequest(from), "mesh", timeoutMs)) as unknown as MeshInfoMessage;
+      return r.state ?? {};
+    });
+    this.meshState_ = s;
+    return s;
   }
 
   /** Membership and administration (mesh M7): provision this fixture into a mesh, unlock

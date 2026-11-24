@@ -23,6 +23,9 @@
  *                map) renders the Calibrate-IMU screen with its controls.
  *   mesh       — (with `device`) the controller is a mesh gateway with two other
  *                fixtures meshed with it (the device sheet's Mesh section, mesh M5).
+ *                Its topology (the mesh map, #/mesh/topology) places all three in the room.
+ *   meshtopo   — `mesh` plus two more fixtures for the mesh map: one with no room
+ *                position, two hops away, and one on older firmware (no topology).
  *   discovered — fixtures heard on the network (net/discovery.ts): two new ones
  *                ("Porch Arch", "Stair Rail") and a known "Kitchen" at a new
  *                address, so the lists show "On this network".
@@ -72,7 +75,7 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("effect")) setupEffectEditor();
   if (scenarios.has("flash")) setupFlashDemo();
   if (scenarios.has("imu")) setupImuDemo();
-  if (scenarios.has("mesh")) setupMeshDemo();
+  if (scenarios.has("mesh") || scenarios.has("meshtopo")) setupMeshDemo(scenarios.has("meshtopo"));
   if (scenarios.has("discovered")) void setupDiscovered();
   if (scenarios.has("stale")) void setupStale();
   if (scenarios.has("nousb")) setupNoUsb();
@@ -242,10 +245,37 @@ function setupConnectedDevice(): void {
   });
 }
 
-/** The demo controller is a mesh gateway with two others meshed with it (mesh M5). */
-function setupMeshDemo(): void {
+/** The demo controller is a mesh gateway with two others meshed with it (mesh M5); with
+ * `more`, two more for the mesh map (an unplaced one two hops away, one on old firmware). */
+function setupMeshDemo(more = false): void {
   const client = appState.client;
   if (!client) return;
+  const pose = (room: string, t: [number, number, number], yaw = 0) => ({
+    room,
+    translation: t,
+    rotation: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)],
+  });
+  const nb = (node: number, rssi: number, txOkPct?: number) => ({ node, rssi, ...(txOkPct !== undefined ? { txOkPct } : {}) });
+  const health = { fps: 80, sync: 2, firmware: 0x5e1f, uptimeS: 7260, heapFree: 61_000, heapMin: 38_000, brightness: 255 };
+  const members: Record<string, unknown>[] = [
+    {
+      node: 0x7c02, rssi: -38, seenMsAgo: 400, ...health, hops: 1, poseState: "MESH_POSE_SET", topologyMsAgo: 2100,
+      pose: pose("Living Room", [2.4, 1.1, -0.6], 1.2), neighbours: [nb(0x3a41, -39, 100), nb(0x91e4, -57, 98), ...(more ? [nb(0x52c7, -79, 71)] : [])],
+    },
+    {
+      node: 0x91e4, rssi: -44, seenMsAgo: 700, ...health, hops: 1, poseState: "MESH_POSE_SET", topologyMsAgo: 5400,
+      pose: pose("Living Room", [0.3, 2.2, -2.8], -0.4), neighbours: [nb(0x3a41, -45, 99), nb(0x7c02, -58, 97)],
+    },
+  ];
+  if (more) {
+    members.push(
+      {
+        node: 0x52c7, seenMsAgo: 1900, ...health, fps: 62, sync: 1, hops: 2, poseState: "MESH_POSE_NONE", topologyMsAgo: 8100,
+        neighbours: [nb(0x7c02, -77, 74)],
+      },
+      { node: 0xa0f3, rssi: -66, seenMsAgo: 2600, ...health, lastError: 27, lastErrorOp: 41 },
+    );
+  }
   const state = {
     on: true,
     member: true,
@@ -257,10 +287,14 @@ function setupMeshDemo(): void {
     sync: 2,
     timeErrUs: 41,
     epochGen: 1,
-    members: [
-      { node: 0x7c02, rssi: -38, seenMsAgo: 400, fps: 80, sync: 2 },
-      { node: 0x91e4, rssi: -44, seenMsAgo: 700, fps: 80, sync: 2 },
-    ],
+    members: members.map(({ hops: _h, pose: _p, poseState: _s, neighbours: _n, topologyMsAgo: _t, ...m }) => m),
+  };
+  const topology = {
+    ...state,
+    members,
+    poseState: "MESH_POSE_SET",
+    pose: pose("Living Room", [0, 0.9, 0]),
+    neighbours: [nb(0x7c02, -38, 100), nb(0x91e4, -44, 99), ...(more ? [nb(0xa0f3, -66)] : [])],
   };
   // A mesh-variant player says so in welcome.features (the app's mesh UI is gated on it).
   const base = client.welcome;
@@ -270,6 +304,10 @@ function setupMeshDemo(): void {
   c["getMesh"] = async () => {
     c["meshState_"] = state;
     return state;
+  };
+  c["getMeshTopology"] = async () => {
+    c["meshState_"] = topology;
+    return topology;
   };
 }
 

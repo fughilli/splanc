@@ -45,6 +45,34 @@ export interface MeshMemberInfo {
   timeErrUs?: number;
   lastError?: number;
   lastErrorOp?: number;
+  // The topology (get_mesh{topology}; empty from older firmware).
+  /** Mesh hops its status took to reach the connected fixture (1 = a direct neighbour). */
+  hops?: number;
+  pose?: MeshPoseInfo;
+  poseState?: string | number;
+  neighbours?: MeshNeighbourInfo[];
+  /** Since its last topology report; absent: none (older firmware, or not yet). */
+  topologyMsAgo?: number;
+}
+
+/** A member's room pose as the mesh carries it (FixturePose: room, translation, rotation). */
+export interface MeshPoseInfo {
+  room?: string;
+  /** Metres (x, y, z), to 1 cm. */
+  translation?: number[];
+  /** Unit quaternion (x, y, z, w); absent = identity. */
+  rotation?: number[];
+}
+
+/** One radio neighbour a member reported. */
+export interface MeshNeighbourInfo {
+  node: number;
+  /** dBm (running average). */
+  rssi?: number;
+  /** Unicasts delivered, percent; absent before the first. */
+  txOkPct?: number;
+  /** Reserved for Wi-Fi ranging (not sent yet). */
+  rangeM?: number;
 }
 
 export interface MeshMemberResultInfo {
@@ -94,6 +122,65 @@ export interface MeshStateInfo {
   sessionsSynced?: number;
   /** Mesh time in seconds: what a grant's expiry is in. */
   meshS?: number;
+  // The topology (get_mesh{topology}): this fixture's own pose and neighbours, and the
+  // next page of member topology (0 = this reply had them all).
+  pose?: MeshPoseInfo;
+  poseState?: string | number;
+  neighbours?: MeshNeighbourInfo[];
+  topologyNext?: number;
+}
+
+const POSE_STATES = ["MESH_POSE_UNKNOWN", "MESH_POSE_NONE", "MESH_POSE_SET"];
+
+/** A pose state as its name: "MESH_POSE_UNKNOWN" | "MESH_POSE_NONE" | "MESH_POSE_SET". */
+export function meshPoseState(s: string | number | undefined): string {
+  if (s === undefined) return POSE_STATES[0]!;
+  return typeof s === "number" ? (POSE_STATES[s] ?? POSE_STATES[0]!) : s;
+}
+
+/** The `get_mesh` that asks for the topology, from member `from` on. */
+export function meshTopologyRequest(from: number): ClientMessage {
+  return { type: "get_mesh", topology: true, ...(from > 0 ? { topologyFrom: from } : {}) } as unknown as ClientMessage;
+}
+
+/** Whether a member's entry carries topology (in this page). */
+function hasTopology(m: MeshMemberInfo): boolean {
+  // (decoded frames carry every implicit field: hops 0, poseState UNKNOWN, neighbours [].)
+  return m.topologyMsAgo !== undefined || (m.neighbours?.length ?? 0) > 0 || m.pose !== undefined || (m.hops ?? 0) > 0 || meshPoseState(m.poseState) !== "MESH_POSE_UNKNOWN";
+}
+
+/** The topology pages of one `get_mesh{topology}` read as one state: the last page's state,
+ * each member's topology from whichever page carried it. */
+export function mergeTopologyPages(pages: MeshStateInfo[]): MeshStateInfo {
+  const last = pages[pages.length - 1];
+  if (!last) return {};
+  const topo = new Map<number, MeshMemberInfo>();
+  for (const p of pages) for (const m of p.members ?? []) if (hasTopology(m)) topo.set(m.node, m);
+  const members = (last.members ?? []).map((m) => {
+    const t = topo.get(m.node);
+    if (!t || t === m) return m;
+    const out: MeshMemberInfo = { ...m };
+    for (const k of ["hops", "pose", "poseState", "neighbours", "topologyMsAgo"] as const) {
+      if (t[k] !== undefined) (out as unknown as Record<string, unknown>)[k] = t[k];
+    }
+    return out;
+  });
+  const { topologyNext: _next, ...rest } = last;
+  return { ...rest, members };
+}
+
+/** Read the topology from `get` (one page per call), at most `maxPages` pages. */
+export async function readMeshTopology(get: (from: number) => Promise<MeshStateInfo>, maxPages = 8): Promise<MeshStateInfo> {
+  const pages: MeshStateInfo[] = [];
+  let from = 0;
+  for (let i = 0; i < maxPages; i++) {
+    const s = await get(from);
+    pages.push(s);
+    const next = s.topologyNext ?? 0;
+    if (next <= from) break;
+    from = next;
+  }
+  return mergeTopologyPages(pages);
 }
 
 /** A fixture waiting to join (approval: `admit`). */

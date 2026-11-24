@@ -124,3 +124,37 @@ def test_app_requests_name_the_arms():
         (5, "rx", 27, "9a031810"),  # a reply, not a request
     ]
     assert app_requests(frames, arms) == ["list_stored_effects", "get_sensors"]
+
+
+def test_topology_view_and_gate():
+    from mesh_app_e2e_core import topology_ok, topology_view
+
+    rows = [
+        {
+            "name": "Lamp A (this one)",
+            "detail": "Time synced · Connected to this phone · no room position",
+            "placed": False,
+        },
+        {
+            "name": "Lamp B",
+            "detail": "Time synced · 80 fps · Direct neighbour · in Rig bench",
+            "placed": True,
+        },
+        {
+            "name": "Lamp C",
+            "detail": "Time synced · 80 fps · Direct neighbour · in Rig bench",
+            "placed": True,
+        },
+    ]
+    v = topology_view("3 fixtures · 3 radio links · 2 of 3 placed in the room", rows)
+    assert (v["fixtures"], v["links"], v["rows"], v["direct"]) == (3, 3, 3, 2)
+    assert v["placed"] == ["Lamp B", "Lamp C"] and v["unplaced"] == ["Lamp A (this one)"]
+    assert topology_ok(v, 3, 2) == (True, [])
+    # Not converged yet: one link, a member heard through another, one on old firmware.
+    rows2 = [dict(r) for r in rows]
+    rows2[2]["detail"] = "Time synced · 2 hops away · no map data (older firmware)"
+    rows2[2]["placed"] = False
+    v2 = topology_view("3 fixtures · 1 radio link · 1 of 3 placed in the room", rows2)
+    ok, why = topology_ok(v2, 3, 2)
+    assert not ok and len(why) == 4, why
+    assert topology_view("Reading the mesh…", [])["fixtures"] == 0
