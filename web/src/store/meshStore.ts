@@ -83,6 +83,23 @@ const WRAP_KEY = "wrap-key";
 const MESH_PREFIX = "mesh:";
 /** A mesh backup's text form (exportBackup): this prefix, then base64 JSON. */
 export const BACKUP_PREFIX = "splanc-mesh-1:";
+/** A fixture's token kept without its mesh (putFixtureToken): `token:<meshId>:<node>`. */
+const TOKEN_PREFIX = "token:";
+
+/** A mesh backup's body (exportBody): hex secrets, the roster, and the tokens by node. */
+export interface MeshBackupBody {
+  v: 1;
+  meshId: number;
+  name: string;
+  admin: string;
+  site: string;
+  keyEpoch: number;
+  revVersion: number;
+  revoked: string[];
+  members: { label: string; node: number; keyHash: string }[];
+  /** Provisioner tokens (hex) by node; absent in backups made before share links. */
+  tokens?: Record<string, string>;
+}
 
 function utf8ToB64(s: string): string {
   let bin = "";
@@ -327,11 +344,23 @@ export class MeshStore {
   /** The mesh as one text a second phone imports (D-442): its id, name, admin secret, site
    * secret, key epoch, revocations and members. Whoever holds it administers the mesh. */
   async exportBackup(meshId: number): Promise<string> {
+    return BACKUP_PREFIX + utf8ToB64(JSON.stringify(await this.exportBody(meshId)));
+  }
+
+  /** The backup's body (also what a share link carries, docs/design/share-links.md): the
+   * backup fields plus the provisioner tokens this app holds, by node. */
+  async exportBody(meshId: number): Promise<MeshBackupBody> {
     const s = await this.stored(meshId);
     if (!s.admin) throw new Error("this mesh was made before admin backups: re-create it to back it up");
     const admin = await this.unseal(s.admin, meshId);
     const site = await this.unseal(s.site, meshId);
-    const body = {
+    const tokens: Record<string, string> = {};
+    for (const [node, t] of Object.entries(s.tokens ?? {})) {
+      const b = await this.unseal(t, meshId);
+      tokens[node] = toHex(b);
+      b.fill(0);
+    }
+    const body: MeshBackupBody = {
       v: 1,
       meshId: s.meshId >>> 0,
       name: s.name,
@@ -342,9 +371,10 @@ export class MeshStore {
       revoked: s.revoked,
       members: s.members.map((m) => ({ label: m.label, node: m.node, keyHash: m.keyHash })),
     };
+    if (Object.keys(tokens).length) body.tokens = tokens;
     admin.fill(0);
     site.fill(0);
-    return BACKUP_PREFIX + utf8ToB64(JSON.stringify(body));
+    return body;
   }
 
   /** A mesh from another phone's backup (exportBackup). Replaces this app's copy of the same
@@ -352,29 +382,41 @@ export class MeshStore {
   async importBackup(text: string): Promise<MeshRecord> {
     const t = text.trim();
     if (!t.startsWith(BACKUP_PREFIX)) throw new Error("not a Splanc mesh backup");
-    let b: {
-      v?: number;
-      meshId?: number;
-      name?: string;
-      admin?: string;
-      site?: string;
-      keyEpoch?: number;
-      revVersion?: number;
-      revoked?: string[];
-      members?: { label?: string; node?: number; keyHash?: string }[];
-    };
+    let b: Partial<MeshBackupBody>;
     try {
-      b = JSON.parse(b64ToUtf8(t.slice(BACKUP_PREFIX.length)));
+      b = JSON.parse(b64ToUtf8(t.slice(BACKUP_PREFIX.length))) as Partial<MeshBackupBody>;
     } catch {
       throw new Error("this mesh backup is damaged");
     }
-    if (b.v !== 1 || typeof b.meshId !== "number" || !b.admin || !b.site) throw new Error("this mesh backup is damaged");
+    return this.importBody(b);
+  }
+
+  /** A backup body (importBackup, or a share link's). Tokens this phone already holds for
+   * the mesh (its own, or a fixture shared on its own) are kept. */
+  async importBody(b: Partial<MeshBackupBody>): Promise<MeshRecord> {
+    if (b?.v !== 1 || typeof b.meshId !== "number" || !b.admin || !b.site) throw new Error("this mesh backup is damaged");
     const meshId = b.meshId >>> 0;
     const admin = fromHex(b.admin);
     const site = fromHex(b.site);
     if (admin.length !== 16 || site.length !== 32) throw new Error("this mesh backup is damaged");
     await this.load();
     const adminPublic = (await adminSignerFromSecret(admin, meshId)).publicKey;
+    const be = this.be();
+    const prev = (await be.get(MESH_PREFIX + meshId)) as StoredMesh | undefined;
+    const tokens: Record<string, Sealed> = { ...(prev?.tokens ?? {}) };
+    for (const [node, hex] of Object.entries(b.tokens ?? {})) {
+      const raw = fromHex(hex);
+      if (raw.length === 16) tokens[node] = await this.seal(raw, meshId);
+      raw.fill(0);
+    }
+    const loose = `${TOKEN_PREFIX}${meshId}:`;
+    for (const k of await be.keys()) {
+      if (!k.startsWith(loose)) continue;
+      const node = k.slice(loose.length);
+      const t = (await be.get(k)) as Sealed | undefined;
+      if (t && !tokens[node]) tokens[node] = t;
+      await be.del(k);
+    }
     const rec: StoredMesh = {
       meshId,
       name: (b.name ?? "").trim() || "Home mesh",
@@ -387,6 +429,7 @@ export class MeshStore {
       members: (b.members ?? []).map((m) => ({ deviceId: "", label: m.label ?? "", node: m.node ?? 0, keyHash: m.keyHash ?? "" })),
       revoked: [...(b.revoked ?? [])],
     };
+    if (Object.keys(tokens).length) rec.tokens = tokens;
     admin.fill(0);
     site.fill(0);
     this.signers.delete(meshId);
@@ -408,11 +451,35 @@ export class MeshStore {
     return this.write(s);
   }
 
-  /** A member's provisioner token (null: none kept). */
+  /** A member's provisioner token (null: none kept): from the mesh's record or, for a
+   * fixture shared on its own (putFixtureToken), from beside it. */
   async provisionerToken(meshId: number, node: number): Promise<Uint8Array | null> {
-    const s = await this.stored(meshId);
-    const t = s.tokens?.[String(node)];
-    return t ? this.unseal(t, meshId) : null;
+    const id = meshId >>> 0;
+    const s = (await this.be().get(MESH_PREFIX + id)) as StoredMesh | undefined;
+    const t = s?.tokens?.[String(node)] ?? ((await this.be().get(`${TOKEN_PREFIX}${id}:${node}`)) as Sealed | undefined);
+    return t ? this.unseal(t, id) : null;
+  }
+
+  /** One fixture's provisioner token, shared without its mesh's admin key (a share link of
+   * kind "fixture"). It lets this phone take that fixture out of the mesh or re-provision
+   * it, nothing mesh-wide. Kept in the mesh's record when this phone holds the mesh. */
+  async putFixtureToken(meshId: number, node: number, token: Uint8Array): Promise<void> {
+    const id = meshId >>> 0;
+    const s = (await this.be().get(MESH_PREFIX + id)) as StoredMesh | undefined;
+    const sealed = await this.seal(token, id);
+    if (s) {
+      (s.tokens ??= {})[String(node)] = sealed;
+      await this.write(s);
+      return;
+    }
+    await this.be().put(`${TOKEN_PREFIX}${id}:${node}`, sealed);
+    this.emit();
+  }
+
+  /** Forget a token kept by putFixtureToken (the fixture left that mesh). */
+  async dropFixtureToken(meshId: number, node: number): Promise<void> {
+    await this.be().del(`${TOKEN_PREFIX}${meshId >>> 0}:${node}`);
+    this.emit();
   }
 
   async dropMember(meshId: number, node: number): Promise<MeshRecord> {
