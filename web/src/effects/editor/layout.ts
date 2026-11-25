@@ -66,6 +66,11 @@ export interface PaneSpec {
   primary?: boolean;
   /** The STABLE content node — re-parented, never recreated. */
   node: HTMLElement;
+  /** Shown only in the WIDE workspace; on narrow the screen offers it another
+   * way (the Docs pane opens as a bottom sheet on a phone). */
+  wideOnly?: boolean;
+  /** WIDE edge a pane lands on when a stored layout predates it. */
+  home?: Exclude<Dock, "center">;
 }
 
 interface Persisted {
@@ -97,7 +102,8 @@ const MIN_EDGE = 0.04;
 const MAX_EDGE = 0.92;
 const MIN_CENTER = 0.04;
 const MIN_NREG = 0.08; // narrow region minimum height fraction
-const NARROW_QUERY = "(max-width: 719px)";
+/** The narrow (phone) layout query; the screen uses it to pick sheet vs pane. */
+export const NARROW_QUERY = "(max-width: 719px)";
 
 /** Default WIDE arrangement: Code is the center; Uniforms + Preview dock right;
  * Chat / Diagnostics / Disassembly dock bottom (disasm hidden by default).
@@ -109,7 +115,7 @@ function defaultLayout(): Persisted {
     center: "code",
     docks: {
       left: [],
-      right: ["uniforms", "preview"],
+      right: ["uniforms", "preview", "docs"],
       top: [],
       bottom: ["diagnostics", "chat", "disasm"],
     },
@@ -136,7 +142,7 @@ function presetLayout(preset?: LayoutPreset): Persisted {
   if (preset !== "effects-demo") return defaultLayout();
   return {
     v: 2, center: "preview",
-    docks: { left: ["uniforms"], right: ["chat"], top: [], bottom: ["code", "midi", "video", "diagnostics", "disasm"] },
+    docks: { left: ["uniforms"], right: ["chat", "docs"], top: [], bottom: ["code", "midi", "video", "diagnostics", "disasm"] },
     active: { left: "uniforms", right: "chat", top: null, bottom: "code" },
     edgeSizes: { left: 0.22, right: 0.34, top: 0.25, bottom: 0.3 },
     hidden: [],
@@ -279,7 +285,7 @@ export class FxLayout {
         this.state.center = id;
       } else {
         const spec = this.panes.get(id)!;
-        const target: Exclude<Dock, "center"> = spec.primary ? "right" : "bottom";
+        const target: Exclude<Dock, "center"> = spec.home ?? (spec.primary ? "right" : "bottom");
         this.state.docks[target].push(id);
       }
       seen.add(id);
@@ -333,11 +339,16 @@ export class FxLayout {
     return !this.state.hidden.includes(id);
   }
 
+  /** False for a wide-only pane while the narrow layout is active. */
+  private shownInMode(id: string): boolean {
+    return !(this.panes.get(id)?.wideOnly && this.mql?.matches);
+  }
+
   /** True while at least one pane is open (not closed). When false the workspace
    * is empty and its tab strips are gone — the editor keeps the drawer expanded
    * so Back / the ⋯ "recall closed pane" menu stay reachable. */
   anyVisible(): boolean {
-    return this.order.some((id) => this.isVisible(id));
+    return this.order.some((id) => this.isVisible(id) && this.shownInMode(id));
   }
 
   /** Flag/unflag a pane's tab for attention (a warn-colored tint), so the user
@@ -355,7 +366,7 @@ export class FxLayout {
    * closed pane" menu. Restore one with `setVisible(id, true)`. */
   hiddenPanes(): { id: string; title: string }[] {
     return this.order
-      .filter((id) => !this.isVisible(id))
+      .filter((id) => !this.isVisible(id) && this.shownInMode(id))
       .map((id) => ({ id, title: this.panes.get(id)!.title }));
   }
 
@@ -541,7 +552,7 @@ export class FxLayout {
 
   /** NARROW: visible panes in a region, in stable declaration order. */
   private nvisibleAt(r: NRegion): string[] {
-    return this.order.filter((id) => this.state.ndock[id] === r && this.isVisible(id));
+    return this.order.filter((id) => this.state.ndock[id] === r && this.isVisible(id) && !this.panes.get(id)?.wideOnly);
   }
 
   /** NARROW: the region's front pane (stored active if visible, else the first). */
@@ -897,7 +908,7 @@ export class FxLayout {
     }
     // Keep at least one pane on screen (wide: the center must stay).
     const canHide = narrow
-      ? this.order.filter((x) => this.isVisible(x)).length > 1
+      ? this.order.filter((x) => this.isVisible(x) && this.shownInMode(x)).length > 1
       : this.state.center !== id;
     if (canHide) {
       const hide = document.createElement("button");

@@ -135,14 +135,17 @@ import { DEVICE_MAP, initialPreviewMap, learnDeviceMap, pickMap, pickedMap } fro
 import { deviceMapTitle, deviceMaps } from "./deviceMapCard";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
-import { Button, IconButton, confirmDialog, icon, toast, type IconName } from "../kit";
+import { Button, IconButton, Sheet, confirmDialog, icon, toast, type IconName } from "../kit";
 import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
 import { TurnHistory, TurnRecorder } from "../../feedback/agentTrace";
 import type { FeedbackScreenContext } from "../../feedback/appFeedback";
 import { openAgentFeedbackSheet, reportButton } from "./agentFeedbackSheet";
 import { mountEffectsTour } from "../guide/effectsTour";
 import { captureDemoPreview, makeDemoProvider } from "../../effects/ai/providers/demo";
-import { FxLayout } from "../../effects/editor/layout";
+import { FxLayout, NARROW_QUERY } from "../../effects/editor/layout";
+import { DocsPanel } from "../../effects/editor/docs-panel";
+import { insertSnippetEdit, termAt } from "../../effects/editor/docs";
+import { SelectionActions, type SelectionAction } from "../../effects/editor/selection-actions";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { FxDebugPanel } from "../../effects/editor/fxDebugPanel";
 import { renderMarkdown } from "../markdown";
@@ -526,7 +529,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     swizzle: "sw",
   };
 
-  function caretPixel(): { left: number; top: number } {
+  function caretPixel(caret = codeEl.selectionEnd): { left: number; top: number } {
     // Copy the metrics that affect glyph flow from the textarea to the mirror.
     const cs = getComputedStyle(codeEl);
     const props = [
@@ -549,7 +552,6 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     for (const p of props) mirror.style.setProperty(cssProp(p), cs[p as keyof CSSStyleDeclaration] as string);
     mirror.style.width = `${codeEl.clientWidth}px`;
 
-    const caret = codeEl.selectionEnd;
     mirror.textContent = codeEl.value.slice(0, caret);
     mirror.appendChild(mirrorMark);
     mirrorMark.textContent = "​";
@@ -1268,6 +1270,14 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     resetChat();
     closeMenu();
   });
+  const miDocs = document.createElement("button");
+  miDocs.type = "button";
+  miDocs.className = "fxedit-menu-item";
+  miDocs.textContent = "Language docs";
+  miDocs.addEventListener("click", () => {
+    closeMenu();
+    openDocs(null);
+  });
   const miFormat = document.createElement("button");
   miFormat.type = "button";
   miFormat.className = "fxedit-menu-item";
@@ -1313,7 +1323,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       miRecall.appendChild(it);
     }
   }
-  menu.append(miKey, miNewChat, miFormat, miReset, miRecall);
+  menu.append(miKey, miNewChat, miDocs, miFormat, miReset, miRecall);
 
   // Auto-format (re-indent) the buffer, keeping the caret at roughly the same
   // logical spot (measured in non-whitespace characters, which the reformat
@@ -2336,6 +2346,75 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   disasmBody.className = "fxedit-disasmbody";
   disasmBody.appendChild(disasmPre);
 
+  // ---- docs pane + selection actions (D-541 PR 6) ---------------------------
+  // Desktop: a dockable "Docs" pane. Phone: the same panel in a bottom sheet
+  // (a fresh instance per open, so the pane's page stays where it was).
+  /** Insert an example snippet on its own line above the caret's line. */
+  function insertExample(snippet: string): void {
+    codeEl.focus();
+    const e = insertSnippetEdit(codeEl.value, codeEl.selectionStart, snippet);
+    applyEdit(e);
+    toast(`Inserted on line ${codeEl.value.slice(0, e.from).split("\n").length}`);
+  }
+  function copyText(text: string): void {
+    void navigator.clipboard
+      ?.writeText(text)
+      .then(() => toast("Copied"))
+      .catch(() => toast("Couldn't copy: select the example and copy it", { error: true }));
+  }
+  const docsOpts = { onInsert: insertExample, onCopy: copyText };
+  const docsPanel = new DocsPanel(docsOpts);
+  let docsSheet: { close: () => void } | null = null;
+  /** Open the docs at `term`'s page (or the index with the search focused). */
+  function openDocs(term: string | null): void {
+    if (window.matchMedia(NARROW_QUERY).matches) {
+      docsSheet?.close();
+      const sheet = Sheet("Docs", { onClose: () => (docsSheet = null) });
+      sheet.body.classList.add("fxdocs-sheetbody");
+      const panel = new DocsPanel({
+        onInsert: (snippet) => {
+          sheet.close();
+          insertExample(snippet);
+        },
+        onCopy: copyText,
+      });
+      sheet.body.append(panel.node);
+      if (term) panel.show(term);
+      docsSheet = sheet;
+      return;
+    }
+    layout.revealPane("docs");
+    if (term) docsPanel.show(term);
+    else docsPanel.focusSearch();
+  }
+  /** The selection (or caret) as a selection-action context. */
+  function selectionContext(): { src: string; start: number; end: number; text: string; term: string | null } {
+    const src = codeEl.value;
+    const start = Math.min(codeEl.selectionStart, codeEl.selectionEnd);
+    const end = Math.max(codeEl.selectionStart, codeEl.selectionEnd);
+    return { src, start, end, text: src.slice(start, end), term: termAt(src, start, end) };
+  }
+  // Watch ("Add to Watch") registers here next.
+  const selectionActionList: SelectionAction[] = [
+    {
+      id: "docs",
+      icon: "info",
+      label: (ctx) => `Docs: ${ctx.term ?? ""}`,
+      available: (ctx) => ctx.term !== null,
+      run: (ctx) => openDocs(ctx.term),
+    },
+  ];
+  const selectionActions = new SelectionActions({
+    code: codeEl,
+    wrap: codeWrap,
+    caretPixel: (offset) => ({
+      ...caretPixel(offset),
+      lineH: parseFloat(getComputedStyle(codeEl).lineHeight) || 18,
+    }),
+    context: selectionContext,
+    actions: () => selectionActionList,
+  });
+
   // ---- pane model + slots -------------------------------------------------
   // Each pane wraps a STABLE content node (never recreated — only re-parented)
   // so the code textarea / MapView canvas / chat log preserve state across
@@ -2353,6 +2432,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       { id: "chat", title: "AI chat", node: chatBody },
       { id: "midi", title: "MIDI", node: midiPanel.node },
       { id: "video", title: "Video", node: videoPanel.node },
+      { id: "docs", title: "Docs", node: docsPanel.node, wideOnly: true, home: "right" as const },
       ...(fxDebugPanel ? [{ id: "fxdebug", title: "Debugger", node: fxDebugPanel.node }] : []),
     ],
     onRelayout: () => {
@@ -2496,6 +2576,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
     if (ev.isComposing) return;
     hideDiagTip();
+    // F1: the docs for the word under the caret (or the index).
+    if (ev.key === "F1") {
+      ev.preventDefault();
+      openDocs(selectionContext().term);
+      return;
+    }
     const isF = ev.code === "KeyF" || ev.key === "F" || ev.key === "f";
     // Cmd+Shift+F (Mac) / Ctrl+Shift+F → auto-format; Shift+Alt+F (VS Code) too.
     if (isF && ev.shiftKey && (ev.metaKey || ev.ctrlKey || ev.altKey)) {
@@ -2572,6 +2658,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       midiPanel.dispose();
       videoPanel.dispose();
       fxDebugPanel?.dispose();
+      selectionActions.dispose();
+      docsSheet?.close();
       layout.unmount();
       preview?.dispose();
       worker.dispose();
