@@ -191,12 +191,18 @@ A lamp holds 24 rules. The pure logic is the no_std crate `//firmware/schedule`,
   name, Save; Delete when editing). From the review, "Change …" takes only the steps that
   part needs.
 - **The location (D-565).** The first sun rule on a lamp without a location adds one step
-  before the review. It says what is sent and why, and asks the phone for its position
-  only when the user taps "Use this phone's location". The position is rounded to 0.1°
-  (`net/schedule.ts` `locationRequest`) and sent with `set_clock_config` just before the rule
-  is saved. Nothing is sent for time-of-day rules. The list offers "Update from this phone"
-  (with a confirm) for a lamp that moved. iOS: `NSLocationWhenInUseUsageDescription`
-  (`web/ios-config/apply.sh`).
+  before the review. It says what is sent and why, and offers two ways:
+  - "Use this phone's location": the geolocation prompt, only on that tap;
+  - "Choose on map" (`ui/screens/mapPicker.ts`): a drag-to-pan map with a centre pin, or
+    typed coordinates. It needs no permission, so it is also where a denied or failed
+    geolocation lands. The map is OpenStreetMap's keyless raster tiles
+    (`tile.openstreetmap.org`, attributed), so no API key reaches the client; the tiles
+    reveal only the area looked at. Offline (the lamp's own Wi-Fi), the map says so and
+    the typed coordinates still work.
+  Either way the spot is rounded to 0.1° (`net/schedule.ts` `locationRequest`) and sent
+  with `set_clock_config` just before the rule is saved. Nothing is sent for time-of-day
+  rules. "Change location" on the list opens the same step for a lamp that moved. iOS:
+  `NSLocationWhenInUseUsageDescription` (`web/ios-config/apply.sh`).
 - The wire mapping and the rule text live in `web/src/net/schedule.ts`, shared with the bridge.
 
 ## The bridge (PR-7)

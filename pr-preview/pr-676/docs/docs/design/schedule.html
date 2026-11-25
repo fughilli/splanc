@@ -604,12 +604,21 @@ trigger) → its <strong>details</strong> (fade, level + ramp, crossfade, trigge
 name, Save; Delete when editing). From the review, “Change …” takes only the steps that
 part needs.</p></li>
 <li><p><strong>The location (D-565).</strong> The first sun rule on a lamp without a location adds one step
-before the review. It says what is sent and why, and asks the phone for its position
-only when the user taps “Use this phone’s location”. The position is rounded to 0.1°
-(<code class="docutils literal notranslate"><span class="pre">net/schedule.ts</span></code> <code class="docutils literal notranslate"><span class="pre">locationRequest</span></code>) and sent with <code class="docutils literal notranslate"><span class="pre">set_clock_config</span></code> just before the rule
-is saved. Nothing is sent for time-of-day rules. The list offers “Update from this phone”
-(with a confirm) for a lamp that moved. iOS: <code class="docutils literal notranslate"><span class="pre">NSLocationWhenInUseUsageDescription</span></code>
-(<code class="docutils literal notranslate"><span class="pre">web/ios-config/apply.sh</span></code>).</p></li>
+before the review. It says what is sent and why, and offers two ways:</p>
+<ul>
+<li><p>“Use this phone’s location”: the geolocation prompt, only on that tap;</p></li>
+<li><p>“Choose on map” (<code class="docutils literal notranslate"><span class="pre">ui/screens/mapPicker.ts</span></code>): a drag-to-pan map with a centre pin, or
+typed coordinates. It needs no permission, so it is also where a denied or failed
+geolocation lands. The map is OpenStreetMap’s keyless raster tiles
+(<code class="docutils literal notranslate"><span class="pre">tile.openstreetmap.org</span></code>, attributed), so no API key reaches the client; the tiles
+reveal only the area looked at. Offline (the lamp’s own Wi-Fi), the map says so and
+the typed coordinates still work.
+Either way the spot is rounded to 0.1° (<code class="docutils literal notranslate"><span class="pre">net/schedule.ts</span></code> <code class="docutils literal notranslate"><span class="pre">locationRequest</span></code>) and sent
+with <code class="docutils literal notranslate"><span class="pre">set_clock_config</span></code> just before the rule is saved. Nothing is sent for time-of-day
+rules. “Change location” on the list opens the same step for a lamp that moved. iOS:
+<code class="docutils literal notranslate"><span class="pre">NSLocationWhenInUseUsageDescription</span></code> (<code class="docutils literal notranslate"><span class="pre">web/ios-config/apply.sh</span></code>).</p></li>
+</ul>
+</li>
 <li><p>The wire mapping and the rule text live in <code class="docutils literal notranslate"><span class="pre">web/src/net/schedule.ts</span></code>, shared with the bridge.</p></li>
 </ul>
 </section>
