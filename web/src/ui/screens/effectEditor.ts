@@ -141,6 +141,7 @@ import { FxLayout, NARROW_QUERY } from "../../effects/editor/layout";
 import { DocsPanel } from "../../effects/editor/docs-panel";
 import { insertSnippetEdit, termAt } from "../../effects/editor/docs";
 import { SelectionActions, type SelectionAction } from "../../effects/editor/selection-actions";
+import { WatchController } from "../../effects/editor/watch-panel";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { FxDebugPanel } from "../../effects/editor/fxDebugPanel";
 import { renderMarkdown } from "../markdown";
@@ -200,6 +201,13 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   let previewTriad = false;
   let positions: Float32Array | null = null;
   let preview: FxPreview | null = null;
+  // The Watch pane (D-541 PR 11): its own VM on the host watch build, fed the
+  // live preview's inputs; it also owns pause / step / scrub of the preview.
+  let watchCtl: WatchController | null = null;
+  /** The preview clock while paused (s); resuming continues from it. */
+  let pausedTime = 0;
+  /** The source of the last clean compile (what the live preview runs). */
+  let lastCompiledSrc = "";
   // Per-LED topology (led.seg/s/branch) for the current map, so the preview
   // matches the device. Recomputed async on map change; token guards staleness.
   let currentTopo: LedTopology | null = null;
@@ -833,6 +841,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
 
   const panel = new UniformPanel(uniformsHost, (slot, value) => {
     preview?.setUniform(slot, value);
+    watchCtl?.setUniform(slot, value);
     const c = appState.client;
     // The live-control channel: latest value wins, paced on the device.
     if (c?.isConnected) c.live.setUniform(slot, value);
@@ -1533,6 +1542,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     currentRawTopo = topo ?? null;
     currentTopo = deriveLedTopology(map, topo);
     preview?.setTopology(currentTopo);
+    watchCtl?.setTopology(currentTopo);
   }
 
   // -- compile --------------------------------------------------------------
@@ -1647,6 +1657,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     // are independent of the live preview.
     try {
       await swapPreview(r.bytecode);
+      lastCompiledSrc = src;
+      watchCtl?.compiled(src);
     } catch (err) {
       console.warn("live preview unavailable:", err);
     }
@@ -1670,6 +1682,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     if (currentTopo !== null) preview.setTopology(currentTopo);
     startT = performance.now();
     frame = 0;
+    pausedTime = 0;
   }
 
   function renderDiagnostics(diags: { line: number; col: number; msg: string }[]): void {
@@ -1691,10 +1704,19 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       mapView.setLedColors(debugColors);
       return;
     }
+    watchCtl?.draw();
+    // Paused (Watch pane): the frame stays; a scrubbed one is shown by the pane.
+    if (watchCtl?.paused) return;
+    runPreviewFrame((t - startT) / 1000, dt / 1000);
+  }
+
+  /** One live preview frame (the rAF loop, or a Watch step while paused). */
+  function runPreviewFrame(time: number, dtS: number): void {
     if (preview === null || mapView === null || currentMap === null || positions === null) return;
-    const time = (t - startT) / 1000;
-    preview.tick(time, dt / 1000, frame++, currentMap.leds.length);
+    const n = frame++;
+    preview.tick(time, dtS, n, currentMap.leds.length);
     mapView.setLedColors(preview.shadeAll(positions));
+    watchCtl?.liveFrame(time, dtS, n, currentMap.leds.length, positions);
   }
 
   // -- AI chat: run one user turn through the tool-use loop ------------------
@@ -1862,6 +1884,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     for (const ch of plan.changes) {
       panel.setLive(ch.slot, ch.to);
       preview?.setUniform(ch.slot, ch.to);
+      watchCtl?.setUniform(ch.slot, ch.to);
       if (c?.isConnected && (device === "sent" || device === "sent-maybe-stale")) c.live.setUniform(ch.slot, ch.to);
     }
     if (plan.changes.length > 0) scheduleSave();
@@ -2164,12 +2187,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   /** Refresh the live frame before encoding. Free-demo screenshots are bounded
    * JPEGs; configured providers retain the full-resolution PNG capture. */
   async function capturePreviewImage(): Promise<string> {
-    if (preview !== null && mapView !== null && currentMap !== null && positions !== null) {
-      const time = (performance.now() - startT) / 1000;
-      preview.tick(time, 1 / 60, frame++, currentMap.leds.length);
+    // (Not while the Watch pane holds the preview paused: capture that frame.)
+    if (!watchCtl?.paused) {
       // MapView runs its own rAF loop, so pushing fresh colors updates the
       // canvas on the next frame; the capture reflects the current effect.
-      mapView.setLedColors(preview.shadeAll(positions));
+      // The Watch VM runs the same frame (it mirrors every live frame).
+      runPreviewFrame((performance.now() - startT) / 1000, 1 / 60);
     }
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     return demoProvider ? captureDemoPreview(canvas) : canvas.toDataURL("image/png");
@@ -2252,7 +2275,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       runningEffectId = r.effectId;
       refreshMismatch();
       panel.hydrate(r.current.map((x) => ({ slot: x.slot, value: x.value })));
-      for (const { slot, value } of r.current) preview?.setUniform(slot, value);
+      for (const { slot, value } of r.current) {
+        preview?.setUniform(slot, value);
+        watchCtl?.setUniform(slot, value);
+      }
       devStatus.textContent =
         r.effectId === effectId
           ? "Pulled uniforms from device."
@@ -2414,7 +2440,40 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const end = Math.max(codeEl.selectionStart, codeEl.selectionEnd);
     return { src, start, end, text: src.slice(start, end), term: termAt(src, start, end) };
   }
-  // Watch ("Add to Watch") registers here next.
+  // ---- Watch pane (D-541 PR 11; host preview only, D-550) --------------------
+  const watch = new WatchController({
+    compileWatch: (src, ranges) => worker.compileWatch(src, ranges),
+    live: () =>
+      preview && currentMap && positions ? { preview, ledCount: currentMap.leds.length, positions } : null,
+    uniforms: () => panel.values(),
+    topology: () => currentTopo,
+    showColors: (colors) => {
+      if (mapView === null) return;
+      if (colors) mapView.setLedColors(colors);
+    },
+    stepLive: () => {
+      pausedTime += 1 / 60;
+      runPreviewFrame(pausedTime, 1 / 60);
+    },
+    pausedChanged: (paused) => {
+      const now = performance.now();
+      if (paused) pausedTime = (now - startT) / 1000;
+      else startT = now - pausedTime * 1000;
+      lastT = 0;
+    },
+    selectCode: (start, end) => {
+      codeEl.focus({ preventScroll: true });
+      codeEl.setSelectionRange(start, end);
+    },
+  });
+  watchCtl = watch;
+  if (lastCompiledSrc) watch.compiled(lastCompiledSrc);
+  /** Add the selection to the Watch pane and show it. */
+  function addToWatch(ctx: { src: string; start: number; end: number }): void {
+    void watch.add(ctx.src, ctx.start, ctx.end).then((ok) => {
+      if (ok && !disposed) layout.revealPane("watch");
+    });
+  }
   const selectionActionList: SelectionAction[] = [
     {
       id: "docs",
@@ -2422,6 +2481,14 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       label: (ctx) => `Docs: ${ctx.term ?? ""}`,
       available: (ctx) => ctx.term !== null,
       run: (ctx) => openDocs(ctx.term),
+    },
+    {
+      id: "watch",
+      icon: "eye",
+      label: () => "Add to Watch",
+      // A selection (not a bare caret); the compiler decides if it is an expression.
+      available: (ctx) => ctx.end > ctx.start && ctx.text.trim().length > 0,
+      run: (ctx) => addToWatch(ctx),
     },
   ];
   const selectionActions = new SelectionActions({
@@ -2453,6 +2520,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       { id: "midi", title: "MIDI", node: midiPanel.node },
       { id: "video", title: "Video", node: videoPanel.node },
       { id: "docs", title: "Docs", node: docsPanel.node, wideOnly: true, home: "right" as const },
+      { id: "watch", title: "Watch", node: watch.node, home: "bottom" as const },
       ...(fxDebugPanel ? [{ id: "fxdebug", title: "Debugger", node: fxDebugPanel.node }] : []),
     ],
     onRelayout: () => {
@@ -2558,6 +2626,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     videoPanel.setPreview({
       setTexture: (texIndex, w, h, rgba) => {
         if (preview && currentMap) preview.setTexture(texIndex, w, h, rgba, currentMap.leds.length);
+        if (currentMap) watchCtl?.setTexture(texIndex, w, h, rgba, currentMap.leds.length);
       },
     });
     if (disposed) return;
@@ -2679,6 +2748,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       videoPanel.dispose();
       fxDebugPanel?.dispose();
       selectionActions.dispose();
+      watch.dispose();
       docsSheet?.close();
       layout.unmount();
       preview?.dispose();

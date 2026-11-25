@@ -4151,3 +4151,225 @@ input.device-name-input {
   color: var(--text-dim);
   padding: 0 var(--sp-2);
 }
+
+/* ---- FX editor: Watch pane (D-541 PR 11) --------------------------------- */
+.fxpane[data-pane="watch"] .fxpane-body {
+  padding: 0;
+}
+.fxwatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 100%;
+  padding-bottom: var(--sp-3);
+  container: fxwatch / inline-size;
+}
+.fxwatch-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.fxwatch-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+/* A wide pane (the bottom dock on desktop): list and plot side by side. */
+@container fxwatch (min-width: 720px) {
+  .fxwatch-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+.fxwatch-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.fxwatch-btn {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+}
+.fxwatch-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fxwatch-scrub {
+  flex: 1 1 120px;
+  min-width: 100px;
+  accent-color: var(--accent);
+}
+.fxwatch-scrub:disabled {
+  opacity: 0.4;
+}
+.fxwatch-clock {
+  font: 12px/1 var(--font-mono);
+  color: var(--text-dim);
+  white-space: nowrap;
+  min-width: 4.5em;
+}
+.fxwatch-probe {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.fxwatch-probe input {
+  width: 4.5em;
+  min-height: 32px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  background: var(--bg);
+  color: var(--text);
+  font: 14px var(--font-mono);
+}
+.fxwatch-empty {
+  margin: var(--sp-2) var(--sp-3);
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  max-width: 60ch;
+}
+.fxwatch-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+}
+.fxwatch-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-2);
+}
+.fxwatch-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px var(--sp-2);
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctrl);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.fxwatch-row.is-selected .fxwatch-main {
+  border-color: var(--accent);
+}
+.fxwatch-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.fxwatch-expr {
+  font: 13px var(--font-mono);
+  color: #c9a3ff;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fxwatch-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.fxwatch-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font: 11px var(--font-mono);
+  color: var(--text);
+}
+/* The class chip: text says the class, the dot only reinforces it. */
+.fxwatch-class::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--text-dim);
+}
+.fxwatch-class--frame::before { background: #3987e5; }
+.fxwatch-class--led::before { background: #199e70; }
+.fxwatch-class--dynamic::before { background: #d95926; }
+.fxwatch-err {
+  color: var(--warn);
+}
+.fxwatch-value {
+  font: 13px var(--font-mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.fxwatch-value:empty {
+  display: none;
+}
+.fxwatch-rm {
+  flex: 0 0 auto;
+  width: 36px;
+  min-height: 36px;
+  align-self: center;
+}
+.fxwatch-plot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+}
+.fxwatch-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.fxwatch-legend-title {
+  font: 12px var(--font-mono);
+  color: var(--text);
+}
+.fxwatch-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fxwatch-legend-item i {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+.fxwatch-legend-item i.is-band {
+  height: 10px;
+}
+.fxwatch-canvas {
+  width: 100%;
+  height: 160px;
+  border-radius: var(--r-ctrl);
+  background: var(--bg);
+  touch-action: pan-y;
+}
+.fxwatch-readout {
+  min-height: 1.2em;
+  font: 12px var(--font-mono);
+  color: var(--text-dim);
+}

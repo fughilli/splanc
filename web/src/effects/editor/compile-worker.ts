@@ -14,6 +14,7 @@
  */
 
 import type { FxCompiled, FxDiagnostic, FxSymbol, FxUniform } from "../../fx/preview";
+import type { WatchInfo } from "../../fx/watch";
 import { compilerAssetBase } from "./workerAssets";
 import { compilerDownloadMessage, createRetryingLoader, retryUrl, WasmDownloadError, type WasmLoadStatus } from "../../fx/wasmLoad";
 
@@ -22,12 +23,15 @@ import { compilerDownloadMessage, createRetryingLoader, retryUrl, WasmDownloadEr
  * untagged legacy `{id, src}` shape is treated as a compile. */
 export type CompileRequest =
   | { id: number; kind?: "compile"; src: string }
+  // The Watch pane's host build (fx_compile_watch): flat UTF-16 (start, end) pairs.
+  | { id: number; kind: "watch"; src: string; ranges: Uint32Array }
   | { id: number; kind: "disassemble"; fxb: Uint8Array }
   | { id: number; kind: "warm" };
 
 /** Replies, plus unsolicited `status` updates on the compiler download (id 0). */
 export type CompileResponse =
   | { id: number; kind?: "compile"; result: FxCompiled }
+  | { id: number; kind: "watch"; result: FxCompiled; watches: WatchInfo[] }
   | { id: number; kind: "disassemble"; text: string }
   | { id: 0; kind: "status"; status: WasmLoadStatus };
 
@@ -37,10 +41,13 @@ interface CompilerResult {
   readonly manifest: string;
   readonly diagnostics: string;
   readonly warnings?: string;
+  readonly watches?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
   fx_compile(src: string): CompilerResult;
+  /** Absent from compiler bundles that predate the Watch pane. */
+  fx_compile_watch?(src: string, ranges: Uint32Array): CompilerResult;
   fx_disassemble(fxb: Uint8Array): string;
 }
 
@@ -100,6 +107,22 @@ self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
         text = `; disassembly failed: ${e instanceof Error ? e.message : String(e)}`;
       }
       post({ id: req.id, kind: "disassemble", text });
+      return;
+    }
+    if (req.kind === "watch") {
+      let result: FxCompiled;
+      let watches: WatchInfo[] = [];
+      try {
+        const mod = await loadCompiler();
+        if (!mod.fx_compile_watch) throw new Error("this compiler build has no watch build");
+        const r = mod.fx_compile_watch(req.src, req.ranges);
+        result = toCompiled(r);
+        watches = r.watches ? (JSON.parse(r.watches) as WatchInfo[]) : [];
+      } catch (e) {
+        const text = e instanceof Error ? e.message : String(e);
+        result = { ok: false, bytecode: new Uint8Array(0), uniforms: [], diagnostics: [{ line: 0, col: 0, msg: text }], warnings: [] };
+      }
+      post({ id: req.id, kind: "watch", result, watches });
       return;
     }
     let result: FxCompiled;
