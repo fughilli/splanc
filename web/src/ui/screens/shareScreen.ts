@@ -54,7 +54,11 @@ export function ShareScreen(query: URLSearchParams): Screen {
   const showPreview = async (env: ShareEnvelope): Promise<void> => {
     const p = await previewShare(env);
     card.replaceChildren(
-      h("div", "device-detail-cap", env.kind === "mesh" ? "Mesh admin access" : "A fixture"),
+      h(
+        "div",
+        "device-detail-cap",
+        env.kind === "fixture" ? "A fixture" : (env.body as { delegation?: string })?.delegation ? "Shared mesh access" : "Mesh admin access",
+      ),
       h("div", "share-title", p.title),
     );
     for (const l of p.lines) card.append(h("div", "mesh-row-hint", l));

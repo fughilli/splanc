@@ -69,6 +69,14 @@ const CSS = `
 .share-code-input { font: 600 1.25rem/1.2 ui-monospace, monospace; letter-spacing: 0.08em; text-transform: uppercase; }
 .share-screen { padding: 16px; max-width: 560px; margin: 0 auto; box-sizing: border-box; width: 100%; }
 .mesh-row-hint--warn { color: var(--warn); }
+.share-choices { display: flex; flex-direction: column; gap: 8px; }
+.share-choice { display: flex; flex-direction: column; gap: 4px; text-align: left; font: inherit; color: var(--text); cursor: pointer;
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--r-ctrl); background: var(--surface); }
+.share-choice[aria-pressed="true"] { border-color: var(--accent, #5b7cfa); box-shadow: 0 0 0 1px var(--accent, #5b7cfa) inset; }
+.share-field { display: flex; flex-direction: column; gap: 6px; }
+.mesh-people { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mesh-person { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--r-ctrl); background: var(--surface); }
 .share-title { font-size: 1.25rem; font-weight: 600; }
 .mesh-backup-text { width: 100%; box-sizing: border-box; font: 0.75rem/1.4 ui-monospace, monospace; padding: 10px;
   border-radius: 8px; border: 1px solid var(--border, #444); background: var(--surface-2, transparent); color: inherit;

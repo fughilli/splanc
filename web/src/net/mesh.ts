@@ -213,7 +213,7 @@ export interface MeshInfoMessage {
  * and rotation orders with the admin secret (M8); this is the wire. */
 export type MeshAdminOp =
   | { provision: { meshId: number; siteSecret?: Uint8Array; adminKey?: Uint8Array; mode?: number; channel?: number; groups?: number[]; provisionerToken?: Uint8Array } }
-  | { unlock: { grant: Uint8Array } }
+  | { unlock: { grant: Uint8Array; delegation?: Uint8Array } }
   | { admit: { node: number; keyHash: Uint8Array } }
   | { revoke: { order: Uint8Array; meshKey: Uint8Array; siteSecret: Uint8Array; exclude?: number[] } }
   | { leave: { provisionerToken?: Uint8Array } }

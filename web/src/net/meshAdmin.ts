@@ -10,7 +10,7 @@
  */
 
 import { meshAdminError, type MeshAdminOp, type MeshAdminResultInfo, type MeshPendingInfo, type MeshStateInfo } from "./mesh";
-import { keyHash, randomBytes, randomU32, signGrant, signRekeyOrder, toHex, type MeshAdminSigner } from "./meshKeys";
+import { decodeDelegation, keyHash, NO_EXPIRY, ORDER_REVOKED, randomBytes, randomU32, signGrant, signRekeyOrder, toHex, type MeshAdminSigner } from "./meshKeys";
 import type { MeshMemberRecord, MeshRecord } from "../store/meshStore";
 
 /** What these operations need of a connection (LedMapperClient has it). */
@@ -142,16 +142,26 @@ export async function unlockFixture(
   signer: MeshAdminSigner,
   meshId: number,
   state?: MeshStateInfo,
-  opts: { session?: number; ttlS?: number } = {},
+  opts: { session?: number; ttlS?: number; delegation?: Uint8Array | null } = {},
 ): Promise<Unlocked> {
   const s = state ?? (await c.getMesh());
   if (!s.on || !s.node || !s.deviceKey || s.deviceKey.length !== 65) {
     throw new MeshAdminFailure("this fixture is not in a mesh yet", "MESH_ADMIN_NO_MESH");
   }
   const session = opts.session ?? randomU32();
-  const notAfter = ((s.meshS ?? 0) + (opts.ttlS ?? GRANT_TTL_S)) >>> 0;
-  const grant = await signGrant(signer, { meshId: meshId >>> 0, session, gateway: s.node, gatewayKey: s.deviceKey, notAfter });
-  const r = await admin(c, { unlock: { grant } });
+  const meshS = s.meshS ?? 0;
+  let notAfter = (meshS + (opts.ttlS ?? GRANT_TTL_S)) >>> 0;
+  // A delegate (revocable access, docs/design/share-links.md): its grants name it and never
+  // outlive its certificate, which goes along for the gateway to check and pass on.
+  const cert = opts.delegation ? decodeDelegation(opts.delegation) : null;
+  if (opts.delegation && !cert) throw new MeshAdminFailure("the shared access on this phone is damaged", "MESH_ADMIN_BAD_GRANT");
+  if (cert && cert.notAfter !== NO_EXPIRY) {
+    if (cert.notAfter <= meshS) throw new MeshAdminFailure("the access shared with you has expired", "MESH_ADMIN_BAD_GRANT");
+    notAfter = Math.min(notAfter, cert.notAfter) >>> 0;
+  }
+  const fields = { meshId: meshId >>> 0, session, gateway: s.node, gatewayKey: s.deviceKey, notAfter };
+  const grant = cert ? await signGrant(signer, fields, { by: await keyHash(signer.publicKey) }) : await signGrant(signer, fields);
+  const r = await admin(c, { unlock: cert ? { grant, delegation: opts.delegation! } : { grant } });
   return { session: r.value || session, notAfter };
 }
 
@@ -167,7 +177,7 @@ export function unlockedSession(c: object): (Unlocked & { meshId: number }) | nu
  * the fixture refused (the caller shows the state it reads). */
 export async function ensureUnlocked(
   c: MeshAdminClient & object,
-  lookup: (meshId: number) => Promise<{ signer: MeshAdminSigner } | null>,
+  lookup: (meshId: number) => Promise<{ signer: MeshAdminSigner; delegation?: Uint8Array | null } | null>,
   state?: MeshStateInfo,
 ): Promise<boolean> {
   const s = state ?? (await c.getMesh());
@@ -179,7 +189,7 @@ export async function ensureUnlocked(
   const k = await lookup(meshId);
   if (!k) return false;
   try {
-    const u = await unlockFixture(c, k.signer, meshId, s);
+    const u = await unlockFixture(c, k.signer, meshId, s, { delegation: k.delegation ?? null });
     unlockedBy.set(c, { ...u, meshId });
     return true;
   } catch {
@@ -239,12 +249,19 @@ export async function revokeMembers(
   mesh: Pick<MeshRecord, "meshId" | "keyEpoch" | "revVersion"> & { revoked?: string[] },
   out: { node: number; keyHash: string }[],
   state?: MeshStateInfo,
+  /** Revoked delegates still able to sign (not expired): a fresh list (D-443) carries them
+   * again, or they would work again (docs/design/share-links.md). */
+  keep: string[] = [],
 ): Promise<Rotation> {
   const s = state ?? (await c.getMesh());
   const epoch = (((s.keyEpoch ?? mesh.keyEpoch) + 1) & 0xff) || 1;
   const revVersion = ((mesh.revVersion & 0x7fff) + 1) & 0x7fff || 1;
   const stored = Math.max(s.revoked ?? 0, mesh.revoked?.length ?? 0);
   const replaced = revocationReplaces(stored, out.length);
+  const hashes = [...new Set([...out.map((m) => m.keyHash), ...(replaced ? keep : [])])];
+  if (hashes.length > ORDER_REVOKED) {
+    throw new MeshAdminFailure(`at most ${ORDER_REVOKED} fixtures or people per removal`, "MESH_ADMIN_BAD_REQUEST");
+  }
   const meshKey = randomBytes(16);
   const siteSecret = randomBytes(32);
   const order = await signRekeyOrder(signer, {
@@ -253,14 +270,16 @@ export async function revokeMembers(
     meshKey,
     siteSecret,
     revVersion: replaced ? revVersion | REV_REPLACE : revVersion,
-    revoked: out.map((m) => fromHex8(m.keyHash)),
+    revoked: hashes.map(fromHex8),
   });
+  // A delegate (node 0) is no fixture: nothing to exclude from the wraps.
+  const nodes = out.map((m) => m.node).filter((n) => n > 0);
   try {
-    await admin(c, { revoke: { order, meshKey, siteSecret, exclude: out.map((m) => m.node) } }, 10_000);
+    await admin(c, { revoke: { order, meshKey, siteSecret, exclude: nodes } }, 10_000);
   } finally {
     meshKey.fill(0);
   }
-  return { keyEpoch: epoch, revVersion, siteSecret, revoked: out.map((m) => m.keyHash), nodes: out.map((m) => m.node), replaced };
+  return { keyEpoch: epoch, revVersion, siteSecret, revoked: hashes, nodes, replaced };
 }
 
 function fromHex8(h: string): Uint8Array {
