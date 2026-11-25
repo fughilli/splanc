@@ -13,6 +13,7 @@
   "dependencies": {
     "@bufbuild/protobuf": "^2.12.1",
     "@capacitor-community/bluetooth-le": "^8.2.0",
+    "@capacitor/app": "8.1.2",
     "@capacitor/core": "^8.5.0",
     "@capacitor/ios": "^8.5.0",
     "@ledmapper/protocol": "workspace:*",

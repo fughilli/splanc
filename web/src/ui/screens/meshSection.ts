@@ -21,6 +21,8 @@ import { lastMeshResult, meshSignerLookup, onMeshResults, rememberMeshAll } from
 import { meshResultSummary, meshSectionModel, nodeLabel, type MeshMemberRow, type MeshResultSummary, type MeshSectionModel } from "./meshModel";
 import { installMeshStyles } from "./meshUi.css";
 import { toHex } from "../../net/meshKeys";
+import { meshShareBody } from "../../store/shareAccess";
+import { openShareSheet } from "./shareSheet";
 
 export interface MeshSectionClient {
   getMesh(timeoutMs?: number): Promise<MeshStateInfo>;
@@ -59,9 +61,15 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
   let lastKey = "";
   let busy = false;
 
-  const render = (m: MeshSectionModel, rec: MeshRecord | undefined, meshes: MeshRecord[], last: MeshResultSummary | null): void => {
+  const render = (
+    m: MeshSectionModel,
+    rec: MeshRecord | undefined,
+    meshes: MeshRecord[],
+    last: MeshResultSummary | null,
+    held: { meshId: number; node: number } | null,
+  ): void => {
     // Re-render only on a visible change (the poll must not reset a focused button).
-    const key = JSON.stringify([m, meshes.map((x) => [x.meshId, x.name]), last]);
+    const key = JSON.stringify([m, meshes.map((x) => [x.meshId, x.name]), last, held]);
     if (key === lastKey) return;
     lastKey = key;
     el.replaceChildren();
@@ -140,6 +148,12 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
         ),
       );
       const actions = h("div", "mesh-actions");
+      if (held) {
+        // A fixture shared on its own (a "fixture" share link): its token lets this phone
+        // take it out of the mesh, though another phone administers the mesh.
+        const out = Button({ label: "Take it out of this mesh", variant: "danger", onClick: () => void leaveWithToken(out, held) });
+        actions.append(out);
+      }
       actions.append(Button({ label: "Use a mesh from another phone", variant: "quiet", onClick: () => openImportSheet() }));
       el.append(actions);
       return;
@@ -149,10 +163,45 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
       actions.append(
         Button({ label: "Add a fixture to this mesh", icon: "plus", onClick: () => go(`#/mesh/add/${rec.meshId}`) }),
         Button({ label: "Remove from mesh", variant: "quiet", onClick: () => openMemberSheet(m.members[0]!, m, rec) }),
+        Button({ label: "Share admin access", icon: "share", variant: "quiet", onClick: () => void shareMesh(rec) }),
         Button({ label: "Back up this mesh", variant: "quiet", onClick: () => void openBackupSheet(rec) }),
       );
       el.append(actions);
     }
+  };
+
+  /** The mesh's admin access as a share link (docs/design/share-links.md). */
+  const shareMesh = async (rec: MeshRecord): Promise<void> => {
+    if (!(await meshStore.exportable(rec.meshId))) {
+      toast("This mesh was made before it could be shared. Create it again to share it.", { error: true });
+      return;
+    }
+    openShareSheet({
+      kind: "mesh",
+      title: rec.name,
+      grants: "Whoever opens this link in Splanc can add, remove and control every fixture in this mesh, as you can.",
+      body: () => meshShareBody(rec.meshId),
+    });
+  };
+
+  const leaveWithToken = async (btn: HTMLButtonElement, held: { meshId: number; node: number }): Promise<void> => {
+    const ok = await confirmDialog({
+      title: `Take ${opts.deviceName} out of this mesh?`,
+      message: "It leaves the mesh and turns its mesh off. The other fixtures keep playing. You can add it to a mesh of your own afterwards.",
+      confirmLabel: "Take it out",
+      danger: true,
+    });
+    if (!ok) return;
+    await act(btn, async () => {
+      const tok = await meshStore.provisionerToken(held.meshId, held.node);
+      try {
+        await leaveMesh(client, tok);
+      } finally {
+        tok?.fill(0);
+      }
+      await meshStore.dropFixtureToken(held.meshId, held.node);
+      toast(`${opts.deviceName} left the mesh`);
+    });
   };
 
   /** D-442: the mesh's admin secret (and site secret) as one text, for a second phone. */
@@ -416,7 +465,13 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
     }
     const lr = lastMeshResult(client);
     const last = lr ? meshResultSummary(lr, (n) => rec?.members.find((x) => x.node === n)?.label ?? nodeLabel(n), s.node ? { node: s.node, name: opts.deviceName } : undefined) : null;
-    render(meshSectionModel(s, rec, opts.deviceName), rec, s.on ? [] : meshes, last);
+    let held: { meshId: number; node: number } | null = null;
+    if (s.on && !rec && s.meshId && s.node) {
+      const tok = await meshStore.provisionerToken(s.meshId, s.node).catch(() => null);
+      if (tok) held = { meshId: s.meshId >>> 0, node: s.node };
+      tok?.fill(0);
+    }
+    render(meshSectionModel(s, rec, opts.deviceName), rec, s.on ? [] : meshes, last, held);
   };
 
   const tick = (): void => {
