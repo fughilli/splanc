@@ -1,18 +1,18 @@
 {
  "schema": 2,
  "repo": "fughilli/splanc",
- "generated_at": "2026-11-25T00:30:04Z",
- "digest": "sha256:3f2741d917578fb43c310a11226d26aa28ccb16337129fc2140bbe8dbe9bce86",
+ "generated_at": "2026-11-25T08:06:18Z",
+ "digest": "sha256:3f5eb489ee45dbb2fc8c0cbbb2abeeb1d5482a3800a7ca6a1d953afc61a4e732",
  "products": [
   {
    "id": "app",
    "name": "Splanc app",
    "label": "Splanc",
    "file": "app.json",
-   "count": 28,
+   "count": 29,
    "latest": {
-    "version": "1.16.0",
-    "date": "2026-11-22T08:26:16Z"
+    "version": "1.17.0",
+    "date": "2026-11-25T06:14:14Z"
    }
   },
   {
