@@ -1,0 +1,8170 @@
+{
+ "schema": 2,
+ "product": "app",
+ "releases": [
+  {
+   "version": "1.17.0",
+   "tag": "app-v1.17.0",
+   "name": "app-v1.17.0",
+   "date": "2026-11-25T06:14:14Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.17.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "Feature previews"
+     ]
+    },
+    {
+     "t": "h3",
+     "c": [
+      "Set up AI in one place"
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "img",
+       "a": {
+        "src": "media/fef9950b570be319da66.gif",
+        "alt": "Set up AI in one place",
+        "width": 280
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      "Model setup compares the AI options side by side: free OpenRouter models, Splanc AI credits, or your own key. Each lists its cost, quality, limits and privacy. (",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/pull/591"
+       },
+       "c": [
+        "#591"
+       ]
+      },
+      ") · ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/releases/download/app-v1.17.0/ai-model-setup-phone.mp4"
+       },
+       "c": [
+        "phone video (MP4)"
+       ]
+      }
+     ]
+    },
+    {
+     "t": "h3",
+     "c": [
+      "AI settings have their own tab"
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "img",
+       "a": {
+        "src": "media/0d3caf99e868f6c7d96b.gif",
+        "alt": "AI settings have their own tab",
+        "width": 280
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      "Pick where effect generation runs (cloud, a local server, or in the browser) from Settings → AI, available from anywhere in the app. (",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/pull/591"
+       },
+       "c": [
+        "#591"
+       ]
+      },
+      ") · ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/releases/download/app-v1.17.0/ai-settings-tab-phone.mp4"
+       },
+       "c": [
+        "phone video (MP4)"
+       ]
+      },
+      " · ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/releases/download/app-v1.17.0/ai-settings-tab-desktop.mp4"
+       },
+       "c": [
+        "desktop video (MP4)"
+       ]
+      }
+     ]
+    },
+    {
+     "t": "h3",
+     "c": [
+      "What's new, after every update"
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "img",
+       "a": {
+        "src": "media/d53a95a8b08e9a5d80ff.gif",
+        "alt": "What's new, after every update",
+        "width": 280
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      "After an update a sparkle appears in the corner. Tap it for the release notes since your last version, with a picker for the app, firmware and bridge. (",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/pull/591"
+       },
+       "c": [
+        "#591"
+       ]
+      },
+      ") · ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/releases/download/app-v1.17.0/whats-new-phone.mp4"
+       },
+       "c": [
+        "phone video (MP4)"
+       ]
+      }
+     ]
+    },
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Release feature-preview clips: recorded per release, inline in What's new, gated on owner review by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/591"
+         },
+         "c": [
+          "#591"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Effect editor: uniform value fields 8 px apart; the uniforms pane in the layout guard by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/633"
+         },
+         "c": [
+          "#633"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/firmware-v1.16.0...app-v1.17.0"
+       },
+       "c": [
+        "firmware-v1.16.0...app-v1.17.0"
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "img",
+       "a": {
+        "src": "media/e006efcc0ee3dbd767f1.jpg",
+        "alt": "ai model setup phone"
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "video",
+       "a": {
+        "src": "media/9dda21fc64a63bfa1f80.mp4",
+        "controls": true,
+        "muted": true,
+        "playsinline": true
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "video",
+       "a": {
+        "src": "media/69e787fb3866f4756ab6.webm",
+        "controls": true,
+        "muted": true,
+        "playsinline": true
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "img",
+       "a": {
+        "src": "media/d5718f33dc0ca8ed1ded.gif",
+        "alt": "ai settings tab desktop"
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "img",
+       "a": {
+        "src": "media/e5a6c11a4cd3ea86e8d7.jpg",
+        "alt": "ai settings tab desktop"
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "video",
+       "a": {
+        "src": "media/318cf03896fde04eadbb.mp4",
+        "controls": true,
+        "muted": true,
+        "playsinline": true
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "video",
+       "a": {
+        "src": "media/781f02ea922b1ab850fc.webm",
+        "controls": true,
+        "muted": true,
+        "playsinline": true
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "img",
+       "a": {
+        "src": "media/c7d88f2216de573ce787.jpg",
+        "alt": "ai settings tab phone"
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "video",
+       "a": {
+        "src": "media/6d8112c2d0ee1f2c9307.mp4",
+        "controls": true,
+        "muted": true,
+        "playsinline": true
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "video",
+       "a": {
+        "src": "media/8f44581df6f33aa626c5.webm",
+        "controls": true,
+        "muted": true,
+        "playsinline": true
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "img",
+       "a": {
+        "src": "media/cf3571022060ffdd7720.jpg",
+        "alt": "whats new phone"
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "video",
+       "a": {
+        "src": "media/7e879a83fc0ad4587a6c.mp4",
+        "controls": true,
+        "muted": true,
+        "playsinline": true
+       }
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "video",
+       "a": {
+        "src": "media/2f4104caf5fe506ce545.webm",
+        "controls": true,
+        "muted": true,
+        "playsinline": true
+       }
+      }
+     ]
+    }
+   ],
+   "media": [
+    "media/0d3caf99e868f6c7d96b.gif",
+    "media/2f4104caf5fe506ce545.webm",
+    "media/318cf03896fde04eadbb.mp4",
+    "media/69e787fb3866f4756ab6.webm",
+    "media/6d8112c2d0ee1f2c9307.mp4",
+    "media/781f02ea922b1ab850fc.webm",
+    "media/7e879a83fc0ad4587a6c.mp4",
+    "media/8f44581df6f33aa626c5.webm",
+    "media/9dda21fc64a63bfa1f80.mp4",
+    "media/c7d88f2216de573ce787.jpg",
+    "media/cf3571022060ffdd7720.jpg",
+    "media/d53a95a8b08e9a5d80ff.gif",
+    "media/d5718f33dc0ca8ed1ded.gif",
+    "media/e006efcc0ee3dbd767f1.jpg",
+    "media/e5a6c11a4cd3ea86e8d7.jpg",
+    "media/fef9950b570be319da66.gif"
+   ]
+  },
+  {
+   "version": "1.16.0",
+   "tag": "app-v1.16.0",
+   "name": "app-v1.16.0",
+   "date": "2026-11-22T08:26:16Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.16.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Diffuse capture: bench tooling and reference data behind ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/555"
+         },
+         "c": [
+          "#555"
+         ]
+        },
+        " by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/584"
+         },
+         "c": [
+          "#584"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware/netstack: rename changes the advertised BLE name live by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/568"
+         },
+         "c": [
+          "#568"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Refactor to extract container skills by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/225"
+         },
+         "c": [
+          "#225"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "docs: smart-home integrations feasibility study (Matter, HA, HomeKit, Google/Alexa) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/582"
+         },
+         "c": [
+          "#582"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "AI billing: Stripe live-mode go-live prep (AI_BILLING=production, runbook, check/apply/rollback) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/585"
+         },
+         "c": [
+          "#585"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M3a: Splanc Public Action frames on our netstack (spike, §4.4 met) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/563"
+         },
+         "c": [
+          "#563"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Research: two-C6 wideband channel sounding / ranging on raw I/Q (bench firmware, pipeline, findings) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/535"
+         },
+         "c": [
+          "#535"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "lint: format the diffuse-capture bench tooling from ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/584"
+         },
+         "c": [
+          "#584"
+         ]
+        },
+        " (main lint is red) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/588"
+         },
+         "c": [
+          "#588"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Fail fast on a wrong Wi-Fi password; keep what the user typed by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/564"
+         },
+         "c": [
+          "#564"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web/map detail: Digital twin as a panel tile, drop Pull by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/505"
+         },
+         "c": [
+          "#505"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Bridge migrate: keep a Pi bridge paired across a reflash (backup/restore + first-boot import) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/549"
+         },
+         "c": [
+          "#549"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "capture: exposure-first light servo (exposure before LED brightness, measured floor, no ratchet) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/504"
+         },
+         "c": [
+          "#504"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web/flash: detect the board and flash the image that fits it, or refuse by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/491"
+         },
+         "c": [
+          "#491"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: \"What's new?\" release-notes card + sparkle bubble after updates by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/506"
+         },
+         "c": [
+          "#506"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M3: the 802.11 backhaul in the mainline player (AP-anchored) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/565"
+         },
+         "c": [
+          "#565"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Splanc AI credits: Apple In-App Purchase on iOS (StoreKit 2 + App Store Server Notifications v2) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/587"
+         },
+         "c": [
+          "#587"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Mesh HITL rig: RP2350 RF controller, camera/LA flip timing, bench harness by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/578"
+         },
+         "c": [
+          "#578"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M4: mesh time + apply_at across the mesh (skew 0.76 ms, agreement 47 µs on rig-1) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/566"
+         },
+         "c": [
+          "#566"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "AI billing: Sign in with Apple and Google for credit accounts (D-143) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/583"
+         },
+         "c": [
+          "#583"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M5: gateway fan-out from the phone (mesh_send / get_mesh, relay allow-list, member status, mesh_gateway HITL) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/567"
+         },
+         "c": [
+          "#567"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh: the Pi as a mesh node — Broadcom radio (patched brcmfmac → nl80211, tap fallback), Public Action, Pi↔C6 by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/533"
+         },
+         "c": [
+          "#533"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: per-gate HITL performance metrics, Grafana dashboard + gate-threshold audit by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/576"
+         },
+         "c": [
+          "#576"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Improv absent wait: keep the BLE link alive through the sweeps (improv_fresh_join flake, desk ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/75"
+         },
+         "c": [
+          "#75"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/575"
+         },
+         "c": [
+          "#575"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fx native AOT: design + stages 1-2 (fx_aot RV32IM lowering, verifier, C6 bench) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/341"
+         },
+         "c": [
+          "#341"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Effect store: keep compiled effects on the device, open and delete them by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/441"
+         },
+         "c": [
+          "#441"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: deflake captureDeviceDrop_test (frame shedding on real time) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/609"
+         },
+         "c": [
+          "#609"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Connect flow: one Connect picker, saved Wi-Fi networks, auto-discovery (D-72) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/577"
+         },
+         "c": [
+          "#577"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "OOBE: Effects is home; tap an effect to play + tune it; opening the app no longer shows setup (D-219) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/593"
+         },
+         "c": [
+          "#593"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "P4 front end: a pure relay (no player core, no effects engine) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/607"
+         },
+         "c": [
+          "#607"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fx lang: fixed-point literal suffixes (0.6fx, 0.6fx16, 0.6fx8) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/513"
+         },
+         "c": [
+          "#513"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "set_counting_pattern: refuse more than 32 blocks instead of truncating by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/603"
+         },
+         "c": [
+          "#603"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fx_bench: re-baseline the sweep16 golden (stale golden, not a VM regression) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/592"
+         },
+         "c": [
+          "#592"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Diffuse capture: pipelined detection, faster CCL, low-end tier, detector bench (D-177) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/596"
+         },
+         "c": [
+          "#596"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Home Assistant integration: Splanc lamps as lights (HACS) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/595"
+         },
+         "c": [
+          "#595"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: a device-clock step back never freezes the effect (live_latency failures) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/590"
+         },
+         "c": [
+          "#590"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "New-fixture onboarding: name at flash, Blink in the picker (Improv Identify), LED count + colour order (D-259) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/605"
+         },
+         "c": [
+          "#605"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware/relay: stub player_identify_start (front-end image link failure on main) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/622"
+         },
+         "c": [
+          "#622"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.15.8...app-v1.16.0"
+       },
+       "c": [
+        "app-v1.15.8...app-v1.16.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.8",
+   "tag": "app-v1.15.8",
+   "name": "app-v1.15.8",
+   "date": "2026-11-20T12:12:06Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.8",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "ops: private Grafana Cloud monitoring for billing, spend, feedback and the demo relay by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/559"
+         },
+         "c": [
+          "#559"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "bazel: retry truncated repository downloads by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/562"
+         },
+         "c": [
+          "#562"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "docs: mesh networking design (swarm mesh layer, 802.11 P2P backhaul first) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/516"
+         },
+         "c": [
+          "#516"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M2a: envelope with 64-bit counters, replay, insider-resistant admin sessions, ports by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/529"
+         },
+         "c": [
+          "#529"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M2b: membership (closed, locked, open), joins, revocations, rotation on removal by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/530"
+         },
+         "c": [
+          "#530"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M2c: MeshStack, mesh time, live interpolation, meshsim + capacity/rate/live sweeps by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/531"
+         },
+         "c": [
+          "#531"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: -Os for the from-source mbedtls + Arduino core, drop core's float formatter (-267 KB flash) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/569"
+         },
+         "c": [
+          "#569"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "docs: guide to building a Vive-tracked lamp (the flashlight demo) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/580"
+         },
+         "c": [
+          "#580"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "docs: link the show-and-tell video from the Vive-tracked lamp guide by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/581"
+         },
+         "c": [
+          "#581"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.15.7...app-v1.15.8"
+       },
+       "c": [
+        "app-v1.15.7...app-v1.15.8"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.7",
+   "tag": "app-v1.15.7",
+   "name": "app-v1.15.7",
+   "date": "2026-11-19T01:23:21Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.7",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "lint: fix main after ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/555"
+         },
+         "c": [
+          "#555"
+         ]
+        },
+        " (diffuse dataset tools) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/561"
+         },
+         "c": [
+          "#561"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "AI settings as a Settings tab + dedicated Splanc AI credits flow + layout guard by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/558"
+         },
+         "c": [
+          "#558"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "AI: default Anthropic model for bring-your-own-key is Claude Sonnet 5.5 by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/560"
+         },
+         "c": [
+          "#560"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.15.6...app-v1.15.7"
+       },
+       "c": [
+        "app-v1.15.6...app-v1.15.7"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.6",
+   "tag": "app-v1.15.6",
+   "name": "app-v1.15.6",
+   "date": "2026-11-18T20:12:42Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.6",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Diffuse capture: adaptive spot detector (web + iOS), negotiated exposure and bit rate by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/555"
+         },
+         "c": [
+          "#555"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.15.5...app-v1.15.6"
+       },
+       "c": [
+        "app-v1.15.5...app-v1.15.6"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.5",
+   "tag": "app-v1.15.5",
+   "name": "app-v1.15.5",
+   "date": "2026-11-18T19:54:38Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.5",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "AI billing: design + sandbox scaffold for Splanc AI credits by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/547"
+         },
+         "c": [
+          "#547"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "AI billing: Stripe web checkout + webhook (test mode), Buy flow on web/Android by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/554"
+         },
+         "c": [
+          "#554"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.15.4...app-v1.15.5"
+       },
+       "c": [
+        "app-v1.15.4...app-v1.15.5"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.4",
+   "tag": "app-v1.15.4",
+   "name": "app-v1.15.4",
+   "date": "2026-11-18T13:45:24Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.4",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "p4/tracker: slow solves on a worker task; lighthouse @42d1a17 (mode B, deferred solves) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/538"
+         },
+         "c": [
+          "#538"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: an uncalibrated estimate never blocks deploy_effect or crossfade_to by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/540"
+         },
+         "c": [
+          "#540"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Agent feedback: report a bad AI answer with its trace (private store, triage + replay) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/539"
+         },
+         "c": [
+          "#539"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "flasher test: corrupt the damaged download for real (1-in-256 flake) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/543"
+         },
+         "c": [
+          "#543"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "ios: upload to TestFlight with the app's Apple ID explicitly by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/542"
+         },
+         "c": [
+          "#542"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "AI tiers: free OpenRouter models + first-prompt model setup by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/548"
+         },
+         "c": [
+          "#548"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.15.3...app-v1.15.4"
+       },
+       "c": [
+        "app-v1.15.3...app-v1.15.4"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.3",
+   "tag": "app-v1.15.3",
+   "name": "app-v1.15.3",
+   "date": "2026-11-18T07:27:30Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.3",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "capture: Stop & finish solves without a device session; device stop is fire-and-forget by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/512"
+         },
+         "c": [
+          "#512"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: advertise hue_stagger_pilot (hue code v2 on C6/P4) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/517"
+         },
+         "c": [
+          "#517"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "capture: hue code v2 by default on players that advertise it by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/518"
+         },
+         "c": [
+          "#518"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web/README: wrap an over-long line (main lint red after ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/518"
+         },
+         "c": [
+          "#518"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/527"
+         },
+         "c": [
+          "#527"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Release the ESP32-P4 player: signed OTA package and USB bundle on firmware-v* tags by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/490"
+         },
+         "c": [
+          "#490"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Effect compiler: retry a failed download instead of failing every compile by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/521"
+         },
+         "c": [
+          "#521"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Auto-push on by default, push on connect, honest SENT / NOT SENT results, uncalibrated estimates never gate by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/522"
+         },
+         "c": [
+          "#522"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Diagnostics Share: work around Chrome's file-type allowlist, then fall back by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/524"
+         },
+         "c": [
+          "#524"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: schedule_test waits for what it asserts (ramp_uniforms flake) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/528"
+         },
+         "c": [
+          "#528"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Diagnostics: bounded app event log (errors, toasts, connection changes, failed fetches) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/519"
+         },
+         "c": [
+          "#519"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl/README: modify DUTs for tests, not the rig hosts by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/532"
+         },
+         "c": [
+          "#532"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pbview: consume the extracted fughilli/pbview as a Bazel module by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/473"
+         },
+         "c": [
+          "#473"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "capture: re-code the synthetic scene on every mid-capture renegotiation (android_journeys) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/536"
+         },
+         "c": [
+          "#536"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Firmware: only offer the connected board's bundles; refuse cross-board packages by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/523"
+         },
+         "c": [
+          "#523"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "hitl: restore headless Chromium's system libraries for the web-OTA journey by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/534"
+         },
+         "c": [
+          "#534"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: re-send the reclaim RST (lost in transit); BLE disconnect-reason telemetry by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/537"
+         },
+         "c": [
+          "#537"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh M1: port the swarm network stack + backhaul seam by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/520"
+         },
+         "c": [
+          "#520"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/pi-bridge-v1.2.0...app-v1.15.3"
+       },
+       "c": [
+        "pi-bridge-v1.2.0...app-v1.15.3"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.2",
+   "tag": "app-v1.15.2",
+   "name": "app-v1.15.2",
+   "date": "2026-11-17T03:56:07Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.2",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "capture: hue code v2 by default on players that advertise it by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/518"
+         },
+         "c": [
+          "#518"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.15.1...app-v1.15.2"
+       },
+       "c": [
+        "app-v1.15.1...app-v1.15.2"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.1",
+   "tag": "app-v1.15.1",
+   "name": "app-v1.15.1",
+   "date": "2026-11-17T03:33:02Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.1",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Bridge OTA: confirm on the display before any update installs by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/511"
+         },
+         "c": [
+          "#511"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "capture: Stop & finish solves without a device session; device stop is fire-and-forget by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/512"
+         },
+         "c": [
+          "#512"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: advertise hue_stagger_pilot (hue code v2 on C6/P4) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/517"
+         },
+         "c": [
+          "#517"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.15.0...app-v1.15.1"
+       },
+       "c": [
+        "app-v1.15.0...app-v1.15.1"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.15.0",
+   "tag": "app-v1.15.0",
+   "name": "app-v1.15.0",
+   "date": "2026-11-17T00:39:53Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.15.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "Highlights"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        {
+         "t": "strong",
+         "c": [
+          "Faster, more robust mapping at scale."
+         ]
+        },
+        " A new staggered colour code (hue code v2) with a palette pilot gives each LED a unique code with fewer false matches, and the capture loop sheds work under load: per-frame time at 2000 LEDs dropped from ~78 ms to ~24 ms on a throttled phone."
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        {
+         "t": "strong",
+         "c": [
+          "One solve progress bar."
+         ]
+        },
+        " Solving now shows a single bar that only moves forward across all optimizer passes, with a full-screen 3D preview while it runs."
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        {
+         "t": "strong",
+         "c": [
+          "Virtual LED wall."
+         ]
+        },
+        " The host player's virtual wall can be added in the app by address, like any other player."
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        {
+         "t": "strong",
+         "c": [
+          "Synced shows."
+         ]
+        },
+        " Uniform, effect, crossfade and brightness changes can be scheduled to land on the same frame across a room, and stateful effects stay in step using the shared time base."
+       ]
+      }
+     ]
+    },
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "hitl: pin hitl-reserve eaec330 (analyzer capture deadline) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/496"
+         },
+         "c": [
+          "#496"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pattern: one Rust colour-code kernel for firmware, web (WASM) and Python by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/488"
+         },
+         "c": [
+          "#488"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Hue code v2 phase 2: staggered cycles + a palette pilot unique by code-book pruning by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/501"
+         },
+         "c": [
+          "#501"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "player_host: virtual LED wall as a player the phone app adds by address by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/500"
+         },
+         "c": [
+          "#500"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "capture: one monotonic solve progress bar + full-screen solve preview by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/502"
+         },
+         "c": [
+          "#502"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/player_rs: shared time base + output latency offset (host player) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/498"
+         },
+         "c": [
+          "#498"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Canonicalize approved splash motion and generate relay boot bitmaps by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/503"
+         },
+         "c": [
+          "#503"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Synced show: bridge drift discipline + shared-time dt for stateful effects by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/497"
+         },
+         "c": [
+          "#497"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Bridge OLED: draw at the panel's native rate; 240 fps boot animation by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/507"
+         },
+         "c": [
+          "#507"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Bridge OLED: shift-safe 127x63 canvas and a Life-glider screensaver by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/508"
+         },
+         "c": [
+          "#508"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Scheduled changes (apply_at): room-wide control changes land on one frame by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/499"
+         },
+         "c": [
+          "#499"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "ci: medium size for //pi/bridge:display_test (macOS timeout) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/509"
+         },
+         "c": [
+          "#509"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.14.1...app-v1.15.0"
+       },
+       "c": [
+        "app-v1.14.1...app-v1.15.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.14.1",
+   "tag": "app-v1.14.1",
+   "name": "app-v1.14.1",
+   "date": "2026-11-15T04:41:43Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.14.1",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "pwa: rescue stale pages.dev home-screen icons — open in Chrome to reinstall by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/493"
+         },
+         "c": [
+          "#493"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.14.0...app-v1.14.1"
+       },
+       "c": [
+        "app-v1.14.0...app-v1.14.1"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.14.0",
+   "tag": "app-v1.14.0",
+   "name": "app-v1.14.0",
+   "date": "2026-11-15T03:57:45Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.14.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "agent: ",
+        {
+         "t": "code",
+         "c": [
+          "splanc-agent stage"
+         ]
+        },
+        ": demo-night TV screen (voice agent, code walkthroughs, 3D previews, phone mirror) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/434"
+         },
+         "c": [
+          "#434"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "docs: strided capture deep dive + README docs badge by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/456"
+         },
+         "c": [
+          "#456"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: lanbridge_test redeems a settled pairing code (main CI red) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/470"
+         },
+         "c": [
+          "#470"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "solver: roll back a strip-prior pass that collapses a usable final (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/455"
+         },
+         "c": [
+          "#455"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/458"
+         },
+         "c": [
+          "#458"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: Back never re-enters a finished capture (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/442"
+         },
+         "c": [
+          "#442"
+         ]
+        },
+        "); debug-server QR stops retry-flooding (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/454"
+         },
+         "c": [
+          "#454"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/459"
+         },
+         "c": [
+          "#459"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: navigating right after leaving capture opens the screen (fixes main HITL red after ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/459"
+         },
+         "c": [
+          "#459"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/472"
+         },
+         "c": [
+          "#472"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mapping: link telemetry in capture bundles + throughput benchmark (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/448"
+         },
+         "c": [
+          "#448"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/457"
+         },
+         "c": [
+          "#457"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent stage: rebuild on reconnect, keep whole turns, request identity + supersede (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/445"
+         },
+         "c": [
+          "#445"
+         ]
+        },
+        ", ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/449"
+         },
+         "c": [
+          "#449"
+         ]
+        },
+        ", ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/447"
+         },
+         "c": [
+          "#447"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/461"
+         },
+         "c": [
+          "#461"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: stop hosts re-asking to approve Splanc tools (stable offline tool list, scene changes not destructive) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/469"
+         },
+         "c": [
+          "#469"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web+tools: unified diagnostics export via the debug server, with Share parity (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/450"
+         },
+         "c": [
+          "#450"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/463"
+         },
+         "c": [
+          "#463"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: honest FX-agent outcomes, live uniforms, perf populations, over-budget drafts (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/451"
+         },
+         "c": [
+          "#451"
+         ]
+        },
+        " ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/452"
+         },
+         "c": [
+          "#452"
+         ]
+        },
+        " ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/453"
+         },
+         "c": [
+          "#453"
+         ]
+        },
+        " ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/443"
+         },
+         "c": [
+          "#443"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/462"
+         },
+         "c": [
+          "#462"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Wi-Fi connect (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/444"
+         },
+         "c": [
+          "#444"
+         ]
+        },
+        "): busy vs cert, idle session handover, mbedTLS context overrun by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/460"
+         },
+         "c": [
+          "#460"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: compile every mbedtls consumer against the linked library's config (",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/issues/468"
+         },
+         "c": [
+          "#468"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/471"
+         },
+         "c": [
+          "#471"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Splanc on the ESP32-P4 (+C6 front end) with a wired Vive tracker by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/439"
+         },
+         "c": [
+          "#439"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Mapping: a scale floor against collapse, and capture/IMU/CV ahead of the solver and overlays by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/479"
+         },
+         "c": [
+          "#479"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "P4 OTA: one signed package updates both the P4 and its C6 by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/475"
+         },
+         "c": [
+          "#475"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: reset an idle peer before reclaiming the slot (Android ERR_TOO_MANY_RETRIES) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/480"
+         },
+         "c": [
+          "#480"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "player_host: Splanc player on a Mac, driving WLED over DDP / Art-Net by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/476"
+         },
+         "c": [
+          "#476"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "P4 Ethernet: DDP / Art-Net network outputs and an outputs-first Hardware Setup page by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/478"
+         },
+         "c": [
+          "#478"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Synthetic radiolarian captures: scale collapse and IMU starvation (tests for ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/479"
+         },
+         "c": [
+          "#479"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/484"
+         },
+         "c": [
+          "#484"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/player_rs: retry spidev instead of disabling rendering (cold-boot race); order unit after spidev + FT2232 by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/489"
+         },
+         "c": [
+          "#489"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "ci: medium timeout for the P4 tracker reacquire_test (macOS flake) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/495"
+         },
+         "c": [
+          "#495"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pwa: valid-XML SVG app icons (Android \"This app cannot be installed\") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/494"
+         },
+         "c": [
+          "#494"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.13.1...app-v1.14.0"
+       },
+       "c": [
+        "app-v1.13.1...app-v1.14.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.13.1",
+   "tag": "app-v1.13.1",
+   "name": "app-v1.13.1",
+   "date": "2026-11-04T08:31:16Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.13.1",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "demo AI relay: Claude first (paid), free models as fallback by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/429"
+         },
+         "c": [
+          "#429"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "iOS: fix crash on every launch after a Bluetooth (Halloween) session by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/428"
+         },
+         "c": [
+          "#428"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "demo AI relay: Opus 4.8 first; fix Claude 400 (reasoning is mandatory); paid-model 400s fall back by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/430"
+         },
+         "c": [
+          "#430"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "demo AI relay: Acid play mode is an engaging conversation with previews by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/431"
+         },
+         "c": [
+          "#431"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Acid play mode: a real conversation, with previews of the connected fixture by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/432"
+         },
+         "c": [
+          "#432"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "demo AI relay: no bare string exports; every deploy checks the Worker runtime by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/433"
+         },
+         "c": [
+          "#433"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "app: breathing default effect, preview on the fixture's map, stale-icon reinstall by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/435"
+         },
+         "c": [
+          "#435"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "app: back up and restore the whole app by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/436"
+         },
+         "c": [
+          "#436"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "app: retire the Halloween entry button by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/437"
+         },
+         "c": [
+          "#437"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.13.0...app-v1.13.1"
+       },
+       "c": [
+        "app-v1.13.0...app-v1.13.1"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.13.0",
+   "tag": "app-v1.13.0",
+   "name": "app-v1.13.0",
+   "date": "2026-10-30T01:07:47Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.13.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Bridge: per-client credential management (list, last used, revoke one) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/415"
+         },
+         "c": [
+          "#415"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "max_ota_release: read --toplevel files that live in the store by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/416"
+         },
+         "c": [
+          "#416"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "bridge flasher: show the image version and let users pick an older one by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/417"
+         },
+         "c": [
+          "#417"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: native BLE player socket + connect-by-name for iOS (Halloween) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/418"
+         },
+         "c": [
+          "#418"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Halloween install: kiosk mode, play mode, iOS BLE, free Acid Mode, presets, per-channel capture by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/426"
+         },
+         "c": [
+          "#426"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.12.9...app-v1.13.0"
+       },
+       "c": [
+        "app-v1.12.9...app-v1.13.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.9",
+   "tag": "app-v1.12.9",
+   "name": "app-v1.12.9",
+   "date": "2026-10-28T23:19:07Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.9",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Splanc MAX over-the-air updates (pull, signed, one-shot trial boot + rollback) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/369"
+         },
+         "c": [
+          "#369"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/pi-bridge-v1.1.0...app-v1.12.9"
+       },
+       "c": [
+        "pi-bridge-v1.1.0...app-v1.12.9"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.8",
+   "tag": "app-v1.12.8",
+   "name": "app-v1.12.8",
+   "date": "2026-10-28T12:57:53Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.8",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "HITL: keep the DUT's full console log when a test fails by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/394"
+         },
+         "c": [
+          "#394"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "iOS TestFlight: sign with a fixed dist cert + App Store profile (manual signing) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/395"
+         },
+         "c": [
+          "#395"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: Improv Wi-Fi joins are always fresh; report an unseen SSID as UNABLE_TO_CONNECT by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/401"
+         },
+         "c": [
+          "#401"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "docs: pairing codes on the Pi image use splanc-bridge, not npx by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/403"
+         },
+         "c": [
+          "#403"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack Improv: fresh join auths the latched AP between sweeps; report unseen after ~30 s (fixes ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/401"
+         },
+         "c": [
+          "#401"
+         ]
+        },
+        " iOS regression) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/411"
+         },
+         "c": [
+          "#411"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: never RST-refuse a closing client's reconnect; gate a 1.4x effect + live heartbeat session by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/407"
+         },
+         "c": [
+          "#407"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.12.7...app-v1.12.8"
+       },
+       "c": [
+        "app-v1.12.7...app-v1.12.8"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.7",
+   "tag": "app-v1.12.7",
+   "name": "app-v1.12.7",
+   "date": "2026-10-27T17:28:48Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.7",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "firmware: stack bound counts mask-ROM frames; stacks resized to it (+[stack] high-water line) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/384"
+         },
+         "c": [
+          "#384"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.12.6...app-v1.12.7"
+       },
+       "c": [
+        "app-v1.12.6...app-v1.12.7"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.6",
+   "tag": "app-v1.12.6",
+   "name": "app-v1.12.6",
+   "date": "2026-10-27T11:30:51Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.6",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Live control at the physical floor on the LAN: loopTask never parks on the render mutex, live mailbox, adaptive ack timeout, on-LAN gate by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/366"
+         },
+         "c": [
+          "#366"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.12.5...app-v1.12.6"
+       },
+       "c": [
+        "app-v1.12.5...app-v1.12.6"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.5",
+   "tag": "app-v1.12.5",
+   "name": "app-v1.12.5",
+   "date": "2026-10-27T07:34:44Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.5",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "hitl: infra outcomes re-queue then skip; quarantine list; flake report by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/378"
+         },
+         "c": [
+          "#378"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "hitl: run only the HITL tests a PR / merge group can affect (Target Determinator) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/379"
+         },
+         "c": [
+          "#379"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: share loopTask's RX scratch; loopTask stack 14 -> 11 KB (+4.6 KB boot heap) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/383"
+         },
+         "c": [
+          "#383"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FX debugger: pause/step/inspect the device FX engine + host replay diff (firmware, MCP, workspace) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/357"
+         },
+         "c": [
+          "#357"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FX authoring: honest C6 cost table + fixed-point examples in both agent prompts, estimate findings, perf warnings by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/348"
+         },
+         "c": [
+          "#348"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Estimator R12: walk user functions, guards + equality-branch odds, texture/fixed-context costs (p10 0.59 -> 0.92) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/349"
+         },
+         "c": [
+          "#349"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: raise rig-1/rig-2 C6 caps to 4 for the powered-hub boards by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/367"
+         },
+         "c": [
+          "#367"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.12.4...app-v1.12.5"
+       },
+       "c": [
+        "app-v1.12.4...app-v1.12.5"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.4",
+   "tag": "app-v1.12.4",
+   "name": "app-v1.12.4",
+   "date": "2026-10-26T15:27:38Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.4",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "HITL capacity: normalise supply by counter coverage, skip data gaps by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/387"
+         },
+         "c": [
+          "#387"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: rig queue priority classes + progress-driven activation waits by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/376"
+         },
+         "c": [
+          "#376"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fx_bench gate: pass within ±margin OR an 8,000-cycle absolute floor by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/390"
+         },
+         "c": [
+          "#390"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: stage flash read-back frames on demand, not in .bss (+6.5 KB boot heap) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/382"
+         },
+         "c": [
+          "#382"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "ota_sign keygen: generic labels, --name and --pub-out by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/388"
+         },
+         "c": [
+          "#388"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Wi-Fi rejoin: auto-mode decay is opt-in (default off) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/389"
+         },
+         "c": [
+          "#389"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Hotfix (1.12.4): heavy effects starve the netstack, players unreachable by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/393"
+         },
+         "c": [
+          "#393"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/hitl-capacity-data...app-v1.12.4"
+       },
+       "c": [
+        "hitl-capacity-data...app-v1.12.4"
+       ]
+      }
+     ]
+    },
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "HITL capacity: normalise supply by counter coverage, skip data gaps by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/387"
+         },
+         "c": [
+          "#387"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: rig queue priority classes + progress-driven activation waits by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/376"
+         },
+         "c": [
+          "#376"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fx_bench gate: pass within ±margin OR an 8,000-cycle absolute floor by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/390"
+         },
+         "c": [
+          "#390"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: stage flash read-back frames on demand, not in .bss (+6.5 KB boot heap) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/382"
+         },
+         "c": [
+          "#382"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "ota_sign keygen: generic labels, --name and --pub-out by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/388"
+         },
+         "c": [
+          "#388"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Wi-Fi rejoin: auto-mode decay is opt-in (default off) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/389"
+         },
+         "c": [
+          "#389"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Hotfix (1.12.4): heavy effects starve the netstack, players unreachable by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/393"
+         },
+         "c": [
+          "#393"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/hitl-capacity-data...app-v1.12.4"
+       },
+       "c": [
+        "hitl-capacity-data...app-v1.12.4"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.3",
+   "tag": "app-v1.12.3",
+   "name": "app-v1.12.3",
+   "date": "2026-10-25T09:53:42Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.3",
+   "prerelease": true,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "video: present-at on the shared time base, device jitter buffer, TextureAck, lock-free ingest by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/359"
+         },
+         "c": [
+          "#359"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Wi-Fi rejoin policy (auto/fixed/manual/offline) + Wi-Fi work never disturbs the LEDs by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/371"
+         },
+         "c": [
+          "#371"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.12.2...app-v1.12.3"
+       },
+       "c": [
+        "app-v1.12.2...app-v1.12.3"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.2",
+   "tag": "app-v1.12.2",
+   "name": "app-v1.12.2",
+   "date": "2026-10-25T05:19:04Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.2",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "netstack tcp: buffer out-of-order segments + SACK, tail-loss probe, honour peer window scale by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/358"
+         },
+         "c": [
+          "#358"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "effects: rate knobs are integrators, never time * speed (prompts, examples, compiler lint) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/372"
+         },
+         "c": [
+          "#372"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "hitl: long-run video latency/jitter/burst test + netstack RX/TCP diagnostics by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/352"
+         },
+         "c": [
+          "#352"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: latest-wins VideoSender for texture streaming; phase-locked capture cadence; createImageBitmap capture by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/361"
+         },
+         "c": [
+          "#361"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "hitl_client: skip cordoned rigs; re-queue when a daemon restart drops our slot by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/364"
+         },
+         "c": [
+          "#364"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Multi-fixture room localization from one phone capture (group_capture + solver + app + bridge) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/329"
+         },
+         "c": [
+          "#329"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web OTA: keep reconnecting through the handoff and install; clear waits and failures; Update firmware on the device sheet by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/373"
+         },
+         "c": [
+          "#373"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.12.1...app-v1.12.2"
+       },
+       "c": [
+        "app-v1.12.1...app-v1.12.2"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.1",
+   "tag": "app-v1.12.1",
+   "name": "app-v1.12.1",
+   "date": "2026-10-24T07:38:50Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.1",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "fx_vm: accurate logf/expf (pow(x, 8) was off by up to 2.8x) — output change, needs sign-off by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/344"
+         },
+         "c": [
+          "#344"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.12.0...app-v1.12.1"
+       },
+       "c": [
+        "app-v1.12.0...app-v1.12.1"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.12.0",
+   "tag": "app-v1.12.0",
+   "name": "app-v1.12.0",
+   "date": "2026-10-24T06:37:55Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.12.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "docs: Splanc quickstart guide (README + docs site) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/334"
+         },
+         "c": [
+          "#334"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "OTA: split loader + app, signed images, rollback and Wi-Fi updates by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/322"
+         },
+         "c": [
+          "#322"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "ota: provision the offline backup signing key (key id 1) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/340"
+         },
+         "c": [
+          "#340"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fx_compiler: broadcast scalar clamp() bounds (clamp(vec3, 0.0, 1.0) hung the device VM) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/338"
+         },
+         "c": [
+          "#338"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FX engine performance study on the ESP32-C6 (native ceiling, agent authoring, estimator, architecture) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/337"
+         },
+         "c": [
+          "#337"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FX VM perf stack: JIT register caching + fixed ISA (R11) — lands ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/328"
+         },
+         "c": [
+          "#328"
+         ]
+        },
+        " + R3..R11 with regenerated goldens by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/350"
+         },
+         "c": [
+          "#350"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "file_bug: every Splanc agent can report bugs (link by default; direct via relay POST /bugs) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/355"
+         },
+         "c": [
+          "#355"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: per-class concurrency caps, AP station stats, HITL only on ",
+        {
+         "t": "code",
+         "c": [
+          "hitl"
+         ]
+        },
+        "-labelled PRs by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/362"
+         },
+         "c": [
+          "#362"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: never reboot to rescan Wi-Fi; slow effects lag instead of being parked by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/363"
+         },
+         "c": [
+          "#363"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Calibrate IMU: hands-free 3-pose capture, verified write-back, pending push on reconnect by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/365"
+         },
+         "c": [
+          "#365"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.11.0...app-v1.12.0"
+       },
+       "c": [
+        "app-v1.11.0...app-v1.12.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.11.0",
+   "tag": "app-v1.11.0",
+   "name": "app-v1.11.0",
+   "date": "2026-10-22T20:39:30Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.11.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "netstack: stable factory Wi-Fi MAC + mDNS re-announce + stable-identity HITL gate (TLS slot analysis) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/326"
+         },
+         "c": [
+          "#326"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web/flash: sort firmware versions numerically (1.10.0 above 1.9.0) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/330"
+         },
+         "c": [
+          "#330"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web/effects/ai: teach the in-app effect agent the imu_* sensor uniforms by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/331"
+         },
+         "c": [
+          "#331"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Maps tab: device map card (Save / Preview / Calibrate IMU from the device) + Supplement for observation-less maps by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/332"
+         },
+         "c": [
+          "#332"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Calibrate IMU: exposure/brightness/stride controls + no silent profile-less fallback by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/333"
+         },
+         "c": [
+          "#333"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: rejoin reliably with the stable MAC (disassoc+deauth goodbye, real 802.11 seq numbers, unanswered-auth guard) + reboot-loop gate by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/336"
+         },
+         "c": [
+          "#336"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Show Mode: nested effects list, MIDI encoder browse/load, relative modes, Twister SysEx setup by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/327"
+         },
+         "c": [
+          "#327"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: 1024 LEDs per channel (2048 total) + wire-aware frame-rate ladder by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/335"
+         },
+         "c": [
+          "#335"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.10.0...app-v1.11.0"
+       },
+       "c": [
+        "app-v1.10.0...app-v1.11.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.10.0",
+   "tag": "app-v1.10.0",
+   "name": "app-v1.10.0",
+   "date": "2026-10-21T23:04:57Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.10.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "agent: follow players that change IP (identity by device id), heartbeat sessions, specific tool errors by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/323"
+         },
+         "c": [
+          "#323"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Live VJ through the bridge: drive every fixture from the app via the relay or the LAN by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/317"
+         },
+         "c": [
+          "#317"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Mapping: fix degenerate final solves after a good preview + debug-mode capture bundles by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/318"
+         },
+         "c": [
+          "#318"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: finish connecting when a retry welcomes after the first attempt timed out (android_journeys deflake) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/324"
+         },
+         "c": [
+          "#324"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Sensor core: MPU-6050 auto-detect, native fusion, uniform pool, get_sensors by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/315"
+         },
+         "c": [
+          "#315"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FUG-107: sensor drivers in the effects VM (supersedes ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/96"
+         },
+         "c": [
+          "#96"
+         ]
+        },
+        ") + MPU-6050 VM-vs-native A/B by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/319"
+         },
+         "c": [
+          "#319"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "IMU-to-fixture extrinsic calibration (post-mapping) + capture-profile reuse by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/320"
+         },
+         "c": [
+          "#320"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Calibrate IMU: the guided multi-pose screen by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/321"
+         },
+         "c": [
+          "#321"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware/netstack: persist WiFi credentials so updates and reboots rejoin by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/311"
+         },
+         "c": [
+          "#311"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/firmware-v1.9.0...app-v1.10.0"
+       },
+       "c": [
+        "firmware-v1.9.0...app-v1.10.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.9.0",
+   "tag": "app-v1.9.0",
+   "name": "app-v1.9.0",
+   "date": "2026-10-20T22:20:38Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.9.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "web: export a map as TouchDesigner CSV or a Chromatik .lxf fixture by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/297"
+         },
+         "c": [
+          "#297"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: fast first call (no manifest round trip, cached players, early-exit mDNS) + progress by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/299"
+         },
+         "c": [
+          "#299"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: two-channel analyzer capture for time_base_skew (hitl-reserve ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/15"
+         },
+         "c": [
+          "#15"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/298"
+         },
+         "c": [
+          "#298"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: answer ICMP echo (rate-limited) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/302"
+         },
+         "c": [
+          "#302"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/bridge: one-command Raspberry Pi Splanc bridge appliance (HDMI + OLED HAT) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/300"
+         },
+         "c": [
+          "#300"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware/netstack: per-device TLS key + self-signed cert (retire the shared baked key) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/303"
+         },
+         "c": [
+          "#303"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: cloud relay + LAN bridge for cloud-hosted agents (+ retire splanc.pages.dev) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/301"
+         },
+         "c": [
+          "#301"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/firmware-v1.7.1...app-v1.9.0"
+       },
+       "c": [
+        "firmware-v1.7.1...app-v1.9.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
+   "version": "1.8.0",
+   "tag": "app-v1.8.0",
+   "name": "app-v1.8.0",
+   "date": "2026-10-20T08:17:58Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.8.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl/phone: wire the iOS-native app-driver lane + dynamic C6 port discovery by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/227"
+         },
+         "c": [
+          "#227"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "iOS HITL: make real-BLE smoke+connect pass on the Mac bench by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/253"
+         },
+         "c": [
+          "#253"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FUG-112: supplemental captures + live registered 3D overlay by @issuefleet[bot] in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/83"
+         },
+         "c": [
+          "#83"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: always capture the DUT serial log for every HITL reservation by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/254"
+         },
+         "c": [
+          "#254"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: key uploaded map positions by LED id, interpolate unmapped LEDs by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/255"
+         },
+         "c": [
+          "#255"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "solver: optional strip prior (stripPrior) for sparse/diffuse captures by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/256"
+         },
+         "c": [
+          "#256"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Multi-channel hardware config: per-channel color-order probe + LED counts by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/257"
+         },
+         "c": [
+          "#257"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: strip the topology debug report before saving/sending by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/258"
+         },
+         "c": [
+          "#258"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: WS2812 via PARLIO + GDMA on the ESP32-C6 (fixes LED pops) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/261"
+         },
+         "c": [
+          "#261"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl: bump hitl-reserve (analyzer timing op) + hitl-capture --timing by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/260"
+         },
+         "c": [
+          "#260"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "solver: re-anchor scale with the BA's biases, warn on weak/implausible metric scale by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/259"
+         },
+         "c": [
+          "#259"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: zero-copy board-caps reply, in-place dispatch, stacks sized from a static bound by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/262"
+         },
+         "c": [
+          "#262"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web/flash: Android USB-JTAG connect resets then reopens; fix C6 flash-ID probe by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/268"
+         },
+         "c": [
+          "#268"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pbview: zero-copy protobuf views + in-place request decoding on the firmware by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/265"
+         },
+         "c": [
+          "#265"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Add guided effects playground with free AI fallback by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/275"
+         },
+         "c": [
+          "#275"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: free vendor WiFi scan residue; move dead SDK IRAM code to flash by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/266"
+         },
+         "c": [
+          "#266"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: zero-copy TX (one in-place frame); loopTask 20 -> 14 KiB by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/267"
+         },
+         "c": [
+          "#267"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: region crate (pools/slab/mode union) + reachability-checked mode model by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/263"
+         },
+         "c": [
+          "#263"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Fix the public demo relay on Cloudflare Workers by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/281"
+         },
+         "c": [
+          "#281"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Handle model capacity limits in the public demo relay by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/283"
+         },
+         "c": [
+          "#283"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Diagnose unavailable free demo models safely by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/284"
+         },
+         "c": [
+          "#284"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Normalize demo provider tool-call transport fields by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/287"
+         },
+         "c": [
+          "#287"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "release: publish app-v* releases with the built webapp as a durable asset by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/277"
+         },
+         "c": [
+          "#277"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "pi/hitl/observability: put amd-rig + mac-mini on the dashboards (Mac launchd push, loud sync skip) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/279"
+         },
+         "c": [
+          "#279"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Keep free demo AI responsive through preview follow-ups by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/288"
+         },
+         "c": [
+          "#288"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: MCP bridge, skill and release bundle (Agent Discovery & MCP Bundle Spec) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/274"
+         },
+         "c": [
+          "#274"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Use normal demo docks, highlight the tour, and prevent oversized previews by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/290"
+         },
+         "c": [
+          "#290"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: multi-fixture hub, one-shot CLI, bundle-carried site entry point by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/278"
+         },
+         "c": [
+          "#278"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: static stack-bound CI gate + JTAG hang catcher; xmit/logdrain 3 -> 2 KiB by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/270"
+         },
+         "c": [
+          "#270"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: post-boot heap census (log-only freeze trap), read over JTAG by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/271"
+         },
+         "c": [
+          "#271"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: mbedTLS allocates from its own region (record slots + private TLSF), off the shared heap by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/272"
+         },
+         "c": [
+          "#272"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: open littlefs files unbuffered (no 4 KB stdio buffer per open) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/273"
+         },
+         "c": [
+          "#273"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Agent discovery, device side: splanc.json manifest, mDNS, welcome.features, uniform commit, list_effects by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/276"
+         },
+         "c": [
+          "#276"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Multi-fixture device side: room-frame pose (led.room, room.min/max) + shared time base by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/280"
+         },
+         "c": [
+          "#280"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "tools/kani: hermetic Kani under Bazel (rust_kani_test); region proofs as bazel tests by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/264"
+         },
+         "c": [
+          "#264"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: track the device through the sysmode model (log-only) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/269"
+         },
+         "c": [
+          "#269"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "docs: the Splanc manifesto + docs for the agent and memory work by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/282"
+         },
+         "c": [
+          "#282"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "effects AI: measure_on_device — on-fixture perf stream alongside the offline estimate by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/292"
+         },
+         "c": [
+          "#292"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware: exact-size topology decode + 12 KB topology arena (462-LED / 51-segment scans upload) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/291"
+         },
+         "c": [
+          "#291"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware/player_app: ffi_test back to one #[test] (fixes a cross-test race) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/294"
+         },
+         "c": [
+          "#294"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "release: pass the agent bundle's URL + sha256 into the firmware build by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/293"
+         },
+         "c": [
+          "#293"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "agent: uniform keypoint MCP tools (save / recall / blend looks) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/286"
+         },
+         "c": [
+          "#286"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FX decks + crossfade + on-device uniform keypoints (supersedes ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/82"
+         },
+         "c": [
+          "#82"
+         ]
+        },
+        ") by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/285"
+         },
+         "c": [
+          "#285"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "docs: keypoints/decks, topology arena, measure_on_device by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/295"
+         },
+         "c": [
+          "#295"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/firmware-v1.4.0...app-v1.8.0"
+       },
+       "c": [
+        "firmware-v1.4.0...app-v1.8.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  }
+ ]
+}
