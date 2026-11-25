@@ -355,6 +355,8 @@ test("the Mesh section model", () => {
     meshId: 5,
     name: "Home",
     createdAt: "",
+    role: "admin" as const,
+    delegates: [],
     adminPublic: ADMIN_PK,
     keyEpoch: 1,
     revVersion: 0,

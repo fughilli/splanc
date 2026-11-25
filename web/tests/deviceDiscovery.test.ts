@@ -268,6 +268,8 @@ test("mesh members are grouped under their gateway: the connected one, else one 
       meshId,
       name: `m${meshId}`,
       createdAt,
+      role: "admin",
+      delegates: [],
       adminPublic: new Uint8Array(65),
       keyEpoch: 1,
       revVersion: 0,
