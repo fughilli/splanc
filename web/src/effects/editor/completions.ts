@@ -15,7 +15,7 @@
  *      context roots, true/false, and the program's declared names.
  */
 
-import { BUILTINS, CONTEXTS, KEYWORD_DOCS, TYPES } from "./lang-spec";
+import { BUILTINS, CONTEXTS, KEYWORD_DOCS, LANG, TYPES } from "./lang-spec";
 
 export type CompletionKind =
   | "member"
@@ -43,14 +43,24 @@ export interface CompletionResult {
   from: number;
 }
 
-const CONTROL_KEYWORDS = ["if", "else", "for", "return", "uniform", "state"];
+// Declaration + control keywords (true/false are offered separately below).
+const CONTROL_KEYWORDS = LANG.filter((e) => e.kind === "keyword" && e.category !== "literal").map((e) => e.name);
 const SWIZZLE_COMPONENTS = ["x", "y", "z", "w", "r", "g", "b", "a"];
 
 function funcName(sig: string): string {
   return sig.slice(0, sig.indexOf("("));
 }
 
-/** Contexts that expose members via `.` (led/imu). */
+// The declarable value types as a regex alternation, longest-first so
+// `fixed16`/`fixed8` win over the `fixed` prefix.
+const VALUE_TYPE_RE = `(?:${LANG.filter(
+  (e) => e.kind === "type" && !["program", "storage", "trigger"].includes(e.category),
+)
+  .map((e) => e.name)
+  .sort((a, b) => b.length - a.length)
+  .join("|")})`;
+
+/** Contexts that expose members via `.` (led/imu/room). */
 const MEMBER_CONTEXTS = new Map(CONTEXTS.filter((c) => c.members.length > 0).map((c) => [c.name, c]));
 
 /**
@@ -68,8 +78,7 @@ function scanDeclarations(source: string): CompletionItem[] {
     out.push({ label: name, kind, detail, doc, insertText: name });
   };
 
-  // Longest-first so `fixed16`/`fixed8` win over the `fixed` prefix.
-  const TYPE = "(?:float|int|fixed16|fixed8|fixed|bool|vec2|vec3|vec4)";
+  const TYPE = VALUE_TYPE_RE;
   for (const m of source.matchAll(new RegExp(`\\buniform\\s+(${TYPE})\\s+([A-Za-z_]\\w*)`, "g"))) {
     add(m[2]!, "uniform", m[1]!, "declared uniform");
   }

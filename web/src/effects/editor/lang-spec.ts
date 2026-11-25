@@ -1,154 +1,77 @@
 /**
- * Single source of truth for the effect language's token vocabulary
- * (docs/design/effects-compiler.md §"lang-spec.ts"): keywords, context idents,
- * built-in function signatures, and types — fixed by the AUTHORITATIVE compiler
- * (fx_compiler/src/lib.rs: `emit_builtin`, `emit_namespace`, and the
- * time/dt/frame globals in `primary`).
+ * The effect language's vocabulary for the editor: keywords, context idents,
+ * built-in function signatures, and types. It is DERIVED from the compiler's
+ * reference table (fx_compiler/src/lang.rs, embedded here as lang-table.gen.ts
+ * and exported live by the compiler wasm as `fx_language()`), so it can never
+ * describe a built-in the compiler doesn't have: //fx_compiler:lang_test fails
+ * when the compiler accepts a name with no table entry, when an entry names
+ * something the compiler doesn't know, and when lang-table.gen.ts is stale.
  *
- * The compiler is the authority on correctness — this module is consumed by the
- * AI system prompt's built-in table, the syntax highlighter (highlight.ts), and
- * the autocomplete engine (completions.ts). Keeping the vocabulary in one place
- * means adding a built-in updates the prompt AND the editor together, and never
- * describes a built-in the compiler doesn't have.
+ * Consumers: the AI system prompt's tables (system-prompt.ts), the syntax
+ * highlighter (highlight.ts) and the autocomplete engine (completions.ts). The
+ * full entries (docs, examples, cost hints, related terms) are `LANG`.
  */
 
-export const KEYWORDS = [
-  "uniform",
-  "state",
-  "buffer",
-  "texture",
-  "struct",
-  "void",
-  "vec2",
-  "vec3",
-  "vec4",
-  "float",
-  "int",
-  "bool",
-  "if",
-  "else",
-  "for",
-  "return",
-] as const;
+import { LANG_TABLE } from "./lang-table.gen";
+import type { LangEntry, LangScope } from "./lang-types";
+
+export type { LangEntry, LangKind, LangScope } from "./lang-types";
+
+/** Every reference entry, in the compiler table's order. */
+export const LANG: readonly LangEntry[] = LANG_TABLE;
+
+const BY_NAME = new Map<string, LangEntry>(LANG.map((e) => [e.name, e]));
+
+/** The entry for a word (`sin`, `led.pos`, `uniform`), if any. */
+export function langEntry(name: string): LangEntry | undefined {
+  return BY_NAME.get(name);
+}
+
+const ofKind = (kind: LangEntry["kind"]): LangEntry[] => LANG.filter((e) => e.kind === kind);
+
+/** Declaration + control keywords (not the true/false literals), then the type
+ * names, as one word list (the highlighter splits types back out via TYPES). */
+export const KEYWORDS: readonly string[] = [
+  ...ofKind("keyword")
+    .filter((e) => e.category !== "literal")
+    .map((e) => e.name),
+  ...ofKind("type").map((e) => e.name),
+];
 
 /** One-line docstrings for the control/declaration keywords, for completion
- * detail. Type-name keywords are documented richly in TYPES instead. */
-export const KEYWORD_DOCS: Record<string, string> = {
-  uniform: "declare a live, user-tweakable parameter with a range + default",
-  state: "declare a value persisted across frames (written in update()/init()); starts at zero or a constant initial value: `state float level = 0.5;` (compute from uniforms/time in `void init()`)",
-  buffer: "declare a hidden per-LED buffer that persists across frames: `buffer vec3 trail;` then read/write `trail[i]` (i an int LED index). Pack narrow to save RAM: `buffer fixed8 t;` (1 B/LED) or `buffer vec3 c : fixed8;` (3 B/LED, read/written as float)",
-  texture: "declare a hidden WxH 2D texture: `texture vec3 img(64, 64);` then `sample(img, uv)` (bilinear, always float) / `paint(img, uv, c)` / flat `img[i]`. Add `: fixed8` / `: fixed16` to compress storage (e.g. `texture vec3 img(64,64) : fixed8;`)",
-  struct: "declare a composite type: struct Name { float a; vec3 b; };",
-  void: "the return type of update() and init() — produces no value",
-  return: "return a value from shade() (or exit update())",
-  if: "conditional branch",
-  else: "the alternative branch of an if",
-  for: "bounded loop (compile-time trip count; per-frame budget applies)",
-};
+ * detail (plus `void`). Type-name keywords are documented richly in TYPES. */
+export const KEYWORD_DOCS: Record<string, string> = Object.fromEntries([
+  ...ofKind("keyword").map((e) => [e.name, e.summary] as const),
+  ["void", langEntry("void")?.summary ?? ""] as const,
+]);
 
 /**
- * Global read-only contexts and their members (member access via `.`). Member
- * types + docstrings are verified against fx_compiler `emit_namespace`. `time`,
- * `dt`, `frame` are leaf globals (zero members) from `primary()`.
+ * Global read-only contexts and their members (member access via `.`), with
+ * the member types the compiler gives them. `time`, `dt`, `frame` are leaf
+ * globals (zero members).
  */
 export const CONTEXTS: {
   name: string;
   doc: string;
   members: { name: string; type: string; doc: string }[];
-}[] = [
-  { name: "time", doc: "seconds since effect start (float)", members: [] },
-  { name: "dt", doc: "seconds since last frame (float)", members: [] },
-  { name: "frame", doc: "frame counter (int)", members: [] },
-  {
-    name: "led",
-    doc: "the per-LED input struct (also the shade() parameter)",
-    members: [
-      { name: "pos", type: "vec3", doc: "LED position in the gravity-leveled, roughly unit-box map frame" },
-      { name: "idx", type: "int", doc: "this LED's index" },
-      { name: "count", type: "int", doc: "total LED count" },
-      { name: "seg", type: "int", doc: "topology segment id, -1 if none" },
-      { name: "s", type: "float", doc: "0..1 arclength along the LED's segment" },
-      { name: "dist", type: "float", doc: "0..1 geodesic distance from the current source (the topology root by default; call flood_from(node) in update() to re-source it, e.g. to flood from a random endpoint)" },
-      { name: "branch", type: "bool", doc: "true at a junction/branch point" },
-      { name: "uv", type: "vec2", doc: "per-LED texture coord in 0..1 (this LED's XY position normalized over the map bounds — a top-down projection); feed sample(tex, led.uv)" },
-    ],
-  },
-  {
-    name: "imu",
-    doc: "inertial context when present",
-    members: [
-      { name: "accel", type: "vec3", doc: "accelerometer, m/s^2 (when present)" },
-      { name: "gyro", type: "vec3", doc: "gyroscope, rad/s (when present)" },
-    ],
-  },
-];
+}[] = ofKind("context").map((c) => ({
+  name: c.name,
+  doc: c.summary,
+  members: ofKind("member")
+    .filter((m) => m.name.startsWith(`${c.name}.`))
+    .map((m) => ({ name: m.name.slice(c.name.length + 1), type: m.ty, doc: m.summary })),
+}));
 
 /**
- * Built-in functions with signatures (verbatim into the AI prompt) and a
- * one-line docstring. Covers every function `emit_builtin` accepts.
+ * Built-in functions with signatures (verbatim into the AI prompt; several
+ * accepted forms are joined with " / ") and a one-line docstring. Covers every
+ * function the compiler accepts except reserved names. `scope` is "driver" for
+ * the sensor-driver intrinsics (inert outside poll()) and "update" for the
+ * once-per-frame ones.
  */
-export const BUILTINS: { sig: string; doc: string }[] = [
-  // unary math (UN_MATH)
-  { sig: "sin(x)", doc: "sine of x (radians); on a fixed arg the angle is in TURNS (1.0 = full circle) and it is an integer LUT, ~4x cheaper" },
-  { sig: "cos(x)", doc: "cosine of x (radians); on a fixed arg: TURNS, integer LUT" },
-  { sig: "tan(x)", doc: "tangent of x (radians); on a fixed arg: TURNS" },
-  { sig: "abs(x)", doc: "absolute value" },
-  { sig: "floor(x)", doc: "largest integer <= x" },
-  { sig: "ceil(x)", doc: "smallest integer >= x" },
-  { sig: "fract(x)", doc: "fractional part, x - floor(x)" },
-  { sig: "sqrt(x)", doc: "square root" },
-  { sig: "exp(x)", doc: "e raised to the power x (a fixed arg is an integer LUT covering only -2..0.69)" },
-  { sig: "log(x)", doc: "natural logarithm" },
-  { sig: "sign(x)", doc: "-1, 0, or 1 by the sign of x" },
-  // binary math (BIN_MATH) — component-wise, equal widths
-  { sig: "min(a, b)", doc: "component-wise minimum" },
-  { sig: "max(a, b)", doc: "component-wise maximum" },
-  { sig: "pow(x, y)", doc: "x raised to the power y" },
-  { sig: "mod(x, y)", doc: "modulo (x - y*floor(x/y))" },
-  { sig: "step(edge, x)", doc: "0 if x < edge, else 1" },
-  { sig: "atan2(y, x)", doc: "angle of the vector (x, y) in radians; with two args of the same fixed type: in TURNS (-0.5..0.5), integer path" },
-  // ternary
-  { sig: "clamp(x, lo, hi)", doc: "constrain x to the range [lo, hi]" },
-  { sig: "mix(a, b, t)", doc: "linear interpolation a*(1-t) + b*t (t scalar)" },
-  { sig: "smoothstep(lo, hi, x)", doc: "smooth Hermite 0..1 ramp between lo and hi" },
-  // vector
-  { sig: "length(v)", doc: "Euclidean length of v" },
-  { sig: "distance(a, b)", doc: "distance between points a and b" },
-  { sig: "dot(a, b)", doc: "dot product (scalar)" },
-  { sig: "cross(a, b)", doc: "cross product of two vec3s" },
-  { sig: "normalize(v)", doc: "v scaled to unit length" },
-  // hashing / color
-  { sig: "hash(x)", doc: "deterministic float hash in [0,1); accepts a float or a vec3 (always float maths)" },
-  { sig: "hsv2rgb(h, s, v)", doc: "HSV to linear RGB (vec3), hue 0..1; also accepts a single vec3. Three args of the same fixed type take the integer path (return that colour directly from shade())" },
-  { sig: "palette0(t)", doc: "sample built-in palette 0 at t (vec3)" },
-  { sig: "palette1(t)", doc: "sample built-in palette 1 at t (vec3)" },
-  { sig: "palette2(t)", doc: "sample built-in palette 2 at t (vec3)" },
-  // topology graph queries (agentic/graph-walking effects; args are int indices)
-  { sig: "seg_count()", doc: "number of topology segments (int)" },
-  { sig: "seg_len(seg)", doc: "arclength of segment `seg` in meters (float)" },
-  { sig: "seg_node(seg, side)", doc: "endpoint node id of `seg` (side 0=a, 1=b; int, -1 if free)" },
-  { sig: "node_deg(node)", doc: "number of segments incident to `node` (int)" },
-  { sig: "node_seg(node, k)", doc: "k-th segment incident to `node` (int segment id) — pick a branch" },
-  { sig: "node_side(node, k)", doc: "which end (0=a,1=b) of that k-th segment touches `node` (int)" },
-  { sig: "term_count()", doc: "number of termini — degree-1 endpoints of the topology (int)" },
-  { sig: "term(k)", doc: "the k-th terminus node id (int, -1 if out of range); pick a random one to flood/spawn from" },
-  { sig: "flood_from(node)", doc: "set the geodesic source: `led.dist` then reports distance from `node` (0..1). Call once per cycle in update() — lets Flood/agents start from any endpoint. void" },
-  // 2D textures (declare with `texture <elem> name(w, h);`)
-  { sig: "sample(tex, uv)", doc: "bilinearly sample 2D texture `tex` at uv (vec2, 0..1, edge-clamped); returns the texture's element type" },
-  { sig: "paint(tex, uv, color)", doc: "write `color` to the nearest texel of `tex` at uv (vec2, 0..1); a void statement" },
-];
+export const BUILTINS: { sig: string; doc: string; scope: LangScope }[] = ofKind("builtin")
+  .filter((b) => b.scope !== "reserved")
+  .map((b) => ({ sig: b.sigs.join(" / "), doc: b.summary, scope: b.scope }));
 
 /** Value types accepted by the language, with docstrings for completion. */
-export const TYPES: { name: string; doc: string }[] = [
-  { name: "float", doc: "32-bit floating point (the default numeric type)" },
-  { name: "int", doc: "native 32-bit integer — fast, no soft-float" },
-  { name: "fixed", doc: "Q16.16 fixed-point number — native integer arithmetic, the fast type for per-LED maths (sin/cos take TURNS on it); literals: x * 0.5fx (= fixed(0.5))" },
-  { name: "fixed16", doc: "Q1.14 reduced-precision fixed-point, range [-2, 2) — integer arithmetic like fixed, sin/cos in turns; overflows past ±2; literals: 0.5fx16" },
-  { name: "fixed8", doc: "Q1.6 reduced-precision fixed-point, range [-2, 2) — mainly for compact buffer/texture storage (: fixed8); literals: 0.5fx8" },
-  { name: "bool", doc: "boolean (true/false)" },
-  { name: "vec2", doc: "2-component vector (x, y)" },
-  { name: "vec3", doc: "3-component vector (x, y, z / r, g, b)" },
-  { name: "vec4", doc: "4-component vector (x, y, z, w / r, g, b, a)" },
-  { name: "void", doc: "no value — the return type of update()" },
-  { name: "Led", doc: "the per-LED input struct passed to shade()" },
-];
+export const TYPES: { name: string; doc: string }[] = ofKind("type").map((t) => ({ name: t.name, doc: t.summary }));

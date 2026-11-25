@@ -12,6 +12,7 @@ use std::fmt::Write as _;
 
 // Bytecode optimizer (FUG-125): decode → peephole/local/CFG passes → re-encode,
 // run over the emitted code just before it is serialized in `finish`.
+pub mod lang;
 mod lint;
 mod memo;
 mod opt;

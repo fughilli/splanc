@@ -11,8 +11,13 @@
 
 import { BUILTINS, CONTEXTS, TYPES } from "../editor/lang-spec";
 
-const builtinTable = BUILTINS.map((b) => `  ${b.sig}  — ${b.doc}`).join("\n");
-const typeTable = TYPES.filter((t) => t.name !== "void" && t.name !== "Led")
+// The effect prompt lists only what an effect can use: the sensor-driver
+// intrinsics (i2c_*, gpio_*, fire) are inert outside a driver's poll().
+const EFFECT_BUILTINS = BUILTINS.filter((b) => b.scope !== "driver");
+const builtinTable = EFFECT_BUILTINS.map((b) => `  ${b.sig}  — ${b.doc}`).join("\n");
+// Value types only: not void/Led (program structure) or the buffer-only int8/int16.
+const PROMPT_TYPES = TYPES.filter((t) => !["void", "Led", "int8", "int16"].includes(t.name));
+const typeTable = PROMPT_TYPES
   .map((t) => `  ${t.name} — ${t.doc}`)
   .join("\n");
 const contextTable = CONTEXTS.map(
@@ -184,7 +189,7 @@ REPAIR: If you are given a previous script and compiler diagnostics, return a co
 // three of the four examples, cutting the prefix to roughly a third. Generated
 // from the SAME lang-spec tables, so it can never name a builtin the compiler
 // lacks. The full prompt still drives the cloud/WebGPU paths.
-const builtinSigList = BUILTINS.map((b) => b.sig).join("\n  ");
+const builtinSigList = EFFECT_BUILTINS.map((b) => b.sig).join("\n  ");
 
 export const SYSTEM_PROMPT_COMPACT = `You write effects for an LED-mapping runtime in a small GLSL-like language. Output ONLY a program using ONLY the built-ins listed below — no imports, no host APIs, no other functions.
 
@@ -193,7 +198,7 @@ STRUCTURE (both required):
 - \`vec3 shade(Led led)\` — runs per-LED; return linear RGB in 0..1.
 No recursion. \`for\` loops need compile-time-bounded trip counts.
 
-TYPES: ${TYPES.filter((t) => t.name !== "void" && t.name !== "Led").map((t) => t.name).join(", ")}
+TYPES: ${PROMPT_TYPES.map((t) => t.name).join(", ")}
 
 CONTEXTS (read-only globals):
 ${contextTable}

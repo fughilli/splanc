@@ -16,6 +16,7 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "fx_compiler",
     srcs = [
+        "src/lang.rs",
         "src/lib.rs",
         "src/lint.rs",
         "src/memo.rs",
@@ -29,6 +30,35 @@ rust_library(
 rust_binary(
     name = "fx_compile",
     srcs = ["bin/compile_main.rs"],
+    edition = "2021",
+    deps = [":fx_compiler"],
+)
+
+# The language reference table (src/lang.rs) as the web module the editor's
+# lang-spec.ts derives from:
+#   bazel run //fx_compiler:fx_lang > web/src/effects/editor/lang-table.gen.ts
+rust_binary(
+    name = "fx_lang",
+    srcs = ["bin/lang_main.rs"],
+    edition = "2021",
+    deps = [":fx_compiler"],
+)
+
+# The language table's coverage: every name the compiler accepts (probed with
+# every identifier-shaped literal in its sources) has an entry, every entry is
+# known to the compiler, context types match, every example compiles without a
+# warning, and the generated web table is fresh.
+rust_test(
+    name = "lang_test",
+    srcs = ["tests/lang.rs"],
+    compile_data = [
+        "src/lang.rs",
+        "src/lib.rs",
+        "src/lint.rs",
+        "src/memo.rs",
+        "src/opt.rs",
+        "//web:src/effects/editor/lang-table.gen.ts",
+    ],
     edition = "2021",
     deps = [":fx_compiler"],
 )
