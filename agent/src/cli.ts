@@ -23,6 +23,8 @@ import { BridgeIdentity, defaultStateDir } from "./bridge/identity";
 import { bridgeSigner } from "./bugs";
 import { DEFAULT_CONTROL_PATH, LanBridge, controlSocketCandidates } from "./bridge/lanBridge";
 import { RelayLink, relayUrl } from "./bridge/relayLink";
+import { HubLamps } from "./bridge/lamps";
+import type { MatterBridge } from "./bridge/matter";
 import { browse } from "./discovery";
 import { setFxHostRoot } from "./fxhost";
 import { Hub } from "./hub";
@@ -173,6 +175,23 @@ async function runBridge(p: Parsed, root: string): Promise<void> {
   const status = flag(p, "status");
   const control = flag(p, "control");
   const livePort = flag(p, "live-port");
+  // The Matter bridge (docs/guides/matter.md): on unless --no-matter / SPLANC_MATTER=0.
+  const matterOff = p.flags.has("no-matter") || /^(0|off|false|no)$/i.test(process.env["SPLANC_MATTER"] ?? "");
+  let bridgeRef: LanBridge | null = null;
+  let matter: MatterBridge | null = null;
+  const lamps = matterOff ? null : new HubLamps(hub, { active: () => matter?.status().commissioned === true, log });
+  if (lamps) {
+    const mp = flag(p, "matter-port") ?? process.env["SPLANC_MATTER_PORT"];
+    // Loaded only here: matter.js is most of the bundle's size, and the MCP server never needs it.
+    const { DEFAULT_MATTER_PORT, MatterBridge } = await import("./bridge/matter");
+    matter = new MatterBridge({
+      lamps,
+      stateDir: flag(p, "state-dir") ?? defaultStateDir(),
+      port: mp !== undefined ? Number(mp) : DEFAULT_MATTER_PORT,
+      log,
+      onChange: () => bridgeRef?.writeStatus(),
+    });
+  }
   const bridge = new LanBridge({
     link,
     hub,
@@ -184,7 +203,9 @@ async function runBridge(p: Parsed, root: string): Promise<void> {
     live: { stateDir: flag(p, "state-dir") ?? defaultStateDir(), ...(livePort !== undefined ? { port: Number(livePort) } : {}) },
     // file_bug files directly through this bridge's relay, signed as this bridge.
     bugs: { surface: "bridge", relay, signer: bridgeSigner(identity, relay) },
+    ...(matter ? { matter } : {}),
   });
+  bridgeRef = bridge;
   if (!relay) {
     // Stay up (a service would only crash-loop) and say what's missing.
     await bridge.start({ connect: false });
@@ -194,9 +215,14 @@ async function runBridge(p: Parsed, root: string): Promise<void> {
     await bridge.start();
   }
   log(`bridge: relay ${link.relay || "(none)"}; status ${bridge.statusPath}; control ${bridge.controlPath}`);
+  if (lamps && matter) {
+    lamps.start();
+    await matter.start();
+  }
   const stop = () => {
     log("bridge: stopping");
-    void bridge.stop().finally(() => {
+    lamps?.stop();
+    void Promise.all([bridge.stop(), matter?.stop()]).finally(() => {
       hub.close();
       process.exit(0);
     });
@@ -214,6 +240,8 @@ const CTL: Record<string, string> = {
   live: "live",
   clients: "clients",
   revoke: "revoke",
+  "matter-pair": "matter_pair",
+  "matter-reset": "matter_reset",
 };
 
 /** `splanc-agent bridge-ctl <new-code|revoke-all|identify|status|live|clients|revoke <id>>`:

@@ -132,6 +132,7 @@ Raspberry Pi bridge <docs/pi-bridge>
 Host player: WLED / DDP / Art-Net <docs/host-player>
 Use Splanc from a cloud agent <docs/guides/cloud-agent>
 Use Splanc lamps in Home Assistant <docs/guides/home-assistant>
+Splanc lamps in Apple Home and other Matter apps <docs/guides/matter>
 Run your own relay with Tailscale <docs/guides/relay-tailscale>
 Build a Vive-tracked lamp <docs/guides/vive-tracker-lamp>
 docs/runbook

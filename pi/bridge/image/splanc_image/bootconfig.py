@@ -42,6 +42,7 @@ Settings (unknown keys and bad values are ignored, with a log line):
     OLED_ROTATE=2                   0-3 (x90 degrees)
     SPLANC_DISPLAY_HDMI=auto        auto | off
     SPLANC_AUTO_UPDATE=1            1 | 0 (daily agent bundle updates)
+    SPLANC_MATTER=1                 1 | 0 (the Matter bridge: Apple Home, Home Assistant, ...)
 
 Nothing here can fail the boot: every step is guarded and logged.
 """
@@ -78,9 +79,17 @@ _VALIDATORS: Dict[str, Callable[[str], Optional[str]]] = {
     "OLED_ROTATE": lambda v: v if v in ("0", "1", "2", "3") else None,
     "SPLANC_DISPLAY_HDMI": lambda v: v.lower() if v.lower() in ("auto", "off") else None,
     "SPLANC_AUTO_UPDATE": lambda v: v if v in ("0", "1") else None,
+    "SPLANC_MATTER": lambda v: v if v in ("0", "1") else None,
 }
 # Passed on to the services' environment (bridge.env).
-ENV_KEYS = ("SPLANC_RELAY", "OLED", "OLED_ROTATE", "SPLANC_DISPLAY_HDMI", "SPLANC_AUTO_UPDATE")
+ENV_KEYS = (
+    "SPLANC_RELAY",
+    "OLED",
+    "OLED_ROTATE",
+    "SPLANC_DISPLAY_HDMI",
+    "SPLANC_AUTO_UPDATE",
+    "SPLANC_MATTER",
+)
 
 _KEY_PREFIXES = (
     "ssh-ed25519 ",

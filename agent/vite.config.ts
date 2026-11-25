@@ -43,6 +43,22 @@ function stageView(): Plugin {
   };
 }
 
+/** matter.js (the Matter bridge) can store into Bun's sqlite: its loader is a dynamic
+ * import, but the single-file bundle inlines it, and Node can't load `bun:` URLs.
+ * The bridge runs on Node with matter.js's file storage, so the module is a stub. */
+function noBun(): Plugin {
+  return {
+    name: "no-bun",
+    enforce: "pre",
+    resolveId: (id) => (id.startsWith("bun:") ? `\0${id}` : null),
+    load: (id) =>
+      id.startsWith("\0bun:")
+        ? 'const no = () => { throw new Error("bun: modules are not available on Node"); };\n' +
+          "export const Database = no; export const constants = {}; export default {};"
+        : null,
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const test = mode === "test";
   // AGENT_TEST_ENTRY=<name>.test.ts builds just that test, as one file in
@@ -59,7 +75,7 @@ export default defineConfig(({ mode }) => {
         );
   const single = !test || one !== undefined;
   return {
-    plugins: [stageView()],
+    plugins: [stageView(), noBun()],
     build: {
       ssr: true,
       target: "node20",
