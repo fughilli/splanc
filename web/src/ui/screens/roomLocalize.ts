@@ -353,10 +353,21 @@ export function RoomLocalizeScreen(router: Router): Screen {
       const pipeline = new CvPipeline(params, epochLocal, (t) => t, { denseRecords: true });
       const pending: DetectionRecord[] = [];
       pipeline.onDetections((r) => pending.push(...r));
+      let lastDiag = 0;
       onFrame((f) => {
         const blobs = detector.detectFrame(f, {});
         if (f.reduced?.truncated) return;
         pipeline.step(blobs, { tCaptureMs: f.tCaptureMs, pose: f.pose, K: f.K, imgW: f.imgW, imgH: f.imgH });
+        // Decode health to the console every ~2 s (remote debugging / iOS log).
+        if (f.tCaptureMs - lastDiag > 2000) {
+          lastDiag = f.tCaptureMs;
+          const s = pipeline.stats;
+          console.info(
+            `[room] blobs=${blobs.length} tracks=${s.tracks} ids=${s.uniqueIds.size} records=${s.recordsEmitted} ` +
+              `cycles=${s.cyclesCompleted} gaps=${s.rejectedGaps} lowconf=${s.rejectedLowConf} ` +
+              `margin=${s.marginEma?.toFixed(2) ?? "-"} views=${session.views().length}`,
+          );
+        }
         if (pending.length) {
           session.addRecords(pending.splice(0));
         }
