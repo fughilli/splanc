@@ -1,11 +1,10 @@
 """The device wall clock: UTC civil time (unix µs <-> Y/M/D h:m:s, weekday), the
 software-RTC discipline (source offers with age-grown error, lowest-error
 selection, step > 1 s / slew below, sanity bounds, crystal-rate fit), the
-monotonic step-back guard and the soft-reset carry-over record.
+monotonic step-back guard, the soft-reset carry-over record, and POSIX TZ rules
+(D-562: the zone the lamp stores) behind the LocalOffset seam.
 
-no_std, zero-dependency, host-tested only for now: the firmware wiring (esp_timer
-base, lm_clock_observe shift, protocol arms) is a later PR. Time zones (D-562: a
-stored POSIX TZ rule) are a follow-up behind the LocalOffset seam in src/local.rs."""
+no_std, zero-dependency, never allocates."""
 
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
@@ -21,6 +20,7 @@ rust_library(
         "src/guard.rs",
         "src/lib.rs",
         "src/local.rs",
+        "src/tz.rs",
     ],
     crate_name = "ledmapper_clock",
     edition = "2021",
@@ -45,6 +45,15 @@ rust_test(
 rust_test(
     name = "guard_test",
     srcs = ["tests/guard.rs"],
+    edition = "2021",
+    deps = [":clock"],
+)
+
+# tzdata vectors from Python zoneinfo: regenerate with tools/gen_tz_vectors.py.
+rust_test(
+    name = "tz_test",
+    srcs = ["tests/tz.rs"],
+    compile_data = ["tests/testdata/tz_vectors.txt"],
     edition = "2021",
     deps = [":clock"],
 )

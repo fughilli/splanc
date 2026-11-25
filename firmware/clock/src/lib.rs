@@ -11,8 +11,10 @@
 //! - [`guard`]: the monotonic-clock step-back guard (the C6's `esp_timer`
 //!   jumps back by multiples of 2^24 systimer ticks).
 //! - [`carry`]: the CRC-guarded record that carries the time over a soft reset.
-//! - [`local`]: the local-time seam ([`LocalOffset`]). Time zones and DST are
-//!   NOT implemented yet (TODO(D-562): a stored POSIX TZ rule, next).
+//! - [`local`]: the local-time seam ([`LocalOffset`]), with local -> UTC
+//!   under the schedule's gap/overlap rules.
+//! - [`tz`]: POSIX TZ rules (D-562: the zone the lamp stores), e.g.
+//!   `CET-1CEST,M3.5.0,M10.5.0/3`, as a [`LocalOffset`].
 //!
 //! `no_std`, zero-dependency, never allocates. Nothing here touches hardware:
 //! the firmware wiring (esp_timer base, the `lm_clock_observe` shift, the
@@ -25,9 +27,11 @@ pub mod civil;
 pub mod discipline;
 pub mod guard;
 pub mod local;
+pub mod tz;
 
 pub use carry::CarryRecord;
 pub use civil::{DateTime, Weekday};
 pub use discipline::{Applied, Config, Offer, Reject, Source, Status, WallClock};
 pub use guard::{MonoClock, StepGuard};
-pub use local::{FixedOffset, LocalOffset, Utc};
+pub use local::{FixedOffset, LocalOffset, LocalResult, Utc};
+pub use tz::{Phase, PosixTz, TzError};

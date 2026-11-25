@@ -1,13 +1,15 @@
 //! The local-time seam.
 //!
-//! TODO(D-562): time zones and DST are deliberately NOT implemented here yet.
-//! Desk item D-562 settled the approach: the device stores a POSIX TZ rule
-//! that the app derives from the phone's IANA zone, so DST stays right while
-//! the lamp is offline. That lands as a follow-up `PosixTz` implementation of
-//! [`LocalOffset`] (the parser, gap/overlap rules for local -> UTC, and tzdata
-//! vector tests). Nothing else in this crate needs to change: the wall clock
-//! itself is always UTC, and local time is only ever derived at the edge with
-//! [`to_local`].
+//! The wall clock itself is always UTC; local time is only ever derived at the
+//! edge with [`to_local`]. The zone is a [`LocalOffset`]: [`Utc`],
+//! [`FixedOffset`], or (D-562) a stored POSIX TZ rule, [`crate::PosixTz`],
+//! which the app derives from the phone's IANA zone so DST stays right while
+//! the lamp is offline.
+//!
+//! Local -> UTC ([`LocalOffset::resolve_local`]) is generic over any zone and
+//! applies the schedule rules: a local time in a spring-forward gap maps to the
+//! first instant after the gap; one in a fall-back overlap maps to its first
+//! occurrence.
 
 use crate::civil::{DateTime, US_PER_SEC};
 
@@ -21,6 +23,63 @@ pub trait LocalOffset {
     /// Seconds to add to UTC to get local time at `utc_us` (east positive:
     /// UTC+1 is 3600). Must be within ±24 h.
     fn utc_offset_s(&self, utc_us: i64) -> i32;
+
+    /// The UTC instant(s) a local wall time (µs "since the epoch" on the local
+    /// clock) names. Assumes at most one offset change within ±24 h of it,
+    /// which holds for every real zone.
+    fn resolve_local(&self, local_us: i64) -> LocalResult {
+        const DAY_US: i64 = 86_400 * US_PER_SEC;
+        let before = self.utc_offset_s(local_us.saturating_sub(DAY_US)) as i64 * US_PER_SEC;
+        let after = self.utc_offset_s(local_us.saturating_add(DAY_US)) as i64 * US_PER_SEC;
+        let fits = |off: i64| {
+            let utc = local_us.saturating_sub(off);
+            (self.utc_offset_s(utc) as i64 * US_PER_SEC == off).then_some(utc)
+        };
+        match (fits(before), fits(after)) {
+            (Some(a), Some(b)) if a != b => LocalResult::Ambiguous {
+                earlier: a.min(b),
+                later: a.max(b),
+            },
+            (Some(a), _) | (None, Some(a)) => LocalResult::Unique(a),
+            (None, None) => {
+                // A spring-forward gap: the change lies between the two
+                // candidates; find its first instant (µs) by bisection.
+                let mut lo = local_us.saturating_sub(before.max(after));
+                let mut hi = local_us.saturating_sub(before.min(after));
+                let lo_off = self.utc_offset_s(lo);
+                while hi - lo > 1 {
+                    let mid = lo + (hi - lo) / 2;
+                    if self.utc_offset_s(mid) == lo_off {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                LocalResult::Gap { after_us: hi }
+            }
+        }
+    }
+
+    /// The UTC instant for a local wall time under the schedule rules: a gap
+    /// maps to the first instant after it, an overlap to the first occurrence.
+    fn local_to_utc_us(&self, local_us: i64) -> i64 {
+        match self.resolve_local(local_us) {
+            LocalResult::Unique(u) => u,
+            LocalResult::Ambiguous { earlier, .. } => earlier,
+            LocalResult::Gap { after_us } => after_us,
+        }
+    }
+}
+
+/// What a local wall time maps to in UTC.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalResult {
+    /// Exactly one instant.
+    Unique(i64),
+    /// Twice (a fall-back overlap): both instants, UTC µs.
+    Ambiguous { earlier: i64, later: i64 },
+    /// Never (a spring-forward gap): the first instant after the gap, UTC µs.
+    Gap { after_us: i64 },
 }
 
 /// UTC itself (offset 0). The default until a zone is configured.
