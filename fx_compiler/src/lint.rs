@@ -41,7 +41,21 @@ pub(crate) struct Taint {
     /// The variable this value was read from, while it is still just that
     /// variable (a bare `speed` or `k`), for naming it in the message.
     pub leaf: Option<String>,
+    /// What kind of input the value depends on ([`DEP_LED`] | [`DEP_FRAME`] |
+    /// [`DEP_DYN`]): the Watch pane's Const / Led / Frame / Dynamic class
+    /// ([`Taint::variance`]). Unlike the lint fields it survives every
+    /// operator and builtin (a comparison or `sin()` still depends on its
+    /// inputs).
+    pub dep: u8,
 }
+
+/// Depends on a per-LED map attribute (led.pos / uv / idx / seg / s / branch).
+pub(crate) const DEP_LED: u8 = 1;
+/// Depends on a per-frame input (time, dt, frame, uniforms, state, imu, ...).
+pub(crate) const DEP_FRAME: u8 = 2;
+/// Depends on something that varies per LED and per frame, or is unknown
+/// (buffers, textures, led.dist / led.room, re-assigned locals, helper calls).
+pub(crate) const DEP_DYN: u8 = 4;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Rate {
@@ -58,13 +72,35 @@ impl Taint {
     pub fn time() -> Taint {
         Taint {
             time: true,
+            dep: DEP_FRAME,
             ..Default::default()
         }
     }
     pub fn uniform(name: &str) -> Taint {
         Taint {
             uniform: Some(name.to_string()),
+            dep: DEP_FRAME,
             ..Default::default()
+        }
+    }
+    /// A value with no lint taint that depends on `dep`.
+    pub fn dep(dep: u8) -> Taint {
+        Taint {
+            dep,
+            ..Default::default()
+        }
+    }
+    /// The variance class of the value (in per-LED code).
+    pub fn variance(&self) -> crate::Variance {
+        use crate::Variance::*;
+        if self.dep & DEP_DYN != 0 || self.dep & (DEP_LED | DEP_FRAME) == DEP_LED | DEP_FRAME {
+            Dynamic
+        } else if self.dep & DEP_LED != 0 {
+            Led
+        } else if self.dep & DEP_FRAME != 0 {
+            Frame
+        } else {
+            Const
         }
     }
     /// This taint, read through the variable `name`.
@@ -82,6 +118,7 @@ impl Taint {
             self.rate = o.rate;
         }
         self.leaf = None;
+        self.dep |= o.dep;
         self
     }
 }
@@ -115,13 +152,14 @@ pub(crate) struct Lint {
 impl Lint {
     /// A binary operator `op` at (line, col) joined `l` and `r`.
     pub fn binop(&mut self, op: &str, l: Taint, r: Taint, line: u32, col: u32) -> Taint {
+        let dep = l.dep | r.dep;
         if matches!(op, "<" | ">" | "<=" | ">=" | "==" | "!=" | "&&" | "||") {
-            return Taint::default();
+            return Taint::dep(dep);
         }
         if op == "%" {
             // `%` wraps like mod(): a phase sink for its left operand.
             self.sink("%", &l);
-            return Taint::default();
+            return Taint::dep(dep);
         }
         let scale = match op {
             "*" if l.time && r.uniform.is_some() => Some(&r),
@@ -149,13 +187,14 @@ impl Lint {
     /// The builtin `name` was called with `self.arg_taints`: returns its taint.
     pub fn builtin(&mut self, name: &str) -> Taint {
         let args = std::mem::take(&mut self.arg_taints);
+        let dep = args.iter().fold(0, |d, a| d | a.dep);
         if PHASE_SINKS.contains(&name) {
             for a in &args {
                 self.sink(name, a);
             }
             // The bounded output of a periodic/wrapping builtin is a fresh value:
             // `sin(time) * amp` is an amplitude, not a rate.
-            return Taint::default();
+            return Taint::dep(dep);
         }
         let keep_time = TIME_TRANSPARENT.contains(&name);
         let mut t = args.into_iter().fold(Taint::default(), Taint::union);

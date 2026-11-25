@@ -224,6 +224,51 @@ impl FxPreview {
         }
         out
     }
+
+    // -- the editor's Watch VM (D-541): read the watch build's hidden storage and
+    // snapshot / restore the whole VM state for pause / step / scrub. The live
+    // preview never calls these.
+
+    /// The state words (SECTION_STATE layout: `state` slots, then the
+    /// flood_from field), raw bits.
+    pub fn state(&self) -> Vec<u32> {
+        let mut out: Vec<u32> = self.vm.state.iter().map(|v| v.to_bits()).collect();
+        out.extend((0..Vm::FLOOD_WORDS).map(|k| self.vm.flood_word(k)));
+        out
+    }
+
+    /// Restore [`Self::state`]'s words.
+    pub fn set_state(&mut self, words: &[u32]) {
+        for (dst, w) in self.vm.state.iter_mut().zip(words) {
+            *dst = f32::from_bits(*w);
+        }
+        self.vm.set_flood_words(words.get(MAX_STATE..).unwrap_or(&[]));
+    }
+
+    /// The buffer arena, raw (as sized by the last update()).
+    pub fn arena(&self) -> Vec<u8> {
+        self.arena.clone()
+    }
+
+    /// Restore an arena from [`Self::arena`] (rebound on the next update()).
+    pub fn set_arena(&mut self, bytes: &[u8]) {
+        self.arena = bytes.to_vec();
+        self.vm.set_arena(&mut self.arena);
+    }
+
+    /// Buffer `id`'s region of the arena for `led_count` LEDs, raw bytes
+    /// (empty when there is no such buffer or the arena is not sized yet).
+    pub fn buffer(&self, id: usize, led_count: u32) -> Vec<u8> {
+        let Ok(prog) = Program::parse(&self.bytes) else {
+            return Vec::new();
+        };
+        let Some(d) = prog.buf_desc(id) else {
+            return Vec::new();
+        };
+        let n = if d.kind == 0 { led_count as usize } else { d.w as usize * d.h as usize };
+        let base = prog.buf_base(id, led_count as usize);
+        self.arena.get(base..base + n * d.elem_bytes()).map(|b| b.to_vec()).unwrap_or_default()
+    }
 }
 
 /// Host replay of a device frame for the FX debugger (docs/design/fx-debugger.md,

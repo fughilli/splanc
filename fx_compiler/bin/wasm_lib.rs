@@ -4,8 +4,8 @@
 //! uniform panel, and feed the `.fxb` to the preview VM (fx_vm_web).
 
 use ledmapper_fx_compiler::{
-    compile, compile_with, disassemble, exports_manifest_json, manifest_json, symbols_json, CompileOptions,
-    Compiled, Diagnostic,
+    compile, compile_watch, compile_with, disassemble, exports_manifest_json, manifest_json, symbols_json,
+    watches_json, CompileOptions, Compiled, Diagnostic,
 };
 use wasm_bindgen::prelude::*;
 
@@ -22,6 +22,8 @@ pub struct CompileResult {
     /// Non-fatal warnings (JSON, same shape as diagnostics; "[]" when none): lints
     /// and perf warnings ("warning: perf: ..."), each msg prefixed "warning: ".
     warnings: String,
+    /// A watch build's watches (JSON, see `watches_json`); "[]" otherwise.
+    watches: String,
 }
 
 #[wasm_bindgen]
@@ -54,6 +56,10 @@ impl CompileResult {
     pub fn warnings(&self) -> String {
         self.warnings.clone()
     }
+    #[wasm_bindgen(getter)]
+    pub fn watches(&self) -> String {
+        self.watches.clone()
+    }
 }
 
 #[wasm_bindgen]
@@ -69,6 +75,29 @@ pub fn fx_compile_no_memo(src: &str) -> CompileResult {
     result(compile_with(src, &CompileOptions { optimize: true, memo: None }))
 }
 
+/// The Watch pane's host build (D-541, host preview only per D-550): `src`
+/// instrumented to copy each watched sub-expression's value into hidden
+/// state / per-LED buffers, optimizer and variance pass off. `ranges` is flat
+/// (start, end) pairs in UTF-16 code units (textarea selection offsets). The
+/// `.fxb` is for the watch VM only, never for a device.
+#[wasm_bindgen]
+pub fn fx_compile_watch(src: &str, ranges: &[u32]) -> CompileResult {
+    // UTF-16 offset -> byte offset.
+    let mut map = Vec::with_capacity(src.len() + 1);
+    for (b, ch) in src.char_indices() {
+        for _ in 0..ch.len_utf16() {
+            map.push(b);
+        }
+    }
+    map.push(src.len());
+    let at = |u: u32| map.get(u as usize).copied().unwrap_or(src.len());
+    let pairs: Vec<(usize, usize)> = ranges.chunks_exact(2).map(|p| (at(p[0]), at(p[1]))).collect();
+    let w = compile_watch(src, &pairs);
+    let mut r = result(w.result);
+    r.watches = watches_json(&w.watches);
+    r
+}
+
 fn result(r: Result<Compiled, Vec<Diagnostic>>) -> CompileResult {
     match r {
         Ok(c) => CompileResult {
@@ -79,6 +108,7 @@ fn result(r: Result<Compiled, Vec<Diagnostic>>) -> CompileResult {
             symbols: symbols_json(&c.symbols),
             diagnostics: "[]".into(),
             warnings: diags_json(&c.warnings),
+            watches: "[]".into(),
         },
         Err(ds) => CompileResult {
             ok: false,
@@ -88,6 +118,7 @@ fn result(r: Result<Compiled, Vec<Diagnostic>>) -> CompileResult {
             symbols: "[]".into(),
             diagnostics: diags_json(&ds),
             warnings: "[]".into(),
+            watches: "[]".into(),
         },
     }
 }

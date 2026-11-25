@@ -626,6 +626,8 @@ pub struct Compiler {
     /// column. Live only inside one lowering sequence (which contains no calls
     /// and no nested lowering), so one region per function is reused by all.
     mat_scratch: Option<(u8, u8)>,
+    /// The host watch build's instrumentation (None in every normal build).
+    watch: Option<Box<WatchCtx>>,
 }
 
 /// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
@@ -730,6 +732,240 @@ pub fn compile_with(src: &str, opts: &CompileOptions) -> Result<Compiled, Vec<Di
     }
 }
 
+// -- host watch build (D-541 Watch) --------------------------------------------
+//
+// The editor's Watch pane shows the value of any expression the author selects,
+// frame by frame, on the HOST preview only (owner answer D-550). The watch build
+// is `__watch(k, expr)` without touching the source text: the selected byte
+// range must be exactly the token span of one sub-expression the parser builds
+// (a recursive-descent parse records every expression span it completes), and
+// right after that sub-expression's code the compiler emits a copy of its value
+// into hidden storage while leaving the value on the stack, so the program
+// computes exactly what it did. Wrapping the text instead would silently change
+// `a + b` selected inside `a + b * c` into `(a + b) * c`; the span check reports
+// "selection is not an expression" there.
+//
+// Storage: in update() / init() / poll() a fresh `state` slot range (one value
+// per frame); in shade() and helpers a hidden LED-arity buffer of raw 32-bit
+// words per up-to-4 components, written at `led.idx` (one value per LED; the
+// last write wins inside a loop). The build runs with the optimizer and the
+// variance pass OFF so every watched value is computed as written. It is never
+// sent to a device (the extra buffers and slots are host-only).
+
+/// Where a watched value lands in the watch VM (see [`WatchInfo`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum WatchStore {
+    /// Not stored (an error, or an expression that never runs per frame).
+    None,
+    /// `width` state words from `slot` (update() / init() / poll()).
+    State { slot: u8 },
+    /// Per-LED: buffer ids, each holding up to 4 raw words per LED.
+    Led { buffers: Vec<u8> },
+}
+
+/// One watched expression of a [`compile_watch`] build.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WatchInfo {
+    /// Why it can't be watched (the selection is not an expression, ...).
+    pub error: Option<String>,
+    /// Source type name (`float`, `vec3`, `int`, `fixed`, `bool`, `mat4`, `color`).
+    pub ty: String,
+    /// Words (components).
+    pub width: u8,
+    /// How to read one raw word: `f32`, `i32`, `bool`, or `qN` (a signed
+    /// fixed-point integer with N fraction bits), `u8` (int 0..255 colour).
+    pub decode: String,
+    /// Variance class: Const / Led / Frame / Dynamic (what it depends on).
+    pub class: Option<Variance>,
+    /// The function the expression is in ("" when none).
+    pub func: String,
+    pub store: WatchStore,
+    /// Where the expression starts (1-based, byte column like diagnostics).
+    pub line: u32,
+    pub col: u32,
+}
+
+/// A [`compile_watch`] result: the instrumented program and one entry per range.
+pub struct WatchCompiled {
+    pub result: Result<Compiled, Vec<Diagnostic>>,
+    pub watches: Vec<WatchInfo>,
+}
+
+/// Per-compile watch instrumentation state.
+struct WatchCtx {
+    /// Token span (first token, one past the last) -> watch index.
+    spans: HashMap<(usize, usize), usize>,
+    infos: Vec<WatchInfo>,
+    /// Whether each watch reached a checkpoint at all.
+    seen: Vec<bool>,
+    /// (span start, span end, code length) after the last emission: the same
+    /// value returning through the outer precedence levels is one watch.
+    last: Option<(usize, usize, usize)>,
+    /// This function's scratch locals (function name, slot, width).
+    scratch: Option<(String, u8, u8)>,
+    /// Code offsets of the slot byte of each watch STORE_STATE / the id byte of
+    /// each watch STORE_BUF (with its chunk), patched once the program is
+    /// parsed: the hidden storage goes AFTER every slot and buffer the program
+    /// itself declares, so those keep the indices they have in the normal build
+    /// (the watch VM can then be synced from the live preview's state + arena).
+    state_patches: Vec<(usize, usize)>,
+    buf_patches: Vec<(usize, usize, usize)>,
+}
+
+/// The message for a selection that is not one whole expression.
+pub const WATCH_NOT_AN_EXPRESSION: &str = "selection is not an expression";
+/// The message for an expression in a declaration (never evaluated per frame).
+pub const WATCH_NOT_PER_FRAME: &str = "a declaration: not evaluated each frame";
+
+/// Compile `src` as a host watch build watching each byte range in `ranges`
+/// (start inclusive, end exclusive; surrounding whitespace is ignored). The
+/// program compiles exactly when `src` does; a range that is not one whole
+/// sub-expression gets [`WATCH_NOT_AN_EXPRESSION`] and is simply not watched.
+pub fn compile_watch(src: &str, ranges: &[(usize, usize)]) -> WatchCompiled {
+    let blank = |error: Option<String>| WatchInfo {
+        error,
+        ty: String::new(),
+        width: 0,
+        decode: String::new(),
+        class: None,
+        func: String::new(),
+        store: WatchStore::None,
+        line: 0,
+        col: 0,
+    };
+    // Lex, keeping each token's byte extent.
+    let line_starts: Vec<usize> =
+        std::iter::once(0).chain(src.bytes().enumerate().filter(|&(_, b)| b == b'\n').map(|(i, _)| i + 1)).collect();
+    let mut lx = Lexer::new(src);
+    let mut toks = Vec::new();
+    let mut extents = Vec::new();
+    loop {
+        match lx.next() {
+            Ok(t) => {
+                let start = line_starts.get(t.1 as usize - 1).copied().unwrap_or(0) + t.2 as usize - 1;
+                extents.push((start, lx.i));
+                let eof = t.0 == Tok::Eof;
+                toks.push(t);
+                if eof {
+                    break;
+                }
+            }
+            Err(d) => {
+                return WatchCompiled {
+                    result: Err(vec![d]),
+                    watches: ranges.iter().map(|_| blank(None)).collect(),
+                }
+            }
+        }
+    }
+    let bytes = src.as_bytes();
+    let mut spans = HashMap::new();
+    let mut infos = Vec::new();
+    for (k, &(a, b)) in ranges.iter().enumerate() {
+        let (mut a, mut b) = (a.min(bytes.len()), b.min(bytes.len()));
+        while a < b && bytes[a].is_ascii_whitespace() {
+            a += 1;
+        }
+        while b > a && bytes[b - 1].is_ascii_whitespace() {
+            b -= 1;
+        }
+        let first = extents.iter().position(|&(s, _)| s == a);
+        let last = extents.iter().position(|&(_, e)| e == b);
+        let mut info = blank(None);
+        match (first, last) {
+            (Some(f), Some(l)) if a < b && f <= l && toks[l].0 != Tok::Eof => {
+                info.line = toks[f].1;
+                info.col = toks[f].2;
+                if spans.contains_key(&(f, l + 1)) {
+                    info.error = Some("already watched".into());
+                } else {
+                    spans.insert((f, l + 1), k);
+                }
+            }
+            _ => info.error = Some(WATCH_NOT_AN_EXPRESSION.into()),
+        }
+        infos.push(info);
+    }
+    let n = infos.len();
+    let mut c = Compiler::new(toks, std::mem::take(&mut lx.comments), false, None);
+    c.watch = Some(Box::new(WatchCtx {
+        spans,
+        infos,
+        seen: vec![false; n],
+        last: None,
+        scratch: None,
+        state_patches: Vec::new(),
+        buf_patches: Vec::new(),
+    }));
+    let r = c.program();
+    let mut w = c.watch.take().map(|w| *w);
+    if r.is_ok() {
+        if let Some(w) = w.as_mut() {
+            if let Err(k) = c.watch_alloc(w) {
+                // Out of hidden storage: build again without this watch.
+                let mut rs = ranges.to_vec();
+                rs[k] = (0, 0);
+                let mut again = compile_watch(src, &rs);
+                again.watches[k].error = Some("too many watches for this effect's free state slots".into());
+                return again;
+            }
+        }
+    }
+    let result = match r {
+        Ok(()) => Ok(c.finish()),
+        Err(d) => Err(vec![d]),
+    };
+    let mut watches = Vec::new();
+    if let Some(w) = w {
+        for (mut info, seen) in w.infos.into_iter().zip(w.seen) {
+            if info.error.is_none() && !seen {
+                info.error = Some(WATCH_NOT_AN_EXPRESSION.into());
+            }
+            watches.push(info);
+        }
+    }
+    WatchCompiled { result, watches }
+}
+
+/// The watches as JSON: [{error, ty, width, decode, class, func, store,
+/// state_slot, buffers, line, col}] (`store` is "none", "state" or "led").
+pub fn watches_json(ws: &[WatchInfo]) -> String {
+    let items: Vec<String> = ws
+        .iter()
+        .map(|w| {
+            let (store, slot, bufs) = match &w.store {
+                WatchStore::None => ("none", -1i32, Vec::new()),
+                WatchStore::State { slot } => ("state", *slot as i32, Vec::new()),
+                WatchStore::Led { buffers } => ("led", -1, buffers.clone()),
+            };
+            let class = match w.class {
+                Some(Variance::Const) => "\"const\"",
+                Some(Variance::Led) => "\"led\"",
+                Some(Variance::Frame) => "\"frame\"",
+                Some(Variance::Dynamic) => "\"dynamic\"",
+                None => "null",
+            };
+            let error = match &w.error {
+                Some(e) => json_str(e, usize::MAX),
+                None => "null".into(),
+            };
+            let bufs: Vec<String> = bufs.iter().map(|b| b.to_string()).collect();
+            format!(
+                "{{\"error\":{error},\"ty\":\"{}\",\"width\":{},\"decode\":\"{}\",\"class\":{class},\"func\":{},\
+                 \"store\":\"{store}\",\"state_slot\":{slot},\"buffers\":[{}],\"line\":{},\"col\":{}}}",
+                w.ty,
+                w.width,
+                w.decode,
+                json_str(&w.func, usize::MAX),
+                bufs.join(","),
+                w.line,
+                w.col
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 const NO_ENTRY: u16 = 0xFFFF;
 // Mirror the VM's slot-array sizes (fx_vm::MAX_STATE / MAX_LOCALS) so the
 // compiler rejects programs that would overflow them at runtime.
@@ -810,6 +1046,7 @@ impl Compiler {
             memo,
             lint: lint::Lint::default(),
             mat_scratch: None,
+            watch: None,
         }
     }
 
@@ -1870,6 +2107,8 @@ impl Compiler {
         for (pname, slot, pty) in &param_syms {
             self.syms
                 .insert(pname.clone(), Sym { kind: SymKind::Local, slot: *slot, ty: *pty });
+            // A helper's parameter can be anything its callers pass (Watch class).
+            self.lint.vars.insert(pname.clone(), lint::Taint::dep(lint::DEP_DYN));
         }
         // args are pushed left→right (last on top), so store params in reverse.
         for (_, slot, pty) in param_syms.iter().rev() {
@@ -2086,7 +2325,10 @@ impl Compiler {
             self.expect_sym('=')?;
             let et = self.expr()?;
             // One element/field of a composite: the variable now ALSO depends on it.
-            let taint = std::mem::take(&mut self.lint.taint);
+            let mut taint = std::mem::take(&mut self.lint.taint);
+            if matches!(sym.kind, SymKind::Local) {
+                taint.dep |= lint::DEP_DYN;
+            }
             let prev = self.lint.vars.remove(&name).unwrap_or_default();
             self.lint.vars.insert(name.clone(), prev.union(taint));
             self.coerce(et, place.ty)?;
@@ -2096,7 +2338,11 @@ impl Compiler {
         // Whole-variable assignment.
         self.expect_sym('=')?;
         let et = self.expr()?;
-        let taint = std::mem::take(&mut self.lint.taint);
+        let mut taint = std::mem::take(&mut self.lint.taint);
+        if matches!(sym.kind, SymKind::Local) {
+            // A re-assigned local is no longer one definition (Watch class).
+            taint.dep |= lint::DEP_DYN;
+        }
         self.lint.vars.insert(name.clone(), taint);
         self.coerce(et, sym.ty)?;
         self.expect_sym(';')?;
@@ -2234,7 +2480,10 @@ impl Compiler {
             .ok_or_else(|| self.mkdiag(&format!("unknown identifier '{name}'")))?;
         self.expect_sym('=')?;
         let et = self.expr()?;
-        let taint = std::mem::take(&mut self.lint.taint);
+        let mut taint = std::mem::take(&mut self.lint.taint);
+        if matches!(sym.kind, SymKind::Local) {
+            taint.dep |= lint::DEP_DYN;
+        }
         self.lint.vars.insert(name.clone(), taint);
         self.coerce(et, sym.ty)?;
         let opc = match sym.kind {
@@ -2427,6 +2676,7 @@ impl Compiler {
     }
 
     fn expr_bp(&mut self, min_bp: u8) -> Result<Ty, Diagnostic> {
+        let p0 = self.p;
         let l_start = self.code.len();
         let mut lty = self.unary()?;
         let mut lt = std::mem::take(&mut self.lint.taint);
@@ -2465,6 +2715,7 @@ impl Compiler {
                 self.emit_binop(op, lty, rty)?
             };
             l_lit = None;
+            self.watch_point(p0, lty, lt.dep);
         }
         self.lint.taint = lt;
         Ok(lty)
@@ -3067,7 +3318,170 @@ impl Compiler {
         }
     }
 
+    /// A sub-expression spanning tokens `p0..self.p` was just compiled (its
+    /// value, of type `ty`, is on top of the stack). In a watch build, if that
+    /// span is watched, copy the value into the watch's hidden storage.
+    fn watch_point(&mut self, p0: usize, ty: Ty, dep: u8) {
+        let Some(mut w) = self.watch.take() else { return };
+        if let Some(&k) = w.spans.get(&(p0, self.p)) {
+            if w.last != Some((p0, self.p, self.code.len())) {
+                w.seen[k] = true;
+                if let Err(e) = self.watch_emit(&mut w, k, ty, dep) {
+                    w.infos[k].error.get_or_insert(e);
+                }
+                w.last = Some((p0, self.p, self.code.len()));
+            }
+        }
+        self.watch = Some(w);
+    }
+
+    fn watch_emit(&mut self, w: &mut WatchCtx, k: usize, ty: Ty, dep: u8) -> Result<(), String> {
+        use fx_vm_op::*;
+        let (name, decode) = match ty {
+            Ty::Float | Ty::Vec2 | Ty::Vec3 | Ty::Vec4 | Ty::Mat3 | Ty::Mat4 => (ty_name(ty), "f32".to_string()),
+            Ty::Int => ("int", "i32".into()),
+            Ty::Fixed => ("fixed", "q16".into()),
+            Ty::Fixed16 => ("fixed16", "q14".into()),
+            Ty::Fixed8 => ("fixed8", "q6".into()),
+            Ty::Bool => ("bool", "bool".into()),
+            Ty::Color(COLOR_I8) => ("color", "u8".into()),
+            Ty::Color(f) => ("color", format!("q{f}")),
+            Ty::Void => return Err("a void call has no value to watch".into()),
+            Ty::Struct(_) | Ty::Array(_) => return Err("watch a field or element, not a whole struct / array".into()),
+        };
+        let width = ty.width();
+        let per_frame = matches!(self.cur_fn.as_str(), "update" | "init" | "poll");
+        let class = if per_frame {
+            if dep == 0 {
+                Variance::Const
+            } else {
+                Variance::Frame
+            }
+        } else {
+            lint::Taint::dep(dep).variance()
+        };
+        let info = &mut w.infos[k];
+        if info.error.is_some() {
+            return Ok(());
+        }
+        info.ty = name.to_string();
+        info.width = width;
+        info.decode = decode;
+        info.class = Some(match info.class {
+            Some(c) => memo::join(c, class),
+            None => class,
+        });
+        if info.func.is_empty() {
+            info.func = self.cur_fn.clone();
+        }
+        if self.const_init || self.cur_fn.is_empty() {
+            // A declaration (a state's initial value, a uniform's range).
+            return Err(WATCH_NOT_PER_FRAME.into());
+        }
+        // The storage kind is fixed by the first emission (a helper's watch is
+        // per-LED); the slots / buffer ids are assigned in `watch_alloc`.
+        if info.store == WatchStore::None {
+            info.store = if per_frame {
+                WatchStore::State { slot: 0 }
+            } else {
+                WatchStore::Led { buffers: vec![0; width.div_ceil(4) as usize] }
+            };
+        }
+        let store = info.store.clone();
+        if matches!(store, WatchStore::State { .. }) != per_frame {
+            // A helper called from update(): its per-LED storage has no LED there.
+            return Ok(());
+        }
+        // Park the value in scratch locals, put it back, then store copies.
+        let scratch = match &w.scratch {
+            Some((f, slot, sw)) if *f == self.cur_fn && *sw >= width => *slot,
+            _ => {
+                let slot = self.alloc_local(width).map_err(|_| "out of local slots for watches".to_string())?;
+                w.scratch = Some((self.cur_fn.clone(), slot, width));
+                slot
+            }
+        };
+        self.ctx_prov = None;
+        self.last_const = None;
+        self.emit(STORE_LOCAL);
+        self.emit(scratch);
+        self.emit(width);
+        self.emit(LOAD_LOCAL);
+        self.emit(scratch);
+        self.emit(width);
+        match store {
+            WatchStore::State { .. } => {
+                self.emit(LOAD_LOCAL);
+                self.emit(scratch);
+                self.emit(width);
+                self.emit(STORE_STATE);
+                w.state_patches.push((self.code.len(), k));
+                self.emit(0);
+                self.emit(width);
+            }
+            WatchStore::Led { buffers } => {
+                for i in 0..buffers.len() {
+                    let off = i as u8 * 4;
+                    let n = (width - off).min(4);
+                    self.emit(LOAD_CTX);
+                    self.emit(fx_ctx::LED_IDX);
+                    self.emit(F2I);
+                    self.emit(LOAD_LOCAL);
+                    self.emit(scratch + off);
+                    self.emit(n);
+                    self.emit(STORE_BUF);
+                    w.buf_patches.push((self.code.len(), k, i));
+                    self.emit(0);
+                }
+            }
+            WatchStore::None => {}
+        }
+        Ok(())
+    }
+
+    /// Assign the watches' hidden state slots and buffers after the program's
+    /// own (see `WatchCtx::state_patches`) and patch the stores. `Err(k)` when
+    /// watch `k` does not fit.
+    fn watch_alloc(&mut self, w: &mut WatchCtx) -> Result<(), usize> {
+        for k in 0..w.infos.len() {
+            let width = w.infos[k].width;
+            match &mut w.infos[k].store {
+                WatchStore::State { slot } => *slot = self.alloc_state(width).map_err(|_| k)?,
+                WatchStore::Led { buffers } => {
+                    for (i, id) in buffers.iter_mut().enumerate() {
+                        if self.buffers.len() >= 255 {
+                            return Err(k);
+                        }
+                        *id = self.buffers.len() as u8;
+                        let n = (width - i as u8 * 4).min(4);
+                        self.buffers.push(BufferInfo { kind: 0, elem: n, comp: comp::I32, w: 0, h: 0 });
+                    }
+                }
+                WatchStore::None => {}
+            }
+        }
+        for &(at, k) in &w.state_patches {
+            if let WatchStore::State { slot } = w.infos[k].store {
+                self.code[at] = slot;
+            }
+        }
+        for &(at, k, i) in &w.buf_patches {
+            if let WatchStore::Led { buffers } = &w.infos[k].store {
+                self.code[at] = buffers[i];
+            }
+        }
+        Ok(())
+    }
+
     fn unary(&mut self) -> Result<Ty, Diagnostic> {
+        let p0 = self.p;
+        let ty = self.unary_op()?;
+        let dep = self.lint.taint.dep;
+        self.watch_point(p0, ty, dep);
+        Ok(ty)
+    }
+
+    fn unary_op(&mut self) -> Result<Ty, Diagnostic> {
         match self.cur().clone() {
             Tok::Sym('-') => {
                 self.advance();
@@ -3100,12 +3514,15 @@ impl Compiler {
     }
 
     fn postfix(&mut self) -> Result<Ty, Diagnostic> {
+        let p0 = self.p;
         let mut ty = self.primary()?;
         // member / swizzle: .x .xyz .rgb
         while *self.cur() == Tok::Sym('.') {
             self.advance();
             let field = self.eat_ident()?;
             ty = self.emit_swizzle(ty, &field)?;
+            let dep = self.lint.taint.dep;
+            self.watch_point(p0, ty, dep);
         }
         Ok(ty)
     }
@@ -3153,17 +3570,39 @@ impl Compiler {
     /// [`Self::primary_expr`] + the lint taint of the leaf it parsed (a call or a
     /// parenthesized expression sets its own while parsing).
     fn primary(&mut self) -> Result<Ty, Diagnostic> {
+        let p0 = self.p;
         let next_is_call = matches!(self.lx_toks.get(self.p + 1), Some((Tok::Sym('('), _, _)));
         let leaf = match self.cur() {
-            Tok::Ident(id) if id == "led" || id == "imu" || id == "room" => Some(lint::Taint::default()),
+            Tok::Ident(id) if id == "led" || id == "imu" || id == "room" => {
+                // The Watch class of a context field (mirrors memo.rs ctx_variance).
+                let field = match self.lx_toks.get(self.p + 2) {
+                    Some((Tok::Ident(f), _, _)) => f.as_str(),
+                    _ => "",
+                };
+                let dep = match (id.as_str(), field) {
+                    ("led", "pos" | "idx" | "seg" | "s" | "branch" | "uv") => lint::DEP_LED,
+                    ("led", "count") | ("imu", _) | ("room", _) => lint::DEP_FRAME,
+                    _ => lint::DEP_DYN,
+                };
+                Some(lint::Taint::dep(dep))
+            }
             Tok::Ident(id) if id == "time" => Some(lint::Taint::time()),
+            Tok::Ident(id) if (id == "dt" || id == "frame") && !self.syms.contains_key(id) => {
+                Some(lint::Taint::dep(lint::DEP_FRAME))
+            }
             Tok::Ident(id) if !next_is_call => Some(match self.syms.get(id) {
                 Some(s) if matches!(s.kind, SymKind::Uniform) && s.ty != Ty::Bool => {
                     lint::Taint::uniform(id).named(id)
                 }
+                Some(s) if matches!(s.kind, SymKind::Uniform) => lint::Taint::dep(lint::DEP_FRAME),
                 Some(s) if matches!(s.kind, SymKind::State | SymKind::Local) => {
-                    self.lint.vars.get(id).cloned().unwrap_or_default().named(id)
+                    let mut t = self.lint.vars.get(id).cloned().unwrap_or_default().named(id);
+                    if matches!(s.kind, SymKind::State) {
+                        t.dep |= lint::DEP_FRAME;
+                    }
+                    t
                 }
+                Some(s) if matches!(s.kind, SymKind::Buffer) => lint::Taint::dep(lint::DEP_DYN),
                 _ => lint::Taint::default(),
             }),
             Tok::Num(..) | Tok::FixNum(..) => Some(lint::Taint::default()),
@@ -3173,6 +3612,8 @@ impl Compiler {
         if let Some(t) = leaf {
             self.lint.taint = t;
         }
+        let dep = self.lint.taint.dep;
+        self.watch_point(p0, ty, dep);
         Ok(ty)
     }
 
@@ -3324,6 +3765,7 @@ impl Compiler {
             let args = self.call_args()?;
             self.expect_sym(')')?;
             self.lint.taint = self.lint.builtin(name);
+            self.lint.taint.dep |= lint::DEP_DYN;
             if args.iter().any(|a| !matches!(a, Ty::Int)) {
                 return self.err("gpio arguments must be int (wrap with int(...))");
             }
@@ -3342,7 +3784,7 @@ impl Compiler {
         // Texture ops take a texture NAME (not a value) as their first argument.
         if name == "sample" || name == "paint" {
             let ty = self.texture_call(name)?;
-            self.lint.taint = lint::Taint::default();
+            self.lint.taint = lint::Taint::dep(lint::DEP_DYN);
             return Ok(ty);
         }
         // Type constructor: scalar cast (float/int/fixed) or vecN.
@@ -3405,6 +3847,9 @@ impl Compiler {
                 self.coerce(at, *pty)?;
             }
             self.expect_sym(')')?;
+            // A helper's result: Dynamic for the Watch class (it may read
+            // anything), like the memo pass treats a call.
+            taint.dep |= lint::DEP_DYN;
             self.lint.taint = taint;
             self.emit(fx_vm_op::CALL);
             self.emit_u16(f.entry);
