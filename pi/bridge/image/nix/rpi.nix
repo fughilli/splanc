@@ -116,6 +116,29 @@
   ];
   services.lvm.enable = false;
 
+  # A slimmer kernel.img: the firmware reads it at ~17 MB/s before the kernel
+  # starts (34.6 MB = 2.0 s on a Pi 3A+; gzip is no help, the firmware's
+  # decompression costs more than it saves). Config-only, on top of the Pi
+  # kernel (so it is built here and pushed to the fugstudio cache):
+  #   - no BTF (5.2 MB of the image). It only serves BPF programs that need
+  #     kernel type info; the bridge runs none. systemd's RestrictFileSystems=
+  #     (BPF LSM) then logs and carries on; IPAddressDeny= etc. don't need BTF.
+  #   - no sched_ext (needs BTF; unused, and its init cost ~0.12 s);
+  #   - kallsyms for functions only (initcall_blacklist and stack traces work);
+  #   - no Xen guest support.
+  boot.kernelPatches = [
+    {
+      name = "splanc-bridge-slim";
+      patch = null;
+      extraStructuredConfig = with lib.kernel; {
+        DEBUG_INFO_BTF = lib.mkForce no;
+        SCHED_CLASS_EXT = lib.mkForce no;
+        KALLSYMS_ALL = lib.mkForce no;
+        XEN = lib.mkForce no;
+      };
+    }
+  ];
+
   services.udev.extraRules = ''
     SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
   '';
