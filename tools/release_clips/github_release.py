@@ -140,6 +140,19 @@ def _attr(s: str) -> str:
     return s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
 
 
+def pick_release(rows: list[dict], tag: str) -> Optional[dict]:
+    """The published release for `tag`, else its newest draft. A draft is matched
+    by its name too: GitHub reports a draft's tag as ``untagged-<id>`` once
+    another release (another draft, say) claims the same tag, and every draft
+    the Release workflow makes is named after its tag."""
+    for r in rows:
+        if not r.get("draft") and r.get("tag_name") == tag:
+            return r
+    drafts = [r for r in rows if r.get("draft") and tag in (r.get("tag_name"), r.get("name"))]
+    drafts.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return drafts[0] if drafts else None
+
+
 def splice_body(body: str, section: str) -> str:
     """Replace the marked section, or put a new one at the top (previews lead
     the notes). An empty section removes it."""
@@ -173,17 +186,25 @@ class GitHub:
             raw = r.read()
             return json.loads(raw) if raw else None
 
-    def release_for_tag(self, tag: str) -> Optional[dict]:
-        """The release (draft or published) for `tag`. Drafts are not visible
-        through /releases/tags/<tag>, so list them."""
+    def releases(self) -> list[dict]:
+        out: list[dict] = []
         for page in range(1, 6):
             rows = self._req("GET", f"/releases?per_page=100&page={page}") or []
-            for r in rows:
-                if r.get("tag_name") == tag:
-                    return r
+            out += rows
             if len(rows) < 100:
                 break
-        return None
+        return out
+
+    def release_for_tag(self, tag: str) -> Optional[dict]:
+        """The release for `tag` (see `pick_release`). Drafts are not visible
+        through /releases/tags/<tag>, so list them."""
+        return pick_release(self.releases(), tag)
+
+    def create_release(self, fields: dict) -> dict:
+        return self._req("POST", "/releases", json.dumps(fields).encode())
+
+    def update_release(self, release: dict, fields: dict) -> dict:
+        return self._req("PATCH", f"/releases/{release['id']}", json.dumps(fields).encode())
 
     def update_body(self, release: dict, body: str) -> dict:
         return self._req("PATCH", f"/releases/{release['id']}", json.dumps({"body": body}).encode())
@@ -252,3 +273,45 @@ def relink(gh: GitHub, tag: str, log=print) -> bool:
     gh.update_body(release, new)
     log(f"release_clips: {tag}'s notes now link /releases/download/{tag}/")
     return True
+
+
+def ensure_draft(gh: GitHub, tag: str, target: str, log=print) -> dict:
+    """The release `tag` will ship as: the existing draft (or published release)
+    for it, else a new draft with generated notes. Notes written on an existing
+    draft beforehand are kept."""
+    release = gh.release_for_tag(tag)
+    if release is not None:
+        log(f"release_clips: using the existing {'draft' if release.get('draft') else 'release'} for {tag} ({release['id']})")
+        return release
+    release = gh.create_release(
+        {
+            "tag_name": tag,
+            "target_commitish": target,
+            "name": tag,
+            "draft": True,
+            "generate_release_notes": True,
+            "make_latest": "false",
+        }
+    )
+    log(f"release_clips: created the draft for {tag} ({release['id']})")
+    return release
+
+
+def finalize(gh: GitHub, tag: str, files: list[str], log=print) -> dict:
+    """Attach `files` (replacing same-named assets) to `tag`'s draft, publish it
+    under `tag` (notes as they are; never marked latest), then relink its notes."""
+    release = gh.release_for_tag(tag)
+    if release is None:
+        raise SystemExit(f"release_clips: no draft or release for {tag}")
+    existing = {a["name"]: a for a in release.get("assets", [])}
+    for path in files:
+        name = os.path.basename(path)
+        if name in existing:
+            gh.delete_asset(existing[name]["id"])
+        gh.upload_asset(release, path, name)
+        log(f"release_clips: uploaded {name}")
+    if release.get("draft"):
+        release = gh.update_release(release, {"draft": False, "tag_name": tag, "make_latest": "false"})
+        log(f"release_clips: published {tag} ({release['id']})")
+    relink(gh, tag, log=log)
+    return release

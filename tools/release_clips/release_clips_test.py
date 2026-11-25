@@ -258,6 +258,73 @@ class FakeGitHub(github_release.GitHub):
         self.calls.append(("upload", name))
 
 
+class ApiGitHub(github_release.GitHub):
+    """A GitHub whose API is a list of releases in memory."""
+
+    def __init__(self, rows):
+        super().__init__("fughilli/splanc", "t")
+        self.rows, self.calls, self.next_id = rows, [], 100
+
+    def releases(self):
+        return self.rows
+
+    def create_release(self, fields):
+        self.next_id += 1
+        r = {**fields, "id": self.next_id, "assets": [], "upload_url": "https://u{?name}",
+             "html_url": f"https://github.com/fughilli/splanc/releases/tag/untagged-{self.next_id:x}"}  # fmt: skip
+        self.rows.append(r)
+        self.calls.append(("create", fields["tag_name"]))
+        return r
+
+    def update_release(self, release, fields):
+        release.update(fields)
+        self.calls.append(("update", fields))
+        return release
+
+    def update_body(self, release, body):
+        release["body"] = body
+        self.calls.append(("body", body))
+
+    def delete_asset(self, asset_id):
+        self.calls.append(("delete", asset_id))
+
+    def upload_asset(self, release, path, name=None):
+        self.calls.append(("upload", name))
+
+
+class DraftLifecycleTest(unittest.TestCase):
+    def test_the_draft_is_found_by_name_reused_and_published_under_the_tag(self):
+        # The app-v1.17.0 failure: the draft's tag read untagged-<id>, the re-run
+        # made a second draft, and publishing made a third, empty release.
+        old = {"id": 1, "draft": True, "tag_name": "untagged-aa", "name": "app-v1.17.0", "created_at": "2026-11-23", "assets": []}  # fmt: skip
+        new = {"id": 2, "draft": True, "tag_name": "untagged-bb", "name": "app-v1.17.0", "created_at": "2026-11-25",
+               "upload_url": "https://u{?name}", "assets": [{"name": "splanc-webapp-1.17.0.tar.gz", "id": 9}],
+               "body": "[v](https://github.com/fughilli/splanc/releases/download/untagged-bb/a.mp4)"}  # fmt: skip
+        other = {"id": 3, "draft": False, "tag_name": "app-v1.16.0", "name": "app-v1.16.0"}
+        gh = ApiGitHub([old, other, new])
+        log = lambda m: None  # noqa: E731
+        self.assertIs(github_release.ensure_draft(gh, "app-v1.17.0", "abc", log=log), new)
+        self.assertEqual(gh.calls, [])
+        d = tempfile.mkdtemp()
+        tar = os.path.join(d, "splanc-webapp-1.17.0.tar.gz")
+        open(tar, "wb").close()
+        github_release.finalize(gh, "app-v1.17.0", [tar], log=log)
+        self.assertIn(("delete", 9), gh.calls)
+        self.assertIn(("upload", "splanc-webapp-1.17.0.tar.gz"), gh.calls)
+        self.assertIn(("update", {"draft": False, "tag_name": "app-v1.17.0", "make_latest": "false"}), gh.calls)
+        self.assertEqual(new["body"], "[v](https://github.com/fughilli/splanc/releases/download/app-v1.17.0/a.mp4)")
+        self.assertFalse(any(k == "create" for k, _ in gh.calls))
+        # Published now: it wins over the leftover draft.
+        self.assertIs(gh.release_for_tag("app-v1.17.0"), new)
+
+    def test_a_missing_draft_is_created_and_finalize_never_makes_a_release(self):
+        gh = ApiGitHub([])
+        r = github_release.ensure_draft(gh, "app-v1.18.0", "abc", log=lambda m: None)
+        self.assertEqual((r["draft"], r["name"], r["target_commitish"], r["generate_release_notes"]), (True, "app-v1.18.0", "abc", True))
+        with self.assertRaises(SystemExit):
+            github_release.finalize(ApiGitHub([]), "app-v1.18.0", [], log=lambda m: None)
+
+
 class PublishTest(unittest.TestCase):
     def test_publish_replaces_assets_and_writes_the_section(self):
         d = tempfile.mkdtemp()

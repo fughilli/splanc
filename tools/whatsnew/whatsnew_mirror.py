@@ -497,12 +497,28 @@ def select_releases(
     cap = _version(up_to, pattern) if up_to else None
     picked = []
     for r in releases:
+        if r.get("draft"):
+            # Only the release being built, matched by name too: a draft's tag
+            # reads "untagged-<id>" once another release claims the same tag.
+            if not up_to or up_to not in (r.get("tag_name"), r.get("name")):
+                continue
+            r = {**r, "tag_name": up_to}
         v = _version(r.get("tag_name", ""), pattern)
-        if v is None or (r.get("draft") and r.get("tag_name") != up_to):
+        if v is None:
             continue
         if cap is not None and v > cap:
             continue
         picked.append((v, r))
+    # One row per tag: the published release, else the newest draft.
+    def rank(r: dict) -> tuple:
+        return (not r.get("draft"), r.get("created_at") or "")
+
+    best: dict = {}
+    for v, r in picked:
+        cur = best.get(r["tag_name"])
+        if cur is None or rank(r) > rank(cur[1]):
+            best[r["tag_name"]] = (v, r)
+    picked = list(best.values())
     picked.sort(key=lambda p: p[0], reverse=True)
     rows = [r for _v, r in picked]
     return rows[:limit] if limit > 0 else rows

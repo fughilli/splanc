@@ -13,6 +13,10 @@
              release and write the "Feature previews" section of its notes
     relink   once the draft is published, point its notes' asset links at the
              final tag URLs (a draft's notes link the draft's own URLs)
+    ensure-draft  the tag's existing draft, else a new one with generated notes
+    finalize attach files to the tag's draft, publish it, and relink its notes
+
+ensure-draft, finalize and relink need only the standard library (plain python3).
 
 Run through Bazel (``bazel run //tools/release_clips -- record ...``) so
 Playwright and ffmpeg come from the lockfile, or with any python that has
@@ -362,13 +366,30 @@ def cmd_publish(args) -> int:
     return 0
 
 
-def cmd_relink(args) -> int:
+def _gh(args):
     import github_release
 
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:
-        sys.exit("release_clips: relink needs GH_TOKEN")
-    github_release.relink(github_release.GitHub(args.github_repo, token), args.tag, log=_log)
+        sys.exit(f"release_clips: {args.cmd} needs GH_TOKEN")
+    return github_release, github_release.GitHub(args.github_repo, token)
+
+
+def cmd_relink(args) -> int:
+    gr, gh = _gh(args)
+    gr.relink(gh, args.tag, log=_log)
+    return 0
+
+
+def cmd_ensure_draft(args) -> int:
+    gr, gh = _gh(args)
+    gr.ensure_draft(gh, args.tag, args.target, log=_log)
+    return 0
+
+
+def cmd_finalize(args) -> int:
+    gr, gh = _gh(args)
+    gr.finalize(gh, args.tag, args.files, log=_log)
     return 0
 
 
@@ -425,6 +446,16 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("relink", help="point a published release's notes at its final asset URLs")
     p.add_argument("--tag", required=True)
     p.set_defaults(fn=cmd_relink)
+
+    p = sub.add_parser("ensure-draft", help="the tag's draft release, created if missing")
+    p.add_argument("--tag", required=True)
+    p.add_argument("--target", required=True, help="commit the tag points at")
+    p.set_defaults(fn=cmd_ensure_draft)
+
+    p = sub.add_parser("finalize", help="attach files to the tag's draft and publish it")
+    p.add_argument("--tag", required=True)
+    p.add_argument("files", nargs="*")
+    p.set_defaults(fn=cmd_finalize)
 
     args = ap.parse_args(argv)
     for name in ("out", "clips", "dist"):
