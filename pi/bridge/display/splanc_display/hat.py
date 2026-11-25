@@ -82,6 +82,74 @@ def detect(mode: str = "auto") -> Optional[str]:
     return None
 
 
+# The SoC's GPIO block, by gpiochip label (as the splash finds it). Its chip
+# number is not fixed: drivers probed asynchronously at boot can register the
+# firmware's 8-line GPIO expander (raspberrypi-exp-gpio) first, making the SoC
+# gpiochip1. gpiozero 2.0.1's lgpio factory ignores its `chip` argument and
+# always opens 0 (4 on a Pi 5), which then fails with "bad GPIO number".
+SOC_GPIO_LABELS = ("pinctrl-bcm2835", "pinctrl-bcm2711", "pinctrl-rp1")
+_GPIO_GET_CHIPINFO_IOCTL = 0x8044B401  # _IOR(0xB4, 0x01, struct gpiochip_info), 68 bytes
+_MIN_LINES = max(PIN_DC, PIN_RST, *KEY_PINS.values()) + 1
+
+
+def _chip_info(path: str):
+    """(label, lines) of a /dev/gpiochipN, or None."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        buf = bytearray(68)  # name[32], label[32], u32 lines
+        fcntl.ioctl(fd, _GPIO_GET_CHIPINFO_IOCTL, buf)
+        return (
+            bytes(buf[32:64]).split(b"\0")[0].decode(errors="replace"),
+            struct.unpack_from("<I", buf, 64)[0],
+        )
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def soc_gpiochip(info: Callable = _chip_info, dev: str = "/dev") -> Optional[int]:
+    """The number of the SoC's gpiochip (see SOC_GPIO_LABELS), or None."""
+    for n in range(16):
+        got = info(f"{dev}/gpiochip{n}")
+        if got and got[0] in SOC_GPIO_LABELS and got[1] >= _MIN_LINES:
+            return n
+    return None
+
+
+def use_soc_gpiochip() -> None:
+    """Make gpiozero's lgpio pin factory open the SoC's gpiochip (found by label)
+    instead of the number it assumes. A no-op with another factory, or when no
+    SoC gpiochip is found (gpiozero's own default then applies)."""
+    if os.environ.get("GPIOZERO_PIN_FACTORY", "lgpio") != "lgpio":
+        return
+    chip = soc_gpiochip()
+    if chip is None:
+        return
+    from gpiozero import Device
+    from gpiozero.pins.lgpio import LGPIOFactory, LGPIOPin
+    from gpiozero.pins.local import LocalPiFactory
+
+    if isinstance(Device.pin_factory, LGPIOFactory) and Device.pin_factory.chip == chip:
+        return
+
+    class _SocLGPIOFactory(LGPIOFactory):
+        def __init__(self, chip):
+            LocalPiFactory.__init__(self)  # LGPIOFactory.__init__ would open its own guess
+            import lgpio
+
+            self._handle = lgpio.gpiochip_open(chip)
+            self._chip = chip
+            self.pin_class = LGPIOPin
+
+    if Device.pin_factory is not None:
+        Device.pin_factory.close()
+    Device.pin_factory = _SocLGPIOFactory(chip)
+
+
 class GpioAdapter:
     """The RPi.GPIO subset luma's ``spi`` interface calls, on gpiozero devices."""
 
@@ -89,6 +157,7 @@ class GpioAdapter:
 
     def __init__(self, factory: Callable = None):
         if factory is None:
+            use_soc_gpiochip()
             from gpiozero import DigitalOutputDevice as factory  # noqa: N813
         self._factory = factory
         self._pins = {}
@@ -228,6 +297,7 @@ class Buttons:
 
     def __init__(self, on_press, on_release, factory: Callable = None, pins=KEY_PINS):
         if factory is None:
+            use_soc_gpiochip()
             from gpiozero import Button
 
             def factory(pin):

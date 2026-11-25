@@ -217,3 +217,29 @@ def test_console_vt_takeover(tmp_path, monkeypatch):
     assert calls == [(fb.VT_ACTIVATE, 8), (fb.KDSETMODE, fb.KD_GRAPHICS)]
     con.release()
     assert calls[-1] == (fb.KDSETMODE, fb.KD_TEXT)
+
+
+def test_soc_gpiochip_by_label_not_number():
+    # Async driver probing can register the firmware's GPIO expander first
+    # (gpiochip0), making the SoC's block gpiochip1: the HAT keys must follow it.
+    chips = {
+        "/dev/gpiochip0": ("raspberrypi-exp-gpio", 8),
+        "/dev/gpiochip1": ("pinctrl-bcm2835", 54),
+    }
+    assert hat.soc_gpiochip(info=chips.get) == 1
+    # The usual order, a Pi 4 and a Pi 5 (RP1).
+    assert hat.soc_gpiochip(info={"/dev/gpiochip0": ("pinctrl-bcm2835", 54)}.get) == 0
+    assert hat.soc_gpiochip(info={"/dev/gpiochip0": ("pinctrl-bcm2711", 58)}.get) == 0
+    pi5 = {"/dev/gpiochip0": ("gpio-brcmstb@107d508500", 32), "/dev/gpiochip4": ("pinctrl-rp1", 54)}
+    assert hat.soc_gpiochip(info=pi5.get) == 4
+    # Too few lines for the HAT's pins, or no SoC chip at all: None (gpiozero's default).
+    assert hat.soc_gpiochip(info={"/dev/gpiochip0": ("pinctrl-bcm2835", 8)}.get) is None
+    assert hat.soc_gpiochip(info={}.get) is None
+
+
+def test_use_soc_gpiochip_leaves_other_factories(monkeypatch):
+    monkeypatch.setenv("GPIOZERO_PIN_FACTORY", "mock")
+    called = []
+    monkeypatch.setattr(hat, "soc_gpiochip", lambda *a, **k: called.append(1))
+    hat.use_soc_gpiochip()
+    assert called == []
