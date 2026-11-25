@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "mesh-map",
+  "title": "See your mesh on a map",
+  "summary": "The mesh map shows each fixture where it sits in the room, the radio links between them and their health. Tap a fixture for its details.",
+  "prs": [640],
+  "route": "#/maps",
+  "demo": "device,meshall",
+  "framing": ["phone"],
+  "theme": "dark",
+  "setup": [
+    { "click": ".tab[data-tab='device']", "wait": 700 },
+    { "click": ".device-row:has-text('Living Room') button[title='Options']", "wait": 900 },
+    { "wait_for": ".mesh-section button:has-text('Show the mesh map')" },
+    { "scroll": ".k-sheet:has(.mesh-section)", "by": 4000 }
+  ],
+  "steps": [
+    { "click": ".mesh-section button:has-text('Show the mesh map')", "wait": 1800 },
+    { "click": ".mtopo-seg button[data-colouring='hops']", "wait": 1000 },
+    { "click": ".mtopo-seg button[data-colouring='signal']", "wait": 500 },
+    { "scroll": ".shell-outlet", "by": 600, "duration": 900, "wait": 300 },
+    { "click": ".mtopo-member:has-text('Porch Arch')", "wait": 2000 }
+  ],
+  "tail_ms": 1200
+}
