@@ -164,4 +164,14 @@ const CSS = `
 }
 .aiset-chip-progress { margin: 6px 0 0; }
 .aiset-chip-progress .aiset-progress > i { background: #4a9eff; }
+
+/* Voice card (D-541 PR 8). */
+.vset .aiset-field { margin-top: var(--sp-3); }
+.vset-row { flex-wrap: wrap; }
+.vset-row .settings-row-label { flex: 1 1 14rem; }
+.vset-row .settings-row-hint { max-width: 34rem; }
+.vset-kokoro { margin-top: var(--sp-2); }
+.vset-line { margin: var(--sp-2) 0 0; color: var(--text-dim); font-size: var(--f-caption); }
+.vset-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-3); }
+.vset-actions[hidden] { display: none; }
 `;

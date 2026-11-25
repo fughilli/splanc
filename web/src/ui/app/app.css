@@ -4019,3 +4019,66 @@ input.device-name-input {
 .fxedit-codewrap.fxexp-on .fxedit-explainlayer {
   padding-bottom: 8rem;
 }
+
+/* Voice under the editor chat (D-541 PR 8): push-to-talk on the left, the
+   read-aloud toggle on the right, a status between; 12 px apart at least. */
+.fxvoice-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.fxvoice-bar[hidden] {
+  display: none;
+}
+.fxvoice-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--f-caption, 0.8rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fxvoice-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 2.25rem;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.fxvoice-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.fxvoice-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fxvoice-mic.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.vset-sheet p {
+  margin: 0 0 var(--sp-3);
+}
+.vset-sheet .vset-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}

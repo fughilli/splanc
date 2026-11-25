@@ -54,6 +54,8 @@ export type IconName =
   | "midi"
   | "chip"
   | "mic"
+  | "volume"
+  | "volume-off"
   | "check"
   | "code"
   | "eye"
@@ -153,6 +155,10 @@ const PATHS: Record<IconName, string> = {
   chip: `<rect x="8" y="8" width="8" height="8" rx="1"/><path d="M10 8V5M14 8V5M10 19v-3M14 19v-3M8 10H5M8 14H5M19 10h-3M19 14h-3"/>`,
   // Microphone: a rounded capsule over a stand — the voice-input affordance.
   mic: `<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><path d="M12 17v4M9 21h6"/>`,
+  // Speaker with sound waves (read replies aloud: on).
+  volume: `<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>`,
+  // Speaker, muted (read aloud: off).
+  "volume-off": `<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>`,
   // Checkmark (download complete).
   check: `<path d="M5 12.5 10 17.5 19 7"/>`,
   // Angle brackets </> (load model).

@@ -138,6 +138,11 @@ import { openAgentFeedbackSheet, reportButton } from "./agentFeedbackSheet";
 import { mountEffectsTour } from "../guide/effectsTour";
 import { captureDemoPreview, makeDemoProvider } from "../../effects/ai/providers/demo";
 import { ExplainView } from "../../effects/editor/explainView";
+import { ChatVoice } from "../../effects/editor/chatVoice";
+import { appSpeaker, speakingNarrator } from "../../effects/ai/tts";
+import { appKokoro } from "../../effects/ai/kokoro";
+import { createVoice } from "../acid/voice";
+import { kokoroFirstUseSheet } from "./voiceSettings";
 import type { ExplainStep } from "../../effects/ai/explain";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
@@ -878,6 +883,9 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     },
   });
   codeWrap.insertBefore(explainView.layer, diagLayer);
+  // Voice (D-541 PR 8): walkthrough steps are spoken when read-aloud is on.
+  const speaker = appSpeaker();
+  explainView.setNarrator(speakingNarrator(speaker));
 
   // The input is a textarea with the send control nested inline at its right as
   // an up-arrow button (so the box stays the dominant, legible element).
@@ -895,6 +903,17 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   const chatInputWrap = document.createElement("div");
   chatInputWrap.className = "fxedit-askwrap";
   chatInputWrap.append(chatInput, chatSend);
+  // Push-to-talk + the read-aloud toggle, in their own row under the input.
+  const chatVoice = new ChatVoice({
+    input: chatInput,
+    send: () => void runChat(),
+    busy: () => chatBusy,
+    speaker,
+    kokoro: appKokoro(),
+    createVoice,
+    onBargeIn: () => explainView?.skip(),
+    askKokoro: kokoroFirstUseSheet,
+  });
   chatInput.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
       ev.preventDefault();
@@ -1713,6 +1732,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   async function runChat(): Promise<void> {
     const ask = chatInput.value.trim();
     if (!ask) return;
+    chatVoice.onSend();
     // First prompt with no AI set up: the model-setup sheet picks a tier, then
     // this same prompt is sent (docs/design/ai-tiers.md). Dismissing it keeps
     // the typed text; a setup that leaves the page (OpenRouter sign-in,
@@ -2132,6 +2152,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       } else if (result.text || !explained) {
         replyText = result.text || "(done)";
         replyRow = appendChat("assistant", replyText);
+        if (result.text) chatVoice.speakReply(result.text);
       } else {
         // A walkthrough is the whole answer: its step list is the reply.
         replyText = "(walkthrough)";
@@ -2380,7 +2401,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     } else note.textContent = "Using your configured AI provider";
     chatBody.appendChild(note);
   }
-  chatBody.append(chatLog, chatInputWrap);
+  chatBody.append(chatLog, chatInputWrap, chatVoice.el);
 
   // "Device" pane content: the upload/download (send/hydrate) controls are the
   // primary surface; the compiler diagnostics list lives below under its own
@@ -2617,6 +2638,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       disposed = true;
       chatAbort.abort();
       explainView?.dispose();
+      chatVoice.dispose();
       disposeTour?.();
       unregisterChatDriver?.();
       document.documentElement.classList.remove("is-locked");

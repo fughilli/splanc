@@ -34,6 +34,7 @@ import {
 import { listOpenAiModels, pullOllamaModel } from "../../effects/ai/providers/openaiCompat";
 import { creditsVisible } from "../../effects/ai/providers/credits";
 import { creditsAccountCard } from "./creditsAccount";
+import { voiceSettingsCard } from "./voiceSettings";
 import {
   isWllamaSupported,
   loadWllamaModel,
@@ -167,7 +168,8 @@ export function aiSettingsPanel(): HTMLElement {
 
   rerender();
   // Model setup (docs/design/ai-tiers.md): the tier picker, reachable any time.
-  el.append(sub, modelSetupRow(rerender), status, body);
+  // Voice (D-541 PR 8): read-aloud + push-to-talk, whichever provider runs.
+  el.append(sub, modelSetupRow(rerender), status, body, voiceSettingsCard(group));
   return el;
 }
 
