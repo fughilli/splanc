@@ -256,6 +256,12 @@
       "route": "autonomous"
     },
     {
+      "kind": "untraced-failure",
+      "entity": "//:requirements.test",
+      "message": "//:requirements.test requirements.test error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
       "kind": "high-risk-open",
       "entity": "RISK-1",
       "message": "high risk; mitigation is PARTIAL",

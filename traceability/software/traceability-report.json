@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 3678,
-    "gaps": 39
+    "test_cases": 3702,
+    "gaps": 40
   },
   "levels": [
     {
@@ -7642,6 +7642,12 @@
       "kind": "no-implementation",
       "entity": "PR-41",
       "message": "no source annotation implements it",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//:requirements.test",
+      "message": "//:requirements.test requirements.test error and traces to no requirement",
       "route": "autonomous"
     },
     {
