@@ -137,6 +137,8 @@ import type { FeedbackScreenContext } from "../../feedback/appFeedback";
 import { openAgentFeedbackSheet, reportButton } from "./agentFeedbackSheet";
 import { mountEffectsTour } from "../guide/effectsTour";
 import { captureDemoPreview, makeDemoProvider } from "../../effects/ai/providers/demo";
+import { ExplainView } from "../../effects/editor/explainView";
+import type { ExplainStep } from "../../effects/ai/explain";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { FxDebugPanel } from "../../effects/editor/fxDebugPanel";
@@ -367,10 +369,14 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   diagTip.style.display = "none";
   codeWrap.append(backdrop, diagLayer, codeEl, diagTip);
   let marks: Mark[] = [];
+  // Code walkthrough (explain_code, D-541): its layer goes under the
+  // diagnostics; created once the chat log exists (below).
+  let explainView: ExplainView | null = null;
 
   function paintHighlight(): void {
     backdropCode.innerHTML = highlight(codeEl.value);
     paintDiagnostics();
+    explainView?.paint();
   }
   function paintDiagnostics(): void {
     diagLayer.innerHTML = diagnosticsHtml(codeEl.value, marks);
@@ -382,6 +388,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     backdrop.scrollLeft = codeEl.scrollLeft;
     diagLayer.scrollTop = codeEl.scrollTop;
     diagLayer.scrollLeft = codeEl.scrollLeft;
+    explainView?.syncScroll();
     if (popupOpen) positionPopup();
     hideDiagTip();
   }
@@ -854,8 +861,23 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   const chatHint = document.createElement("p");
   chatHint.className = "fxedit-muted";
   chatHint.textContent =
-    "Ask the AI to write or tweak this effect. It can compile changes and see the live preview.";
+    "Ask the AI to write or tweak this effect, or to explain how it works. It can compile changes and see the live preview.";
   chatLog.appendChild(chatHint);
+  explainView = new ExplainView({
+    codeEl,
+    codeWrap,
+    chatLog,
+    // Only when the Code pane is closed or behind another tab: a relayout
+    // re-parents the panes (losing scroll and focus) for nothing otherwise.
+    revealCode: () => {
+      if (!codeWrap.isConnected || codeWrap.offsetParent === null) layout.revealPane("code");
+    },
+    onComplete: (text) => {
+      if (chatHint.isConnected) chatHint.remove();
+      transcript.push({ role: "assistant", text });
+    },
+  });
+  codeWrap.insertBefore(explainView.layer, diagLayer);
 
   // The input is a textarea with the send control nested inline at its right as
   // an up-arrow button (so the box stays the dominant, legible element).
@@ -1985,6 +2007,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const recorder = new TurnRecorder({ turn: chatTurns, ask: opts.label ?? ask, sourceBefore: codeEl.value });
     let replyRow: HTMLElement | null = null;
     let replyText = "";
+    let explained = false;
     setChatStatus("Thinking…");
 
     // Per-device builtin cost listing (from the user's calibrated board if any,
@@ -2073,6 +2096,20 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
           setChatStatus("Setting live values…");
           return applyLiveUniforms(call);
         },
+        // Code walkthroughs (D-541): every tool-capable provider except the
+        // in-browser models (generate.ts checks) and the free demo relay,
+        // whose shared allowance caps the tools a request may carry.
+        ...(!demoProvider && explainView
+          ? {
+              explain: {
+                ...explainView.hooks(),
+                onStep: (step: ExplainStep) => {
+                  explained = true;
+                  explainView?.hooks().onStep(step);
+                },
+              },
+            }
+          : {}),
         onToolUse: () => undefined,
         onPrompt: (info) => recorder.onPrompt(info),
         onTrace: (ev) => {
@@ -2092,9 +2129,13 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         replyText = describeExhaustedTurn(result);
         replyRow = appendChat("assistant", replyText);
         replyRow.classList.add("fxedit-msg--warn");
-      } else {
+      } else if (result.text || !explained) {
         replyText = result.text || "(done)";
         replyRow = appendChat("assistant", replyText);
+      } else {
+        // A walkthrough is the whole answer: its step list is the reply.
+        replyText = "(walkthrough)";
+        replyRow = explainView?.lastCard ?? null;
       }
       // Splanc AI credits: a gentle heads-up once the balance runs low.
       const left = getAiConfig().kind === "credits" ? takeLowBalanceWarning() : null;
@@ -2575,6 +2616,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     onUnmount: () => {
       disposed = true;
       chatAbort.abort();
+      explainView?.dispose();
       disposeTour?.();
       unregisterChatDriver?.();
       document.documentElement.classList.remove("is-locked");

@@ -3860,3 +3860,162 @@ input.device-name-input {
   font: 11px/1 var(--font-mono, ui-monospace, monospace);
   color: var(--text-dim);
 }
+
+/* -- Code walkthrough (explain_code, D-541 PR 7) ---------------------------
+ * .fxedit-explainlayer repeats the code (transparent) between the highlighted
+ * backdrop and the diagnostics layer; the walkthrough's marks are painted on
+ * it (effects/editor/explainOverlay.ts). .fxexp-bar is the step being read, at
+ * the foot of the Code pane; .fxexp-card the step list in the chat. */
+.fxedit-explainlayer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font: 13px/1.5 var(--font-mono, ui-monospace, monospace);
+  tab-size: 4;
+  white-space: pre;
+  overflow: hidden;
+  border: 0;
+  color: transparent;
+  background: transparent;
+  pointer-events: none;
+  z-index: 0;
+}
+.fxexp-c-yellow { --mk: #f2c230; }
+.fxexp-c-pink { --mk: #ff5fa2; }
+.fxexp-c-cyan { --mk: #3fc8f0; }
+.fxexp-c-green { --mk: #4fd87e; }
+.fxexp-line {
+  display: inline-block;
+  vertical-align: top;
+  min-width: calc(100% + 0.8rem);
+  margin-left: -0.8rem;
+  padding-left: 0.8rem;
+  box-sizing: border-box;
+}
+.fxexp-band {
+  background: color-mix(in srgb, var(--mk) 18%, transparent);
+  box-shadow: inset 3px 0 0 var(--mk);
+  animation: fxexp-ink 0.3s ease-out;
+}
+.fxexp-box {
+  box-shadow: inset 2px 0 0 var(--mk), inset -2px 0 0 var(--mk);
+  background: color-mix(in srgb, var(--mk) 6%, transparent);
+}
+.fxexp-box.fxexp-top { box-shadow: inset 2px 0 0 var(--mk), inset -2px 0 0 var(--mk), inset 0 2px 0 var(--mk); }
+.fxexp-box.fxexp-bot { box-shadow: inset 2px 0 0 var(--mk), inset -2px 0 0 var(--mk), inset 0 -2px 0 var(--mk); }
+.fxexp-box.fxexp-top.fxexp-bot { box-shadow: inset 0 0 0 2px var(--mk); }
+.fxexp-span {
+  border-radius: 3px;
+  text-decoration-line: underline;
+  text-decoration-color: var(--mk);
+  text-decoration-thickness: 2px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+  animation: fxexp-ink 0.3s ease-out;
+}
+.fxexp-hl {
+  background: color-mix(in srgb, var(--mk) 24%, transparent);
+}
+.fxexp-ul {
+  text-decoration-style: wavy;
+}
+@keyframes fxexp-ink {
+  from { background: transparent; text-decoration-color: transparent; }
+}
+/* A note sits under its mark's last line, anchored at the line start. */
+.fxexp-noteat {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1.5em;
+  vertical-align: top;
+}
+.fxexp-note {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 1;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--mk);
+  color: #111;
+  font: 600 0.7rem/1.5 var(--font-ui, system-ui, sans-serif);
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.fxexp-target {
+  display: inline-block;
+  width: 0;
+}
+.fxexp-bar {
+  position: absolute;
+  left: var(--sp-2);
+  right: var(--sp-2);
+  bottom: var(--sp-2);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3, 12px);
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+.fxexp-bar[hidden] {
+  display: none;
+}
+.fxexp-bar-text {
+  flex: 1 1 14rem;
+  min-width: 0;
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+  font: 0.875rem/1.4 var(--font-ui, system-ui, sans-serif);
+}
+.fxexp-bar-count {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.fxexp-bar-actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
+.fxexp-steps {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fxexp-step-btn {
+  all: unset;
+  display: block;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  white-space: normal;
+}
+.fxexp-step-btn:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.fxexp-step--now .fxexp-step-btn {
+  background: var(--accent-quiet);
+}
+.fxexp-step--next {
+  color: var(--text-dim);
+}
+/* While the caption bar shows, the code can scroll clear of it. */
+.fxedit-codewrap.fxexp-on .fxedit-code,
+.fxedit-codewrap.fxexp-on .fxedit-backdrop,
+.fxedit-codewrap.fxexp-on .fxedit-diaglayer,
+.fxedit-codewrap.fxexp-on .fxedit-explainlayer {
+  padding-bottom: 8rem;
+}

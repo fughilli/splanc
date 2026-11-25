@@ -13,6 +13,7 @@
 
 import { BUG_TOOL_NAME, FILE_BUG_DESCRIPTION, FILE_BUG_INPUT_SCHEMA } from "../../bugs/bugReport";
 import { SYSTEM_PROMPT, SYSTEM_PROMPT_COMPACT } from "./system-prompt";
+import { EXPLAIN_TOOLS } from "./explain";
 import type { ToolDef } from "./provider";
 
 export const TOOLS = [
@@ -274,7 +275,15 @@ export function baseChatSystem(providerId: string): string {
  * app's tool-use loop and the eval harness both use. */
 export function selectTools(
   caps: { tools: boolean; vision: boolean },
-  opts: { perf: boolean; midi: boolean; devicePerf?: boolean; bugs?: boolean; liveUniforms?: boolean },
+  opts: {
+    perf: boolean;
+    midi: boolean;
+    devicePerf?: boolean;
+    bugs?: boolean;
+    liveUniforms?: boolean;
+    /** show_code + explain_code (explain.ts); the caller checks explainAvailable. */
+    explain?: boolean;
+  },
 ): ToolDef[] {
   if (!caps.tools) return [];
   const base = caps.vision ? TOOLS : TOOLS.filter((t) => t.name !== "capture_preview");
@@ -285,5 +294,6 @@ export function selectTools(
     ...(opts.midi ? MIDI_TOOLS : []),
     ...(opts.liveUniforms ? (LIVE_UNIFORM_TOOLS as unknown as ToolDef[]) : []),
     ...(opts.bugs ? (BUG_TOOLS as unknown as ToolDef[]) : []),
+    ...(opts.explain ? EXPLAIN_TOOLS : []),
   ];
 }
