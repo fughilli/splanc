@@ -344,15 +344,15 @@ export class UniformPanel {
         onInput: (v) => {
           const next = clampUniformValue(s.uniform, v);
           this.set(i, next);
-          value.textContent = label(next);
+          value.textContent = value.title = label(next);
         },
       });
       ctrl.appendChild(swatch.el);
-      value.textContent = label(s.value);
+      value.textContent = value.title = label(s.value);
       value.classList.add("upanel-hex");
       this.setters.set(s.uniform.slot, (v) => {
         swatch.set(v);
-        value.textContent = label(v);
+        value.textContent = value.title = label(v);
       });
       return;
     }
