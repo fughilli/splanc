@@ -11,6 +11,10 @@
 #     Pi 5's default (nixos-raspberrypi's boards default to U-Boot -> extlinux
 #     otherwise): one boot path, no U-Boot menu, and a one-shot trial boot
 #     (tryboot) for every system update (nix/system-update-rpi.nix).
+#   * Firmware start-up: no boot_delay (the firmware's default waits 1 s before
+#     loading the kernel) and no camera probe (the bridge has no camera). With
+#     the splash only able to start with the initrd, firmware time is dead
+#     screen time.
 #   * The SD image: named after the board, uncompressed (CI compresses it with
 #     zstd -19 for the release), with a smaller FAT firmware partition.
 { config, lib, ... }:
@@ -57,6 +61,11 @@
       enable = true;
       value = true;
     };
+    options.boot_delay = {
+      enable = true;
+      value = 0;
+    };
+    options.camera_auto_detect.enable = false;
   };
   hardware.i2c.enable = true;
 
