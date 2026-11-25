@@ -644,14 +644,24 @@ def list_releases(repo: str, fetch: Fetcher, pages: int = 40, per_page: int = 50
     return out
 
 
-def _media_ext(url: str, ctype: str) -> Optional[str]:
+# Content types that say nothing about the file: trust the file name instead.
+GENERIC_TYPES = ("", "application/octet-stream", "binary/octet-stream", "application/binary")
+
+
+def _media_ext(url: str, ctype: str, name: Optional[str] = None) -> Optional[str]:
+    """The local extension for a download, or None if it isn't an image/video.
+
+    A specific content type decides. A generic one (GitHub serves every asset
+    as octet-stream, and a draft's asset API URL has no extension) falls back
+    to `name` (the asset's file name) or else the URL's extension; either way
+    only image/video extensions pass."""
     ctype = ctype.split(";")[0].strip().lower()
     if ctype in MEDIA_EXT:
         return MEDIA_EXT[ctype]
-    ext = os.path.splitext(urllib.parse.urlsplit(url).path)[1].lower()
-    if ext in EXT_TYPES and (
-        not ctype or ctype in ("application/octet-stream", "binary/octet-stream")
-    ):
+    if ctype not in GENERIC_TYPES:
+        return None
+    ext = os.path.splitext(name or urllib.parse.urlsplit(url).path)[1].lower()
+    if ext in EXT_TYPES:
         return ".jpg" if ext == ".jpeg" else ext
     return None
 
@@ -666,13 +676,15 @@ class MediaStore:
         self.cache: dict[str, Optional[str]] = {}
         self.total = 0
 
-    def get(self, url: str) -> Optional[str]:
+    def get(self, url: str, name: Optional[str] = None) -> Optional[str]:
+        """Local path of `url`'s media (None: not media or download failed).
+        `name` is the release asset's file name, when it is one."""
         if url in self.cache:
             return self.cache[url]
         local: Optional[str] = None
         try:
             data, ctype = self.fetch(url)
-            ext = _media_ext(url, ctype)
+            ext = _media_ext(url, ctype, name)
             if ext is None:
                 raise ValueError(f"not an image/video ({ctype or 'no content type'})")
             if self.total + len(data) > MAX_TOTAL_MEDIA_BYTES:
@@ -695,6 +707,18 @@ def _asset_url(release: dict, asset: dict) -> Optional[str]:
     if release.get("draft") and asset.get("url"):
         return asset["url"]
     return asset.get("browser_download_url")
+
+
+def _public_urls(release: dict, asset: dict, repo: str) -> set:
+    """The URLs the notes may link an asset by: its browser_download_url and,
+    for a draft (whose browser_download_url is an untagged-... one that dies on
+    publish), the tag's future public download URL."""
+    out = {asset.get("browser_download_url")}
+    if release.get("draft") and asset.get("name"):
+        out.add(
+            f"https://github.com/{repo}/releases/download/{release['tag_name']}/{asset['name']}"
+        )
+    return {u for u in out if u}
 
 
 def _text(n) -> str:
@@ -751,7 +775,7 @@ def mirror_clips(
                 a = assets.get(v.get(k))
                 url = _asset_url(release, a) if a else None
                 if url:
-                    got = media.get(url)
+                    got = media.get(url, a.get("name"))
                     if got:
                         local[k] = got
             if "mp4" not in local:
@@ -788,9 +812,10 @@ def mirror_release(
         # The GIF section is GitHub's rendering of the clips; the card plays the MP4s.
         nodes = drop_section(nodes, CLIPS_HEADING)
         clip_urls = {
-            a.get("browser_download_url")
+            u
             for a in release.get("assets", [])
             if a.get("name") in clip_assets
+            for u in _public_urls(release, a, repo)
         }
         urls = [u for u in urls if u in _urls_in(nodes) and u not in clip_urls]
     referenced = set(urls)
@@ -798,7 +823,7 @@ def mirror_release(
     for asset in release.get("assets", []):
         if asset.get("name") in clip_assets:
             continue
-        if asset.get("browser_download_url") in referenced or not _is_media_asset(asset):
+        if _public_urls(release, asset, repo) & referenced or not _is_media_asset(asset):
             continue
         url = _asset_url(release, asset)
         if not url:
@@ -816,16 +841,15 @@ def mirror_release(
         urls.append(url)
     # A draft's notes link its assets by their future public URL; fetch those
     # through the API too.
-    alias = {}
-    if release.get("draft"):
-        for a in release.get("assets", []):
-            if a.get("url"):
-                alias[
-                    f"https://github.com/{repo}/releases/download/{release['tag_name']}/{a.get('name')}"
-                ] = a["url"]
-                if a.get("browser_download_url"):
-                    alias[a["browser_download_url"]] = a["url"]
-    mapping = {u: media.get(alias.get(u, u)) for u in urls}
+    alias, names = {}, {}
+    for a in release.get("assets", []):
+        for u in _public_urls(release, a, repo) | {_asset_url(release, a)}:
+            if u and a.get("name"):
+                names[u] = a["name"]
+            if u and release.get("draft") and a.get("url"):
+                alias[u] = a["url"]
+    # The asset name types the download: the API serves it as octet-stream.
+    mapping = {u: media.get(alias.get(u, u), names.get(u)) for u in urls}
     nodes = rewrite_media(nodes, mapping)
     v = _version(release["tag_name"], version_re)
     assert v is not None

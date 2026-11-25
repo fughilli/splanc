@@ -506,6 +506,46 @@ class ClipsTest(unittest.TestCase):
         self.check(r)
         self.assertFalse(any(u.startswith(self.DL) for u in net.calls))
 
+    def test_draft_assets_served_as_octet_stream(self):
+        # What GitHub really does while the Release workflow mirrors its draft
+        # (app-v1.17.1 shipped with no clips): the asset API URL has no file
+        # extension and answers application/octet-stream, and the draft's
+        # browser_download_url is an untagged-... one. The asset name types the
+        # download, for the clips, the gallery and an image inline in the notes.
+        rel = self.release(True)
+        for a in rel["assets"]:
+            a["browser_download_url"] = a["browser_download_url"].replace(
+                "app-v1.11.0", "untagged-0f3c"
+            )
+        shot = self.DL + "screenshot.png"  # the notes link the tag's future URL
+        rel["body_html"] += '<p><img src="' + shot + '" alt="shot"></p>'
+        net = self.net(True)
+        net.files = {u: (data, "application/octet-stream") for u, (data, _) in net.files.items()}
+        logs = []
+        media = wm.MediaStore(tempfile.mkdtemp(), net, logs.append)
+        r = wm.mirror_release(rel, wm.APP.pattern, media, "fughilli/splanc", log=logs.append)
+        self.check(r)  # clips kept; the screenshot shows once (inline, no gallery copy)
+        v = r["clips"][0]["variants"][0]
+        self.assertTrue(v["mp4"].endswith(".mp4") and v["webm"].endswith(".webm"))
+        self.assertTrue(v["poster"].endswith(".jpg"))
+        img = [n for n in walk(r["body"]) if isinstance(n, dict) and n["t"] == "img"]
+        self.assertEqual(len(img), 1)
+        self.assertRegex(img[0]["a"]["src"], r"^media/[0-9a-f]{20}\.png$")
+        self.assertEqual(len(r["media"]), 4)
+        self.assertFalse([m for m in logs if "skipping media" in m])
+        self.assertFalse(any(u.startswith(self.DL) or "untagged" in u for u in net.calls))
+
+    def test_name_hint_only_admits_media(self):
+        octet = "application/octet-stream"
+        self.assertEqual(wm._media_ext(self.API + "7", octet, "clip.mp4"), ".mp4")
+        self.assertEqual(wm._media_ext(self.API + "7", "", "poster.jpeg"), ".jpg")
+        self.assertIsNone(wm._media_ext(self.API + "7", octet))
+        self.assertIsNone(wm._media_ext(self.API + "7", octet, "splanc-webapp.tar.gz"))
+        self.assertIsNone(wm._media_ext(self.API + "7", octet, "preview-clips.json"))
+        # A specific non-media type is never overridden by the name.
+        self.assertIsNone(wm._media_ext(self.API + "7", "text/html", "x.png"))
+        self.assertEqual(wm._media_ext(self.API + "7", "image/png", "x.bin"), ".png")
+
     def test_no_manifest_keeps_the_body(self):
         rel = self.release(False)
         rel["assets"] = [a for a in rel["assets"] if a["name"] != "preview-clips.json"]
