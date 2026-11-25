@@ -1,0 +1,1511 @@
+//! The effect language reference: one entry per keyword, type, context,
+//! built-in function, entry point and uniform annotation the compiler knows.
+//!
+//! This table is the single source of truth for the language's vocabulary
+//! (desk D-552). The web editor's `lang-spec.ts` (highlighter, completions and
+//! the AI system prompt) is generated from it (`lang-table.gen.ts`, written by
+//! `bazel run //fx_compiler:fx_lang`), the wasm build exports it as
+//! `fx_language()` for the Docs pane, and `tests/lang.rs` fails when the
+//! compiler accepts a name that has no entry here, when an entry names
+//! something the compiler doesn't know, when an example stops compiling, or
+//! when the generated web file is stale.
+//!
+//! Examples are either a whole program (they contain `shade(` or `poll(`) or a
+//! snippet that compiles on its own inside `vec3 shade(Led led) { ... }`. Rate
+//! uniforms are integrated in `update()` (`ph = fract(ph + dt * speed)`), never
+//! `time * speed`; the test compiles every example and rejects any warning.
+
+use std::fmt::Write as _;
+
+/// What an entry describes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    /// A declaration or control-flow word (`uniform`, `if`, `true`).
+    Keyword,
+    /// A type name (`float`, `mat4`, `Led`, storage-only `int8`).
+    Type,
+    /// A read-only global (`time`, `led`).
+    Context,
+    /// A field of a context (`led.pos`); the name is `ctx.field`.
+    Member,
+    /// A built-in function.
+    Builtin,
+    /// A function the runtime calls (`shade`, `update`, `init`, `poll`).
+    Entry,
+    /// A uniform/buffer declaration annotation (`: color`, `: lo .. hi`).
+    Annotation,
+    /// Other syntax (`.xyz` swizzles, `0.5fx` literals, arrays).
+    Syntax,
+}
+
+impl Kind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Keyword => "keyword",
+            Kind::Type => "type",
+            Kind::Context => "context",
+            Kind::Member => "member",
+            Kind::Builtin => "builtin",
+            Kind::Entry => "entry",
+            Kind::Annotation => "annotation",
+            Kind::Syntax => "syntax",
+        }
+    }
+}
+
+/// Where an entry may be used.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Scope {
+    /// Anywhere in an effect.
+    Any,
+    /// Only in `update()` / `init()` (once per frame), never per LED.
+    Update,
+    /// Only meaningful in a sensor driver (`void poll()`); inert elsewhere.
+    Driver,
+    /// Recognised by the compiler but not usable: it reports what to use instead.
+    Reserved,
+}
+
+impl Scope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scope::Any => "any",
+            Scope::Update => "update",
+            Scope::Driver => "driver",
+            Scope::Reserved => "reserved",
+        }
+    }
+}
+
+/// One language reference entry.
+#[derive(Clone, Copy, Debug)]
+pub struct LangEntry {
+    /// The word as written (`sin`, `led.pos`), or a short label for syntax.
+    pub name: &'static str,
+    pub kind: Kind,
+    /// Docs grouping: "math", "vector", "matrix", "colour", "noise", "texture",
+    /// "topology", "trigger", "driver", "declaration", "control", "literal",
+    /// "scalar", "fixed", "storage", "input", "program", "uniform ui", ...
+    pub category: &'static str,
+    pub scope: Scope,
+    /// Call/declaration forms. Builtins: every accepted signature.
+    pub sigs: &'static [&'static str],
+    /// Value type of a context/member (as the compiler types it); "" otherwise.
+    pub ty: &'static str,
+    /// One line, for completions and the AI system prompt.
+    pub summary: &'static str,
+    /// One paragraph, for the Docs pane.
+    pub doc: &'static str,
+    /// A short example (a whole program, or a snippet valid inside shade()).
+    pub example: &'static str,
+    /// Names of related entries.
+    pub related: &'static [&'static str],
+    /// Cycle-cost hint on the ESP32-C6 (dispatch included); "" when none.
+    pub cost: &'static str,
+}
+
+const E: LangEntry = LangEntry {
+    name: "",
+    kind: Kind::Builtin,
+    category: "",
+    scope: Scope::Any,
+    sigs: &[],
+    ty: "",
+    summary: "",
+    doc: "",
+    example: "",
+    related: &[],
+    cost: "",
+};
+
+/// Whether `name` may be called in a constant initialiser (`state float x = sin(0.5);`).
+pub fn is_const_builtin(name: &str) -> bool {
+    crate::CONST_BUILTINS.contains(&name)
+}
+
+/// Look an entry up by name (first match).
+pub fn lookup(name: &str) -> Option<&'static LangEntry> {
+    LANG.iter().find(|e| e.name == name)
+}
+
+/// The whole table.
+pub static LANG: &[LangEntry] = &[
+    // -- keywords: declarations ------------------------------------------------
+    LangEntry {
+        name: "uniform",
+        kind: Kind::Keyword,
+        category: "declaration",
+        sigs: &[
+            "uniform float name : lo .. hi = default;",
+            "uniform vec3 name : color = r, g, b;",
+            "uniform int name : {\"a\", \"b\"} = 0;",
+            "uniform bool name = false;",
+            "uniform mat4 name;",
+            "uniform trigger name;",
+        ],
+        summary: "declare a live, user-tweakable parameter with a range + default",
+        doc: "A uniform is a knob the user, MIDI, OSC or an agent can change while the effect runs, without recompiling. The annotation after `:` picks the control: a numeric range is a slider, `color` a colour picker, `{\"a\",\"b\"}` a dropdown (the value is the option index) and a `bool` a toggle. A vec3/vec4 with no annotation is a colour; with a range it is a numeric vector. A mat3/mat4 defaults to the identity. The comment on the declaration line (or the comment block just above) becomes its doc string in the manifest, and an optional string after the annotation is its unit. Uniforms are read-only in the program. A uniform that sets a rate must be integrated in update(), never multiplied by `time`. Some names are written by the firmware every frame when a sensor runs (`imu_gravity`, `imu_shake`, ...); otherwise they are ordinary knobs.",
+        example: "uniform float speed : 0.0 .. 4.0 = 1.0;   // cycles per second\nuniform vec3 tint : color = 0.2, 0.6, 1.0;\nstate float ph;\nvoid update() { ph = fract(ph + dt * speed); }\nvec3 shade(Led led) { return tint * fract(led.s - ph); }",
+        related: &["state", "color", "range", "dropdown", "unit", "trigger"],
+        ..E
+    },
+    LangEntry {
+        name: "state",
+        kind: Kind::Keyword,
+        category: "declaration",
+        sigs: &["state T name;", "state T name = constant;", "state T name[N];"],
+        summary: "declare a value persisted across frames (written in update()/init()); starts at zero or a constant initial value: `state float level = 0.5;` (compute from uniforms/time in `void init()`)",
+        doc: "A state variable keeps its value from frame to frame. Write it in update() (or init()); shade() may only read it. It starts at zero, or at an initial value that must be a compile-time constant (literals, maths over them, `vec3(...)`, the constant built-ins); anything computed from uniforms, `time` or other state goes in `void init()`. State may be a scalar, vector, matrix, struct or a fixed-size array, and is the place for integrated phases, agents and anything hoisted out of shade(). State and locals are each limited to about 128 slots.",
+        example: "uniform float rate : 0.05 .. 1.0 = 0.2;\nstate float ph;\nstate float glow;\nvoid update() {\n  ph = fract(ph + dt * rate);\n  glow = 0.5 + 0.5 * sin(ph * 6.2832);\n}\nvec3 shade(Led led) { return vec3(1.0, 0.4, 0.1) * glow; }",
+        related: &["shared", "init", "update", "uniform", "buffer"],
+        ..E
+    },
+    LangEntry {
+        name: "shared",
+        kind: Kind::Keyword,
+        category: "declaration",
+        sigs: &["shared state T name;"],
+        summary: "qualify a state declaration as mesh-shared: a fixture rejoining the mesh copies it from the gateway",
+        doc: "`shared state` marks state that several fixtures running the same effect keep in step. When a fixture (re)joins the mesh it copies the shared slots from the gateway's VM instead of starting from zero, so a phase or an agent simulation continues where the others are. Plain `state` belongs to this fixture only. `shared` is only valid in front of `state`.",
+        example: "uniform float speed : 0.0 .. 2.0 = 0.5;\nshared state float ph;\nvoid update() { ph = fract(ph + dt * speed); }\nvec3 shade(Led led) { return hsv2rgb(fract(led.dist + ph), 0.9, 1.0); }",
+        related: &["state"],
+        ..E
+    },
+    LangEntry {
+        name: "export",
+        kind: Kind::Keyword,
+        category: "declaration",
+        scope: Scope::Driver,
+        sigs: &["export float name \"unit\";", "export vec3 name;", "export trigger name;"],
+        summary: "declare a sensor driver output that poll() writes (float, int or vecN; `export trigger` for an event counter)",
+        doc: "A sensor driver (a program with `void poll()` instead of shade()) publishes its readings with `export` declarations. Each export is a float, int or vec2/3/4 that poll() assigns; the firmware copies it into the uniform pool, where any effect that declares a uniform of the same name receives it. `export trigger name;` declares an event counter that poll() bumps with `fire(name)`. An optional string is the unit. Exports are only valid in a driver, and a driver takes no uniforms.",
+        example: "export float level \"V\";\nvoid poll() {\n  level = float(gpio_read(4));\n}",
+        related: &["poll", "fire", "trigger", "i2c_read16s"],
+        ..E
+    },
+    LangEntry {
+        name: "buffer",
+        kind: Kind::Keyword,
+        category: "declaration",
+        sigs: &["buffer T name;", "buffer T name : fixed8;"],
+        summary: "declare a hidden per-LED buffer that persists across frames: `buffer vec3 trail;` then read/write `trail[i]` (i an int LED index). Pack narrow to save RAM: `buffer fixed8 t;` (1 B/LED) or `buffer vec3 c : fixed8;` (3 B/LED, read/written as float)",
+        doc: "A buffer holds one element per LED and keeps it across frames, in the VM's arena. Unlike state, shade() may write it (each LED owns its slot), which makes it the tool for trails, feedback and anything precomputed once per LED. Always index it (`trail[led.idx]`); a bare buffer name is an error. The element is a numeric scalar or vector; a narrow element type (`fixed8`, `fixed16`, `int8`, `int16`) or a `: fixed8` / `: fixed16` storage annotation on a float/vec element saves device RAM.",
+        example: "buffer vec3 trail : fixed8;\nvec3 shade(Led led) {\n  vec3 spark = vec3(step(0.98, hash(float(led.idx) + floor(time * 8.0))));\n  vec3 v = trail[led.idx] * 0.9 + spark;\n  trail[led.idx] = v;\n  return v;\n}",
+        related: &["texture", "storage", "state", "int8"],
+        cost: "a buffer read or write ~130 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "texture",
+        kind: Kind::Keyword,
+        category: "declaration",
+        sigs: &["texture T name(w, h);", "texture T name(w, h) : fixed8;"],
+        summary: "declare a hidden WxH 2D texture: `texture vec3 img(64, 64);` then `sample(img, uv)` (bilinear, always float) / `paint(img, uv, c)` / flat `img[i]`. Add `: fixed8` / `: fixed16` to compress storage (e.g. `texture vec3 img(64,64) : fixed8;`)",
+        doc: "A texture is a hidden W×H grid (1..1024 each side) that persists across frames. Read it with `sample(img, uv)` (bilinear, edge-clamped, uv in 0..1) or flat `img[i]`, and write it with `paint(img, uv, colour)` or `img[i] = v`. `led.uv` is the usual coordinate. The app can stream live video or images into a texture. Textures share the device's 24 KB effect arena with buffers, so compress with `: fixed8` (a 64×64 vec3 is then 12 KB).",
+        example: "texture vec3 img(16, 16) : fixed8;\nvoid update() { paint(img, vec2(fract(time * 0.1), 0.5), vec3(1.0, 0.5, 0.0)); }\nvec3 shade(Led led) { return sample(img, led.uv); }",
+        related: &["sample", "paint", "led.uv", "buffer", "storage"],
+        ..E
+    },
+    LangEntry {
+        name: "struct",
+        kind: Kind::Keyword,
+        category: "declaration",
+        sigs: &["struct Name { T field; ... };"],
+        summary: "declare a composite type: struct Name { float a; vec3 b; };",
+        doc: "A struct groups fields (scalars, vectors or nested structs) into one type. Use it for agents and particles: declare `state Agent agents[8];`, seed it in init() and advance it in update() with a `for` loop. Fields are read and written with `.field`; whole structs can be copied with `=`.",
+        example: "struct Agent { fixed pos; fixed vel; };\nstate Agent a[2];\nvoid init() { a[0].vel = 0.2fx; a[1].vel = 0.3fx; }\nvoid update() {\n  for (int i = 0; i < 2; i = i + 1) { a[i].pos = fract(a[i].pos + a[i].vel * fixed(dt)); }\n}\nvec3 shade(Led led) {\n  fixed d = abs(fixed(led.s) - a[0].pos);\n  return vec3(float(step(d, 0.05fx)));\n}",
+        related: &["array", "state", "init"],
+        ..E
+    },
+    // -- keywords: control flow ------------------------------------------------
+    LangEntry {
+        name: "if",
+        kind: Kind::Keyword,
+        category: "control",
+        sigs: &["if (cond) { ... }", "if (cond) { ... } else { ... }"],
+        summary: "conditional branch",
+        doc: "Runs a block when a bool condition holds. The braces are required, and `else` must be followed by a block, so `else if` is written as a nested `if` inside `else { }`. Comparisons (`< <= > >= == !=`) and `&&` / `||` produce bools.",
+        example: "float d = led.s;\nvec3 c = vec3(0.0);\nif (d < 0.5) { c = vec3(1.0, 0.0, 0.0); } else { c = vec3(0.0, 0.0, 1.0); }",
+        related: &["else", "step", "bool"],
+        ..E
+    },
+    LangEntry {
+        name: "else",
+        kind: Kind::Keyword,
+        category: "control",
+        sigs: &["if (cond) { ... } else { ... }"],
+        summary: "the alternative branch of an if",
+        doc: "The block after `else` runs when the `if` condition is false. It must be a braced block: write `else { if (...) { ... } }` for a chain.",
+        example: "vec3 c = vec3(0.0);\nif (led.s < 0.3) { c = vec3(1.0); } else { if (led.s < 0.6) { c = vec3(0.5); } }",
+        related: &["if"],
+        ..E
+    },
+    LangEntry {
+        name: "for",
+        kind: Kind::Keyword,
+        category: "control",
+        sigs: &["for (int i = 0; i < N; i = i + 1) { ... }"],
+        summary: "bounded loop (compile-time trip count; per-frame budget applies)",
+        doc: "A C-style loop: an init declaration, a bool condition and an update assignment (`i = i + 1`; there is no `++` or `+=`). The VM's instruction budget bounds every invocation, so keep trip counts small and known. In shade() a loop multiplies its body by the trip count for every LED: precompute in update() or into a buffer instead.",
+        example: "float acc = 0.0;\nfor (int i = 0; i < 3; i = i + 1) { acc = acc + hash(float(i) + led.s); }",
+        related: &["array", "update", "struct"],
+        cost: "the body's cost times the trip count, per LED in shade()",
+        ..E
+    },
+    LangEntry {
+        name: "return",
+        kind: Kind::Keyword,
+        category: "control",
+        sigs: &["return expr;", "return;"],
+        summary: "return a value from shade() (or exit update())",
+        doc: "Ends the current function. shade() returns the LED's linear RGB colour (a vec3 in 0..1, or the integer colour from `rgb`, `rgb8`, or `hsv2rgb`/`palette` on fixed arguments). Helper functions return their declared type; update(), init() and poll() use a bare `return;`.",
+        example: "if (led.s > 0.5) { return vec3(0.0); }",
+        related: &["shade", "rgb"],
+        ..E
+    },
+    LangEntry {
+        name: "true",
+        kind: Kind::Keyword,
+        category: "literal",
+        sigs: &["true"],
+        summary: "boolean true",
+        doc: "The bool literal true. A bool reads as the number 1 where a number is expected.",
+        example: "bool on = true;",
+        related: &["false", "bool"],
+        ..E
+    },
+    LangEntry {
+        name: "false",
+        kind: Kind::Keyword,
+        category: "literal",
+        sigs: &["false"],
+        summary: "boolean false",
+        doc: "The bool literal false. A bool reads as the number 0 where a number is expected.",
+        example: "bool on = false;",
+        related: &["true", "bool"],
+        ..E
+    },
+    // -- entry points ----------------------------------------------------------
+    LangEntry {
+        name: "shade",
+        kind: Kind::Entry,
+        category: "program",
+        sigs: &["vec3 shade(Led led) { ... }"],
+        summary: "required: runs once per LED per frame and returns linear RGB in 0..1",
+        doc: "Every effect defines shade(). It runs once for each LED every frame, reads the LED's inputs through `led.*`, the uniforms and state, and returns the colour. It is the hot path: at 500 LEDs and 30 fps the device has about 10,600 cycles per LED, so keep it to a few dozen cheap operations, use `fixed` maths, and hoist anything that does not depend on the LED into update(). shade() may write buffers but not state.",
+        example: "vec3 shade(Led led) {\n  return hsv2rgb(led.s, 0.8, 1.0);\n}",
+        related: &["update", "init", "Led", "led"],
+        cost: "~10,600 cycles per LED per frame at 500 LEDs and 30 fps, ~2,600 of them runtime overhead",
+        ..E
+    },
+    LangEntry {
+        name: "update",
+        kind: Kind::Entry,
+        category: "program",
+        sigs: &["void update() { ... }"],
+        summary: "optional: runs once per frame before shade(); advance state here",
+        doc: "update() runs once per frame, before the LEDs are shaded. Integrate rate uniforms here (`ph = fract(ph + dt * speed)`), step simulations, and compute anything every LED shares, then store it in state. It takes no parameters, returns nothing and cannot read `led`.",
+        example: "uniform float speed : 0.0 .. 3.0 = 1.0;\nstate float ph;\nvoid update() { ph = fract(ph + dt * speed); }\nvec3 shade(Led led) { return vec3(fract(led.s - ph)); }",
+        related: &["state", "init", "shade", "dt"],
+        ..E
+    },
+    LangEntry {
+        name: "init",
+        kind: Kind::Entry,
+        category: "program",
+        sigs: &["void init() { ... }"],
+        summary: "optional: runs once when the effect loads, before the first update(); seed arrays/structs and values computed from uniforms",
+        doc: "init() runs once, after the constant state initialisers and before the first update(). Seed arrays and structs here, and any state whose starting value depends on uniforms or `time`, instead of a hand-rolled `state bool inited` flag. It takes no parameters and returns nothing.",
+        example: "state float seeds[4];\nvoid init() {\n  for (int i = 0; i < 4; i = i + 1) { seeds[i] = hash(float(i)); }\n}\nvec3 shade(Led led) { return vec3(seeds[0]); }",
+        related: &["state", "update"],
+        ..E
+    },
+    LangEntry {
+        name: "poll",
+        kind: Kind::Entry,
+        category: "program",
+        scope: Scope::Driver,
+        sigs: &["void poll() { ... }"],
+        summary: "a sensor driver's entry point (instead of shade()): read the bus and write the `export`s",
+        doc: "A program that defines `void poll()` is a sensor driver, not an effect: the firmware runs it on its own schedule, with I2C and GPIO access, and copies its `export`s into the uniform pool. A driver has no shade() or update() and takes no uniforms. The i2c_* and gpio_* intrinsics only reach hardware inside poll().",
+        example: "export float pressed;\nvoid poll() {\n  int m = gpio_mode(9, 1);\n  pressed = float(1 - gpio_read(9));\n}",
+        related: &["export", "i2c_read8", "gpio_read", "fire"],
+        ..E
+    },
+    // -- types -----------------------------------------------------------------
+    LangEntry {
+        name: "float",
+        kind: Kind::Type,
+        category: "scalar",
+        sigs: &["float x = 1.0;", "float(x)"],
+        summary: "32-bit floating point (the default numeric type)",
+        doc: "A 32-bit float. It is the default for literals with a decimal point and for most built-ins, but the ESP32-C6 player has no floating-point unit, so every float operation is software-emulated: prefer `fixed` for per-LED maths. `float(x)` converts an int or fixed value.",
+        example: "float half = 0.5 * led.s;",
+        related: &["fixed", "int"],
+        cost: "+ - * ~195 cycles, / ~350; conversion to/from int or fixed ~320",
+        ..E
+    },
+    LangEntry {
+        name: "int",
+        kind: Kind::Type,
+        category: "scalar",
+        sigs: &["int i = 0;", "int(x)"],
+        summary: "native 32-bit integer — fast, no soft-float",
+        doc: "A native 32-bit integer: indices, counters, graph ids and the i2c/gpio intrinsics. Integer literals without a decimal point are ints. `int(x)` truncates a float or fixed value. Graph queries and the driver intrinsics take int arguments only (wrap with `int(...)`).",
+        example: "int k = int(led.s * 8.0);",
+        related: &["float", "fixed"],
+        cost: "+ - * min max ~100-150 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "bool",
+        kind: Kind::Type,
+        category: "scalar",
+        sigs: &["bool b = true;"],
+        summary: "boolean (true/false)",
+        doc: "A truth value from a comparison, `&&`, `||` or `true`/`false`. `if` and `for` conditions must be bool. A bool converts to 0 or 1 where a number is expected, and a `uniform bool` is a toggle.",
+        example: "bool near = led.s < 0.25;",
+        related: &["true", "false", "if"],
+        ..E
+    },
+    LangEntry {
+        name: "fixed",
+        kind: Kind::Type,
+        category: "fixed",
+        sigs: &["fixed x = 0.5fx;", "fixed(x)"],
+        summary: "Q16.16 fixed-point number — native integer arithmetic, the fast type for per-LED maths (sin/cos take TURNS on it); literals: x * 0.5fx (= fixed(0.5))",
+        doc: "A Q16.16 fixed-point number: a fraction held in an integer, so + - * and the native built-ins run as integer opcodes with no soft-float. It is the fast type for per-LED work. sin/cos/atan2 on fixed arguments use TURNS (1.0 = a full circle). Mixing in one float operand (a float literal or variable) turns the expression back into soft-float plus conversions, so write fixed literals (`0.5fx`) and read LED inputs as `fixed(led.s)`, which loads directly.",
+        example: "fixed s = fixed(led.s);\nfixed w = sin(s * 2.0fx);",
+        related: &["fixed16", "fixed8", "fx", "float"],
+        cost: "+ - * ~100-150 cycles, / ~150",
+        ..E
+    },
+    LangEntry {
+        name: "fixed16",
+        kind: Kind::Type,
+        category: "fixed",
+        sigs: &["fixed16 x = 0.5fx16;", "fixed16(x)"],
+        summary: "Q1.14 reduced-precision fixed-point, range [-2, 2) — integer arithmetic like fixed, sin/cos in turns; overflows past ±2; literals: 0.5fx16",
+        doc: "A reduced-precision fixed-point number (Q1.14) holding values in [-2, 2). It behaves like `fixed` (integer arithmetic, sin/cos in turns) but wraps past ±2, so use it for values known to stay small. As a buffer or texture element it takes 2 bytes.",
+        example: "fixed16 t = fixed16(led.s);\nfixed16 w = sin(t);",
+        related: &["fixed", "fixed8", "storage"],
+        cost: "like fixed: ~100-150 cycles per operation",
+        ..E
+    },
+    LangEntry {
+        name: "fixed8",
+        kind: Kind::Type,
+        category: "fixed",
+        sigs: &["fixed8 x = 0.5fx8;", "fixed8(x)"],
+        summary: "Q1.6 reduced-precision fixed-point, range [-2, 2) — mainly for compact buffer/texture storage (: fixed8); literals: 0.5fx8",
+        doc: "A coarse fixed-point number (Q1.6, 64 steps per unit) holding values in [-2, 2). Its main use is compact storage: a `buffer fixed8` is one byte per LED, and `: fixed8` packs a float/vec buffer or texture element to a byte per component. Fine for 0..1 colours.",
+        example: "fixed8 g = fixed8(led.s);",
+        related: &["fixed16", "fixed", "storage"],
+        ..E
+    },
+    LangEntry {
+        name: "vec2",
+        kind: Kind::Type,
+        category: "vector",
+        sigs: &["vec2(x, y)", "vec2(s)"],
+        summary: "2-component vector (x, y)",
+        doc: "A pair of floats. Built with `vec2(x, y)` (or `vec2(s)` to broadcast), read with `.x .y` swizzles or `v[i]`. Texture coordinates (`led.uv`) are vec2. Arithmetic is component-wise and a scalar broadcasts.",
+        example: "vec2 d = led.uv - vec2(0.5);\nfloat r = dot(d, d);",
+        related: &["vec3", "vec4", "swizzle"],
+        cost: "every lane pays: a vec2 + vec2 is two float adds",
+        ..E
+    },
+    LangEntry {
+        name: "vec3",
+        kind: Kind::Type,
+        category: "vector",
+        sigs: &["vec3(x, y, z)", "vec3(s)", "vec3(v2, z)"],
+        summary: "3-component vector (x, y, z / r, g, b)",
+        doc: "Three floats: a position (`led.pos`), a direction or a colour (shade() returns one). Build with `vec3(x, y, z)`, a broadcast `vec3(s)`, or any mix of scalars and vectors totalling three components. Swizzle with `.xyz` or `.rgb`. A `uniform vec3` with no range is a colour picker.",
+        example: "vec3 c = vec3(1.0, 0.5, 0.2) * led.s;",
+        related: &["vec2", "vec4", "swizzle", "color"],
+        cost: "every lane pays: vec3 + vec3 ~440 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "vec4",
+        kind: Kind::Type,
+        category: "vector",
+        sigs: &["vec4(x, y, z, w)", "vec4(s)", "vec4(v3, w)"],
+        summary: "4-component vector (x, y, z, w / r, g, b, a)",
+        doc: "Four floats: a plane (normal + offset), a quaternion (`imu_quat`), a homogeneous point or a colour with alpha. Swizzle with `.xyzw` / `.rgba`. A `uniform vec4` with no range is a colour; give it a range for a numeric vector.",
+        example: "vec4 plane = vec4(0.0, 1.0, 0.0, 0.5);\nfloat side = dot(plane.xyz, led.pos) - plane.w;",
+        related: &["vec3", "mat4", "swizzle"],
+        ..E
+    },
+    LangEntry {
+        name: "mat3",
+        kind: Kind::Type,
+        category: "matrix",
+        sigs: &["mat3(s)", "mat3(c0, c1, c2)", "mat3(m4)", "mat3(9 scalars)"],
+        summary: "3x3 float matrix, column-major (m[c] is a vec3 column); * + - / with vectors, scalars and matrices, transpose(), transform(mat3, vec2)",
+        doc: "A 3×3 float matrix stored column-major, GLSL style: `m[c]` is column c (a vec3) and `m[c][r]` one element, both readable and assignable. Construct from a scalar (the diagonal; `mat3(1.0)` is the identity), three column vectors, nine scalars, or the upper-left 3×3 of a mat4. Operators: `m * v`, `v * m`, `m * m`, `m * s`, `m / s`, `m + m`, `m - m`, `-m`. A mat3 rotates or scales directions; `transform(m, p)` applies it to a vec2 as a 2D affine. A `uniform mat3` is 9 slots with a matrix control. No VM opcode knows matrices: the compiler lowers them to vector ops, so they run on every player.",
+        example: "mat3 r = mat3(vec3(0.0, 1.0, 0.0), vec3(-1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0));\nvec3 p = r * led.pos;",
+        related: &["mat4", "transpose", "transform"],
+        cost: "mat3 * vec3 is 9 float multiplies + 6 adds (~3,000 cycles); pre-multiply in update()",
+        ..E
+    },
+    LangEntry {
+        name: "mat4",
+        kind: Kind::Type,
+        category: "matrix",
+        sigs: &["mat4(s)", "mat4(c0, c1, c2, c3)", "mat4(m3)", "mat4(16 scalars)"],
+        summary: "4x4 float matrix, column-major (m[c] is a vec4 column); `uniform mat4 pose;` defaults to identity; transform(m, p) is the affine point transform",
+        doc: "A 4×4 float matrix stored column-major, GLSL style: `m[c]` is column c (a vec4), `m[c][r]` an element, and the translation is the last column. Construct from a scalar diagonal (`mat4(1.0)`), four column vectors, sixteen scalars, or a mat3 (padded with an identity row and column). It supports the same operators as mat3 plus `transform(m, p)`, the affine point transform `(m * vec4(p, 1.0)).xyz`. `uniform mat4 pose;` defaults to the identity and is usually streamed by OSC or an agent; `state mat4` and locals start at zero. Per LED a mat4 is expensive: move a plane or point into the fixture frame once in update() and keep only a `dot` per LED.",
+        example: "uniform mat4 pose;\nstate vec4 plane;\nvoid update() { plane = transpose(pose) * vec4(0.0, 1.0, 0.0, 0.0); }\nvec3 shade(Led led) {\n  float d = dot(plane, vec4(led.pos, 1.0));\n  return vec3(smoothstep(0.05, 0.0, abs(d)));\n}",
+        related: &["mat3", "transform", "transpose", "vec4"],
+        cost: "mat4 * vec4 is 16 float multiplies + 12 adds (~5,000 cycles); transform(m, p) 9 + 9",
+        ..E
+    },
+    LangEntry {
+        name: "void",
+        kind: Kind::Type,
+        category: "program",
+        sigs: &["void update() { ... }"],
+        summary: "no value — the return type of update(), init() and poll()",
+        doc: "The return type of functions that produce no value: update(), init(), poll() and helpers used as statements. A void call is a statement on its own (`paint(img, uv, c);`).",
+        example: "uniform float speed : 0.0 .. 2.0 = 1.0;\nstate float ph;\nvoid step_phase() { ph = fract(ph + dt * speed); }\nvoid update() { step_phase(); }\nvec3 shade(Led led) { return vec3(ph); }",
+        related: &["update", "init"],
+        ..E
+    },
+    LangEntry {
+        name: "Led",
+        kind: Kind::Type,
+        category: "program",
+        sigs: &["vec3 shade(Led led)"],
+        summary: "the per-LED input struct passed to shade()",
+        doc: "The type of shade()'s parameter. It is not a real value: `led` names the per-LED inputs (`led.pos`, `led.s`, ...), which compile to direct context loads. Only shade() takes it.",
+        example: "vec3 shade(Led led) { return vec3(led.s); }",
+        related: &["led", "shade"],
+        ..E
+    },
+    LangEntry {
+        name: "int8",
+        kind: Kind::Type,
+        category: "storage",
+        sigs: &["buffer int8 name;", "texture int8 name(w, h);"],
+        summary: "buffer/texture element stored as a signed byte, read back as int",
+        doc: "A storage-only element type for buffers and textures: each element takes one byte (-128..127) and reads back as an `int`. It cannot be used for locals, state or uniforms.",
+        example: "buffer int8 hits;\nvec3 shade(Led led) {\n  int h = hits[led.idx];\n  hits[led.idx] = 1;\n  return vec3(float(h));\n}",
+        related: &["int16", "buffer", "int"],
+        ..E
+    },
+    LangEntry {
+        name: "int16",
+        kind: Kind::Type,
+        category: "storage",
+        sigs: &["buffer int16 name;", "texture int16 name(w, h);"],
+        summary: "buffer/texture element stored as a signed 16-bit integer, read back as int",
+        doc: "A storage-only element type for buffers and textures: two bytes per element (-32768..32767), read back as an `int`. It cannot be used for locals, state or uniforms.",
+        example: "buffer int16 age;\nvec3 shade(Led led) {\n  int a = age[led.idx] + 1;\n  age[led.idx] = a;\n  return vec3(0.0);\n}",
+        related: &["int8", "buffer", "int"],
+        ..E
+    },
+    LangEntry {
+        name: "trigger",
+        kind: Kind::Type,
+        category: "trigger",
+        sigs: &["uniform trigger name;", "uniform trigger name \"label\";", "export trigger name;"],
+        summary: "an event counter: `uniform trigger tap;` + `fired(tap)` in update(); a driver bumps `export trigger` with fire()",
+        doc: "A trigger carries discrete events (a tap, a button press) rather than a level. An effect declares `uniform trigger tap;` and asks `fired(tap)` in update(), which is true once per event. A sensor driver declares `export trigger tap;` and calls `fire(tap)`; the uniform pool connects the two by name, and the app shows a trigger as a button. Under the hood it is a float counter.",
+        example: "uniform trigger tap;\nstate float flash;\nvoid update() {\n  flash = max(flash - dt * 2.0, 0.0);\n  if (fired(tap)) { flash = 1.0; }\n}\nvec3 shade(Led led) { return vec3(flash); }",
+        related: &["fired", "fire", "uniform", "export"],
+        ..E
+    },
+    // -- contexts --------------------------------------------------------------
+    LangEntry {
+        name: "time",
+        kind: Kind::Context,
+        category: "input",
+        ty: "float",
+        summary: "seconds since effect start (float)",
+        doc: "Seconds since the effect started. Fixtures aligned with `align_time` share it. Use it for motion with a constant rate (`fract(led.s - time)`, `sin(time * 0.7)`), never multiplied by a rate uniform: `time * speed` jumps when the slider moves. Integrate rate uniforms in update() with `dt` instead.",
+        example: "float wave = fract(led.s - time * 0.25);",
+        related: &["dt", "frame", "update"],
+        ..E
+    },
+    LangEntry {
+        name: "dt",
+        kind: Kind::Context,
+        category: "input",
+        ty: "float",
+        summary: "seconds since last frame (float)",
+        doc: "Seconds since the previous frame (the device measures it; the preview steps it). The building block of every rate control: `ph = fract(ph + dt * speed)` in update() advances a phase smoothly however the knob moves.",
+        example: "uniform float speed : 0.0 .. 4.0 = 1.0;\nstate float ph;\nvoid update() { ph = fract(ph + dt * speed); }\nvec3 shade(Led led) { return vec3(fract(led.s + ph)); }",
+        related: &["time", "update", "state"],
+        ..E
+    },
+    LangEntry {
+        name: "frame",
+        kind: Kind::Context,
+        category: "input",
+        ty: "float",
+        summary: "frame counter (a float holding an integer)",
+        doc: "The number of frames since the effect started, as a float holding a whole number. Handy as a seed (`hash(frame)`) for per-frame randomness.",
+        example: "float flicker = hash(frame + float(led.idx));",
+        related: &["time", "hash"],
+        ..E
+    },
+    LangEntry {
+        name: "led",
+        kind: Kind::Context,
+        category: "input",
+        ty: "Led",
+        summary: "the per-LED input struct (also the shade() parameter)",
+        doc: "The current LED's inputs, valid in shade() and its helpers: position (`led.pos`, `led.room`), index and count, topology (`led.seg`, `led.s`, `led.dist`, `led.branch`) and texture coordinate (`led.uv`). Reading them as `fixed(led.s)` loads a fixed-point copy directly, with no conversion.",
+        example: "vec3 c = vec3(led.s, led.dist, 0.0);",
+        related: &["Led", "shade", "led.pos", "led.s"],
+        ..E
+    },
+    LangEntry {
+        name: "imu",
+        kind: Kind::Context,
+        category: "input",
+        summary: "inertial context when present",
+        doc: "The fixture's raw IMU readings when the host drives them (`imu.accel`, `imu.gyro`). For motion effects prefer the sensor uniforms the firmware writes by name, such as `uniform vec3 imu_gravity`, `imu_shake` and `imu_tap`, which also work as ordinary knobs in the preview.",
+        example: "float shake = length(imu.gyro);",
+        related: &["imu.accel", "imu.gyro", "uniform"],
+        ..E
+    },
+    LangEntry {
+        name: "room",
+        kind: Kind::Context,
+        category: "input",
+        summary: "the shared room frame's bounding box (room.min, room.max)",
+        doc: "The bounding box of the room the fixture is posed in (the host's box, else this fixture's own room-frame box). Together with `led.room` it lets several fixtures render one room-scale effect: normalise `(led.room - room.min) / (room.max - room.min)`.",
+        example: "vec3 n = (led.room - room.min) / max(room.max - room.min, vec3(0.001));",
+        related: &["room.min", "room.max", "led.room"],
+        ..E
+    },
+    // -- context members -------------------------------------------------------
+    LangEntry {
+        name: "led.pos",
+        kind: Kind::Member,
+        category: "input",
+        ty: "vec3",
+        summary: "LED position in the gravity-leveled, roughly unit-box map frame",
+        doc: "The LED's position in the fixture's map frame, in metres, +Y up. Use it for spatial patterns; `fixed(led.pos.y)` loads a component as fixed point directly.",
+        example: "float h = smoothstep(-0.5, 0.5, led.pos.y);",
+        related: &["led.room", "led.uv"],
+        ..E
+    },
+    LangEntry {
+        name: "led.idx",
+        kind: Kind::Member,
+        category: "input",
+        ty: "float",
+        summary: "this LED's index (a float holding an integer; buffer[led.idx] converts it)",
+        doc: "The LED's index, 0..led.count-1, typed float. Use it to index buffers (`trail[led.idx]`, which converts it to int) or as a per-LED seed (`hash(float(led.idx))`).",
+        example: "float r = hash(led.idx);",
+        related: &["led.count", "buffer"],
+        ..E
+    },
+    LangEntry {
+        name: "led.count",
+        kind: Kind::Member,
+        category: "input",
+        ty: "float",
+        summary: "total LED count (float)",
+        doc: "The number of live LEDs on the fixture, typed float. `led.idx / led.count` is a 0..1 ramp in wiring order.",
+        example: "float t = led.idx / led.count;",
+        related: &["led.idx"],
+        ..E
+    },
+    LangEntry {
+        name: "led.seg",
+        kind: Kind::Member,
+        category: "topology",
+        ty: "float",
+        summary: "topology segment id, -1 if none (float)",
+        doc: "The id of the topology segment the LED lies on, typed float, -1 when the map has no topology. Pair it with `seg_len` and the other graph queries.",
+        example: "float hue = fract(led.seg * 0.17);",
+        related: &["led.s", "seg_len", "seg_count"],
+        ..E
+    },
+    LangEntry {
+        name: "led.s",
+        kind: Kind::Member,
+        category: "topology",
+        ty: "float",
+        summary: "0..1 arclength along the LED's segment",
+        doc: "How far along its segment the LED sits, 0 at endpoint a and 1 at endpoint b. The natural coordinate for chases along a strip: `fract(led.s - ph)`.",
+        example: "float band = smoothstep(0.1, 0.0, abs(led.s - 0.5));",
+        related: &["led.seg", "led.dist"],
+        ..E
+    },
+    LangEntry {
+        name: "led.dist",
+        kind: Kind::Member,
+        category: "topology",
+        ty: "float",
+        summary: "0..1 geodesic distance from the current source (the topology root by default; call flood_from(node) in update() to re-source it, e.g. to flood from a random endpoint)",
+        doc: "The distance along the topology graph from the current source to this LED, normalised to 0..1. The source is the topology root until update() calls `flood_from(node)`. Good for floods, ripples and anything that should follow the wiring rather than space.",
+        example: "float front = step(led.dist, fract(time * 0.2));",
+        related: &["flood_from", "led.s", "term"],
+        ..E
+    },
+    LangEntry {
+        name: "led.branch",
+        kind: Kind::Member,
+        category: "topology",
+        ty: "bool",
+        summary: "true at a junction/branch point",
+        doc: "True for an LED at a junction of the topology graph, where more than two segments meet.",
+        example: "vec3 c = vec3(0.0);\nif (led.branch) { c = vec3(1.0); }",
+        related: &["node_deg", "led.seg"],
+        ..E
+    },
+    LangEntry {
+        name: "led.uv",
+        kind: Kind::Member,
+        category: "texture",
+        ty: "vec2",
+        summary: "per-LED texture coord in 0..1 (this LED's XY position normalized over the map bounds — a top-down projection); feed sample(tex, led.uv)",
+        doc: "A 2D coordinate in 0..1: the LED's map position projected top-down and normalised over the map's bounds. Feed it to `sample(tex, led.uv)` for texture-mapped and pixel-space effects.",
+        example: "vec2 d = led.uv - vec2(0.5);\nfloat ring = step(dot(d, d), 0.1);",
+        related: &["sample", "texture", "led.pos"],
+        ..E
+    },
+    LangEntry {
+        name: "led.room",
+        kind: Kind::Member,
+        category: "input",
+        ty: "vec3",
+        summary: "LED position in the shared room frame, metres (== led.pos while the fixture is unposed)",
+        doc: "The LED's position in the shared room frame, after the fixture's room pose (translation, rotation, scale) is applied. It equals `led.pos` until the fixture is posed. Use it with `room.min` / `room.max` so several fixtures render one continuous effect.",
+        example: "float h = smoothstep(room.min.y, room.max.y, led.room.y);",
+        related: &["room", "led.pos"],
+        ..E
+    },
+    LangEntry {
+        name: "room.min",
+        kind: Kind::Member,
+        category: "input",
+        ty: "vec3",
+        summary: "the room bounding box's minimum corner (vec3)",
+        doc: "The minimum corner of the room's bounding box, in the room frame.",
+        example: "vec3 lo = room.min;",
+        related: &["room.max", "led.room"],
+        ..E
+    },
+    LangEntry {
+        name: "room.max",
+        kind: Kind::Member,
+        category: "input",
+        ty: "vec3",
+        summary: "the room bounding box's maximum corner (vec3)",
+        doc: "The maximum corner of the room's bounding box, in the room frame.",
+        example: "vec3 hi = room.max;",
+        related: &["room.min", "led.room"],
+        ..E
+    },
+    LangEntry {
+        name: "imu.accel",
+        kind: Kind::Member,
+        category: "input",
+        ty: "vec3",
+        summary: "accelerometer, m/s^2 (when present)",
+        doc: "The raw accelerometer reading when the host drives the IMU context. For tilt, `uniform vec3 imu_gravity` (written by the firmware's sensor core) is usually easier.",
+        example: "float g = length(imu.accel);",
+        related: &["imu.gyro", "imu"],
+        ..E
+    },
+    LangEntry {
+        name: "imu.gyro",
+        kind: Kind::Member,
+        category: "input",
+        ty: "vec3",
+        summary: "gyroscope, rad/s (when present)",
+        doc: "The raw gyroscope reading in rad/s when the host drives the IMU context.",
+        example: "float spin = length(imu.gyro);",
+        related: &["imu.accel", "imu"],
+        ..E
+    },
+    // -- built-ins: unary maths -------------------------------------------------
+    LangEntry {
+        name: "sin",
+        category: "math",
+        sigs: &["sin(x)"],
+        summary: "sine of x (radians); on a fixed arg the angle is in TURNS (1.0 = full circle) and it is an integer LUT, ~4x cheaper",
+        doc: "The sine of x, component-wise on vectors. A float argument is in radians (`sin(ph * 6.2832)` for a phase in turns). A `fixed`, `fixed16` or `fixed8` argument takes the angle in TURNS (1.0 = one full circle) and runs as an integer lookup table, about four times cheaper. Drive it from an integrated phase, not `time * speed`.",
+        example: "uniform float rate : 0.1 .. 2.0 = 0.5;\nstate fixed ph;\nvoid update() { ph = fract(ph + fixed(dt * rate)); }\nvec3 shade(Led led) {\n  fixed w = sin(fixed(led.s) + ph);\n  return vec3(float(w) * 0.5 + 0.5);\n}",
+        related: &["cos", "tan", "atan2", "fixed"],
+        cost: "float ~570 cycles; fixed (turns) ~150",
+        ..E
+    },
+    LangEntry {
+        name: "cos",
+        category: "math",
+        sigs: &["cos(x)"],
+        summary: "cosine of x (radians); on a fixed arg: TURNS, integer LUT",
+        doc: "The cosine of x, component-wise. Radians for a float argument; TURNS and an integer lookup table for a fixed argument, like `sin`.",
+        example: "fixed c = cos(fixed(led.s));",
+        related: &["sin", "atan2"],
+        cost: "float ~650 cycles; fixed (turns) ~150",
+        ..E
+    },
+    LangEntry {
+        name: "tan",
+        category: "math",
+        sigs: &["tan(x)"],
+        summary: "tangent of x (radians); on a fixed arg: TURNS",
+        doc: "The tangent of x. Radians for a float argument; a fixed scalar argument takes TURNS and uses an integer path.",
+        example: "float t = tan(led.s * 0.7);",
+        related: &["sin", "cos", "atan"],
+        cost: "float ~1,300 cycles; fixed ~370-480",
+        ..E
+    },
+    LangEntry {
+        name: "abs",
+        category: "math",
+        sigs: &["abs(x)"],
+        summary: "absolute value",
+        doc: "The absolute value, component-wise. Native on int and every fixed type.",
+        example: "float d = abs(led.s - 0.5);",
+        related: &["sign"],
+        cost: "int/fixed ~100-150 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "floor",
+        category: "math",
+        sigs: &["floor(x)"],
+        summary: "largest integer <= x",
+        doc: "Rounds down to a whole number, component-wise; the result keeps the argument's type. Native on fixed types. With `hash` it makes stepped randomness: `hash(floor(led.s * 8.0))`.",
+        example: "float cell = floor(led.s * 8.0);",
+        related: &["ceil", "fract"],
+        cost: "fixed ~100-150 cycles; float ~260",
+        ..E
+    },
+    LangEntry {
+        name: "ceil",
+        category: "math",
+        sigs: &["ceil(x)"],
+        summary: "smallest integer >= x",
+        doc: "Rounds up to a whole number, component-wise. Native on fixed types.",
+        example: "float c = ceil(led.s * 4.0);",
+        related: &["floor"],
+        cost: "fixed ~100-150 cycles; float ~260",
+        ..E
+    },
+    LangEntry {
+        name: "fract",
+        category: "math",
+        sigs: &["fract(x)"],
+        summary: "fractional part, x - floor(x)",
+        doc: "The fractional part, `x - floor(x)`, in 0..1. The standard wrap for phases (`ph = fract(ph + dt * speed)`) and repeating patterns. Native on fixed types.",
+        example: "uniform float speed : 0.0 .. 2.0 = 0.5;\nstate fixed ph;\nvoid update() { ph = fract(ph + fixed(dt * speed)); }\nvec3 shade(Led led) { return hsv2rgb(fract(fixed(led.s) + ph), 0.9fx, 1.0fx); }",
+        related: &["floor", "mod"],
+        cost: "fixed ~100-150 cycles; float ~340",
+        ..E
+    },
+    LangEntry {
+        name: "sqrt",
+        category: "math",
+        sigs: &["sqrt(x)"],
+        summary: "square root",
+        doc: "The square root, component-wise. A fixed scalar argument uses an integer path. To test a distance, compare squared lengths (`dot(d, d) < r * r`) and skip the root.",
+        example: "float r = sqrt(led.s);",
+        related: &["length", "pow"],
+        cost: "float ~680 cycles; fixed ~480",
+        ..E
+    },
+    LangEntry {
+        name: "exp",
+        category: "math",
+        sigs: &["exp(x)"],
+        summary: "e raised to the power x (a fixed arg is an integer LUT covering only -2..0.69)",
+        doc: "e to the power x, component-wise. A fixed argument runs as an integer lookup table but saturates: it covers only -2..0.69. For decays per LED prefer a polynomial or `x * x`.",
+        example: "float fall = exp(-4.0 * led.s);",
+        related: &["log", "pow"],
+        cost: "float ~850 cycles; fixed ~170",
+        ..E
+    },
+    LangEntry {
+        name: "log",
+        category: "math",
+        sigs: &["log(x)"],
+        summary: "natural logarithm",
+        doc: "The natural logarithm, component-wise. A fixed scalar argument uses an integer path.",
+        example: "float l = log(1.0 + led.s);",
+        related: &["exp", "pow"],
+        cost: "float ~850 cycles; fixed ~370-480",
+        ..E
+    },
+    LangEntry {
+        name: "sign",
+        category: "math",
+        sigs: &["sign(x)"],
+        summary: "-1, 0, or 1 by the sign of x",
+        doc: "-1, 0 or 1 by the sign of x, component-wise. Native on int and fixed types.",
+        example: "float s = sign(led.pos.x);",
+        related: &["abs", "step"],
+        cost: "int/fixed ~100-150 cycles",
+        ..E
+    },
+    // -- built-ins: binary maths ------------------------------------------------
+    LangEntry {
+        name: "min",
+        category: "math",
+        sigs: &["min(a, b)"],
+        summary: "component-wise minimum",
+        doc: "The smaller of a and b, component-wise; both must have the same width. Native when both are the same int/fixed type.",
+        example: "float m = min(led.s, 0.5);",
+        related: &["max", "clamp"],
+        cost: "int/fixed ~100-150 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "max",
+        category: "math",
+        sigs: &["max(a, b)"],
+        summary: "component-wise maximum",
+        doc: "The larger of a and b, component-wise; both must have the same width. Native when both are the same int/fixed type.",
+        example: "float m = max(led.s - 0.2, 0.0);",
+        related: &["min", "clamp"],
+        cost: "int/fixed ~100-150 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "pow",
+        category: "math",
+        sigs: &["pow(x, y)"],
+        summary: "x raised to the power y",
+        doc: "x to the power y, component-wise. It is the most expensive float built-in: per LED write `x * x` (or a polynomial) instead. Two arguments of the same fixed type take an integer path that saturates like `exp`.",
+        example: "float g = led.s * led.s;   // instead of pow(led.s, 2.0)",
+        related: &["exp", "sqrt"],
+        cost: "float ~1,800 cycles; fixed ~720",
+        ..E
+    },
+    LangEntry {
+        name: "mod",
+        category: "math",
+        sigs: &["mod(x, y)"],
+        summary: "modulo (x - y*floor(x/y))",
+        doc: "GLSL modulo, `x - y * floor(x / y)`, component-wise; the result has y's sign. Native when both are the same int/fixed type.",
+        example: "float m = mod(led.idx, 4.0);",
+        related: &["fract", "floor"],
+        cost: "int/fixed ~100-150 cycles; float ~590",
+        ..E
+    },
+    LangEntry {
+        name: "step",
+        category: "math",
+        sigs: &["step(edge, x)"],
+        summary: "0 if x < edge, else 1",
+        doc: "0 where x is below edge and 1 otherwise, component-wise: a branch-free threshold. Native on the same int/fixed type.",
+        example: "float on = step(0.5, led.s);",
+        related: &["smoothstep", "clamp"],
+        cost: "int/fixed ~100-150 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "atan2",
+        category: "math",
+        sigs: &["atan2(y, x)"],
+        summary: "angle of the vector (x, y) in radians; with two args of the same fixed type: in TURNS (-0.5..0.5), integer path",
+        doc: "The angle of the vector (x, y): -π..π radians for float arguments. With both arguments the same fixed type it returns TURNS (-0.5..0.5) on an integer path, ready for a fixed `sin`/`cos` or `hsv2rgb` hue. In shade() of `led.pos` alone it is per-LED invariant, so the compiler caches it.",
+        example: "fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + 0.5fx;",
+        related: &["atan", "sin", "cos"],
+        cost: "float ~1,040 cycles; fixed (turns) ~350",
+        ..E
+    },
+    LangEntry {
+        name: "atan",
+        category: "math",
+        sigs: &["atan(y)", "atan(y, x)"],
+        summary: "arc tangent: atan(y) = atan2(y, 1.0); atan(y, x) is atan2",
+        doc: "GLSL's spelling of the arc tangent. One argument is the principal value `atan2(y, 1.0)`; two arguments are exactly `atan2(y, x)`.",
+        example: "float a = atan(led.pos.y, led.pos.x);",
+        related: &["atan2", "tan"],
+        cost: "as atan2: float ~1,040 cycles",
+        ..E
+    },
+    // -- built-ins: interpolation / vectors --------------------------------------
+    LangEntry {
+        name: "clamp",
+        category: "vector",
+        sigs: &["clamp(x, lo, hi)"],
+        summary: "constrain x to the range [lo, hi]",
+        doc: "Limits x to [lo, hi], component-wise; lo and hi may be scalars against a vector x. Native when x, lo and hi are the same int/fixed type. In fixed point `clamp((x - a) * k, 0.0fx, 1.0fx)` is a cheap ramp that replaces smoothstep.",
+        example: "float t = clamp(led.s * 2.0 - 0.5, 0.0, 1.0);",
+        related: &["min", "max", "smoothstep"],
+        cost: "int/fixed ~100-150 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "mix",
+        category: "vector",
+        sigs: &["mix(a, b, t)"],
+        summary: "linear interpolation a*(1-t) + b*t (t scalar)",
+        doc: "Linear interpolation from a (t = 0) to b (t = 1); a and b may be vectors, t is a scalar. Native when a, b and t are the same fixed type.",
+        example: "vec3 c = mix(vec3(1.0, 0.2, 0.0), vec3(0.0, 0.3, 1.0), led.s);",
+        related: &["smoothstep", "clamp"],
+        cost: "fixed ~100-150 cycles; float pays every lane",
+        ..E
+    },
+    LangEntry {
+        name: "smoothstep",
+        category: "vector",
+        sigs: &["smoothstep(lo, hi, x)"],
+        summary: "smooth Hermite 0..1 ramp between lo and hi",
+        doc: "A smooth 0..1 ramp as x goes from lo to hi (Hermite `t*t*(3-2t)`); lo > hi ramps down. Always float: per LED in fixed maths a clamped linear ramp is much cheaper.",
+        example: "float band = smoothstep(0.2, 0.0, abs(led.s - 0.5));",
+        related: &["step", "clamp", "mix"],
+        cost: "~700 cycles per lane (always float)",
+        ..E
+    },
+    LangEntry {
+        name: "length",
+        category: "vector",
+        sigs: &["length(v)"],
+        summary: "Euclidean length of v",
+        doc: "The Euclidean length of a vector (or |x| of a scalar). Always float. For a radius test compare `dot(d, d)` with `r * r` instead.",
+        example: "float r = length(led.pos);",
+        related: &["distance", "dot", "normalize"],
+        cost: "length(vec3) ~1,000 cycles (always float)",
+        ..E
+    },
+    LangEntry {
+        name: "distance",
+        category: "vector",
+        sigs: &["distance(a, b)"],
+        summary: "distance between points a and b",
+        doc: "The Euclidean distance between two points, `length(a - b)`. Always float.",
+        example: "float d = distance(led.pos, vec3(0.0, 0.5, 0.0));",
+        related: &["length", "dot"],
+        cost: "distance(vec3) ~1,200 cycles (always float)",
+        ..E
+    },
+    LangEntry {
+        name: "dot",
+        category: "vector",
+        sigs: &["dot(a, b)"],
+        summary: "dot product (scalar)",
+        doc: "The dot product of two vectors of equal width, a scalar. The cheap way to project onto an axis or a plane and to compare squared distances.",
+        example: "float side = dot(led.pos, vec3(0.0, 1.0, 0.0));",
+        related: &["cross", "length"],
+        cost: "dot(vec3) ~440 cycles (always float)",
+        ..E
+    },
+    LangEntry {
+        name: "cross",
+        category: "vector",
+        sigs: &["cross(a, b)"],
+        summary: "cross product of two vec3s",
+        doc: "The cross product of two vec3s: a vector perpendicular to both. Always float.",
+        example: "vec3 n = cross(led.pos, vec3(0.0, 1.0, 0.0));",
+        related: &["dot", "normalize"],
+        cost: "~720 cycles (always float)",
+        ..E
+    },
+    LangEntry {
+        name: "normalize",
+        category: "vector",
+        sigs: &["normalize(v)"],
+        summary: "v scaled to unit length",
+        doc: "The vector scaled to length 1. Always float, and one of the dearer vector built-ins: normalise once in update() where you can.",
+        example: "vec3 dir = normalize(led.pos + vec3(0.001));",
+        related: &["length", "dot"],
+        cost: "normalize(vec3) ~1,600 cycles (always float)",
+        ..E
+    },
+    // -- built-ins: matrices -----------------------------------------------------
+    LangEntry {
+        name: "transpose",
+        category: "matrix",
+        sigs: &["transpose(m)"],
+        summary: "the transpose of a mat3 or mat4",
+        doc: "Swaps rows and columns of a mat3 or mat4. For a pure rotation the transpose is the inverse, which is how a world-frame plane or direction moves into the fixture frame once per frame in update().",
+        example: "mat3 r = mat3(1.0);\nmat3 inv = transpose(r);",
+        related: &["mat3", "mat4", "transform"],
+        cost: "a copy of 9 or 16 floats; do it in update()",
+        ..E
+    },
+    LangEntry {
+        name: "transform",
+        category: "matrix",
+        sigs: &["transform(mat4 m, vec3 p)", "transform(mat3 m, vec2 p)"],
+        summary: "affine point transform: transform(mat4, vec3) = (m * vec4(p, 1.0)).xyz; transform(mat3, vec2) in 2D",
+        doc: "Applies an affine matrix to a point: rotation and scale plus translation, without the projective row. `transform(m, p)` with a mat4 and a vec3 equals `(m * vec4(p, 1.0)).xyz` at 9 multiplies + 9 adds instead of 16 + 12; with a mat3 and a vec2 it is the 2D equivalent. A direction (no translation) is `mat3(m) * d`.",
+        example: "uniform mat4 pose;\nvec3 shade(Led led) {\n  vec3 p = transform(pose, led.pos);\n  return vec3(step(0.0, p.y));\n}",
+        related: &["mat4", "mat3", "transpose"],
+        cost: "9 float multiplies + 9 adds (~3,500 cycles) per call",
+        ..E
+    },
+    // -- built-ins: noise / colour ---------------------------------------------
+    LangEntry {
+        name: "hash",
+        category: "noise",
+        sigs: &["hash(x)", "hash(v3)"],
+        summary: "deterministic float hash in [0,1); accepts a float or a vec3 (always float maths)",
+        doc: "A deterministic pseudo-random value in [0, 1) from a float or a vec3: the same input always gives the same output, on the device and in the preview. Seed it with `float(led.idx)`, a cell (`floor(...)`) or `frame`. Value noise is built from hashes at lattice points mixed together; that is expensive per LED, so precompute or use a fixed-point lattice.",
+        example: "float sparkle = step(0.97, hash(float(led.idx) + floor(time * 10.0)));",
+        related: &["floor", "frame", "mix"],
+        cost: "~185 cycles; 3-D value noise from 8 hashes + mixes ~9,000",
+        ..E
+    },
+    LangEntry {
+        name: "hsv2rgb",
+        category: "colour",
+        sigs: &["hsv2rgb(h, s, v)", "hsv2rgb(hsv)"],
+        summary: "HSV to linear RGB (vec3), hue 0..1; also accepts a single vec3. Three args of the same fixed type take the integer path (return that colour directly from shade())",
+        doc: "Converts hue, saturation and value (all 0..1; the hue is not in degrees) to a linear RGB vec3. A full rainbow is `hsv2rgb(fract(t), 1.0, 1.0)`. With three arguments of the same fixed type it runs on the integer path and produces a fixed colour, which must be returned directly from shade() (it cannot be mixed into float maths).",
+        example: "uniform float speed : 0.0 .. 2.0 = 0.3;\nstate fixed ph;\nvoid update() { ph = fract(ph + fixed(dt * speed)); }\nvec3 shade(Led led) { return hsv2rgb(fract(fixed(led.dist) + ph), 0.9fx, 1.0fx); }",
+        related: &["rgb", "palette0", "fixed"],
+        cost: "float ~1,300 cycles; fixed (integer colour) ~370",
+        ..E
+    },
+    LangEntry {
+        name: "rgb",
+        category: "colour",
+        sigs: &["rgb(r, g, b)"],
+        summary: "a float-free colour from 3 channels of the same fixed type (0..1); return it directly from shade()",
+        doc: "Builds an integer colour from three channels of the same fixed type (`fixed`, `fixed16` or `fixed8`, each 0..1). It never touches soft-float: shade() returns it as scaled integers. Like the other fixed colours it must be the value of shade()'s `return`; it cannot be stored or mixed.",
+        example: "vec3 shade(Led led) {\n  fixed t = fixed(led.s);\n  return rgb(t, 0.2fx, 1.0fx - t);\n}",
+        related: &["rgb8", "hsv2rgb", "fixed"],
+        cost: "no soft-float: the channels are returned as integers",
+        ..E
+    },
+    LangEntry {
+        name: "rgb8",
+        category: "colour",
+        sigs: &["rgb8(r, g, b)"],
+        summary: "a float-free colour from 3 int channels in 0..255; return it directly from shade()",
+        doc: "Builds a colour from three int channels in 0..255, returned from shade() without any float maths. Use it when the colour is already integer data (a palette table, a counter). It must be the value of shade()'s `return`.",
+        example: "vec3 shade(Led led) {\n  int k = int(led.s * 255.0);\n  return rgb8(k, 0, 255 - k);\n}",
+        related: &["rgb", "int"],
+        cost: "no soft-float: the channels are returned as integers",
+        ..E
+    },
+    LangEntry {
+        name: "palette0",
+        category: "colour",
+        sigs: &["palette0(t)"],
+        summary: "sample built-in palette 0 (fire: black, red, orange, yellow, white) at t (vec3)",
+        doc: "Samples the built-in fire palette at t in 0..1 (clamped): black → red → orange → yellow → white. A fixed argument takes the integer path and gives a fixed colour to return directly from shade().",
+        example: "vec3 c = palette0(led.s);",
+        related: &["palette1", "palette2", "hsv2rgb"],
+        cost: "float ~500 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "palette1",
+        category: "colour",
+        sigs: &["palette1(t)"],
+        summary: "sample built-in palette 1 (ice: black, blue, cyan, white) at t (vec3)",
+        doc: "Samples the built-in ice palette at t in 0..1 (clamped): black → blue → cyan → white. A fixed argument takes the integer path.",
+        example: "vec3 c = palette1(led.s);",
+        related: &["palette0", "palette2"],
+        cost: "float ~500 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "palette2",
+        category: "colour",
+        sigs: &["palette2(t)"],
+        summary: "sample built-in palette 2 (rainbow) at t (vec3)",
+        doc: "Samples the built-in rainbow palette at t in 0..1 (clamped); the same as `hsv2rgb(t, 1.0, 1.0)`. A fixed argument takes the integer path.",
+        example: "vec3 c = palette2(led.s);",
+        related: &["palette0", "palette1", "hsv2rgb"],
+        cost: "float ~500 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "palette",
+        category: "colour",
+        scope: Scope::Reserved,
+        sigs: &["palette(id, t)"],
+        summary: "reserved: use palette0(t), palette1(t) or palette2(t)",
+        doc: "A palette chosen by a runtime id is not supported yet: the compiler reports an error pointing at the fixed-id forms `palette0` (fire), `palette1` (ice) and `palette2` (rainbow).",
+        example: "vec3 c = palette0(led.s);",
+        related: &["palette0", "palette1", "palette2"],
+        ..E
+    },
+    // -- built-ins: textures ---------------------------------------------------
+    LangEntry {
+        name: "sample",
+        category: "texture",
+        sigs: &["sample(tex, uv)"],
+        summary: "bilinearly sample 2D texture `tex` at uv (vec2, 0..1, edge-clamped); returns the texture's element type",
+        doc: "Reads a texture declared with `texture`, bilinearly filtered and edge-clamped, at uv in 0..1. The first argument is the texture's name. The result is a float scalar/vector with the element's component count, whatever the storage precision.",
+        example: "texture vec3 img(8, 8);\nvec3 shade(Led led) { return sample(img, led.uv); }",
+        related: &["paint", "texture", "led.uv"],
+        cost: "~3,800 cycles",
+        ..E
+    },
+    LangEntry {
+        name: "paint",
+        category: "texture",
+        sigs: &["paint(tex, uv, color)"],
+        summary: "write `color` to the nearest texel of `tex` at uv (vec2, 0..1); a void statement",
+        doc: "Writes a value into the texel of `tex` nearest uv (0..1). It is a statement, not an expression. Painting in update() and sampling in shade() gives drawings, trails and feedback effects that persist across frames.",
+        example: "texture float ink(16, 16);\nvoid update() { paint(ink, vec2(hash(frame), hash(frame + 1.0)), 1.0); }\nvec3 shade(Led led) { return vec3(sample(ink, led.uv)); }",
+        related: &["sample", "texture"],
+        ..E
+    },
+    // -- built-ins: topology -----------------------------------------------------
+    LangEntry {
+        name: "seg_count",
+        category: "topology",
+        sigs: &["seg_count()"],
+        summary: "number of topology segments (int)",
+        doc: "The number of segments in the fixture's topology graph.",
+        example: "int n = seg_count();",
+        related: &["seg_len", "led.seg"],
+        ..E
+    },
+    LangEntry {
+        name: "seg_len",
+        category: "topology",
+        sigs: &["seg_len(seg)"],
+        summary: "arclength of segment `seg` in meters (float)",
+        doc: "The length of segment `seg` (an int id) in metres. Multiply by `led.s` for the distance along it.",
+        example: "float m = seg_len(int(led.seg)) * led.s;",
+        related: &["seg_count", "led.s"],
+        ..E
+    },
+    LangEntry {
+        name: "seg_node",
+        category: "topology",
+        sigs: &["seg_node(seg, side)"],
+        summary: "endpoint node id of `seg` (side 0=a, 1=b; int, -1 if free)",
+        doc: "The node at one end of a segment: side 0 is endpoint a (where `led.s` is 0), side 1 is endpoint b. -1 when that end is free.",
+        example: "int a = seg_node(0, 0);",
+        related: &["node_deg", "node_seg"],
+        ..E
+    },
+    LangEntry {
+        name: "node_deg",
+        category: "topology",
+        sigs: &["node_deg(node)"],
+        summary: "number of segments incident to `node` (int)",
+        doc: "How many segments meet at a node: 1 at a terminus, 2 along a path, 3 or more at a junction.",
+        example: "int d = node_deg(seg_node(0, 1));",
+        related: &["node_seg", "term"],
+        ..E
+    },
+    LangEntry {
+        name: "node_seg",
+        category: "topology",
+        sigs: &["node_seg(node, k)"],
+        summary: "k-th segment incident to `node` (int segment id) — pick a branch",
+        doc: "The k-th segment touching a node (k in 0..node_deg-1). Agents walking the graph use it to pick the next branch.",
+        example: "int s = node_seg(term(0), 0);",
+        related: &["node_side", "node_deg"],
+        ..E
+    },
+    LangEntry {
+        name: "node_side",
+        category: "topology",
+        sigs: &["node_side(node, k)"],
+        summary: "which end (0=a,1=b) of that k-th segment touches `node` (int)",
+        doc: "For the k-th segment at a node, which of its ends (0 = a, 1 = b) touches the node, so an agent knows whether to walk `led.s` up or down.",
+        example: "int side = node_side(term(0), 0);",
+        related: &["node_seg", "seg_node"],
+        ..E
+    },
+    LangEntry {
+        name: "term_count",
+        category: "topology",
+        sigs: &["term_count()"],
+        summary: "number of termini — degree-1 endpoints of the topology (int)",
+        doc: "The number of termini: nodes with exactly one segment (the free ends of the strips).",
+        example: "int n = term_count();",
+        related: &["term", "flood_from"],
+        ..E
+    },
+    LangEntry {
+        name: "term",
+        category: "topology",
+        sigs: &["term(k)"],
+        summary: "the k-th terminus node id (int, -1 if out of range); pick a random one to flood/spawn from",
+        doc: "The node id of the k-th terminus, -1 out of range. Pick one at random to start a flood or spawn an agent.",
+        example: "int t = term(int(hash(frame) * float(term_count())));",
+        related: &["term_count", "flood_from"],
+        ..E
+    },
+    LangEntry {
+        name: "flood_from",
+        category: "topology",
+        scope: Scope::Update,
+        sigs: &["flood_from(node)"],
+        summary: "set the geodesic source: `led.dist` then reports distance from `node` (0..1). Call once per cycle in update() — lets Flood/agents start from any endpoint. void",
+        doc: "Re-roots `led.dist`: after the call it measures the graph distance from `node`. Call it from update(), once per cycle (for example when a wavefront finishes), not every frame or per LED. A void statement.",
+        example: "uniform float speed : 0.1 .. 2.0 = 0.5;\nstate float front;\nvoid update() {\n  front = front + dt * speed;\n  if (front > 1.0) {\n    front = 0.0;\n    flood_from(term(int(hash(frame) * float(term_count()))));\n  }\n}\nvec3 shade(Led led) { return vec3(step(led.dist, front) * step(front - 0.2, led.dist)); }",
+        related: &["led.dist", "term", "term_count"],
+        ..E
+    },
+    // -- built-ins: triggers ---------------------------------------------------
+    LangEntry {
+        name: "fired",
+        category: "trigger",
+        scope: Scope::Update,
+        sigs: &["fired(trigger)"],
+        summary: "true once per event of a `uniform trigger` (update() only)",
+        doc: "True in the frame after a `uniform trigger` received an event (a tap, a button press), false otherwise. Only valid in update() / init(): a trigger fires once per frame, not per LED. The argument is the trigger's name.",
+        example: "uniform trigger tap;\nstate float hue;\nvoid update() { if (fired(tap)) { hue = fract(hue + 0.25); } }\nvec3 shade(Led led) { return hsv2rgb(hue, 0.9, 1.0); }",
+        related: &["trigger", "fire"],
+        ..E
+    },
+    LangEntry {
+        name: "fire",
+        category: "trigger",
+        scope: Scope::Driver,
+        sigs: &["fire(trigger)"],
+        summary: "bump an `export trigger` from a driver's poll() (one event)",
+        doc: "Raises one event on an `export trigger` declared by a sensor driver. Effects that declare a `uniform trigger` of the same name see `fired(...)` once. A void statement.",
+        example: "export trigger tap;\nstate int last;\nvoid poll() {\n  int now = gpio_read(9);\n  if (now == 0 && last == 1) { fire(tap); }\n  last = now;\n}",
+        related: &["fired", "trigger", "export"],
+        ..E
+    },
+    // -- built-ins: driver intrinsics ------------------------------------------
+    LangEntry {
+        name: "gpio_read",
+        category: "driver",
+        scope: Scope::Driver,
+        sigs: &["gpio_read(pin)"],
+        summary: "read a GPIO pin in a driver's poll(): 0 / 1 (-1 when unavailable)",
+        doc: "Reads a GPIO pin's level in a sensor driver: 0 or 1, -1 when the pin is unavailable. The pin is an int. Outside a driver's poll() there is no hardware and it returns -1.",
+        example: "export float button;\nvoid poll() { button = float(gpio_read(9)); }",
+        related: &["gpio_mode", "poll", "fire"],
+        ..E
+    },
+    LangEntry {
+        name: "gpio_mode",
+        category: "driver",
+        scope: Scope::Driver,
+        sigs: &["gpio_mode(pin, mode)"],
+        summary: "configure a GPIO input in a driver: mode 0 input, 1 pull-up, 2 pull-down; returns 1 when applied",
+        doc: "Configures a pin as an input in a sensor driver: mode 0 plain input, 1 with pull-up, 2 with pull-down. Returns 1 when applied. Both arguments are ints.",
+        example: "export float button;\nvoid poll() {\n  int ok = gpio_mode(9, 1);\n  button = float(gpio_read(9));\n}",
+        related: &["gpio_read", "poll"],
+        ..E
+    },
+    LangEntry {
+        name: "i2c_write",
+        category: "driver",
+        scope: Scope::Driver,
+        sigs: &["i2c_write(addr, reg, byte)"],
+        summary: "write one byte to an I2C register in a driver's poll(); returns the ACK (1/0)",
+        doc: "Writes `byte` to register `reg` of the I2C device at 7-bit address `addr`, in a sensor driver. Returns 1 on ACK, 0 otherwise. All arguments are ints. Outside poll() there is no bus.",
+        example: "export float ok;\nvoid poll() { ok = float(i2c_write(104, 107, 0)); }",
+        related: &["i2c_read8", "poll"],
+        ..E
+    },
+    LangEntry {
+        name: "i2c_read8",
+        category: "driver",
+        scope: Scope::Driver,
+        sigs: &["i2c_read8(addr, reg)"],
+        summary: "read one byte from an I2C register in a driver (int, -1 on failure)",
+        doc: "Reads one byte from register `reg` of the I2C device at `addr` in a sensor driver: 0..255, or -1 when the read fails or there is no bus.",
+        example: "export float who;\nvoid poll() { who = float(i2c_read8(104, 117)); }",
+        related: &["i2c_read16", "i2c_write"],
+        ..E
+    },
+    LangEntry {
+        name: "i2c_read16",
+        category: "driver",
+        scope: Scope::Driver,
+        sigs: &["i2c_read16(addr, reg)"],
+        summary: "read a big-endian unsigned 16-bit word from an I2C register in a driver",
+        doc: "Reads two bytes starting at register `reg` as a big-endian unsigned word (0..65535), -1 on failure.",
+        example: "export float raw;\nvoid poll() { raw = float(i2c_read16(64, 0)); }",
+        related: &["i2c_read16s", "i2c_read8"],
+        ..E
+    },
+    LangEntry {
+        name: "i2c_read16s",
+        category: "driver",
+        scope: Scope::Driver,
+        sigs: &["i2c_read16s(addr, reg)"],
+        summary: "read a big-endian signed 16-bit word (MEMS sensor data) from an I2C register in a driver",
+        doc: "Reads two bytes starting at `reg` as a big-endian signed word (-32768..32767), the format of most MEMS accelerometers and gyroscopes.",
+        example: "export vec3 accel;\nvoid poll() {\n  accel = vec3(float(i2c_read16s(104, 59)), float(i2c_read16s(104, 61)), float(i2c_read16s(104, 63))) / 16384.0;\n}",
+        related: &["i2c_read16", "export"],
+        ..E
+    },
+    // -- uniform / storage annotations ---------------------------------------------
+    LangEntry {
+        name: "color",
+        kind: Kind::Annotation,
+        category: "uniform ui",
+        sigs: &["uniform vec3 name : color = r, g, b;", "uniform vec4 name : color = r, g, b, a;"],
+        summary: "uniform annotation: show a vec3/vec4 as a colour picker (linear RGB 0..1)",
+        doc: "Shows a vec3/vec4 uniform as a colour picker holding linear RGB in 0..1. It is also the default for an unannotated vec3/vec4. Not valid on a matrix.",
+        example: "uniform vec3 tint : color = 1.0, 0.4, 0.1;\nvec3 shade(Led led) { return tint * led.s; }",
+        related: &["uniform", "range", "hsv2rgb"],
+        ..E
+    },
+    LangEntry {
+        name: "range",
+        kind: Kind::Annotation,
+        category: "uniform ui",
+        sigs: &[
+            "uniform float name : lo .. hi = v;",
+            "uniform float name : lo .. hi step s = v;",
+            "uniform vec3 name : lo .. hi = x, y, z;",
+            "uniform vec3 name : vec3(lo..) .. vec3(hi..) = vec3(v);",
+            "uniform mat4 name : lo .. hi;",
+        ],
+        summary: "uniform annotation `: lo .. hi` (optionally `step s`): a slider (scalars), numeric per-component sliders (vectors) or a bounded matrix",
+        doc: "A numeric range makes a slider: `lo .. hi` (either may be negative). The slider has the uniform's native precision: continuous for a float, whole numbers for an int, the least step for a fixed type; `step s` after the range snaps the control (editor, MIDI and keypoint blends) to a grid, and `step 0` asks for continuous explicitly. On a vector one range applies to every component and makes it a numeric vector rather than a colour; `vecN(...) .. vecN(...)` gives each component its own range. On a matrix it bounds every element (the default is ±1000). The uniform's default follows `=`.",
+        example: "uniform float width : 0.02 .. 0.5 = 0.1;\nuniform float bands : 1.0 .. 8.0 step 1.0 = 3.0;\nuniform vec3 dir : -1.0 .. 1.0 = 0.0, 1.0, 0.0;\nvec3 shade(Led led) { return vec3(step(abs(dot(led.pos, dir)), width) * fract(led.s * bands)); }",
+        related: &["uniform", "unit", "dropdown"],
+        ..E
+    },
+    LangEntry {
+        name: "dropdown",
+        kind: Kind::Annotation,
+        category: "uniform ui",
+        sigs: &["uniform int name : {\"a\", \"b\", \"c\"} = 0;"],
+        summary: "uniform annotation `: {\"a\",\"b\"}`: a dropdown whose value is the option index",
+        doc: "A list of option strings in braces makes a dropdown. The uniform's value is the index of the chosen option, so declare it `int` and compare with `==`.",
+        example: "uniform int mode : {\"fire\", \"ice\"} = 0;\nvec3 shade(Led led) {\n  vec3 c = palette0(led.s);\n  if (mode == 1) { c = palette1(led.s); }\n  return c;\n}",
+        related: &["uniform", "int"],
+        ..E
+    },
+    LangEntry {
+        name: "unit",
+        kind: Kind::Annotation,
+        category: "uniform ui",
+        sigs: &["uniform float name : lo .. hi \"unit\" = v;", "export float name \"unit\";"],
+        summary: "an optional unit string after a uniform's annotation (or an export's name)",
+        doc: "A string after the annotation (or alone after `:`) names the uniform's unit, shown next to its control and given to agents in the manifest. A sensor driver's `export` takes one after its name.",
+        example: "uniform float speed : 0.0 .. 4.0 \"Hz\" = 1.0;\nstate float ph;\nvoid update() { ph = fract(ph + dt * speed); }\nvec3 shade(Led led) { return vec3(ph); }",
+        related: &["uniform", "range", "export"],
+        ..E
+    },
+    LangEntry {
+        name: "storage",
+        kind: Kind::Annotation,
+        category: "storage",
+        sigs: &["buffer vec3 name : fixed8;", "texture vec3 name(w, h) : fixed16;"],
+        summary: "buffer/texture annotation `: fixed8` / `: fixed16`: store float/vec elements compressed (read and written as float)",
+        doc: "On a float or vector buffer/texture element, `: fixed8` stores each component in one byte and `: fixed16` in two, values in [-2, 2). Reads and writes still use floats; only the stored precision drops. It quarters (or halves) the element's RAM in the shared 24 KB effect arena.",
+        example: "buffer vec3 glow : fixed8;\nvec3 shade(Led led) {\n  vec3 g = glow[led.idx] * 0.95;\n  glow[led.idx] = g;\n  return g;\n}",
+        related: &["buffer", "texture", "fixed8", "fixed16"],
+        ..E
+    },
+    // -- syntax ----------------------------------------------------------------
+    LangEntry {
+        name: "fx",
+        kind: Kind::Syntax,
+        category: "literal",
+        sigs: &["0.5fx", "0.5fx16", "0.5fx8"],
+        summary: "fixed-point literal suffixes: 0.5fx = fixed(0.5), 0.5fx16 = fixed16(0.5), 0.5fx8 = fixed8(0.5)",
+        doc: "A numeric literal with the suffix `fx`, `fx16` or `fx8` is a fixed, fixed16 or fixed8 constant, folded at compile time. Use them in fixed-point maths: a float literal there turns the whole expression back into soft-float. `fx16` and `fx8` literals must be below 2.",
+        example: "fixed x = fixed(led.s) * 0.6fx + 0.1fx;",
+        related: &["fixed", "fixed16", "fixed8"],
+        ..E
+    },
+    LangEntry {
+        name: "swizzle",
+        kind: Kind::Syntax,
+        category: "vector",
+        sigs: &["v.x", "v.xy", "v.rgb", "v.zyx", "v[i]"],
+        summary: "vector component access: .x .y .z .w / .r .g .b .a in any order and length, or v[i]",
+        doc: "Pick or reorder vector components with up to four of `x y z w` (or `r g b a`): `led.pos.xz`, `c.bgr`, `v.xxx`. A vector can also be indexed like an array, `v[1]` being `v.y`.",
+        example: "vec2 flat = led.pos.xz;\nvec3 p = led.pos;\nfloat y = p[1];",
+        related: &["vec2", "vec3", "vec4"],
+        ..E
+    },
+    LangEntry {
+        name: "array",
+        kind: Kind::Syntax,
+        category: "declaration",
+        sigs: &["T name[N];", "a[i]"],
+        summary: "fixed-size arrays `T name[N];` (state or locals), indexed a[i] with a runtime int",
+        doc: "Any scalar, vector or struct type can form a fixed-size array (1..255 elements, at most 255 slots in total) as state or a local. Index with `a[i]`; a runtime int index is fine. Locals start at zero. There are no array literals: fill arrays in init() or a loop.",
+        example: "float w[4];\nfor (int i = 0; i < 4; i = i + 1) { w[i] = hash(float(i)); }\nfloat pick = w[2];",
+        related: &["struct", "for", "state"],
+        ..E
+    },
+];
+
+fn json_str(out: &mut String, s: &str) {
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
+fn json_list(out: &mut String, items: &[&str]) {
+    out.push('[');
+    for (i, s) in items.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        json_str(out, s);
+    }
+    out.push(']');
+}
+
+/// The table as JSON: an array of `{name, kind, category, scope, sigs, ty,
+/// summary, doc, example, related, cost, constant}`, one entry per line (stable
+/// and diff-friendly; the web's generated `lang-table.gen.ts` embeds it).
+pub fn language_json() -> String {
+    let mut out = String::from("[\n");
+    for (i, e) in LANG.iter().enumerate() {
+        out.push_str("  {\"name\": ");
+        json_str(&mut out, e.name);
+        out.push_str(", \"kind\": ");
+        json_str(&mut out, e.kind.as_str());
+        out.push_str(", \"category\": ");
+        json_str(&mut out, e.category);
+        out.push_str(", \"scope\": ");
+        json_str(&mut out, e.scope.as_str());
+        out.push_str(", \"sigs\": ");
+        json_list(&mut out, e.sigs);
+        out.push_str(", \"ty\": ");
+        json_str(&mut out, e.ty);
+        out.push_str(", \"summary\": ");
+        json_str(&mut out, e.summary);
+        out.push_str(", \"doc\": ");
+        json_str(&mut out, e.doc);
+        out.push_str(", \"example\": ");
+        json_str(&mut out, e.example);
+        out.push_str(", \"related\": ");
+        json_list(&mut out, e.related);
+        out.push_str(", \"cost\": ");
+        json_str(&mut out, e.cost);
+        let _ = write!(
+            out,
+            ", \"constant\": {}}}",
+            e.kind == Kind::Builtin && is_const_builtin(e.name)
+        );
+        out.push_str(if i + 1 < LANG.len() { ",\n" } else { "\n" });
+    }
+    out.push(']');
+    out
+}
+
+/// The web module embedding [`language_json`] (`web/src/effects/editor/lang-table.gen.ts`).
+pub fn language_ts() -> String {
+    format!(
+        "// GENERATED from fx_compiler/src/lang.rs — do not edit by hand.\n\
+         // Regenerate: bazel run //fx_compiler:fx_lang > web/src/effects/editor/lang-table.gen.ts\n\
+         // (//fx_compiler:lang_test fails while this file is stale.)\n\
+         \n\
+         import type {{ LangEntry }} from \"./lang-types\";\n\
+         \n\
+         export const LANG_TABLE: readonly LangEntry[] = {};\n",
+        language_json()
+    )
+}
