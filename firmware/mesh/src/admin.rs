@@ -1232,4 +1232,33 @@ mod tests {
         assert!(!gate.is_unlocked(0) && !gate.is_unlocked(3));
     }
 
+
+    fn unhex<const N: usize>(h: &str) -> [u8; N] {
+        let mut o = [0u8; N];
+        for (i, b) in o.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap();
+        }
+        o
+    }
+
+    /// Bytes the app signed (web/src/net/meshKeys.ts signDelegation / signGrant with `by`;
+    /// admin secret 000102…0f, delegate secret 101112…1f, mesh 5e1f00d1): the firmware
+    /// decodes them and its gateway unlocks with them.
+    #[test]
+    fn the_app_s_delegation_and_delegated_grant_unlock_a_gateway() {
+        let admin_pk: PublicKey = unhex("04c882530d916498946920c10b9f048b0312eee19bf5684f2bf8c9de2350003bd2baa0ab9fe5df66d64a705ebef5b9ade6e9fdcd3e4cafb90dfbd9b07d772dfc18");
+        let gk: PublicKey = unhex("04982e4e877f382ea003f5360c5d4669e9ad1f3ca7f6d85b6bbbeae650d5529adf6befef4c20297b7293a7ac7f180d3e8fa3f8d4d7fb1a2b345047d857e3d6188a");
+        let cert: [u8; Delegation::LEN] = unhex("455e1f00d10493334570f6e5e9885d720f322a6bdca44897cd7ad573df40fcaa5f6d1177fbf11a5460f4826fc93db4c579e2ade40b1d669d224b5318a9b5c7e972b8944f541b00001c203266d64e4c3da177a5bb3f5cdb45148ede2a49ef8e3e09455cba37c6723cbba74dc155b967449f8d562eff3c2601483fd9ce5d547ab51b1c10326454d709e54f");
+        let grant: [u8; Grant::LEN_DELEGATED] = unhex("445e1f00d1000000073a4104982e4e877f382ea003f5360c5d4669e9ad1f3ca7f6d85b6bbbeae650d5529adf6befef4c20297b7293a7ac7f180d3e8fa3f8d4d7fb1a2b345047d857e3d6188a00000e10eb6cfa240e1a7caeaa7cc2e52095ba7a5da43faf543e2efd9e7bf3f9a5d4d80d30983372b1d4a9e2ddca31aaadccd2f407b8cc165ca5db4d6b2ef192679274718bf80e18c0b569e2");
+        let mesh = 0x5e1f_00d1;
+        let d = Delegation::decode(&cert).expect("certificate");
+        assert_eq!((d.mesh_id, d.not_after), (mesh, 7200));
+        assert!(d.verify(&admin_pk));
+        let Some(SessionMsg::Grant(g)) = SessionMsg::decode(&grant) else { panic!("grant") };
+        assert_eq!((g.session, g.gateway, g.not_after, g.by), (7, 0x3a41, 3600, Some(d.hash())));
+        assert!(g.verify(&d.key));
+        let mut gate = AdminGate::new();
+        assert_eq!(gate.unlock(0, 0, 0, &g, Some(&d), Some(&admin_pk), &Revocations::default(), mesh, 0x3a41, &gk), Ok(()));
+    }
+
 }
