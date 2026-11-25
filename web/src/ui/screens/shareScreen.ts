@@ -136,4 +136,3 @@ export function ShareScreen(query: URLSearchParams): Screen {
     },
   };
 }
-
