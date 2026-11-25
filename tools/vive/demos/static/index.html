@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splanc tracker demo</title>
+<style>
+  :root { --bg:#0f1216; --panel:rgba(22,27,34,.92); --fg:#d8dee6; --mut:#8a96a6; --acc:#ff8a3c; --ok:#3ccf8e; --bad:#ff5c5c; --line:#2a323d; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.35 -apple-system,system-ui,sans-serif; overflow:hidden; }
+  #view { position:fixed; inset:0; }
+  .panel { position:fixed; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  #side { top:10px; left:10px; width:360px; max-height:calc(100% - 20px); overflow:auto; }
+  #right { top:10px; right:10px; width:300px; max-height:calc(100% - 20px); overflow:auto; }
+  h1 { font-size:14px; margin:0 0 6px; } h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); margin:12px 0 6px; }
+  .step { border-left:3px solid var(--line); padding:2px 0 6px 8px; margin:6px 0; }
+  .step.active { border-color:var(--acc); }
+  button { background:#232a33; color:var(--fg); border:1px solid #3a4553; border-radius:5px; padding:4px 8px; margin:2px 2px 2px 0; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--acc); } button.primary { background:#3a2a1c; border-color:var(--acc); }
+  button:disabled { opacity:.4; cursor:default; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:1px 10px; } .kv span:nth-child(odd) { color:var(--mut); }
+  .mut { color:var(--mut); } .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--acc); }
+  table { border-collapse:collapse; width:100%; } td,th { padding:1px 4px; text-align:right; } th { color:var(--mut); font-weight:normal; }
+  .bar { height:6px; background:#232a33; border-radius:3px; overflow:hidden; margin:4px 0; } .bar > div { height:100%; background:var(--acc); width:0; }
+  label { display:flex; align-items:center; gap:6px; margin:3px 0; } label > span { width:70px; color:var(--mut); }
+  input[type=range] { flex:1; } input[type=number] { width:70px; background:#161b22; color:var(--fg); border:1px solid #3a4553; border-radius:4px; }
+  select, input[type=text] { background:#161b22; color:var(--fg); border:1px solid #3a4553; border-radius:4px; padding:2px; }
+  pre { white-space:pre-wrap; font-size:11px; color:var(--mut); margin:4px 0; }
+  #flash { position:fixed; inset:0; pointer-events:none; background:var(--ok); opacity:0; transition:opacity .4s; }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="flash"></div>
+<div id="side" class="panel">
+  <h1>Splanc tracker demo</h1>
+  <div class="kv" id="status"></div>
+  <div id="btnhint" style="margin:6px 0"></div>
+  <label><span>tracker</span><select id="sel-dev"></select></label>
+  <div style="margin:6px 0"><button id="b-deploy" class="primary">Deploy effect</button> <span id="deployinfo" class="mut"></span></div>
+
+  <div class="step" id="s-probe">
+    <h2>Stylus probe (instead of 1–3)</h2>
+    <div class="mut">The fixture tracker (above) stays on the fixture; the fixture may move. Deploy <b>led_pick</b>. Pivot (once per stylus, saved): tip in the pivot fixture, rock the stylus round it, Pivot done. Then probe each blinking LED. The stylus button drives it too.</div>
+    <label><span>stylus</span><select id="sel-stylus"></select></label>
+    <button id="b-pivot" class="primary">Pivot</button><button id="b-pivdone">Pivot done</button><button id="b-probe" class="primary">Probe LEDs</button><button id="b-pacc">Accept</button><button id="b-pskip">Skip LED</button><button id="b-psave">Save mount &amp; go live</button><button id="b-preset">Reset</button>
+    <div id="probeinfo" class="mut"></div>
+    <table id="ptouches"></table>
+  </div>
+
+  <div class="step" id="s-rub">
+    <h2>1 · Rub the fixture surface</h2>
+    <div class="mut">Fixture must not move from here until the mount is recorded. Deploy <b>led_pick</b> first (README). Sweep the tracker's flat base over the whole surface, many orientations.</div>
+    <button id="b-rub" class="primary">Start rub</button><button id="b-rubstop">Stop &amp; fit</button><button id="b-fit">Re-fit</button><button id="b-reset">Reset</button>
+    <div id="rubinfo" class="mut"></div>
+  </div>
+
+  <div class="step" id="s-touch">
+    <h2>2 · Touch the blinking LED</h2>
+    <div class="mut">Put the contact point on the blinking LED and hold still 1 s (or press the tracker's button). Vary the tilt between touches.</div>
+    <button id="b-touch" class="primary">Start touches</button><button id="b-next">Pick next</button><button id="b-skip">Skip LED</button><button id="b-accept">Accept now</button>
+    <label><input type="checkbox" id="c-auto" checked> auto-advance</label>
+    <div id="pickinfo"></div>
+    <div class="bar"><div id="holdbar"></div></div>
+    <div id="holdinfo" class="mut"></div>
+    <table id="touches"></table>
+    <div id="conv"></div>
+    <label><span>scale s</span><select id="sel-scale"><option value="auto">auto (once touches span)</option><option value="on">estimate</option><option value="off">fixed</option></select><input type="number" id="n-s" step="0.001" value="1.000"></label>
+  </div>
+
+  <div class="step" id="s-mount">
+    <h2>3 · Mount and record</h2>
+    <div class="mut">Attach the tracker to the fixture without moving the fixture, then record (hold still 1 s).</div>
+    <label><span>mount name</span><input type="text" id="t-mount" value="default"></label>
+    <button id="b-mount" class="primary">Mount mode</button><button id="b-mountrec">Record now</button>
+    <div id="mountinfo" class="mut"></div>
+  </div>
+
+  <div class="step" id="s-live">
+    <h2>4 · Live</h2>
+    <div class="mut">Deploy the effect for the shape (<b>Deploy effect</b> above), then go live: T_WF = T_WT · T_TF, /plane or /sphere streamed.</div>
+    <button id="b-live" class="primary">Go live</button><button id="b-idle">Idle (stop sending)</button><button id="b-session">Save session</button>
+  </div>
+</div>
+
+<div id="right" class="panel">
+  <h2 style="margin-top:0">Shape (world W, +Z up)</h2>
+  <label><span>shape</span><select id="shape"><option value="plane">plane (/plane, plane_slice)</option><option value="sphere">sphere (/sphere, sphere_shell)</option></select></label>
+  <label><span>radius m</span><input type="range" id="radius" min="0.01" max="0.5" step="0.001" value="0.08"><input type="number" id="radiusn" step="0.005"></label>
+  <div class="mut">Drag the handle (W: move, E: rotate) or set numbers. The sphere is centred on the handle.</div>
+  <button id="b-mv">Move</button><button id="b-rot">Rotate</button><button id="b-centre">Centre on fixture</button><button id="b-horiz">Horizontal</button><button id="b-vert">Vertical</button>
+  <label><span>x</span><input type="number" id="px" step="0.005"></label>
+  <label><span>y</span><input type="number" id="py" step="0.005"></label>
+  <label><span>z</span><input type="number" id="pz" step="0.005"></label>
+  <label><span>azimuth°</span><input type="range" id="az" min="-180" max="180" step="0.5"><input type="number" id="azn" step="1"></label>
+  <label><span>elevation°</span><input type="range" id="el" min="-90" max="90" step="0.5"><input type="number" id="eln" step="1"></label>
+  <label><span>sweep</span><input type="range" id="sweep" min="-0.15" max="0.15" step="0.001" value="0"></label>
+  <h2>Slice</h2>
+  <label><span>width m</span><input type="range" id="width" min="0.002" max="0.1" step="0.001" value="0.01"><input type="number" id="widthn" step="0.001"></label>
+  <label><span>halo m</span><input type="range" id="halo" min="0" max="0.2" step="0.001" value="0.03"><input type="number" id="halon" step="0.001"></label>
+  <label><span>glow</span><input type="color" id="glow" value="#ff6619"></label>
+  <h2>Sent to the fixture</h2>
+  <div class="kv" id="sent"></div>
+  <pre id="osclog"></pre>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
+
+// W is libsurvive's world: gravity-aligned, +Z up. Draw it that way.
+THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
+const $ = id => document.getElementById(id);
+const post = (path, body = {}) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  .then(r => r.json()).then(j => { if (!j.ok) alert(j.error); return j; });
+
+// ---------- scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+$("view").appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1216);
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.002, 100);
+camera.position.set(1.2, -1.2, 1.4);
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true; orbit.screenSpacePanning = true;
+orbit.target.set(0, 0, 0.8);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(2, -1, 4); scene.add(sun);
+for (const [size, div, c, o] of [[10, 10, 0x3a4553, .9], [2, 40, 0x232a33, .7]]) {
+  const g = new THREE.GridHelper(size, div, c, c); g.rotation.x = Math.PI / 2;
+  g.material.transparent = true; g.material.opacity = o; g.material.depthWrite = false; scene.add(g);
+}
+scene.add(new THREE.AxesHelper(0.2));
+
+function gizmo(len) {
+  const g = new THREE.Group();
+  for (const [x, y, z, c] of [[1,0,0,0xff4d4d],[0,1,0,0x4dff6a],[0,0,1,0x4d8dff]])
+    g.add(new THREE.ArrowHelper(new THREE.Vector3(x, y, z), new THREE.Vector3(), len, c, len * .2, len * .1));
+  return g;
+}
+
+// ---------- fixture (LED cloud in F, placed by T_WF) ----------
+const fixture = new THREE.Group(); fixture.matrixAutoUpdate = false; fixture.visible = false; scene.add(fixture);
+fixture.add(gizmo(0.05));
+let map = null, ledGeom = null, ledColors = null;
+const pickMarker = new THREE.Mesh(new THREE.SphereGeometry(0.004, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+pickMarker.visible = false; fixture.add(pickMarker);
+const touchMarkers = new THREE.Group(); fixture.add(touchMarkers);
+
+async function loadMap() {
+  map = await (await fetch("/map")).json();
+  const n = map.p.length;
+  ledGeom = new THREE.BufferGeometry();
+  ledGeom.setAttribute("position", new THREE.Float32BufferAttribute(map.p.flat(), 3));
+  ledColors = new Float32Array(n * 3);
+  ledGeom.setAttribute("color", new THREE.BufferAttribute(ledColors, 3));
+  const pts = new THREE.Points(ledGeom, new THREE.PointsMaterial({ size: 0.004, vertexColors: true, sizeAttenuation: true }));
+  fixture.add(pts);
+}
+
+// ---------- tracker ----------
+const tracker = new THREE.Group(); tracker.matrixAutoUpdate = false; tracker.visible = false; scene.add(tracker);
+{ // Vive Tracker 3.0 in its head frame: base at z = 0, body towards -z, contact face normal +z.
+  const puck = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.03, 32),
+    new THREE.MeshStandardMaterial({ color: 0x4aa3ff, roughness: .6, transparent: true, opacity: .45 }));
+  puck.rotation.x = Math.PI / 2; puck.position.z = -0.018; tracker.add(puck); tracker.add(gizmo(0.06));
+}
+const stylus = new THREE.Group(); stylus.matrixAutoUpdate = false; stylus.visible = false; scene.add(stylus);
+{ // The stylus's tracker, like the fixture's, in a lighter shade.
+  const puck = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.03, 32),
+    new THREE.MeshStandardMaterial({ color: 0xa0d0ff, roughness: .6, transparent: true, opacity: .35 }));
+  puck.rotation.x = Math.PI / 2; puck.position.z = -0.018; stylus.add(puck); stylus.add(gizmo(0.04));
+}
+// The pivot in progress: the stylus tracker's track (kept samples bright, dropped ones grey)
+// and the pivot point the robust solve puts the tip at.
+const pivGeom = new THREE.BufferGeometry();
+const pivPts = new THREE.Points(pivGeom, new THREE.PointsMaterial({ size: 0.002, vertexColors: true }));
+pivPts.visible = false; scene.add(pivPts);
+const pivPoint = new THREE.Mesh(new THREE.SphereGeometry(0.003, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffb020 }));
+pivPoint.visible = false; scene.add(pivPoint);
+const pivSpokes = new THREE.LineSegments(new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({ color: 0xffb020, transparent: true, opacity: .25 }));
+pivSpokes.visible = false; scene.add(pivSpokes);
+function drawPivot(lv) {
+  const on = !!lv;
+  pivPts.visible = pivPoint.visible = pivSpokes.visible = on;
+  if (!on) return;
+  const pos = lv.track.flat(), col = [], seg = [];
+  lv.track.forEach((p, i) => {
+    if (lv.kept[i]) col.push(0.35, 0.69, 1.0); else col.push(0.45, 0.45, 0.45);
+    if (lv.kept[i] && i % 6 === 0) seg.push(...p, ...lv.q_W);   // a few spokes: tracker -> pivot
+  });
+  pivGeom.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  pivGeom.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  pivGeom.computeBoundingSphere();
+  pivSpokes.geometry.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+  pivSpokes.geometry.computeBoundingSphere();
+  pivPoint.position.set(...lv.q_W);
+}
+const stylusTip = new THREE.Mesh(new THREE.SphereGeometry(0.00635, 16, 12), new THREE.MeshBasicMaterial({ color: 0x5ab0ff, wireframe: true }));
+stylusTip.visible = false; scene.add(stylusTip);
+const contact = new THREE.Mesh(new THREE.SphereGeometry(0.003, 12, 8), new THREE.MeshBasicMaterial({ color: 0x3ccf8e }));
+scene.add(contact);
+const predMarker = new THREE.Mesh(new THREE.TorusGeometry(0.008, 0.0012, 8, 32), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+predMarker.visible = false; scene.add(predMarker);
+
+// ---------- rub points ----------
+const rubGeom = new THREE.BufferGeometry();
+const rubPts = new THREE.Points(rubGeom, new THREE.PointsMaterial({ size: 0.0015, color: 0x4aa3ff, transparent: true, opacity: .5 }));
+scene.add(rubPts);
+let rubVersion = -1, rubFetching = false;
+async function refreshRubs(v) {
+  if (rubFetching) return; rubFetching = true;
+  try { const r = await (await fetch("/rubs")).json(); rubGeom.setAttribute("position", new THREE.Float32BufferAttribute(r.points.flat(), 3)); rubVersion = v; }
+  finally { setTimeout(() => rubFetching = false, 1000); }
+}
+
+// ---------- plane + handle ----------
+const plane = new THREE.Group(); scene.add(plane);
+const planeMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.4),
+  new THREE.MeshBasicMaterial({ color: 0xff8a3c, transparent: true, opacity: .18, side: THREE.DoubleSide, depthWrite: false }));
+plane.add(planeMesh);
+plane.add(new THREE.LineSegments(new THREE.EdgesGeometry(planeMesh.geometry), new THREE.LineBasicMaterial({ color: 0xff8a3c })));
+plane.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), 0.08, 0xff8a3c, 0.02, 0.01));
+const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16),
+  new THREE.MeshBasicMaterial({ color: 0xff8a3c, wireframe: true, transparent: true, opacity: .35, depthWrite: false }));
+sphere.scale.setScalar(0.08); sphere.visible = false; plane.add(sphere);
+const planeParts = [planeMesh, ...plane.children.filter(c => c !== planeMesh && c !== sphere)];
+function shapeChanged(post_ = true) {
+  const sph = $("shape").value === "sphere";
+  sphere.visible = sph; for (const c of planeParts) c.visible = !sph;
+  if (post_) { post("/api/shape", { shape: $("shape").value }); planeChanged(); }
+}
+const handle = new TransformControls(camera, renderer.domElement);
+handle.setSize(0.7); handle.attach(plane); scene.add(handle);
+handle.addEventListener("dragging-changed", e => orbit.enabled = !e.value);
+handle.addEventListener("objectChange", () => { sweepBase = null; $("sweep").value = 0; planeChanged(); });
+addEventListener("keydown", e => { if (e.target.tagName === "INPUT") return; if (e.key === "w") handle.setMode("translate"); if (e.key === "e") handle.setMode("rotate"); });
+$("b-mv").onclick = () => handle.setMode("translate");
+$("b-rot").onclick = () => handle.setMode("rotate");
+
+let planeInit = false, lastPlanePost = 0, planeTimer = null, sweepBase = null;
+function planeNormal() { return new THREE.Vector3(0, 0, 1).applyQuaternion(plane.quaternion).normalize(); }
+function planeChanged() {
+  const n = planeNormal();
+  const az = THREE.MathUtils.radToDeg(Math.atan2(n.y, n.x)), el = THREE.MathUtils.radToDeg(Math.asin(Math.max(-1, Math.min(1, n.z))));
+  for (const [id, v] of [["px", plane.position.x], ["py", plane.position.y], ["pz", plane.position.z]]) if (document.activeElement !== $(id)) $(id).value = v.toFixed(3);
+  if (document.activeElement !== $("az")) { $("az").value = az; $("azn").value = az.toFixed(1); }
+  if (document.activeElement !== $("el")) { $("el").value = el; $("eln").value = el.toFixed(1); }
+  const now = performance.now();
+  clearTimeout(planeTimer);
+  const send = () => {
+    lastPlanePost = performance.now();
+    post("/api/plane", { n: n.toArray(), d: n.dot(plane.position) });
+    post("/api/sphere", { c: plane.position.toArray(), r: +$("radius").value });
+  };
+  if (now - lastPlanePost > 33) send(); else planeTimer = setTimeout(send, 33);
+}
+function setNormal(n) { plane.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n.clone().normalize()); planeChanged(); }
+function fromAzEl() {
+  const az = THREE.MathUtils.degToRad(+$("az").value), el = THREE.MathUtils.degToRad(+$("el").value);
+  setNormal(new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az), Math.sin(el)));
+}
+$("az").oninput = () => { $("azn").value = $("az").value; fromAzEl(); };
+$("el").oninput = () => { $("eln").value = $("el").value; fromAzEl(); };
+$("azn").onchange = () => { $("az").value = $("azn").value; fromAzEl(); };
+$("eln").onchange = () => { $("el").value = $("eln").value; fromAzEl(); };
+for (const id of ["px", "py", "pz"]) $(id).onchange = () => { plane.position.set(+$("px").value, +$("py").value, +$("pz").value); sweepBase = null; planeChanged(); };
+$("sweep").oninput = () => {
+  if (!sweepBase) sweepBase = plane.position.clone().addScaledVector(planeNormal(), -$("sweep").value);
+  plane.position.copy(sweepBase).addScaledVector(planeNormal(), +$("sweep").value); planeChanged();
+};
+function fixtureCentre() {
+  if (!map || !fixture.visible) return null;
+  const c = new THREE.Vector3(); for (const p of map.p) c.add(new THREE.Vector3(...p)); c.multiplyScalar(1 / map.p.length);
+  return c.applyMatrix4(fixture.matrix);
+}
+$("b-centre").onclick = () => { const c = fixtureCentre(); if (c) { plane.position.copy(c); sweepBase = c.clone(); $("sweep").value = 0; planeChanged(); } };
+$("shape").onchange = () => shapeChanged();
+function radiusChanged() { sphere.scale.setScalar(+$("radius").value); $("radiusn").value = $("radius").value; planeChanged(); }
+$("radius").oninput = radiusChanged;
+$("radiusn").onchange = () => { $("radius").value = $("radiusn").value; radiusChanged(); };
+$("b-horiz").onclick = () => setNormal(new THREE.Vector3(0, 0, 1));
+$("b-vert").onclick = () => setNormal(new THREE.Vector3(1, 0, 0));
+
+function sendParams() {
+  const c = new THREE.Color($("glow").value);
+  post("/api/params", { width: +$("width").value, halo: +$("halo").value, glow: [c.r, c.g, c.b] });
+  $("widthn").value = $("width").value; $("halon").value = $("halo").value;
+}
+for (const id of ["width", "halo", "glow"]) $(id).oninput = sendParams;
+$("widthn").onchange = () => { $("width").value = $("widthn").value; sendParams(); };
+$("halon").onchange = () => { $("halo").value = $("halon").value; sendParams(); };
+
+// ---------- wizard buttons ----------
+$("b-rub").onclick = () => post("/api/mode", { mode: "rub" });
+$("b-rubstop").onclick = () => post("/api/mode", { mode: "idle" });
+$("b-fit").onclick = () => post("/api/fit");
+$("b-reset").onclick = () => { if (confirm("Discard rubs, touches and the fit?")) post("/api/reset"); };
+$("b-touch").onclick = () => post("/api/mode", { mode: "touch" });
+$("b-next").onclick = () => post("/api/next");
+$("b-skip").onclick = () => post("/api/skip");
+$("b-accept").onclick = () => post("/api/accept");
+$("c-auto").onchange = () => post("/api/auto_next", { on: $("c-auto").checked });
+$("sel-scale").onchange = $("n-s").onchange = () => post("/api/scale", { mode: $("sel-scale").value, s_fixed: +$("n-s").value });
+$("t-mount").onchange = () => post("/api/mount_name", { name: $("t-mount").value });
+$("b-mount").onclick = () => post("/api/mount_name", { name: $("t-mount").value }).then(() => post("/api/mode", { mode: "mount" }));
+$("b-mountrec").onclick = () => post("/api/mount_record");
+$("b-live").onclick = () => post("/api/mode", { mode: "live" });
+$("b-idle").onclick = () => post("/api/mode", { mode: "idle" });
+$("b-deploy").onclick = () => post("/api/deploy");
+$("b-session").onclick = () => post("/api/session").then(j => j.ok && alert("saved " + j.path));
+window.dropTouch = (i, redo) => post("/api/drop", { i, redo });
+
+// ---------- feedback ----------
+let audio = null;
+function beep(f = 880, ms = 120) {
+  try { audio = audio || new AudioContext(); const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = f; g.gain.value = .15; o.connect(g); g.connect(audio.destination); o.start(); o.stop(audio.currentTime + ms / 1000); } catch (e) {}
+}
+function flash(color) { const f = $("flash"); f.style.background = color; f.style.opacity = .25; setTimeout(() => f.style.opacity = 0, 150); }
+let lastSeq = null, lastReject = null;
+
+// ---------- state ----------
+const m4 = a => new THREE.Matrix4().set(...a.flat());
+const fmt = (v, d = 2) => v == null || Number.isNaN(v) ? "–" : (+v).toFixed(d);
+let S = null, blink = 0;
+
+function applyState(s) {
+  S = s;
+  // events (beeps)
+  for (const e of s.events) {
+    if (lastSeq !== null && e.seq > lastSeq) {
+      if (e.kind === "accept") { beep(988); flash("#3ccf8e"); }
+      if (e.kind === "reject") { beep(220, 250); flash("#ff5c5c"); lastReject = { why: e.why, t: performance.now() }; }
+      if (e.kind === "button") beep(1500, 30);
+      if (e.kind === "mount") { beep(660); setTimeout(() => beep(990), 150); flash("#3ccf8e"); }
+      if (e.kind === "fit" && e.converged) beep(1320, 200);
+    }
+  }
+  if (s.events.length) lastSeq = Math.max(lastSeq ?? 0, s.events[s.events.length - 1].seq);
+  else if (lastSeq === null) lastSeq = 0;
+
+  if (s.T_WF) { fixture.matrix.copy(m4(s.T_WF)); fixture.matrixWorldNeedsUpdate = true; fixture.visible = true; }
+  else fixture.visible = false;
+  if (s.pose) {
+    tracker.matrix.copy(m4(s.pose.M)); tracker.matrixWorldNeedsUpdate = true; tracker.visible = true;
+    contact.position.set(...s.pose.contact); contact.visible = true;
+  }
+  if (s.rub_version !== rubVersion) refreshRubs(s.rub_version);
+  if (!planeInit && s.plane) {
+    planeInit = true;
+    const n = new THREE.Vector3(...s.plane.n_W);
+    plane.position.copy(n.clone().multiplyScalar(s.plane.d_W));
+    plane.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    $("width").value = s.plane.width; $("halo").value = s.plane.halo;
+    $("widthn").value = s.plane.width; $("halon").value = s.plane.halo;
+    $("glow").value = "#" + new THREE.Color(...s.plane.glow).getHexString();
+    $("shape").value = s.shape; $("radius").value = s.sphere.r_W; $("radiusn").value = s.sphere.r_W;
+    sphere.scale.setScalar(s.sphere.r_W); shapeChanged(false);
+    if (s.shape === "sphere") plane.position.set(...s.sphere.c_W);
+    $("t-mount").value = s.mount_name;
+    $("sel-scale").value = s.scale.mode; $("n-s").value = s.scale.s_fixed;
+    planeChanged();
+  }
+  // pick
+  if (s.pick && map) { pickMarker.position.set(...map.p[s.pick.row]); pickMarker.visible = true; } else pickMarker.visible = false;
+  if (s.pick_pred_W) { predMarker.position.set(...s.pick_pred_W); predMarker.visible = s.mode === "touch"; } else predMarker.visible = false;
+  // touch markers
+  if (map && touchMarkers.children.length !== s.touches.length) {
+    touchMarkers.clear();
+    for (const t of s.touches) {
+      const mk = new THREE.Mesh(new THREE.SphereGeometry(0.0035, 12, 8), new THREE.MeshBasicMaterial({ color: 0x3ccf8e }));
+      mk.position.set(...map.p[t.row]); touchMarkers.add(mk);
+    }
+  }
+  s.touches.forEach((t, i) => { const mk = touchMarkers.children[i]; if (mk) mk.material.color.set(t.res_mm == null ? 0x8a96a6 : t.res_mm < 3 ? 0x3ccf8e : t.res_mm < 10 ? 0xffb03c : 0xff5c5c); });
+  renderPanels(s);
+}
+
+function colorLeds() {
+  if (!map || !S) return;
+  const n = map.p.length, pl = S.plane, live = S.mode === "live" || S.mode === "idle";
+  const glow = pl.glow, w = pl.width, h = pl.halo;
+  const fakeLit = S.fake ? new Set(S.fake.lit) : null;
+  blink = (blink + 1) % 60;
+  let lit = 0;
+  for (let i = 0; i < n; i++) {
+    let r = .22, g = .24, b = .28;
+    if (!map.mapped[i]) { r = g = b = .12; }
+    else if (map.reachable && !map.reachable[i]) { r = .16; g = .13; b = .22; }  // the base can't reach it: never picked
+    const sp = S.sphere, sph = S.shape === "sphere";
+    if ((sph ? sp.c_F : pl.n_F) && (S.mode === "live" || S.mode === "idle")) {
+      // Preview: exactly what plane_slice / sphere_shell computes, in F from the map.
+      const p = map.p[i];
+      const d = sph ? Math.abs(Math.hypot(p[0] - sp.c_F[0], p[1] - sp.c_F[1], p[2] - sp.c_F[2]) - sp.r_F)
+                    : Math.abs(pl.n_F[0] * p[0] + pl.n_F[1] * p[1] + pl.n_F[2] * p[2] - pl.d_F);
+      const t = Math.min(1, Math.max(0, (d - w) / Math.max(h, 1e-6)));
+      const k = 1 - t * t * (3 - 2 * t);
+      if (d < w) lit++;
+      r = Math.max(r, glow[0] * k); g = Math.max(g, glow[1] * k); b = Math.max(b, glow[2] * k);
+    }
+    if (S.pick && S.pick.row === i && S.mode !== "live") { const on = blink < 30 ? 1 : .6; r = g = b = on; }
+    ledColors.set([r, g, b], i * 3);
+  }
+  ledGeom.attributes.color.needsUpdate = true;
+  S._lit = lit;
+}
+
+let devKey = "";
+// Only touch the DOM when the content changed, so buttons inside stay clickable.
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+function setHTML(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }
+$("sel-dev").onchange = () => post("/api/device", { dev: $("sel-dev").value });
+$("sel-stylus").onchange = () => post("/api/stylus", { dev: $("sel-stylus").value });
+$("b-pivot").onclick = () => post("/api/mode", { mode: "pivot" });
+$("b-pivdone").onclick = () => post("/api/probe/finish_pivot");
+$("b-probe").onclick = () => post("/api/mode", { mode: "probe" });
+$("b-pacc").onclick = () => post("/api/probe/accept");
+$("b-pskip").onclick = () => post("/api/probe/skip");
+$("b-psave").onclick = () => post("/api/probe/save");
+$("b-preset").onclick = () => post("/api/probe/reset");
+let stylusKey = "";
+function renderProbe(s) {
+  const pr = s.probe;
+  const key = Object.keys(s.devices).join(",") + "|" + pr.stylus;
+  if (key !== stylusKey) {
+    stylusKey = key;
+    $("sel-stylus").innerHTML = `<option value="">(none)</option>` + Object.keys(s.devices).map(d => `<option ${d === pr.stylus ? "selected" : ""}>${d}</option>`).join("");
+  }
+  $("s-probe").classList.toggle("active", s.mode === "pivot" || s.mode === "probe");
+  const f = pr.fit, c = pr.conv || {};
+  setHTML($("probeinfo"), [
+    s.mode === "pivot" ? (pr.pivot_live
+      ? `pivoting: ${pr.pivot_live.n_kept}/${pr.pivot_live.n} samples kept, RMS ${fmt(pr.pivot_live.rms_mm, 2)} mm ` +
+        `(σ ${fmt(pr.pivot_live.sigma_mm, 2)}), ±${fmt(pr.pivot_live.spread_deg, 0)}°, tip [${pr.pivot_live.c_mm.map(v => fmt(v, 1)).join(", ")}] mm · ` +
+        (pr.pivot_live.ok ? `<span style="color:#e0a030">${pr.pivot_live.ok}</span>` : `<span style="color:#3ccf8e">good: press Pivot done</span>`)
+      : `pivoting on the pivot fixture: ${pr.pivot_samples} samples`) : "",
+    pr.c_tip_mm ? `tip c = [${pr.c_tip_mm.map(v => fmt(v, 1)).join(", ")}] mm` +
+      (pr.pivot ? ` (pivot RMS ${fmt(pr.pivot.rms_mm, 2)} mm, ±${fmt(pr.pivot.spread_deg, 0)}°)` : "") : "no tip yet: Pivot first",
+    s.mode === "probe" && s.pick ? `probe LED <b>${s.pick.led}</b>` : "",
+    f ? `fit: touch RMS ${fmt(f.touch_rms_mm)} mm · h ${fmt(f.h_mm, 2)} mm · s ${fmt(f.s, 4)}${f.scale_estimated ? " (est.)" : " (fixed)"}` : "",
+    f ? (pr.converged ? '<b class="ok">Converged</b>: save the mount.' : `<span class="warn">not converged</span>: ${c.why || ""}`) : "",
+  ].filter(Boolean).join("<br>"));
+  setHTML($("ptouches"), pr.touches.length ? "<tr><th>#</th><th>LED</th><th>res mm</th><th></th></tr>" + pr.touches.map(t =>
+    `<tr><td>${t.i}</td><td>${t.led}</td><td>${fmt(t.res_mm, 2)}</td><td><button onclick="post('/api/probe/drop',{i:${t.i}})">drop</button></td></tr>`).join("") : "");
+  if (pr.tip_W) { stylusTip.position.set(...pr.tip_W); stylusTip.visible = true; } else stylusTip.visible = false;
+  drawPivot(s.mode === "pivot" ? pr.pivot_live : null);
+  if (pr.stylus_M) { stylus.matrix.copy(m4(pr.stylus_M)); stylus.matrixWorldNeedsUpdate = true; stylus.visible = true; }
+  else stylus.visible = false;
+}
+window.post = post;
+function renderPanels(s) {
+  renderProbe(s);
+  const src = s.source || {};
+  const fit = s.fit;
+  setHTML($("status"), [
+    ["mode", `<b>${s.mode}</b>`],
+    ["pose source", `${src.source || ""} ${src.state ? "(" + src.state + ")" : ""} ${src.error ? '<span class="bad">' + src.error + "</span>" : ""}`],
+    ["tracker pose", s.pose ? "age " + fmt(s.pose.age, 2) + " s" : '<span class="warn">no pose yet</span>'],
+    ["fixture pose", s.T_WF ? s.T_WF_source : '<span class="mut">unknown (calibrate or load a mount)</span>'],
+    ["mount record", s.mount ? `${s.mount.name} (${s.mount.created}), s=${fmt(s.mount.s, 4)}` : '<span class="mut">none</span>'],
+  ].map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join(""));
+  const rej = lastReject && lastReject.why && performance.now() - lastReject.t < 4000 ? ` · <span class="bad">rejected: ${lastReject.why}</span>` : "";
+  setHTML($("btnhint"), `<span class="mut">tracker button${s.button.control ? "" : " (press to use)"}:</span> <b>${s.button.hint}</b>${rej}`);
+  const devs = Object.keys(s.devices).join(",") + "|" + s.device;
+  if (devs !== devKey) { devKey = devs; $("sel-dev").innerHTML = Object.keys(s.devices).map(d => `<option ${d === s.device ? "selected" : ""}>${d}</option>`).join(""); }
+  for (const [id, modes] of [["s-rub", ["rub"]], ["s-touch", ["touch"]], ["s-mount", ["mount"]], ["s-live", ["live"]]])
+    $(id).classList.toggle("active", modes.includes(s.mode));
+  // --p4: the fixture's tracker is the P4's own, so only the stylus probe places it.
+  for (const id of ["s-rub", "s-touch", "s-mount"]) $(id).style.display = s.p4 ? "none" : "";
+  setHTML($("rubinfo"), `${s.rubs} rub samples${s.fitting ? ' · <span class="warn">fitting…</span>' : ""}` +
+    (fit ? `<br>rub RMS ${fmt(fit.rub_rms_mm)} mm (inliers ${fmt(fit.rub_inliers * 100, 0)} %) · c = [${fit.c_T.map(v => fmt(v * 1000, 1)).join(", ")}] mm · o = ${fmt(fit.o * 1000, 2)} mm · s = ${fmt(fit.s, 4)}${fit.scale_estimated ? " (est.)" : " (fixed)"} · ${fmt(fit.seconds, 1)} s` : ""));
+  setHTML($("pickinfo"), s.pick ? `Blinking LED <b>${s.pick.led}</b>${s.pick_dist_mm != null ? ` · contact point ${fmt(s.pick_dist_mm, 0)} mm from its predicted position` : ""}` : (s.mode === "touch" ? '<span class="mut">no LED picked</span>' : ""));
+  const h = s.hold || {};
+  $("holdbar").style.width = (100 * (h.progress || 0)) + "%";
+  $("holdinfo").textContent = s.button.control && s.mode === "touch" ? "button control: hold the contact point on the LED, then press" :
+    s.mode === "touch" || s.mode === "mount" ? (h.armed === false ? "move away from the last spot to re-arm" :
+    `stillness: position ${fmt(h.pos_mm, 2)} mm (< 1), rotation ${fmt(h.rot_deg, 2)}° (< 0.5)`) + (s.mode === "mount" && !s.mount_armed ? " · press Record now when mounted" : "") : "";
+  setHTML($("touches"), s.touches.length ? `<tr><th>#</th><th>LED</th><th>resid mm</th><th>tilt°</th><th></th></tr>` + s.touches.map(t =>
+    `<tr><td>${t.i + 1}</td><td>${t.led}</td><td class="${t.res_mm == null ? "" : t.res_mm < 3 ? "ok" : t.res_mm < 10 ? "warn" : "bad"}">${fmt(t.res_mm, 2)}</td><td>${fmt(t.tilt_deg, 0)}</td>` +
+    `<td><button onclick="dropTouch(${t.i},false)">drop</button><button onclick="dropTouch(${t.i},true)">redo</button></td></tr>`).join("") : "");
+  const c = s.conv || {};
+  setHTML($("conv"), fit ? `${s.converged ? '<b class="ok">Converged</b> — go to step 3.' : '<span class="warn">Not converged</span>: ' + (c.why || "")}` +
+    `<br><span class="mut">touch RMS ${fmt(c.touch_rms_mm)} mm · last change ${fmt(c.dpos_mm)} mm / ${fmt(c.drot_deg, 3)}° · c ${fmt(c.dc_mm)} mm · scale span ${fmt(s.scale.span, 2)} / ${s.scale.span_needed}</span>` : "");
+  const dp = s.deploy || {};
+  $("b-deploy").textContent = "Deploy " + (dp.wanted || "effect");
+  $("b-deploy").disabled = dp.state === "running" || !dp.configured;
+  setHTML($("deployinfo"), !dp.configured ? "Splanc MCP not configured (README)" :
+    dp.state === "running" ? `<span class="warn">deploying ${dp.effect}…</span>` :
+    dp.state === "ok" ? `<span class="ok">${esc(dp.message)}</span>` :
+    dp.state === "error" ? `<span class="bad">${esc(dp.message)}</span>` : "");
+  setHTML($("mountinfo"), s.mount ? `saved: ${s.mount.path}` : "");
+  const pl = s.plane;
+  setHTML($("sent"), [
+    ["OSC target", s.osc.target], ["datagrams", s.osc.datagrams],
+    ...(s.shape === "sphere"
+      ? [["c_F", s.sphere.c_F ? s.sphere.c_F.map(v => fmt(v, 4)).join(" ") : "–"], ["r_F", s.sphere.c_F ? fmt(s.sphere.r_F, 4) + " m" : "–"]]
+      : [["n_F", pl.n_F ? pl.n_F.map(v => fmt(v, 4)).join(" ") : "–"], ["d_F", pl.n_F ? fmt(pl.d_F, 4) + " m" : "–"]]),
+    ["preview lit", S._lit ?? "–"],
+    ...(s.fake ? [["sim fixture lit", `${s.fake.lit.length} ${s.fake.lit.length === S._lit ? '<span class="ok">matches</span>' : ""}`]] : []),
+    ["streaming", Object.keys(s.osc.values).join(" ") || "nothing"],
+  ].map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join(""));
+  $("osclog").textContent = (s.osc.recent || []).join("\n");
+}
+
+// ---------- go ----------
+await loadMap();
+const es = new EventSource("/events");
+es.onmessage = ev => applyState(JSON.parse(ev.data));
+function frame() {
+  requestAnimationFrame(frame);
+  colorLeds();
+  orbit.update();
+  renderer.render(scene, camera);
+}
+frame();
+addEventListener("resize", () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
+// Frame the fixture once it's known.
+let framed = false;
+setInterval(() => { if (!framed && fixture.visible) { const c = fixtureCentre(); if (c) { orbit.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(.35, -.45, .3)); framed = true; } } }, 300);
+</script>
+</body>
+</html>

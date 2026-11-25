@@ -1,0 +1,7 @@
+# Per-mount calibration records, calibration sessions and OSC dry-run logs are local data.
+mounts/*.json
+sessions/
+osc-dry-run.log
+__pycache__/
+# LED maps exported from Splanc (export_map) stay local.
+*.csv

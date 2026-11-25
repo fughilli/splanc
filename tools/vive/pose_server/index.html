@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lighthouse Viewer</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: rgba(20, 24, 30, 0.88); --line: #2a313b; --text: #dfe5ec;
+    --muted: #8a96a3; --accent: #4aa3ff; --good: #3ccf8e; --warn: #f2b84b; --bad: #ff6b6b;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; }
+  .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    backdrop-filter: blur(6px); }
+  #toolbar { top: 12px; left: 12px; display: flex; gap: 6px; flex-wrap: wrap; padding: 6px; max-width: calc(100vw - 24px); }
+  button, label.tog { background: #1c222b; color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; font: inherit; cursor: pointer; user-select: none; }
+  button:hover, label.tog:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 600; }
+  button.primary.following { background: #1c222b; color: var(--accent); }
+  label.tog input { margin: 0 6px 0 0; vertical-align: -1px; }
+  label.tog.range { display: flex; align-items: center; gap: 6px; cursor: default; }
+  label.tog.range input { width: 90px; }
+  #hud { top: 64px; right: 12px; width: 330px; max-height: calc(100vh - 76px); overflow: auto; padding: 10px 12px; }
+  #hud h2 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+    margin: 12px 0 4px; font-weight: 600; }
+  #hud h2:first-child { margin-top: 0; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-family: var(--mono); font-size: 12px; }
+  .kv span:nth-child(odd) { color: var(--muted); }
+  .kv span:nth-child(even) { text-align: right; white-space: pre; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  #log { bottom: 12px; left: 12px; width: min(720px, calc(100vw - 370px)); height: 120px; overflow: auto; padding: 6px 10px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: pre; }
+  #log.hidden { display: none; }
+  .label { font-family: var(--mono); font-size: 11px; color: var(--text); background: rgba(10,12,16,.7);
+    padding: 1px 5px; border-radius: 4px; white-space: nowrap; pointer-events: none; }
+  .rec { display: grid; gap: 6px; }
+  .rec select, .rec input, .rec textarea { background: #1c222b; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 8px; font: inherit; width: 100%; }
+  .rec textarea { resize: vertical; font-size: 12px; }
+  #rec-btn.recording { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .chip { display: inline-block; padding: 0 6px; margin-left: 4px; border-radius: 9px; font-size: 11px;
+    background: var(--accent); color: #06121f; font-weight: 600; }
+  .chip.off { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 400; }
+  #waiting { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 14px 18px; text-align: center; }
+  @media (max-width: 760px) {
+    #hud { width: calc(100vw - 24px); top: auto; bottom: 12px; max-height: 40vh; }
+    #log { display: none; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="view"></div>
+
+<div id="toolbar" class="panel">
+  <button id="fit" class="primary" title="Fit the workspace (F). Following until you orbit/pan/zoom.">Fit</button>
+  <button id="clear" title="Clear the trail and the workspace bounds">Clear trail</button>
+  <button id="restart" title="Restart the tracking source">Restart source</button>
+  <button id="pair" title="lhd: put the dongles in pairing mode; then hold the tracker's button until its LED blinks blue">Pair tracker</button>
+  <button id="recal" title="lhd: solve the station calibration again from the still scenes collected">Recalibrate</button>
+  <label class="tog"><input type="checkbox" id="t-trail" checked>Trail</label>
+  <label class="tog"><input type="checkbox" id="t-frusta" checked>Frusta</label>
+  <label class="tog"><input type="checkbox" id="t-rays" checked>Rays</label>
+  <label class="tog"><input type="checkbox" id="t-aabb" checked>Bounds</label>
+  <label class="tog"><input type="checkbox" id="t-sensors" checked>Sensors</label>
+  <label class="tog"><input type="checkbox" id="t-log" checked>Log</label>
+  <label class="tog range">Accel <input type="range" id="acc-scale" min="0.02" max="1" step="0.01" value="0.2"> <span id="acc-scale-v"></span></label>
+</div>
+
+<div id="hud" class="panel">
+  <h2>Recording</h2>
+  <div class="rec">
+    <select id="rec-preset" title="Session presets">
+      <option value="static">static — flat on the table, untouched, 60 s</option>
+      <option value="static-near">static-near — close to one station, 60 s</option>
+      <option value="turntable-center">turntable-center — on the axis, turning</option>
+      <option value="turntable-r">turntable-r — off-axis at a measured radius</option>
+      <option value="turntable-fast">turntable-fast — same radius, faster</option>
+      <option value="slider-slow">slider-slow — linear, slow strokes</option>
+      <option value="slider-fast">slider-fast — linear, fast strokes</option>
+      <option value="free">free — anything else</option>
+    </select>
+    <input id="rec-name" placeholder="name" spellcheck="false">
+    <textarea id="rec-notes" rows="2" placeholder="notes: radius, rpm, stroke length, distance to stations…"></textarea>
+    <button id="rec-btn" class="primary">Start recording</button>
+    <div class="kv" id="k-rec"></div>
+  </div>
+  <h2 id="h-source">libsurvive</h2>
+  <div class="kv" id="k-status"></div>
+  <h2>Trackers</h2>
+  <div id="k-trackers"></div>
+  <h2>Base stations</h2>
+  <div id="k-lh"></div>
+</div>
+
+<div id="log" class="panel"></div>
+<div id="waiting" class="panel">Connecting…</div>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+
+// libsurvive's world is gravity-aligned with z up; keep it that way here.
+THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
+
+const TRACKER_COLORS = [0x4aa3ff, 0xff8a4a, 0x3ccf8e, 0xc77dff];
+const LH_COLOR = 0xe6e6e6;
+const TRAIL_CAP = 400000;
+const MIN_FIT_RADIUS = 0.4;
+
+// ---------- scene ----------
+const view = document.getElementById("view");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+view.appendChild(renderer.domElement);
+const labels = new CSS2DRenderer();
+labels.setSize(window.innerWidth, window.innerHeight);
+labels.domElement.style.position = "fixed";
+labels.domElement.style.inset = "0";
+labels.domElement.style.pointerEvents = "none";
+view.appendChild(labels.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1216);
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.005, 500);
+camera.position.set(2.5, -3, 2);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.screenSpacePanning = true;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(3, -2, 6);
+scene.add(sun);
+
+// Ground grids in the z = 0 plane (GridHelper is in XZ; rotate onto XY).
+function makeGrid(size, div, c1, c2, opacity) {
+  const g = new THREE.GridHelper(size, div, c1, c2);
+  g.rotation.x = Math.PI / 2;
+  g.material.transparent = true;
+  g.material.opacity = opacity;
+  g.material.depthWrite = false;
+  scene.add(g);
+  return g;
+}
+makeGrid(20, 20, 0x3a4553, 0x2a323d, 0.9);
+const fineGrid = makeGrid(4, 40, 0x232a33, 0x1d232b, 0.7);
+scene.add(new THREE.AxesHelper(0.25));
+
+function label(text, cls = "label") {
+  const el = document.createElement("div");
+  el.className = cls;
+  el.textContent = text;
+  return new CSS2DObject(el);
+}
+
+// RGB X/Y/Z arrows.
+function gizmo(len) {
+  const g = new THREE.Group();
+  const dirs = [[1, 0, 0, 0xff4d4d], [0, 1, 0, 0x4dff6a], [0, 0, 1, 0x4d8dff]];
+  for (const [x, y, z, c] of dirs) {
+    g.add(new THREE.ArrowHelper(new THREE.Vector3(x, y, z), new THREE.Vector3(), len, c, len * 0.18, len * 0.09));
+  }
+  return g;
+}
+
+// ---------- trackers ----------
+const trackers = new Map();
+
+function makeTracker(dev) {
+  const color = TRACKER_COLORS[trackers.size % TRACKER_COLORS.length];
+  const root = new THREE.Group();          // posed in world
+  const body = new THREE.Group();          // things in the tracker frame
+  root.add(body);
+  const puck = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.03, 32),
+    new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.6, transparent: true, opacity: 0.55, emissive: 0x000000 }));
+  puck.rotation.x = Math.PI / 2;           // cylinder axis along tracker z
+  body.add(puck);
+  body.add(gizmo(0.12));
+  const tag = label(dev);
+  tag.position.set(0, 0, 0.06);
+  root.add(tag);
+  scene.add(root);
+
+  const accel = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), 0.2, 0xff4dd2, 0.04, 0.02);
+  scene.add(accel);
+  const accTag = label("");
+  scene.add(accTag);
+
+  const trailPos = new Float32Array(TRAIL_CAP * 3);
+  const trailGeom = new THREE.BufferGeometry();
+  trailGeom.setAttribute("position", new THREE.BufferAttribute(trailPos, 3));
+  trailGeom.setDrawRange(0, 0);
+  const trail = new THREE.Line(trailGeom, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.8 }));
+  trail.frustumCulled = false;
+  scene.add(trail);
+
+  const t = { dev, color, root, body, accel, accTag, trail, trailPos, trailN: 0, sensors: null, puck, buttons: null,
+              sensorPts: [], pose: null, acc: null, gyro: null, vel: null, poses: 0,
+              box: new THREE.Box3(), lit: {} };
+  trackers.set(dev, t);
+  if (configs[dev]) setSensors(t, configs[dev]);
+  return t;
+}
+
+function setSensors(t, cfg) {
+  if (t.sensors) { t.body.remove(t.sensors); t.sensors.geometry.dispose(); }
+  const pts = cfg.points || [];
+  if (!pts.length) return;
+  const geom = new THREE.SphereGeometry(0.0035, 8, 6);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const mesh = new THREE.InstancedMesh(geom, mat, pts.length);
+  const m = new THREE.Matrix4();
+  pts.forEach((p, i) => { m.makeTranslation(p[0], p[1], p[2]); mesh.setMatrixAt(i, m); mesh.setColorAt(i, new THREE.Color(0x46505c)); });
+  mesh.instanceColor.needsUpdate = true;
+  t.sensors = mesh;
+  t.sensorPts = pts;
+  t.body.add(mesh);
+}
+
+const configs = {};
+
+// ---------- base stations ----------
+const lighthouses = new Map();
+
+function makeLighthouse(id) {
+  const root = new THREE.Group();
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08),
+    new THREE.MeshStandardMaterial({ color: 0x1b1f25, roughness: 0.5 }));
+  root.add(box);
+  // Front face (libsurvive: a base station looks along its own -Z).
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.07, 0.07),
+    new THREE.MeshBasicMaterial({ color: 0x3ccf8e, side: THREE.DoubleSide }));
+  face.position.z = -0.0405;
+  root.add(face);
+  root.add(gizmo(0.15));
+  // 120 x 120 degree field of view, as a wire pyramid; length set per frame.
+  const fr = new THREE.LineSegments(new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0x3ccf8e, transparent: true, opacity: 0.35 }));
+  root.add(fr);
+  const tag = label("LH " + id);
+  tag.position.set(0, 0, 0.09);
+  root.add(tag);
+  scene.add(root);
+  const ray = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+    new THREE.LineDashedMaterial({ color: 0x8a96a3, dashSize: 0.04, gapSize: 0.03, transparent: true, opacity: 0.8 }));
+  ray.frustumCulled = false;
+  scene.add(ray);
+  const l = { id, root, fr, ray, rec: null, tag };
+  lighthouses.set(id, l);
+  return l;
+}
+
+function removeLighthouse(id) {
+  const l = lighthouses.get(id);
+  if (!l) return;
+  scene.remove(l.root);
+  scene.remove(l.ray);
+  lighthouses.delete(id);
+}
+
+function setFrustum(l, len) {
+  const h = Math.tan(THREE.MathUtils.degToRad(60)) * len;
+  const c = [[-h, -h], [h, -h], [h, h], [-h, h]].map(([x, y]) => new THREE.Vector3(x, y, -len));
+  const o = new THREE.Vector3();
+  const pts = [];
+  for (let i = 0; i < 4; i++) pts.push(o, c[i], c[i], c[(i + 1) % 4]);
+  l.fr.geometry.setFromPoints(pts);
+}
+
+// ---------- AABB + fit ----------
+const workBox = new THREE.Box3();
+const boxHelper = new THREE.Box3Helper(workBox, 0x4aa3ff);
+boxHelper.material.transparent = true;
+boxHelper.material.opacity = 0.35;
+scene.add(boxHelper);
+
+function workspaceBox() {
+  const b = new THREE.Box3();
+  for (const t of trackers.values()) { if (!t.box.isEmpty()) b.union(t.box); if (t.pose) b.expandByPoint(t.root.position); }
+  for (const l of lighthouses.values()) if (l.rec) b.expandByPoint(l.root.position);
+  return b;
+}
+
+let following = true;
+let fitAnim = null;
+const fitBtn = document.getElementById("fit");
+
+function fitTarget() {
+  const b = workspaceBox();
+  if (b.isEmpty()) return null;
+  const sphere = b.getBoundingSphere(new THREE.Sphere());
+  const r = Math.max(sphere.radius, MIN_FIT_RADIUS);
+  const vfov = THREE.MathUtils.degToRad(camera.fov);
+  const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+  const dist = r / Math.sin(Math.min(vfov, hfov) / 2) * 1.08;
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  if (!isFinite(dir.x) || dir.lengthSq() < 0.5) dir.set(0.55, -0.65, 0.5).normalize();
+  return { target: sphere.center.clone(), pos: sphere.center.clone().add(dir.multiplyScalar(dist)) };
+}
+
+function fit(animate = true) {
+  const f = fitTarget();
+  if (!f) return;
+  if (!animate) { controls.target.copy(f.target); camera.position.copy(f.pos); return; }
+  fitAnim = { t0: performance.now(), dur: 450, fromT: controls.target.clone(), fromP: camera.position.clone(), ...f };
+}
+
+function setFollowing(on) {
+  following = on;
+  fitBtn.classList.toggle("following", on);
+  fitBtn.textContent = on ? "Fit · following" : "Fit";
+}
+controls.addEventListener("start", () => { fitAnim = null; setFollowing(false); });
+fitBtn.onclick = () => { setFollowing(true); fit(true); };
+window.addEventListener("keydown", e => { if (e.key === "f" || e.key === "F") fitBtn.onclick(); });
+setFollowing(true);
+
+// ---------- controls ----------
+const $ = id => document.getElementById(id);
+const accScale = $("acc-scale");
+const accScaleV = $("acc-scale-v");
+const showScale = () => accScaleV.textContent = (+accScale.value).toFixed(2) + " m/g";
+accScale.oninput = showScale; showScale();
+$("clear").onclick = () => { for (const t of trackers.values()) { t.trailN = 0; t.trail.geometry.setDrawRange(0, 0); t.box.makeEmpty(); } };
+$("restart").onclick = () => fetch("/restart", { method: "POST" });
+$("pair").onclick = () => fetch("/pair", { method: "POST" });
+$("recal").onclick = () => fetch("/recalibrate", { method: "POST" });
+$("t-log").onchange = e => $("log").classList.toggle("hidden", !e.target.checked);
+
+// ---------- recording ----------
+const recPreset = $("rec-preset"), recName = $("rec-name"), recNotes = $("rec-notes"), recBtn = $("rec-btn");
+recPreset.onchange = () => { recName.value = recPreset.value; };
+recName.value = recPreset.value;
+recBtn.onclick = async () => {
+  if (status.recording) {
+    await fetch("/record/stop", { method: "POST" });
+  } else {
+    await fetch("/record/start", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: recName.value || recPreset.value, notes: recNotes.value }) });
+  }
+};
+
+// ---------- data ----------
+const logEl = $("log");
+let status = {}, rates = {}, lastPoseAge = null, lastMsg = 0;
+// What the source can measure (server.py CAPABILITIES) and its health. A field the
+// source can't measure arrives as null: show it as unavailable, never as a zero.
+let caps = {}, health = {};
+const NA = '<span style="color:var(--muted)" title="this source has no such telemetry; not a measured zero">n/a</span>';
+const STATE_LABEL = { tracking: ["tracking", "var(--good)"], no_pose_output: ["no pose output", "var(--warn)"],
+  lost_tracking: ["lost tracking", "var(--bad)"], no_devices: ["no devices", "var(--muted)"] };
+
+function addLog(lines) {
+  if (!lines || !lines.length) return;
+  const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4;
+  logEl.textContent += lines.join("\n") + "\n";
+  if (logEl.textContent.length > 60000) logEl.textContent = logEl.textContent.slice(-40000);
+  if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function onLighthouse(rec) {
+  const l = lighthouses.get(rec.id) || makeLighthouse(rec.id);
+  l.rec = rec;
+  l.root.position.set(...rec.p);
+  l.root.quaternion.set(rec.q[1], rec.q[2], rec.q[3], rec.q[0]);
+}
+
+function onConfig(dev, cfg) {
+  configs[dev] = cfg;
+  const t = trackers.get(dev);
+  if (t) setSensors(t, cfg);
+}
+
+function onBatch(m) {
+  status = m.status; rates = m.rates; lastPoseAge = m.last_pose_age;
+  caps = m.capabilities || {}; health = m.health || {};
+  for (const p of m.poses) {
+    const t = trackers.get(p.dev) || makeTracker(p.dev);
+    t.pose = p; t.poses++;
+    if (t.trailN < TRAIL_CAP) {
+      t.trailPos.set(p.p, t.trailN * 3);
+      t.trailN++;
+    }
+    t.box.expandByPoint(new THREE.Vector3(...p.p));
+  }
+  for (const t of trackers.values()) {
+    if (!t.pose) continue;
+    t.root.position.set(...t.pose.p);
+    t.root.quaternion.set(t.pose.q[1], t.pose.q[2], t.pose.q[3], t.pose.q[0]);
+    t.trail.geometry.setDrawRange(0, t.trailN);
+    t.trail.geometry.attributes.position.needsUpdate = true;
+    t.lit = m.lit == null ? null : m.lit[t.dev] || {};  // null: the source has no optical telemetry
+  }
+  for (const s of m.imu) {
+    const t = trackers.get(s.dev);
+    if (t) { t.acc = s.acc; t.gyro = s.gyro; t.accFrame = s.frame === "head" ? "tracker" : "IMU"; }
+  }
+  for (const [dev, v] of Object.entries(m.vel || {})) { const t = trackers.get(dev); if (t) t.vel = v; }
+  for (const [dev, b] of Object.entries(m.buttons || {})) { const t = trackers.get(dev); if (t) t.buttons = b; }
+  addLog(m.log);
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = ev => {
+    lastMsg = performance.now();
+    const m = JSON.parse(ev.data);
+    if (m.type === "batch") onBatch(m);
+    else if (m.type === "lighthouse") onLighthouse(m);
+    else if (m.type === "lighthouse_removed") removeLighthouse(String(m.id));
+    else if (m.type === "config") onConfig(m.dev, m);
+    else if (m.type === "snapshot") {
+      for (const l of m.lighthouses) onLighthouse(l);
+      for (const [dev, c] of Object.entries(m.configs)) onConfig(dev, c);
+      logEl.textContent = ""; addLog(m.log); status = m.status; caps = m.capabilities || caps;
+    }
+  };
+  es.onerror = () => { status = { survive: "viewer server unreachable" }; };
+}
+connect();
+
+// ---------- per-frame ----------
+const tmpV = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
+const fmt = (v, d = 1, w = 7) => (v == null || !isFinite(v) ? "–" : v.toFixed(d)).padStart(w);
+
+function eulerZYX(q) { // q = [w,x,y,z] -> yaw, pitch, roll (deg)
+  const [w, x, y, z] = q;
+  const yaw = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
+  const pitch = Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x))));
+  const roll = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
+  return [yaw, pitch, roll].map(THREE.MathUtils.radToDeg);
+}
+
+function updateScene() {
+  const showSensors = $("t-sensors").checked;
+  const firstTracker = trackers.values().next().value;
+  for (const t of trackers.values()) {
+    t.trail.visible = $("t-trail").checked;
+    // Light the puck up while a button is held.
+    t.puck.material.emissive.setHex(t.buttons && t.buttons.held.length ? t.color : 0x000000);
+    if (t.sensors) {
+      t.sensors.visible = showSensors;
+      const hits = new Map(); // sensor -> axes seen
+      for (const [, axes] of Object.entries(t.lit || {})) {
+        axes[0].forEach(s => hits.set(s, (hits.get(s) || 0) | 1));
+        axes[1].forEach(s => hits.set(s, (hits.get(s) || 0) | 2));
+      }
+      const c = new THREE.Color();
+      for (let i = 0; i < t.sensorPts.length; i++) {
+        const h = hits.get(i) || 0;
+        c.setHex(h === 3 ? 0xffe14d : h ? 0xff9f43 : 0x46505c);
+        t.sensors.setColorAt(i, c);
+      }
+      t.sensors.instanceColor.needsUpdate = true;
+    }
+    if (t.pose && t.acc) {
+      // Specific force (what the accelerometer reads), already in the tracker (head) frame the
+      // pose is in: ~1 g straight up in the world when still.
+      tmpQ.set(t.pose.q[1], t.pose.q[2], t.pose.q[3], t.pose.q[0]);
+      tmpV.set(...t.acc).applyQuaternion(tmpQ);
+      const g = tmpV.length();
+      t.upErr = THREE.MathUtils.radToDeg(Math.acos(Math.max(-1, Math.min(1, tmpV.z / (g || 1)))));
+      const len = Math.max(1e-4, g * accScale.value);
+      t.accel.position.copy(t.root.position);
+      t.accel.setDirection(tmpV.clone().normalize());
+      t.accel.setLength(len, Math.min(0.05, len * 0.25), Math.min(0.025, len * 0.12));
+      t.accel.visible = true;
+      t.accTag.position.copy(t.root.position).addScaledVector(tmpV.normalize(), len + 0.02);
+      t.accTag.element.textContent = g.toFixed(3) + " g";
+    } else {
+      t.accel.visible = false;
+    }
+  }
+  for (const l of lighthouses.values()) {
+    l.fr.visible = $("t-frusta").checked;
+    let len = 1.5;
+    if (firstTracker && firstTracker.pose) len = Math.max(0.5, l.root.position.distanceTo(firstTracker.root.position) * 1.1);
+    setFrustum(l, len);
+    const unknown = !!firstTracker && firstTracker.lit == null;  // no optical telemetry: neither seen nor unseen
+    const seen = firstTracker && firstTracker.lit && Object.keys(firstTracker.lit).length > 0 &&
+      Object.prototype.hasOwnProperty.call(firstTracker.lit, lhIndex(l));
+    l.ray.visible = $("t-rays").checked && !!(firstTracker && firstTracker.pose);
+    if (l.ray.visible) {
+      l.ray.geometry.setFromPoints([l.root.position, firstTracker.root.position]);
+      l.ray.computeLineDistances();
+      l.ray.material.color.setHex(unknown ? 0x4aa3ff : seen ? 0x3ccf8e : 0x8a96a3);
+      l.ray.material.dashSize = seen ? 1e3 : unknown ? 0.01 : 0.04;
+    }
+  }
+  const b = workspaceBox();
+  boxHelper.visible = $("t-aabb").checked && !b.isEmpty();
+  if (!b.isEmpty()) workBox.copy(b);
+  // Fine grid follows the workspace so 10 cm cells stay under the action.
+  if (!b.isEmpty()) { const c = b.getCenter(tmpV); fineGrid.position.set(Math.round(c.x), Math.round(c.y), 0); }
+}
+
+// Base stations are listed in LH_POSE by BaseStationID; angle records carry
+// libsurvive's index. Map by order of appearance until we see both.
+function lhIndex(l) { return String([...lighthouses.keys()].indexOf(l.id)); }
+
+function updateHud() {
+  const st = $("k-status");
+  $("h-source").textContent = status.source || "libsurvive";
+  const age = lastPoseAge == null ? "–" : lastPoseAge.toFixed(1) + " s";
+  const sColor = status.survive === "running" ? "var(--good)" : "var(--warn)";
+  const [hLabel, hColor] = STATE_LABEL[health.summary] || ["–", "var(--muted)"];
+  const optical = health.optical === "unavailable"
+    ? `<span style="color:var(--muted)" title="${status.source || "this source"} reports no per-sensor light or sweep angles: unknown, not dark">unavailable</span>`
+    : health.optical || "–";
+  const perSec = (v, cap) => (caps[cap] === false || v == null ? NA : `${fmt(v, 0)} /s`);
+  st.innerHTML = `<span>state</span><span><span class="dot" style="background:${sColor}"></span>${status.survive || "–"}</span>
+    <span>source</span><span>${status.source || "–"}</span>
+    <span>restarts</span><span>${status.restarts ?? "–"}</span>
+    <span>tracking</span><span><span class="dot" style="background:${hColor}"></span>${hLabel}</span>
+    <span>last pose</span><span>${age}</span>
+    <span>pose rate</span><span>${fmt(rates.pose, 0)} Hz</span>
+    <span>IMU rate</span><span>${fmt(rates.imu, 0)} Hz</span>
+    <span>optical</span><span>${optical}</span>
+    <span>sweep hits</span><span>${perSec(rates.angle, "optical")}</span>
+    ${caps.pose_hits ? `<span title="light hits the pose solver used">solver light hits</span><span>${fmt(rates.hits_used, 0)} /s</span>` : ""}
+    <span>HID reports</span><span>${perSec(rates.hid, "hid")}</span>`;
+  const r = status.recording;
+  recBtn.classList.toggle("recording", !!r);
+  recBtn.textContent = r ? `Stop recording (${r.seconds.toFixed(0)} s)` : "Start recording";
+  $("k-rec").innerHTML = r ? `<span>file</span><span>${r.file.split("/").pop()}</span>
+    <span>lines</span><span>${r.lines}</span>` : "";
+  $("waiting").style.display = trackers.size || lighthouses.size ? "none" : "block";
+  $("waiting").textContent = performance.now() - lastMsg > 3000 ? "Waiting for the viewer server…"
+    : `Waiting for ${status.source || "libsurvive"} — keep the tracker still and in view (first fix ~15 s)`;
+
+  let html = "";
+  for (const t of trackers.values()) {
+    const p = t.pose ? t.pose.p : [NaN, NaN, NaN];
+    const e = t.pose ? eulerZYX(t.pose.q) : [NaN, NaN, NaN];
+    const a = t.acc || [NaN, NaN, NaN];
+    const an = Math.hypot(...a);
+    const sp = t.vel ? Math.hypot(...t.vel.v) : NaN;
+    const litCount = t.lit == null ? null : Object.values(t.lit).map(ax => new Set([...ax[0], ...ax[1]]).size);
+    const dh = (health.devices || {})[t.dev];
+    const [dLabel, dColor] = STATE_LABEL[dh && dh.state] || ["–", "var(--muted)"];
+    const dWhy = dh && dh.state === "lost_tracking" && dh.reason ? ` (${dh.reason})` : "";
+    html += `<div class="kv" style="margin-bottom:8px">
+      <span><span class="dot" style="background:#${t.color.toString(16).padStart(6, "0")}"></span>${t.dev}</span><span>${t.poses} poses</span>
+      <span>x y z cm</span><span>${fmt(p[0] * 100)}${fmt(p[1] * 100)}${fmt(p[2] * 100)}</span>
+      <span>yaw pit rol °</span><span>${fmt(e[0])}${fmt(e[1])}${fmt(e[2])}</span>
+      <span>speed</span><span>${fmt(sp * 100)} cm/s</span>
+      <span>accel g (${t.accFrame || "–"})</span><span>${fmt(a[0], 3)}${fmt(a[1], 3)}${fmt(a[2], 3)}</span>
+      <span>|accel|</span><span>${fmt(an, 3)} g</span>
+      <span title="Angle between the accel rotated into the world by the optical pose and world +z. ~0 when still if the world frame really is level.">accel vs world up</span><span>${fmt(t.upErr, 1)}°</span>
+      <span>tracking</span><span><span class="dot" style="background:${dColor}"></span>${dLabel}${dWhy}</span>
+      <span>sensors lit</span><span>${litCount == null ? NA : litCount.length ? litCount.join(" / ") : "none"}</span>
+      ${dh && dh.hits_used != null ? `<span>solver light hits</span><span>${dh.hits_used} in the last pose</span>` : ""}
+      <span>buttons</span><span>${t.buttons && t.buttons.names.length
+        ? t.buttons.names.map(n => `<span class="chip">${n}</span>`).join("")
+        : '<span class="chip off">none held</span>'} <span style="color:var(--muted)">${t.buttons ? t.buttons.presses + " presses" : ""}</span></span>
+      <span>trail bounds</span><span>${t.box.isEmpty() ? "–" : t.box.getSize(tmpV).toArray().map(v => (v * 100).toFixed(0)).join(" × ") + " cm"}</span>
+    </div>`;
+  }
+  $("k-trackers").innerHTML = html || '<div class="kv"><span>none yet</span><span></span></div>';
+
+  html = "";
+  const ls = [...lighthouses.values()].filter(l => l.rec);
+  for (const l of ls) {
+    const p = l.rec.p;
+    // Tilt: angle between the station's facing axis (-Z) and the horizontal plane.
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(l.root.quaternion);
+    const tilt = THREE.MathUtils.radToDeg(Math.asin(Math.max(-1, Math.min(1, fwd.z))));
+    const heading = THREE.MathUtils.radToDeg(Math.atan2(fwd.y, fwd.x));
+    html += `<div class="kv" style="margin-bottom:8px">
+      <span>LH ${l.id}</span><span>mode ${l.rec.mode}</span>
+      <span>x y z cm</span><span>${fmt(p[0] * 100)}${fmt(p[1] * 100)}${fmt(p[2] * 100)}</span>
+      <span>facing</span><span>${fmt(heading)}° az ${fmt(tilt)}° el</span>`;
+    const t = trackers.values().next().value;
+    if (t && t.pose) html += `<span>to ${t.dev}</span><span>${fmt(l.root.position.distanceTo(t.root.position) * 100)} cm</span>`;
+    html += `</div>`;
+  }
+  for (let i = 0; i < ls.length; i++) for (let j = i + 1; j < ls.length; j++) {
+    const d = ls[i].root.position.distanceTo(ls[j].root.position);
+    const ang = THREE.MathUtils.radToDeg(ls[i].root.quaternion.angleTo(ls[j].root.quaternion));
+    html += `<div class="kv"><span>LH ${ls[i].id} ↔ ${ls[j].id}</span><span>${fmt(d * 100)} cm, ${fmt(ang)}°</span></div>`;
+  }
+  $("k-lh").innerHTML = html || '<div class="kv"><span>none solved yet</span><span></span></div>';
+}
+
+let hudT = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  updateScene();
+  if (fitAnim) {
+    const k = Math.min(1, (now - fitAnim.t0) / fitAnim.dur), e = 1 - Math.pow(1 - k, 3);
+    controls.target.lerpVectors(fitAnim.fromT, fitAnim.target, e);
+    camera.position.lerpVectors(fitAnim.fromP, fitAnim.pos, e);
+    if (k >= 1) fitAnim = null;
+  } else if (following) {
+    // Track the growing workspace smoothly.
+    const f = fitTarget();
+    if (f) { controls.target.lerp(f.target, 0.08); camera.position.lerp(f.pos, 0.08); }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  labels.render(scene, camera);
+  if (now - hudT > 100) { hudT = now; updateHud(); }
+}
+requestAnimationFrame(frame);
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  labels.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
