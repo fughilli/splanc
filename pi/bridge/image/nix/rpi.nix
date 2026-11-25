@@ -45,6 +45,19 @@
       "logo.nologo"
     ]
     ++ lib.optional (config.security.lsm != [ ]) "lsm=${lib.concatStringsSep "," config.security.lsm}"
+    # Boot time to the splash (measured on a Pi 3A+, 2026-11-24: /init at 1.06 s
+    # instead of 1.74 s). The bcm2835 mailbox probe takes ~0.5 s and every driver
+    # that asks the firmware something waits behind it: probe those in the
+    # background so stage 1 (and the splash) starts without them. Not
+    # driver_async_probe=*: that reorders the gpiochips (the firmware's expander
+    # became gpiochip0, and the HAT keys broke; hat.use_soc_gpiochip now copes).
+    # actpwr_trig_init waits ~0.24 s on the firmware for the PWR LED trigger
+    # (the LED stays on as the firmware left it); scx_init (sched_ext, unused)
+    # takes ~0.12 s.
+    ++ [
+      "driver_async_probe=dwc2,raspberrypi-cpufreq,leds-gpio,bcm2835_vchiq"
+      "initcall_blacklist=actpwr_trig_init,scx_init"
+    ]
     ++ config.splancBridge.kernelParams
   );
 
@@ -67,7 +80,69 @@
     };
     options.camera_auto_detect.enable = false;
   };
+  # The USB controller of boards with nothing behind it on the board (Pi 3A+,
+  # board-type 0x0e; Zero 2 W, 0x12): the mainline dwc2 driver, probed in the
+  # background, instead of the downstream dwc_otg, whose init holds the boot for
+  # ~0.9 s. Pi 3B/3B+ keep dwc_otg (their Ethernet sits behind it, and dwc_otg's
+  # FIQ handles that hub's split transactions better).
+  hardware.raspberry-pi.extra-config = lib.mkAfter ''
+    [board-type=0x0e]
+    dtoverlay=dwc2,dr_mode=host
+    [board-type=0x12]
+    dtoverlay=dwc2,dr_mode=host
+    [all]
+  '';
   hardware.i2c.enable = true;
+
+  # A small initrd: the firmware reads it at ~17 MB/s before the kernel can
+  # start (12.3 MB = 0.73 s on a Pi 3A+), so every MB is ~60 ms before the
+  # splash. NixOS's defaults + the generic installer profile list ~150 modules
+  # (SATA, PATA, RAID, VMware, Allwinner, Rockchip...) and LVM's tools; a Pi
+  # bridge roots on the SD card (or USB storage) with ext4.
+  boot.initrd.includeDefaultModules = false;
+  boot.initrd.availableKernelModules = lib.mkForce [
+    "mmc_block"
+    "ext4"
+    "usb_storage"
+    "uas"
+    "sd_mod"
+    "usbhid"
+    "hid_generic"
+    "vc4" # KMS early: the splash's HDMI output
+    "pcie_brcmstb" # Pi 4/5: PCIe (USB on the Pi 4, NVMe on the Pi 5)
+    "reset-raspberrypi"
+    "xhci_pci"
+    "nvme"
+  ];
+  services.lvm.enable = false;
+
+  # A slimmer kernel.img: the firmware reads it at ~17 MB/s before the kernel
+  # starts (34.6 MB = 2.0 s on a Pi 3A+; gzip is no help, the firmware's
+  # decompression costs more than it saves). Config-only, on top of the Pi
+  # kernel (so it is built here and pushed to the fugstudio cache):
+  #   - no BTF (5.2 MB of the image). It only serves BPF programs that need
+  #     kernel type info; the bridge runs none. systemd's RestrictFileSystems=
+  #     (BPF LSM) then logs and carries on; IPAddressDeny= etc. don't need BTF.
+  #   - no sched_ext (needs BTF; unused, and its init cost ~0.12 s);
+  #   - kallsyms for functions only (initcall_blacklist and stack traces work);
+  #   - no Xen guest support.
+  #   - the splash's SPI built in (spi-bcm2835 + spidev): stage 1 doesn't wait
+  #     for module loads before the OLED can start (the initrd's modprobe of a
+  #     built-in is a no-op; the Pi 5's spi-dw-mmio stays a module).
+  boot.kernelPatches = [
+    {
+      name = "splanc-bridge-slim";
+      patch = null;
+      extraStructuredConfig = with lib.kernel; {
+        DEBUG_INFO_BTF = lib.mkForce no;
+        SCHED_CLASS_EXT = lib.mkForce no;
+        KALLSYMS_ALL = lib.mkForce no;
+        XEN = lib.mkForce no;
+        SPI_BCM2835 = lib.mkForce yes;
+        SPI_SPIDEV = lib.mkForce yes;
+      };
+    }
+  ];
 
   services.udev.extraRules = ''
     SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
