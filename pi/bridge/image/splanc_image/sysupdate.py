@@ -34,13 +34,16 @@ Boot modes (from the image's config, /etc/splanc-bridge/system-update.json):
             the boot default before the reboot. Rollback needs the new system to
             reach `confirm`; one that can't boot at all loops (no bootloader
             fallback on U-Boot/extlinux boards).
-  tryboot   Raspberry Pi 5 (nixos-raspberrypi's "kernel" loader: the firmware
-            boots nixos/default/ straight from the FAT partition, config.txt has
-            os_prefix=nixos/default/). The default entry stays the OLD system;
-            the new generation's directory is installed next to it and
-            tryboot.txt (= the new config.txt with os_prefix pointing at it) is
-            used for ONE boot (`reboot "0 tryboot"`). Any reset before the commit
-            (kernel panic -> panic=10, watchdog, power cut) boots the old system.
+  tryboot   Every Raspberry Pi (nixos-raspberrypi's "kernel" loader: the
+            firmware boots nixos/default/ straight from the FAT partition,
+            config.txt has os_prefix=nixos/default/). The default entry stays the
+            OLD system; the new generation's directory is installed next to it
+            and tryboot.txt (= the new config.txt with os_prefix pointing at it)
+            is used for ONE boot (`reboot "0 tryboot"`). Any reset before the
+            commit (kernel panic -> panic=10, watchdog, power cut) boots the old
+            system. The trial's cmdline.txt also turns hangs into panics
+            (TRIAL_KERNEL_PARAMS). A card still on U-Boot is migrated by its
+            first such release as a trial too (nix/system-update-rpi.nix).
 
 Nothing touches the running system until a release is fully downloaded and
 verified; any failure before the reboot puts the previous profile + boot entry
@@ -85,6 +88,15 @@ SPACE_MARGIN = 256 << 20
 MAX_BAD = 20
 MAX_BOOT_ATTEMPTS = 3
 NIX = ["nix", "--extra-experimental-features", "nix-command"]
+# Appended to a trial boot's cmdline.txt only (nixos/<N>-default/, which the
+# commit leaves as it is and only tryboot.txt boots): a soft lockup, a task hung
+# for 2 minutes or an RCU stall panics, and panic=10 resets the board into the
+# old system, instead of hanging with the watchdog still being petted.
+TRIAL_KERNEL_PARAMS = (
+    "softlockup_panic=1",
+    "hung_task_panic=1",
+    "rcupdate.rcu_cpu_stall_panic=1",
+)
 
 _GEN_RE = re.compile(r"^system-([0-9]+)-link$")
 
@@ -129,6 +141,13 @@ class Config:
 
 class Host:
     """Everything with a side effect outside the state dir (tests fake it)."""
+
+    def boot_id(self) -> str:
+        try:
+            with open("/proc/sys/kernel/random/boot_id", encoding="ascii") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
 
     def run(self, argv: List[str]) -> str:
         p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -272,6 +291,12 @@ class Updater:
         self.config_path = config_path
         self.cache_dir = os.path.join(state_dir, "cache")
         self.staged_root = os.path.join(state_dir, "staged-system")
+        # For the boot splash (pi/bridge/splash), which reads them from the
+        # initrd's side of the root switch, so plain text: the update being tried
+        # (a boot of anything else is the rollback: "Recovering…") and the
+        # rollback to show ("Rolled back to <version>") on the next boot.
+        self.trial_file = os.path.join(state_dir, "trial")
+        self.notice_file = os.path.join(state_dir, "splash-notice")
         self._st: Optional[dict] = None  # the state the last status() describes
 
     # ---- state -------------------------------------------------------------
@@ -413,6 +438,36 @@ class Updater:
             os.unlink(self._tryboot_txt)
         except FileNotFoundError:
             pass
+
+    def _unlink(self, path: str) -> None:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+    def _write_notice(self, version: Optional[str], this_boot: bool) -> None:
+        """ "Rolled back to <version>" for the splash: on this boot (the old system
+        is already running), or on the next one (we're about to reboot into it)."""
+        boot = (self.host.boot_id() or "next") if this_boot else "next"
+        try:
+            _write_atomic(self.notice_file, f"rolled_back {version or '-'}\n{boot}\n".encode())
+        except OSError as e:
+            _log(f"splash notice: {e}")
+
+    def age_notice(self) -> None:
+        """Every boot: a notice for "the next boot" is now for this one; one from an
+        earlier boot is gone (the splash showed it then)."""
+        try:
+            with open(self.notice_file, encoding="utf-8") as f:
+                kind, version, boot = (f.read().split() + ["", "", ""])[:3]
+        except OSError:
+            return
+        if boot == "next":
+            cur = self.host.boot_id()
+            if cur:
+                _write_atomic(self.notice_file, f"{kind} {version}\n{cur}\n".encode())
+        elif boot != self.host.boot_id():
+            self._unlink(self.notice_file)
 
     def _drop_staged_root(self) -> None:
         try:
@@ -730,6 +785,7 @@ class Updater:
             "attempts": 0,
             "fetched_paths": staged.get("fetched_paths"),
             "total_paths": staged.get("total_paths"),
+            "old_version": (st.get("current") or {}).get("version"),
             "had_default_route": self.host.has_default_route(),
             # Units already failing on the old system don't fail the new one.
             "baseline_unhealthy": self.unhealthy_units(units),
@@ -737,6 +793,7 @@ class Updater:
         # Record first: if we die half way, `confirm` on the next boot cleans up.
         st["pending"] = pending
         self.save_state(st)
+        _write_atomic(self.trial_file, (new + "\n").encode())
         self.status("installing", f"installing {pending['version']}", version=pending["version"])
         try:
             self._nix_env("--set", new)
@@ -783,6 +840,10 @@ class Updater:
         boots = resolved == new or any(os.path.realpath(os.path.dirname(i)) == new for i in inits)
         if not boots:
             raise UpdateError(f"{gen_dir}/cmdline.txt does not boot {new}")
+        args = line.split()
+        extra = [p for p in TRIAL_KERNEL_PARAMS if p not in args]
+        if extra:
+            _write_atomic(cmdline, (" ".join(args + extra) + "\n").encode())
         for name in ("kernel.img", "initrd"):
             if not os.path.isfile(os.path.join(d, name)):
                 raise UpdateError(f"{gen_dir}/{name} missing")
@@ -793,8 +854,9 @@ class Updater:
             text = tryboot_config(f.read(), gen_dir)
         _write_atomic(self._tryboot_txt, text.encode())
 
-    def _restore(self, st: dict, reason: str) -> None:
-        """Put the old generation back as the profile + boot default."""
+    def _restore(self, st: dict, reason: str, notice: Optional[str] = None) -> None:
+        """Put the old generation back as the profile + boot default. ``notice``
+        ("this" or "next" boot): tell the boot splash it was rolled back."""
         p = st["pending"]
         gens = self.generations()
         try:
@@ -817,6 +879,9 @@ class Updater:
         if (st.get("available") or {}).get("toplevel") == p["new"]:
             st["available"] = None  # never offered again
         self._drop_staged_root()
+        self._unlink(self.trial_file)
+        if notice:
+            self._write_notice(p.get("old_version"), this_boot=notice == "this")
         self._result(st, "rolled_back", reason, version=p.get("version"), toplevel=p["new"])
         st["pending"] = None
         st["staged"] = None
@@ -824,9 +889,11 @@ class Updater:
     # ---- confirm (every boot) ----------------------------------------------
 
     def confirm(self) -> int:
+        self.age_notice()
         st = self.load_state()
         p = st.get("pending")
         if not p:
+            self._unlink(self.trial_file)
             return 0
         booted = self._realpath(self.booted)
         if booted == p["new"]:
@@ -854,13 +921,14 @@ class Updater:
                 else "the update was interrupted before the new system booted"
             )
             _log(why)
-            self._restore(st, why)
+            self._restore(st, why, notice="this")
             self.save_state(st)
             self.status("rolled_back", why, version=p.get("version"))
             return 1
         _log(f"booted {booted}, which the pending update doesn't know; forgetting it")
         st["pending"] = None
         self.save_state(st)
+        self._unlink(self.trial_file)
         return 0
 
     def _commit(self, st: dict) -> int:
@@ -875,6 +943,7 @@ class Updater:
         self._install_boot(p["new"])
         self._remove_tryboot()
         self._drop_staged_root()
+        self._unlink(self.trial_file)
         st["pending"] = None
         st["staged"] = None
         st["current"] = {"toplevel": p["new"], "version": p.get("version")}
@@ -903,7 +972,7 @@ class Updater:
         p = st["pending"]
         _log(f"rolling back {p.get('version')}: {reason}")
         self.status("rolling_back", reason, version=p.get("version"))
-        self._restore(st, reason)
+        self._restore(st, reason, notice="next")
         self.save_state(st)
         self.host.reboot(tryboot=False)
         return 1

@@ -256,8 +256,9 @@ itself; installing one always takes a press on the OLED HAT.
   - A new system (**System**) restarts the Pi (about a minute without the bridge; your fixtures
     keep playing). If an app is connected through the bridge, the Pi waits until it disconnects;
     press again on **Restart now** to restart anyway. Your pairings and Wi-Fi are kept. If the new
-    system doesn't come up healthy within five minutes, the Pi goes back to the previous one by
-    itself. Only updates signed by Splanc are accepted.
+    system doesn't start, or doesn't come up healthy within five minutes, the Pi goes back to the
+    previous one by itself, and the screens say so as it starts again (**Recovering…**, then
+    **Rolled back to** and the version you're on). Only updates signed by Splanc are accepted.
 - **Without the OLED HAT**, install over SSH: `sudo splanc-system-update install` (system) or
   `sudo splanc-bridge update` (Splanc software).
 - Writing the card again with the flasher also works, but starts fresh: you pair your agents again

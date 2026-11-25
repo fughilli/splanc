@@ -16,11 +16,14 @@
 #                consumer draws with; pi/bridge/tools/vendor_fonts.py).
 #   splash       splanc-splash (pi/bridge/splash), the early boot splash the
 #                initrd starts (nix/splash.nix): one static C binary (musl) with
-#                the boot frames + stage texts baked in by
+#                the OLED boot frames + the stage texts' glyphs baked in by
 #                pi/bridge/tools/gen_splash_assets.py from splancPy's own
-#                boot_frames.bin and fonts. Its check runs it against a file sink
-#                and compares the SH1106 byte stream with luma.oled's
-#                (pi/bridge/splash/check_stream.py).
+#                boot_frames.bin and fonts, and HDMI's colour animation
+#                (gen_boot_frames.py --hdmi-out) embedded as is. Its check runs
+#                it against a file sink and compares the SH1106 byte stream
+#                with luma.oled's (pi/bridge/splash/check_stream.py), and the
+#                HDMI decoder + outro (check_hdmi.py). The same package has
+#                splanc-wdt, stage 1's watchdog pinger (nix/boot-watchdog.nix).
 #
 # luma.core / luma.oled / segno come from PyPI at exactly the versions + sha256
 # in pi/bridge/display/requirements.lock (the Pi OS installer's lockfile), so the
@@ -133,6 +136,10 @@ let
     mkdir -p $out
     PYTHONPATH=${splancPy} python3 ${../../tools/gen_splash_assets.py} \
       --frames ${splancPy}/splanc_display/boot_frames.bin --out $out/splash_assets.h
+    # HDMI's colour animation (SPLH), embedded in the binary as is.
+    python3 ${../../tools/gen_boot_frames.py} --svg ${../../../../web/public/icons/splanc.svg} \
+      --splash ${../../../../shared/brand/splash/frames.json} \
+      --out $TMPDIR/oled.bin --hdmi-out $out/boot_hdmi.bin
   '';
 
   splash = pkgsStatic.stdenv.mkDerivation {
@@ -146,8 +153,10 @@ let
     buildPhase = ''
       runHook preBuild
       $CC -std=gnu11 -O2 -Wall -Wextra -Werror -static -I${splashAssets} \
-        splanc-splash.c -o splanc-splash
-      $STRIP splanc-splash || true
+        -DSPL_HDMI_FILE='"${splashAssets}/boot_hdmi.bin"' \
+        splanc-splash.c -o splanc-splash -lm
+      $CC -std=gnu11 -O2 -Wall -Wextra -Werror -static splanc-wdt.c -o splanc-wdt
+      $STRIP splanc-splash splanc-wdt || true
       runHook postBuild
     '';
     doCheck = true;
@@ -167,10 +176,20 @@ let
       stage=$(echo "$reply" | sed -n 's/.* stage=\([0-9]*\).*/\1/p')
       fps=$(echo "$reply" | sed -n 's/.* fps=\([0-9]*\).*/\1/p')
       PYTHONPATH=${splancPy} python3 check_stream.py $TMPDIR/oled.bin "$frame" "$stage" "$fps"
+      # HDMI: the C decoder vs Python's, the stage text, the outro into the app's page.
+      mkdir -p $TMPDIR/hdmi
+      PYTHONPATH=${../../tools} python3 check_hdmi.py ./splanc-splash ${splashAssets}/boot_hdmi.bin $TMPDIR/hdmi
+      # The boot watchdog pinger: pets a stand-in device, gives up at the deadline.
+      : >$TMPDIR/wdt; : >$TMPDIR/cmdline
+      if ./splanc-wdt test $TMPDIR/wdt 0.5 $TMPDIR/cmdline; then echo "splanc-wdt: no deadline"; exit 1; fi
+      [ -s $TMPDIR/wdt ] || { echo "splanc-wdt: never pet the watchdog"; exit 1; }
+      echo splanc.wdt=0 >$TMPDIR/cmdline
+      ./splanc-wdt test $TMPDIR/wdt 0.5 $TMPDIR/cmdline
       runHook postCheck
     '';
     installPhase = ''
       install -Dm755 splanc-splash $out/bin/splanc-splash
+      install -Dm755 splanc-wdt $out/bin/splanc-wdt
     '';
     meta.mainProgram = "splanc-splash";
   };

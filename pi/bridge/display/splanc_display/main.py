@@ -326,7 +326,7 @@ class App:
         h = self.handoff
         if h is None or not h.oled or h.gpio_fd is None:
             return None
-        self.handoff = splash.Handoff(h.t0, h.stage, False, None, h.frame)
+        self.handoff = splash.Handoff(h.t0, h.stage, False, None, h.frame, h.version)
         return h.gpio_fd
 
     # --- the early boot splash ----------------------------------------------------
@@ -354,7 +354,13 @@ class App:
             max_wait=float(os.environ.get("SPLANC_DISPLAY_QUIET_MAX", splash.QUIET_MAX_SECONDS))
         )
         hdmi = self.hdmi_mode == "auto" and os.path.exists("/dev/fb0")
-        self.handoff = splash.stop(hdmi=hdmi)
+        page = self._handoff_page() if hdmi else None
+        self.handoff = splash.stop(hdmi=hdmi, page=page)
+        if page:
+            try:
+                os.unlink(page)
+            except OSError:
+                pass
         if self.handoff is None:
             log("boot splash went away before the hand-off")
             return
@@ -367,6 +373,28 @@ class App:
             f"{warm:.2f} s, {'quiet' if quiet else 'still busy'} after {waited:.1f} s: {what}; "
             f"stage {self.handoff.text!r}, OLED {'yes' if self.handoff.oled else 'no'})"
         )
+
+    def _handoff_page(self) -> Optional[str]:
+        """Our first HDMI frame, in the framebuffer's format, for the splash to open
+        HDMI into (its outro): the very page hdmi_frame() draws next."""
+        from . import fb as fbmod
+
+        info = fbmod.query_sysfs("fb0")
+        if info is None or info.bpp not in (16, 32):
+            return None
+        try:
+            from . import hat
+
+            oled = hat.detect(self.oled_mode) is not None
+        except Exception:
+            oled = False
+        path = os.path.join(
+            os.environ.get("RUNTIME_DIRECTORY", "/run/splanc-display"), "hdmi-page.fb"
+        )
+        img = render_hdmi.render(
+            self.watcher.status, (info.width, info.height), now=self.wall(), oled=oled
+        )
+        return path if splash.write_page(img, info, path) else None
 
     def _sync_fixtures(self) -> None:
         """Hand the fixture and client lists (and each detail's row count) to the menu."""
@@ -537,6 +565,10 @@ class App:
 
     def run(self) -> None:
         self.take_over_from_splash()
+        if self.handoff is not None:
+            # The panel at once (the splash just let go of it), and before the HDMI
+            # thread's first page, which shows the HAT's key hints when it's there.
+            self._open_oled()
         t = None
         if self.hdmi_mode != "off":
             t = threading.Thread(target=self._hdmi_loop, daemon=True)

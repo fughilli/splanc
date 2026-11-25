@@ -84,8 +84,12 @@ def test_splash_assets_subsample_keeps_the_timing():
         assert sub.at(k / 20).tobytes() == fr.at(k / 20).tobytes(), k
     with pytest.raises(ValueError):
         gen_splash_assets.subsample(fr, 30)  # not a divisor of 40 fps
-    text = gen_splash_assets.header(sub, ("Hi",), splash.draw_stage)
+    from splanc_display import fonts
+
+    f = splash.stage_font()
+    text = gen_splash_assets.header(sub, ("Hi",), f, fonts.ttf("sans", 26), 56)
     assert "#define SPL_FPS 20" in text and "#define SPL_LOOP_START 4" in text
+    assert "#define SPL_GLYPHS 96" in text and "spl_hdmi_glyph_bits" in text
 
 
 def test_boot_scene_is_the_splash_frame_pixel_for_pixel():
@@ -159,9 +163,44 @@ def test_renderer_draws_the_stage_text_only_in_the_loop():
 
 
 def test_parse_reply():
-    assert splash.parse_reply("ok t0=1500000000 stage=2 oled=1 frame=77\n") == (1.5, 2, True, 77)
+    assert splash.parse_reply("ok t0=1500000000 stage=2 oled=1 frame=77\n") == (
+        1.5,
+        2,
+        True,
+        77,
+        "",
+    )
+    r = splash.parse_reply("ok t0=1 stage=6 oled=0 frame=1 fps=60 ver=1.2.0\n")
+    assert r[1] == splash.ROLLED_BACK and r[4] == "1.2.0"
     with pytest.raises(ValueError):
         splash.parse_reply("no")
+
+
+def test_recovery_stage_texts():
+    assert splash.stage_text(splash.RECOVERING) == "Recovering…"
+    assert splash.stage_text(splash.ROLLED_BACK, "1.2.0") == "Rolled back to 1.2.0"
+    assert splash.stage_text(splash.ROLLED_BACK) == "Rolled back"
+    assert splash.stage_text(99) == ""
+    h = splash.Handoff(0.0, splash.ROLLED_BACK, False, None, 0, "1.3.1")
+    assert h.text == "Rolled back to 1.3.1"
+
+
+def test_splash_text_matches_draw_stage():
+    """The C splash draws stage texts glyph by glyph (gen_splash_assets.compose_oled
+    is its algorithm): pixel for pixel what splanc-display's draw_stage draws."""
+    import gen_splash_assets as gsa
+
+    f = splash.stage_font()
+    glyphs = gsa.oled_glyphs(f)
+    texts = list(splash.STAGES) + [
+        splash.stage_text(splash.ROLLED_BACK, v)
+        for v in ("1.2.0", "1.10.3-rc.2", "0.0.0-dev.g1a2b3c4d")
+    ]
+    for text in texts:
+        want = Image.new("1", (128, 64), 0)
+        splash.draw_stage(want, text)
+        got = gsa.compose_oled(text, glyphs, 128, 64, splash.STAGE_BOTTOM - f.height)
+        assert got.tobytes() == want.tobytes(), text
 
 
 class FakeSplash:
