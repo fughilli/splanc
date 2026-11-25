@@ -101,7 +101,10 @@ def _chip_info(path: str):
     try:
         buf = bytearray(68)  # name[32], label[32], u32 lines
         fcntl.ioctl(fd, _GPIO_GET_CHIPINFO_IOCTL, buf)
-        return bytes(buf[32:64]).split(b"\0")[0].decode(errors="replace"), struct.unpack_from("<I", buf, 64)[0]
+        return (
+            bytes(buf[32:64]).split(b"\0")[0].decode(errors="replace"),
+            struct.unpack_from("<I", buf, 64)[0],
+        )
     except OSError:
         return None
     finally:
