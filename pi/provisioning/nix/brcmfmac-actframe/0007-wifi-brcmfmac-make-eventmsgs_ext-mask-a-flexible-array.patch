@@ -1,0 +1,38 @@
+wifi: brcmfmac: make eventmsgs_ext mask a flexible array (6.12)
+
+struct eventmsgs_ext (added by the non-upstream Cypress "support DS1
+exit firmware re-download" patch carried in rpi-6.12.y) ends in a
+one-element placeholder array, u8 mask[1], but is used as a variable
+length message: brcmf_fweh_activate_events() allocates
+EVENTMSGS_EXT_STRUCT_SIZE (offsetof(mask[0]), 4) + event_mask_len and
+copies event_mask_len bytes into mask. With CONFIG_FORTIFY_SOURCE the
+compiler sizes mask as 1 byte, so every boot warns:
+
+  memcpy: detected field-spanning write (size 27) of single field
+  "eventmask_msg->mask" at .../brcmfmac/fweh.c:466 (size 1)
+  WARNING: ... brcmf_fweh_activate_events+0x2cc/0x2f8 [brcmfmac]
+
+The write is in bounds (31-byte buffer, bytes 4..30 written; 27 is
+DIV_ROUND_UP(BRCMF_WCC_E_LAST = 213, 8)), so this is a false positive.
+Declare mask as a flexible array member, as rpi-6.18.y's version of
+the same patch and upstream's struct brcmf_eventmsgs_ext
+(cyw/fwil_types.h, 66f909308a7c, v6.16) already do. Every user sizes
+the message with EVENTMSGS_EXT_STRUCT_SIZE (offsetof, unchanged) and
+none uses sizeof(struct eventmsgs_ext), so the layout and message
+sizes are unchanged.
+
+Local to Splanc's Pi images (pi/provisioning/nix/brcmfmac-actframe.nix),
+for the 6.12 Pi kernels only. Drop it when the image kernel moves to
+rpi-6.18.y or later. See raspberrypi/linux#6952.
+
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.h
+@@ -304,7 +304,7 @@
+ 	u8	command;
+ 	u8	len;
+ 	u8	maxgetsize;
+-	u8	mask[1];
++	u8	mask[];
+ };
+ 
+ typedef int (*brcmf_fweh_handler_t)(struct brcmf_if *ifp,

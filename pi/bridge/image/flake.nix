@@ -75,6 +75,11 @@
             sbc-deploy.nixosModules.spi
             ./nix/rpi.nix
             ./nix/system-update-rpi.nix
+            # The Pi kernel's brcmfmac with Splanc's patch series (only the driver is
+            # rebuilt): the mesh action-frame patches the players carry, and 0007,
+            # the fix for the boot-time FORTIFY warning in brcmf_fweh_activate_events.
+            # Pi-only: the QEMU checks run a stock kernel the series isn't for.
+            ../../provisioning/nix/brcmfmac-actframe.nix
             { splancBridge.board = key; }
           ] ++ bridgeModules;
         };
