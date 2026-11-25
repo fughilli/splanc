@@ -1,13 +1,12 @@
 //! The local-time seam.
 //!
 //! TODO(D-562): time zones and DST are deliberately NOT implemented here yet.
-//! The owner decision on how the device learns its zone (a POSIX TZ string the
-//! app maps from the phone's IANA zone, an offset plus the next DST change
-//! pushed on connect, or UTC only) is pending as desk item D-562. Whatever is
-//! chosen plugs in as another [`LocalOffset`] implementation (for the POSIX
-//! option: a `PosixTz` parser with gap/overlap rules and tzdata vector tests),
-//! and nothing else in this crate needs to change: the wall clock itself is
-//! always UTC, and local time is only ever derived at the edge with
+//! Desk item D-562 settled the approach: the device stores a POSIX TZ rule
+//! that the app derives from the phone's IANA zone, so DST stays right while
+//! the lamp is offline. That lands as a follow-up `PosixTz` implementation of
+//! [`LocalOffset`] (the parser, gap/overlap rules for local -> UTC, and tzdata
+//! vector tests). Nothing else in this crate needs to change: the wall clock
+//! itself is always UTC, and local time is only ever derived at the edge with
 //! [`to_local`].
 
 use crate::civil::{DateTime, US_PER_SEC};

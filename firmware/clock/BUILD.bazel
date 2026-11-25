@@ -4,8 +4,8 @@ selection, step > 1 s / slew below, sanity bounds, crystal-rate fit), the
 monotonic step-back guard and the soft-reset carry-over record.
 
 no_std, zero-dependency, host-tested only for now: the firmware wiring (esp_timer
-base, lm_clock_observe shift, protocol arms) is a later PR. Time zones are out of
-scope until owner decision D-562 (the LocalOffset seam in src/local.rs)."""
+base, lm_clock_observe shift, protocol arms) is a later PR. Time zones (D-562: a
+stored POSIX TZ rule) are a follow-up behind the LocalOffset seam in src/local.rs."""
 
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")

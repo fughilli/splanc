@@ -12,7 +12,7 @@
 //!   jumps back by multiples of 2^24 systimer ticks).
 //! - [`carry`]: the CRC-guarded record that carries the time over a soft reset.
 //! - [`local`]: the local-time seam ([`LocalOffset`]). Time zones and DST are
-//!   NOT implemented yet (TODO(D-562), owner decision pending).
+//!   NOT implemented yet (TODO(D-562): a stored POSIX TZ rule, next).
 //!
 //! `no_std`, zero-dependency, never allocates. Nothing here touches hardware:
 //! the firmware wiring (esp_timer base, the `lm_clock_observe` shift, the
