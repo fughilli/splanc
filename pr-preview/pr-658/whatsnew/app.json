@@ -13,154 +13,6 @@
     {
      "t": "h2",
      "c": [
-      "Feature previews"
-     ]
-    },
-    {
-     "t": "h3",
-     "c": [
-      "Set up AI in one place"
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "img",
-       "a": {
-        "src": "media/fef9950b570be319da66.gif",
-        "alt": "Set up AI in one place",
-        "width": 280
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      "Model setup compares the AI options side by side: free OpenRouter models, Splanc AI credits, or your own key. Each lists its cost, quality, limits and privacy. (",
-      {
-       "t": "a",
-       "a": {
-        "href": "https://github.com/fughilli/splanc/pull/591"
-       },
-       "c": [
-        "#591"
-       ]
-      },
-      ") · ",
-      {
-       "t": "a",
-       "a": {
-        "href": "https://github.com/fughilli/splanc/releases/download/app-v1.17.0/ai-model-setup-phone.mp4"
-       },
-       "c": [
-        "phone video (MP4)"
-       ]
-      }
-     ]
-    },
-    {
-     "t": "h3",
-     "c": [
-      "AI settings have their own tab"
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "img",
-       "a": {
-        "src": "media/0d3caf99e868f6c7d96b.gif",
-        "alt": "AI settings have their own tab",
-        "width": 280
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      "Pick where effect generation runs (cloud, a local server, or in the browser) from Settings → AI, available from anywhere in the app. (",
-      {
-       "t": "a",
-       "a": {
-        "href": "https://github.com/fughilli/splanc/pull/591"
-       },
-       "c": [
-        "#591"
-       ]
-      },
-      ") · ",
-      {
-       "t": "a",
-       "a": {
-        "href": "https://github.com/fughilli/splanc/releases/download/app-v1.17.0/ai-settings-tab-phone.mp4"
-       },
-       "c": [
-        "phone video (MP4)"
-       ]
-      },
-      " · ",
-      {
-       "t": "a",
-       "a": {
-        "href": "https://github.com/fughilli/splanc/releases/download/app-v1.17.0/ai-settings-tab-desktop.mp4"
-       },
-       "c": [
-        "desktop video (MP4)"
-       ]
-      }
-     ]
-    },
-    {
-     "t": "h3",
-     "c": [
-      "What's new, after every update"
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "img",
-       "a": {
-        "src": "media/d53a95a8b08e9a5d80ff.gif",
-        "alt": "What's new, after every update",
-        "width": 280
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      "After an update a sparkle appears in the corner. Tap it for the release notes since your last version, with a picker for the app, firmware and bridge. (",
-      {
-       "t": "a",
-       "a": {
-        "href": "https://github.com/fughilli/splanc/pull/591"
-       },
-       "c": [
-        "#591"
-       ]
-      },
-      ") · ",
-      {
-       "t": "a",
-       "a": {
-        "href": "https://github.com/fughilli/splanc/releases/download/app-v1.17.0/whats-new-phone.mp4"
-       },
-       "c": [
-        "phone video (MP4)"
-       ]
-      }
-     ]
-    },
-    {
-     "t": "h2",
-     "c": [
       "What's Changed"
      ]
     },
@@ -239,182 +91,9 @@
        ]
       }
      ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "img",
-       "a": {
-        "src": "media/e006efcc0ee3dbd767f1.jpg",
-        "alt": "ai model setup phone"
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "video",
-       "a": {
-        "src": "media/9dda21fc64a63bfa1f80.mp4",
-        "controls": true,
-        "muted": true,
-        "playsinline": true
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "video",
-       "a": {
-        "src": "media/69e787fb3866f4756ab6.webm",
-        "controls": true,
-        "muted": true,
-        "playsinline": true
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "img",
-       "a": {
-        "src": "media/d5718f33dc0ca8ed1ded.gif",
-        "alt": "ai settings tab desktop"
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "img",
-       "a": {
-        "src": "media/e5a6c11a4cd3ea86e8d7.jpg",
-        "alt": "ai settings tab desktop"
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "video",
-       "a": {
-        "src": "media/318cf03896fde04eadbb.mp4",
-        "controls": true,
-        "muted": true,
-        "playsinline": true
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "video",
-       "a": {
-        "src": "media/781f02ea922b1ab850fc.webm",
-        "controls": true,
-        "muted": true,
-        "playsinline": true
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "img",
-       "a": {
-        "src": "media/c7d88f2216de573ce787.jpg",
-        "alt": "ai settings tab phone"
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "video",
-       "a": {
-        "src": "media/6d8112c2d0ee1f2c9307.mp4",
-        "controls": true,
-        "muted": true,
-        "playsinline": true
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "video",
-       "a": {
-        "src": "media/8f44581df6f33aa626c5.webm",
-        "controls": true,
-        "muted": true,
-        "playsinline": true
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "img",
-       "a": {
-        "src": "media/cf3571022060ffdd7720.jpg",
-        "alt": "whats new phone"
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "video",
-       "a": {
-        "src": "media/7e879a83fc0ad4587a6c.mp4",
-        "controls": true,
-        "muted": true,
-        "playsinline": true
-       }
-      }
-     ]
-    },
-    {
-     "t": "p",
-     "c": [
-      {
-       "t": "video",
-       "a": {
-        "src": "media/2f4104caf5fe506ce545.webm",
-        "controls": true,
-        "muted": true,
-        "playsinline": true
-       }
-      }
-     ]
     }
    ],
    "media": [
-    "media/0d3caf99e868f6c7d96b.gif",
     "media/2f4104caf5fe506ce545.webm",
     "media/318cf03896fde04eadbb.mp4",
     "media/69e787fb3866f4756ab6.webm",
@@ -425,11 +104,72 @@
     "media/9dda21fc64a63bfa1f80.mp4",
     "media/c7d88f2216de573ce787.jpg",
     "media/cf3571022060ffdd7720.jpg",
-    "media/d53a95a8b08e9a5d80ff.gif",
-    "media/d5718f33dc0ca8ed1ded.gif",
     "media/e006efcc0ee3dbd767f1.jpg",
-    "media/e5a6c11a4cd3ea86e8d7.jpg",
-    "media/fef9950b570be319da66.gif"
+    "media/e5a6c11a4cd3ea86e8d7.jpg"
+   ],
+   "clips": [
+    {
+     "id": "ai-model-setup",
+     "title": "Set up AI in one place",
+     "summary": "Model setup compares the AI options side by side: free OpenRouter models, Splanc AI credits, or your own key. Each lists its cost, quality, limits and privacy.",
+     "prs": [
+      591
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/9dda21fc64a63bfa1f80.mp4",
+       "webm": "media/69e787fb3866f4756ab6.webm",
+       "poster": "media/e006efcc0ee3dbd767f1.jpg",
+       "width": 600,
+       "height": 1298
+      }
+     ]
+    },
+    {
+     "id": "ai-settings-tab",
+     "title": "AI settings have their own tab",
+     "summary": "Pick where effect generation runs (cloud, a local server, or in the browser) from Settings → AI, available from anywhere in the app.",
+     "prs": [
+      591
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/6d8112c2d0ee1f2c9307.mp4",
+       "webm": "media/8f44581df6f33aa626c5.webm",
+       "poster": "media/c7d88f2216de573ce787.jpg",
+       "width": 600,
+       "height": 1298
+      },
+      {
+       "framing": "desktop",
+       "mp4": "media/318cf03896fde04eadbb.mp4",
+       "webm": "media/781f02ea922b1ab850fc.webm",
+       "poster": "media/e5a6c11a4cd3ea86e8d7.jpg",
+       "width": 1120,
+       "height": 700
+      }
+     ]
+    },
+    {
+     "id": "whats-new",
+     "title": "What's new, after every update",
+     "summary": "After an update a sparkle appears in the corner. Tap it for the release notes since your last version, with a picker for the app, firmware and bridge.",
+     "prs": [
+      591
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/7e879a83fc0ad4587a6c.mp4",
+       "webm": "media/2f4104caf5fe506ce545.webm",
+       "poster": "media/cf3571022060ffdd7720.jpg",
+       "width": 600,
+       "height": 1298
+      }
+     ]
+    }
    ]
   },
   {

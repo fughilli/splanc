@@ -233,9 +233,11 @@
 <li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release-clips.html">Feature-preview clips</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
@@ -255,6 +257,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -326,6 +329,37 @@
 <h1>What’s new<a class="headerlink" href="#what-s-new" title="Link to this heading">¶</a></h1>
 <p>Notable changes, newest first. Each entry links the PRs and the doc that covers
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
+<section id="november-2026">
+<h2>November 2026<a class="headerlink" href="#november-2026" title="Link to this heading">¶</a></h2>
+<section id="effect-language-state-initial-values-and-init">
+<h3>Effect language: state initial values and <code class="docutils literal notranslate"><span class="pre">init()</span></code><a class="headerlink" href="#effect-language-state-initial-values-and-init" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">float</span> <span class="pre">level</span> <span class="pre">=</span> <span class="pre">0.5;</span></code></strong> gives a state variable its starting value
+(scalars, vectors, matrices). The value is a constant (<code class="docutils literal notranslate"><span class="pre">0.5</span></code>, <code class="docutils literal notranslate"><span class="pre">vec3(0.1,</span> <span class="pre">0.2,</span> <span class="pre">0.3)</span></code>);
+starting values that come from a uniform or <code class="docutils literal notranslate"><span class="pre">time</span></code> go in <code class="docutils literal notranslate"><span class="pre">init()</span></code>. A state
+without one still starts at zero.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">init()</span> <span class="pre">{</span> <span class="pre">...</span> <span class="pre">}</span></code></strong> runs once when the effect loads, before the first
+<code class="docutils literal notranslate"><span class="pre">update()</span></code>: seed arrays and agents there instead of a hand-rolled
+<code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">bool</span> <span class="pre">inited;</span></code> flag.</p></li>
+<li><p>Plain bytecode, no firmware update needed: it runs the same on the device,
+the JIT and the editor preview, on old firmware too.</p></li>
+<li><p>Details: <a class="reference internal" href="../EFFECTS.html#state-initialisation"><span class="std std-ref">EFFECTS.md § State initialisation</span></a>.</p></li>
+</ul>
+</section>
+<section id="effects-stored-on-the-device">
+<h3>Effects stored on the device<a class="headerlink" href="#effects-stored-on-the-device" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>A player keeps up to 8 compiled effects on its own flash.</strong> <strong>Store on device</strong>
+in the effect editor puts one there without running it. <strong>Device settings →
+Stored effects</strong> lists them, opens one (it plays, its uniforms appear as live
+controls, and the device resumes it on boot) or deletes one. New firmware
+feature <code class="docutils literal notranslate"><span class="pre">effect_store</span></code>.</p></li>
+<li><p>Shows that live on the fixture don’t need the phone’s library to come back.
+This is how demo effects get pre-installed on a fixture.</p></li>
+<li><p>Details: <a class="reference internal" href="design/effect-store.html"><span class="std std-doc">effect-store.md</span></a>.</p></li>
+</ul>
+</section>
+</section>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
 <section id="heavy-effects-no-longer-lock-players-off-the-network-1-12-4">
@@ -1066,6 +1100,11 @@ the way it is.</p></li>
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
+<li><a class="reference internal" href="#november-2026">November 2026</a><ul>
+<li><a class="reference internal" href="#effect-language-state-initial-values-and-init">Effect language: state initial values and <code class="docutils literal notranslate"><span class="pre">init()</span></code></a></li>
+<li><a class="reference internal" href="#effects-stored-on-the-device">Effects stored on the device</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
 <li><a class="reference internal" href="#heavy-effects-no-longer-lock-players-off-the-network-1-12-4">Heavy effects no longer lock players off the network (1.12.4)</a></li>
 <li><a class="reference internal" href="#wi-fi-rejoin-the-long-absence-slow-down-is-opt-in">Wi-Fi rejoin: the long-absence slow-down is opt-in</a></li>
