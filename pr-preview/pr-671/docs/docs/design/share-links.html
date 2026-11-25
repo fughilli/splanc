@@ -426,7 +426,7 @@ link can’t be enforced against someone who keeps the bytes.</p></li>
 everything; the sender can turn it off. <code class="docutils literal notranslate"><span class="pre">fixture</span></code> links open by themselves unless the
 sender turns the code on.</p></li>
 <li><p><strong>Delegated admins instead of copying the key</strong> (needs firmware). Decided (2026-11-24):
-build it; see “Revocable access” below. The owner’s admin key
+built; see “Revocable access” below. The owner’s admin key
 signs a sub-admin certificate <code class="docutils literal notranslate"><span class="pre">{pubkey,</span> <span class="pre">rights,</span> <span class="pre">not_after}</span></code>, and members accept grants from
 it until <code class="docutils literal notranslate"><span class="pre">not_after</span></code> or until a revocation order names it. The link then carries the
 receiver’s <em>own</em> key (or the receiver sends back its public key) instead of the owner’s
@@ -442,6 +442,47 @@ reports the opened link (<code class="docutils literal notranslate"><span class=
 as the route. Android needs <code class="docutils literal notranslate"><span class="pre">assetlinks.json</span></code> plus an intent filter once there is an
 Android build; the installed PWA on Android already takes links in its scope.</p></li>
 </ol>
+</section>
+<section id="revocable-access">
+<h2>Revocable access<a class="headerlink" href="#revocable-access" title="Link to this heading">¶</a></h2>
+<p>Built (owner decision 2026-11-24): firmware #655, app on <code class="docutils literal notranslate"><span class="pre">agent/share-revocable</span></code>.</p>
+<p><strong>Sharing.</strong> “Share admin access” now asks what kind of access to give:</p>
+<ul class="simple">
+<li><p><strong>Access you can take back</strong> (the default). The sender says who it’s for and for how
+long: 1 day, 1 week, 30 days (the default) or until revoked. The owner’s app makes a
+fresh delegate key, and its admin key signs a certificate (<code class="docutils literal notranslate"><span class="pre">Delegation</span></code>, 138 B:
+<code class="docutils literal notranslate"><span class="pre">&quot;SMdeleg1&quot;</span> <span class="pre">‖</span> <span class="pre">mesh</span> <span class="pre">‖</span> <span class="pre">delegate</span> <span class="pre">key</span> <span class="pre">‖</span> <span class="pre">not_after</span></code>, mesh seconds, 0 = until revoked). The
+link carries the delegate’s secret, the certificate, the owner’s admin public key, the
+site secret and the roster. It carries no provisioner tokens. The person is listed under
+“People with access” only once the link is actually shared or copied.</p></li>
+<li><p><strong>Full admin</strong>: the admin secret itself, as before. It can’t be taken back.</p></li>
+</ul>
+<p><strong>On the delegate’s phone</strong> the mesh has role <code class="docutils literal notranslate"><span class="pre">delegate</span></code>. Its app signs grants with the
+delegate key; a grant names the delegate (<code class="docutils literal notranslate"><span class="pre">T_GRANT_D</span></code>) and never outlives the certificate,
+which <code class="docutils literal notranslate"><span class="pre">MeshUnlock.delegation</span></code> carries. The delegate can add, remove and control fixtures.
+It can’t block fixtures (rotation orders need the admin key), back the mesh up or share it
+on. A delegate link can’t replace a phone’s full admin copy of the same mesh, and a
+certificate that doesn’t verify under the stated owner key is refused.</p>
+<p><strong>Firmware.</strong> Members verify the certificate once, on the low-priority crypto task. It
+travels on its own, ahead of the grant: the two together don’t fit a 192 B packet. A member
+missing it asks with the existing <code class="docutils literal notranslate"><span class="pre">Request</span></code>. Refused: a grant that outlives its
+certificate, an expired certificate, a delegate on the revocation list, and a delegate
+renewing the admin’s session. The gateway checks both signatures at unlock.</p>
+<p><strong>Revoking.</strong> “Revoke” under People with access is the owner’s key rotation with the
+delegate’s key hash on the revocation list, the same order “Block it for good” sends. On
+every fixture, <code class="docutils literal notranslate"><span class="pre">Stack::install</span></code> drops the delegate’s certificate and sessions; its gateway
+drops the gateway session and every connection holding it, the detached slot too. The
+rotation also changes the site secret, so the revoked person can’t provision new fixtures.
+Fixtures that are off at the time miss the new keys and need adding again, as with a
+block.</p>
+<p><strong>Limits.</strong></p>
+<ul class="simple">
+<li><p>Revoked delegates share the 8-entry revocation list with blocked fixtures. When a rotation
+starts a fresh list (D-443), the app carries along every revoked delegate that could
+still sign (<code class="docutils literal notranslate"><span class="pre">keepRevoked</span></code>), or it would work again. An order carries at most 4 hashes,
+so a delegate that never expires holds a slot for good. That’s why 30 days is the default.</p></li>
+<li><p>Expiry is in mesh time, so setting one needs a connected fixture.</p></li>
+</ul>
 </section>
 <section id="the-wider-social-feature-set">
 <h2>The wider social feature set<a class="headerlink" href="#the-wider-social-feature-set" title="Link to this heading">¶</a></h2>
@@ -520,6 +561,7 @@ one fixture to a third phone and take it out of the mesh with only that token.</
 <li><a class="reference internal" href="#what-each-kind-carries">What each kind carries</a></li>
 <li><a class="reference internal" href="#security-plainly">Security, plainly</a></li>
 <li><a class="reference internal" href="#decisions-for-the-owner">Decisions for the owner</a></li>
+<li><a class="reference internal" href="#revocable-access">Revocable access</a></li>
 <li><a class="reference internal" href="#the-wider-social-feature-set">The wider social feature set</a></li>
 <li><a class="reference internal" href="#follow-ups">Follow-ups</a></li>
 </ul>
