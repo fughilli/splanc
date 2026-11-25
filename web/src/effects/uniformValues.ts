@@ -26,7 +26,11 @@ export function componentRanges(u: FxUniform): Range[] | null {
     switch (u.ui.kind) {
       case "slider":
       case "matrix":
+      case "vector":
         r = { min: u.ui.min, max: u.ui.max };
+        break;
+      case "direction":
+        r = { min: -1, max: 1 };
         break;
       case "color":
       case "toggle":

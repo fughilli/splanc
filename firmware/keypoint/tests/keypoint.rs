@@ -301,3 +301,44 @@ fn matrix_record_round_trip() {
     for_each_value(&buf[..n], |_, v| widths.push(v.len())).unwrap();
     assert_eq!(widths, vec![4, 16]);
 }
+
+// --- vector / direction kinds (D-541 PR 4, .fxb format 2) ---------------------
+
+const VEC: &[u8] = br#"[{"name":"wind","slot":0,"width":2,"ui":{"kind":"vector","min":-2,"max":2,"step":0},"default":[0,0],"min":-2,"max":2},{"name":"sun","slot":2,"width":3,"ui":{"kind":"direction"},"default":[0,1,0],"min":-1,"max":1},{"name":"later","slot":5,"width":2,"ui":{"kind":"from_the_future"},"default":[0,0],"min":-1,"max":1}]"#;
+
+#[test]
+fn vector_and_direction_kinds_parse() {
+    let r = Rules::parse(VEC);
+    let rs = r.rules();
+    assert_eq!((rs[0].kind, rs[0].width, rs[0].min, rs[0].max), (Kind::Vector, 2, -2.0, 2.0));
+    assert_eq!((rs[1].kind, rs[1].width, rs[1].min, rs[1].max), (Kind::Direction, 3, -1.0, 1.0));
+    // A kind this firmware doesn't know is still tracked, as a plain lerp
+    // (what format-1 firmware did with "vector"/"direction").
+    assert_eq!(rs[2].kind, Kind::Other);
+}
+
+#[test]
+fn vector_lerps_and_direction_stays_unit_length() {
+    let r = Rules::parse(VEC);
+    let mut a = UNSET;
+    let mut b = UNSET;
+    a[..7].copy_from_slice(&[-1.0, 0.5, 1.0, 0.0, 0.0, -1.0, -1.0]);
+    b[..7].copy_from_slice(&[3.0, 0.5, 0.0, 1.0, 0.0, 1.0, 1.0]);
+    let mut out = UNSET;
+    blend(&r, &[&a, &b], &[0.5, 0.5], &UNSET, COLOR_RGB, &mut out);
+    assert_eq!(&out[..2], &[1.0, 0.5], "vector: component lerp");
+    let h = std::f32::consts::FRAC_1_SQRT_2;
+    for (got, want) in out[2..5].iter().zip([h, h, 0.0]) {
+        assert!((got - want).abs() < 1e-6, "x+y midpoint renormalised: {:?}", &out[2..5]);
+    }
+    assert_eq!(&out[5..7], &[0.0, 0.0], "unknown kind: plain lerp");
+    // Opposite directions at 50/50 have no direction: left as the (zero) mix.
+    let mut c = a;
+    c[2..5].copy_from_slice(&[-1.0, 0.0, 0.0]);
+    blend(&r, &[&a, &c], &[0.5, 0.5], &UNSET, COLOR_RGB, &mut out);
+    assert_eq!(&out[2..5], &[0.0, 0.0, 0.0]);
+    // Uneven weights land on the sphere too.
+    blend(&r, &[&a, &b], &[0.8, 0.2], &UNSET, COLOR_RGB, &mut out);
+    let len: f32 = out[2..5].iter().map(|x| x * x).sum::<f32>().sqrt();
+    assert!((len - 1.0).abs() < 1e-5, "len {len}");
+}

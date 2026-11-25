@@ -22,7 +22,12 @@ export type FxUiKind =
   | { kind: "toggle" }
   | { kind: "dropdown"; options: string[] }
   // mat3 / mat4 (width 9 / 16), column-major as in GLSL.
-  | { kind: "matrix"; min: number; max: number };
+  | { kind: "matrix"; min: number; max: number }
+  // `: vector` on a vec2/vec3 (D-541 PR 4, .fxb format 2): an XY pad (+ z
+  // slider). min/max is the envelope; per-component `mins`/`maxs` may refine it.
+  | { kind: "vector"; min: number; max: number; step: number }
+  // `: direction` on a vec2/vec3: a unit vector (angle dial / sphere).
+  | { kind: "direction" };
 
 export interface FxUniform {
   name: string;

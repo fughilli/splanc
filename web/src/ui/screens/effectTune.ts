@@ -86,7 +86,14 @@ export function openEffectTune(router: Router, e: StoredEffect): void {
       const c = appState.client;
       if (c?.isConnected) c.live.setUniform(slot, value);
     },
-    { label: friendlyUniformName, empty: "This effect has nothing to adjust." },
+    {
+      label: friendlyUniformName,
+      empty: "This effect has nothing to adjust.",
+      onCommit: () => {
+        const c = appState.client;
+        if (c?.isConnected) c.live.commit();
+      },
+    },
   );
 
   const editor = Button({

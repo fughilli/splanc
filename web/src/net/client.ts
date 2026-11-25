@@ -83,6 +83,7 @@ import {
   type SetPowerConfigMessage,
 } from "./proto";
 import { LiveControl, applyAt } from "./liveControl";
+import { fxbFormatProblem } from "./fxbFormat";
 import {
   meshAdminMessage,
   meshTopologyRequest,
@@ -476,6 +477,14 @@ export class LedMapperClient {
 
   get welcome(): WelcomeMessage | null {
     return this.welcome_;
+  }
+
+  /** Refuse, before sending, an effect stamped with a newer `.fxb` format than
+   * the device reports (net/fxbFormat.ts, D-557): a `fxb_too_new` error naming
+   * the firmware update instead of the device's bare `bad_fxb`. */
+  private checkFxbFormat(fxb: Uint8Array): void {
+    const why = fxbFormatProblem(fxb, this.welcome_?.fxbFormat);
+    if (why !== null) throw new ServerErrorReply("fxb_too_new", why);
   }
 
   /** Bytes the socket hasn't put on the wire yet (0 when closed or unknown): the
@@ -903,6 +912,7 @@ export class LedMapperClient {
     // Small effects still take the single-window fast path inside sendChunked.
     // Whole-mesh control (mesh M6): every member loads it, all on one frame.
     if (this.meshAll_) return this.meshShareEffect(effectId, fxb, { activate, deck });
+    this.checkFxbFormat(fxb);
     this.live.resetDeck(deck);
     // A sharded upload goes out as upload_chunk frames: count it as activity here.
     for (const fn of this.activitySubs) fn();
@@ -1166,6 +1176,7 @@ export class LedMapperClient {
    * docs/design/effect-store.md). An effect with the same id is replaced. Sharded
    * like submitEffect. Reply: result_ready (id=effectId). */
   async storeEffect(effectId: string, name: string, fxb: Uint8Array): Promise<ResultReadyMessage> {
+    this.checkFxbFormat(fxb);
     for (const fn of this.activitySubs) fn();
     return this.sendChunked("EFFECT", {
       type: "submit_effect",
@@ -1498,6 +1509,7 @@ export class LedMapperClient {
    * keep it harmless on firmware without the "power" feature. Reply:
    * result_ready (the new power state is pushed too). */
   async storeTransitionEffect(slot: 1 | 2, effectId: string, fxb: Uint8Array): Promise<ResultReadyMessage> {
+    this.checkFxbFormat(fxb);
     for (const fn of this.activitySubs) fn();
     return this.sendChunked("EFFECT", {
       type: "submit_effect",

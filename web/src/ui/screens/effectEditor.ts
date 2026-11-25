@@ -834,12 +834,23 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   const diagsEl = document.createElement("ul");
   diagsEl.className = "fxedit-diags";
 
-  const panel = new UniformPanel(uniformsHost, (slot, value) => {
-    preview?.setUniform(slot, value);
-    const c = appState.client;
-    // The live-control channel: latest value wins, paced on the device.
-    if (c?.isConnected) c.live.setUniform(slot, value);
-  });
+  const panel = new UniformPanel(
+    uniformsHost,
+    (slot, value) => {
+      preview?.setUniform(slot, value);
+      const c = appState.client;
+      // The live-control channel: latest value wins, paced on the device.
+      if (c?.isConnected) c.live.setUniform(slot, value);
+    },
+    {
+      // A release persists right away (firmware with uniform_commit) rather
+      // than after the idle timer.
+      onCommit: () => {
+        const c = appState.client;
+        if (c?.isConnected) c.live.commit();
+      },
+    },
+  );
 
   // -- MIDI: route hardware controls into the SAME uniform seam as a manual
   // drag (moves the panel control → preview + device), plus a per-effect

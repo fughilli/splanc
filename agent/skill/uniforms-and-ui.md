@@ -10,6 +10,8 @@ uniform float tilt  : -1.0 .. 1.0 = -0.25;       // signed ranges are fine
 uniform vec3  tint  : color = 0.2, 0.6, 1.0;     // colour picker (linear RGB 0..1)
 uniform vec3  dir   : -1 .. 1 = 0.0, -1.0, 0.0;  // numeric vector: one range for every component
 uniform vec4  plane : vec4(-1,-1,-1,-5) .. vec4(1,1,1,5) = 0, 1, 0, 1;  // per-component range
+uniform vec2  wind  : vector -2 .. 2 = 0.5, 0.0; // vector pad (XY; a vec3 adds a z slider)
+uniform vec3  sun   : direction = 0.0, 1.0, 0.3; // direction: unit length (dial / sphere)
 uniform mat4  pose;                              // matrix (identity default): set by API / OSC
 uniform int   count : 1 .. 12 = 3;              // int slider: whole-number steps
 uniform float beat  : 0.0 .. 8.0 step 0.5 = 2.0; // optional `step N`: a slider grid
@@ -22,6 +24,13 @@ range and it is a plain numeric vector instead (per-component sliders, any sign)
 — use that for directions, offsets, planes. A `mat3`/`mat4` (column-major) takes
 an optional range (`: -10 .. 10`, default ±1000) and is usually streamed from a
 controller or tracker rather than set by hand.
+
+`: vector` (optionally with a range and `step`, default -1..1) and
+`: direction` (a unit vector; the default is normalised, never zero) work on a
+`vec2` or `vec3` and give the user an XY pad / angle dial / aiming sphere
+instead of one slider per component. They need firmware that runs `.fxb`
+format 2 (`protocol.fxb_format` >= 2 in the device manifest); older firmware
+refuses such an effect, so on those players use a plain range instead.
 
 A slider has its uniform's native precision: a `float` is continuous (no grid),
 an `int` moves in whole numbers, a `fixed` type by its smallest step. Add
@@ -40,6 +49,8 @@ appear for the user on their phone.
 | float slider  | a number inside the range                                                                                        |
 | `vec3` color  | `[r, g, b]`, each 0..1                                                                                           |
 | ranged vecN   | `[x, y, ...]`, each in its range (signed)                                                                        |
+| `vector`      | `[x, y]` / `[x, y, z]`, each in its range                                                                        |
+| `direction`   | `[x, y]` / `[x, y, z]`, any non-zero length (sent normalised)                                                    |
 | `mat4`/`mat3` | 16 / 9 numbers, COLUMN-major (GLSL order: `[c0.x, c0.y, c0.z, c0.w, c1.x, ...]`; translation is the last column) |
 | dropdown      | the option string (`"ice"`) or its index                                                                         |
 | bool toggle   | `true` / `false`                                                                                                 |
