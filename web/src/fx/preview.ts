@@ -96,6 +96,12 @@ interface FxPreviewWasm {
   set_texture(texIndex: number, width: number, height: number, rgba: Uint8Array, ledCount: number): void;
   update(time: number, dt: number, frame: number, ledCount: number): void;
   shade_all(positions: Float32Array): Uint8Array;
+  // The Watch VM's accessors (D-541); absent from VM builds that predate them.
+  state?(): Uint32Array;
+  set_state?(words: Uint32Array): void;
+  arena?(): Uint8Array;
+  set_arena?(bytes: Uint8Array): void;
+  buffer?(id: number, ledCount: number): Uint8Array;
   free(): void;
 }
 interface VmModule {
@@ -269,6 +275,35 @@ export class FxPreview {
   /** Shade every LED. `positions` is flat xyz (3*N); returns flat RGB (3*N). */
   shadeAll(positions: Float32Array): Uint8Array {
     return this.inner.shade_all(positions);
+  }
+
+  /** Whether this VM build has the Watch accessors below. */
+  get canWatch(): boolean {
+    const i = this.inner;
+    return !!(i.state && i.set_state && i.arena && i.set_arena && i.buffer);
+  }
+
+  /** The state words (slots, then the flood field), raw: a read-only copy. */
+  state(): Uint32Array {
+    return this.inner.state?.() ?? new Uint32Array(0);
+  }
+
+  setState(words: Uint32Array): void {
+    this.inner.set_state?.(words);
+  }
+
+  /** The buffer arena (a copy). */
+  arena(): Uint8Array {
+    return this.inner.arena?.() ?? new Uint8Array(0);
+  }
+
+  setArena(bytes: Uint8Array): void {
+    this.inner.set_arena?.(bytes);
+  }
+
+  /** Buffer `id`'s bytes for `ledCount` LEDs. */
+  buffer(id: number, ledCount: number): Uint8Array {
+    return this.inner.buffer?.(id, ledCount) ?? new Uint8Array(0);
   }
 
   dispose(): void {

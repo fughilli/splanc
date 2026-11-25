@@ -23,6 +23,7 @@ export type IconName =
   | "gamma"
   | "play"
   | "pause"
+  | "step"
   | "upload"
   | "download"
   | "search"
@@ -109,6 +110,8 @@ const PATHS: Record<IconName, string> = {
   gamma: `<path d="M5 3v16h16"/><path d="M5 19c6 0 10-3 14-14"/>`,
   play: `<path d="M8 5v14l11-7z"/>`,
   pause: `<rect x="7" y="5" width="3" height="14"/><rect x="14" y="5" width="3" height="14"/>`,
+  // Step one frame: a play triangle against a bar.
+  step: `<path d="M6 5v14l10-7z"/><rect x="17" y="5" width="2.5" height="14"/>`,
   upload: `<path d="M12 16V5"/><path d="M7 9l5-5 5 5"/><path d="M5 19h14"/>`,
   download: `<path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 19h14"/>`,
   search: `<circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/>`,

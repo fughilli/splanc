@@ -117,7 +117,7 @@ function defaultLayout(): Persisted {
       left: [],
       right: ["uniforms", "preview", "docs"],
       top: [],
-      bottom: ["diagnostics", "chat", "disasm"],
+      bottom: ["diagnostics", "chat", "watch", "disasm"],
     },
     active: { left: null, right: "uniforms", top: null, bottom: "diagnostics" },
     edgeSizes: { left: 0.24, right: 0.3, top: 0.25, bottom: 0.32 },
@@ -128,6 +128,7 @@ function defaultLayout(): Persisted {
       preview: "bottom",
       diagnostics: "bottom",
       chat: "bottom",
+      watch: "bottom",
       disasm: "bottom",
     },
     nactive: { top: null, center: "code", bottom: "uniforms" },
@@ -142,7 +143,7 @@ function presetLayout(preset?: LayoutPreset): Persisted {
   if (preset !== "effects-demo") return defaultLayout();
   return {
     v: 2, center: "preview",
-    docks: { left: ["uniforms"], right: ["chat", "docs"], top: [], bottom: ["code", "midi", "video", "diagnostics", "disasm"] },
+    docks: { left: ["uniforms"], right: ["chat", "docs"], top: [], bottom: ["code", "midi", "video", "diagnostics", "watch", "disasm"] },
     active: { left: "uniforms", right: "chat", top: null, bottom: "code" },
     edgeSizes: { left: 0.22, right: 0.34, top: 0.25, bottom: 0.3 },
     hidden: [],

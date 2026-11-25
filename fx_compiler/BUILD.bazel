@@ -200,6 +200,18 @@ rust_test(
     ],
 )
 
+# D-541 Watch: the host watch build (compile_watch) — selection = one whole
+# expression, output unchanged on the real VM, values + class read back.
+rust_test(
+    name = "watch_test",
+    srcs = ["tests/watch.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
 # Browser: compile scripts live in the editor.
 rust_shared_library(
     name = "fx_compiler_wasm",

@@ -12,6 +12,7 @@
 import type { FxCompiled } from "../../fx/preview";
 import type { CompileRequest, CompileResponse } from "./compile-worker";
 import type { WasmLoadStatus } from "../../fx/wasmLoad";
+import type { WatchCompile } from "../../fx/watch";
 
 export class FxCompilerWorker {
   private readonly worker: Worker;
@@ -39,6 +40,7 @@ export class FxCompilerWorker {
       if (!resolve) return;
       this.pending.delete(data.id);
       if (data.kind === "disassemble") (resolve as (t: string) => void)(data.text);
+      else if (data.kind === "watch") (resolve as (r: WatchCompile) => void)({ result: data.result, watches: data.watches });
       else (resolve as (r: FxCompiled) => void)(data.result);
     };
   }
@@ -63,6 +65,17 @@ export class FxCompilerWorker {
     const id = this.nextId++;
     const req: CompileRequest = { id, src };
     return new Promise<FxCompiled>((resolve) => {
+      this.pending.set(id, resolve as (r: never) => void);
+      this.worker.postMessage(req);
+    });
+  }
+
+  /** The Watch pane's host build of `src` watching `ranges` (flat UTF-16
+   * start/end pairs). Never rejects. */
+  compileWatch(src: string, ranges: Uint32Array): Promise<WatchCompile> {
+    const id = this.nextId++;
+    const req: CompileRequest = { id, kind: "watch", src, ranges };
+    return new Promise<WatchCompile>((resolve) => {
       this.pending.set(id, resolve as (r: never) => void);
       this.worker.postMessage(req);
     });
