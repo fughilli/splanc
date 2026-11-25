@@ -24,7 +24,7 @@
 //! core's by-value structs never carry them (shared/protocol/rust gen_main.rs skips them in
 //! the firmware profile).
 
-use splanc_mesh::admin::{SessionMsg, UnlockError};
+use splanc_mesh::admin::{Delegation, SessionMsg, UnlockError};
 use splanc_mesh::crypto::{ct_eq, DeviceKey};
 use splanc_mesh::gateway::{self, client_arm, relay_arm, with_apply_at, OpResult, ReplyMsg, Status, StatusMsg};
 use splanc_mesh::membership::{Credentials, Groups, Mode, Phase, ProvisionSource};
@@ -975,14 +975,29 @@ fn admin(m: &mut Mesh, conn: usize, a: &Admin<'_>, now_us: i64) -> (u32, u32) {
             if m.stack.membership.state.is_none() {
                 return (aerr::NO_MESH, 0);
             }
-            let r = m.stack.unlock(now_us, conn, &g);
+            // A delegate's grant comes with its certificate (MeshUnlock.delegation).
+            let deleg = match (g.by, a.by[2]) {
+                (None, _) => None,
+                (Some(_), Some(b)) => match Delegation::decode(b) {
+                    Some(d) => Some(d),
+                    None => return (aerr::BAD_REQUEST, 0),
+                },
+                (Some(_), None) => return (aerr::BAD_GRANT, 0),
+            };
+            let r = m.stack.unlock(now_us, conn, &g, deleg.as_ref());
             let e = match r {
                 Ok(()) => aerr::OK,
                 Err(UnlockError::LockedOut) => aerr::LOCKED_OUT,
                 Err(UnlockError::BadGrant) | Err(UnlockError::NoAdminKey) => aerr::BAD_GRANT,
                 Err(UnlockError::BadConnection) => aerr::BAD_REQUEST,
             };
-            m.log(format_args!("[mesh] unlock conn={conn} session={} not_after={} -> {}", g.session, g.not_after, if e == aerr::OK { "ok" } else { "refused" }));
+            m.log(format_args!(
+                "[mesh] unlock conn={conn} session={} not_after={} by={} -> {}",
+                g.session,
+                g.not_after,
+                if g.by.is_some() { "delegate" } else { "admin" },
+                if e == aerr::OK { "ok" } else { "refused" }
+            ));
             (e, if e == aerr::OK { g.session } else { 0 })
         }
         op::LEAVE => {

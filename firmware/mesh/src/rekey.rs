@@ -536,13 +536,13 @@ mod tests {
         let admin = AdminSigner::from_secret(b"0123456789abcdef", MESH);
         let gw = HostKey::from_seed(1);
         let g = admin.grant(MESH, 7, 1, gw.public_key(), 1000);
-        let mut gs = GatewaySession::<16>::new(g);
+        let mut gs = GatewaySession::<16>::new(g, None);
         let mut rng = TestRng(4);
         let ids: Vec<NodeId> = (2..=10).collect();
         let devs: Vec<HostKey> = ids.iter().map(|&i| HostKey::from_seed(i as u64)).collect();
         let mut sess: Vec<Sessions> = ids.iter().map(|_| Sessions::new()).collect();
         for ((s, d), &id) in sess.iter_mut().zip(&devs).zip(&ids) {
-            let ack = s.on_grant(0, 0, &g, Some(&admin.public()), MESH, id, d, &mut rng).unwrap().unwrap();
+            let ack = s.on_grant(0, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, id, d, &mut rng).unwrap().unwrap();
             let (_, conf) = gs.on_ack(&ack, &gw, MESH, 1, 50).unwrap();
             s.on_confirm(1, &conf, id);
         }

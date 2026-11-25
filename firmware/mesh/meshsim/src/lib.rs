@@ -1116,7 +1116,7 @@ impl World {
                 if self.auto_renew {
                     let g = self.admin.grant(self.mesh_id, session, self.nodes[k].id, self.nodes[k].stack.dev.public_key(), not_after + self.grant_ttl_s);
                     let local = self.local(self.nodes[k].index);
-                    if self.nodes[k].stack.unlock(local, 0, &g).is_ok() {
+                    if self.nodes[k].stack.unlock(local, 0, &g, None).is_ok() {
                         self.renewals += 1;
                     }
                 }
@@ -1219,7 +1219,7 @@ impl World {
     pub fn unlock_and_sync(&mut self, i: usize, session: u32, members: &[usize], max_ms: i64) -> Option<i64> {
         let g = self.grant(i, session);
         let t = self.local(i);
-        self.nodes[i].stack.unlock(t, 0, &g).expect("grant");
+        self.nodes[i].stack.unlock(t, 0, &g, None).expect("grant");
         let members: Vec<usize> = members.iter().copied().filter(|&m| m != i).collect();
         self.run_until(max_ms, |w| members.iter().all(|&m| w.nodes[m].synced(session)))
     }
