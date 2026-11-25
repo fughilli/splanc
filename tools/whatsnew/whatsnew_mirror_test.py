@@ -150,10 +150,22 @@ class SelectionTest(unittest.TestCase):
         picked = wm.select_releases(rows, wm.APP_TAG, 10, up_to="app-v1.17.0")
         self.assertEqual([r["tag_name"] for r in picked], ["app-v1.17.0", "app-v1.16.0"])
         self.assertEqual(picked[0]["created_at"], "2026-11-25T00:00:00Z")
-        self.assertEqual([r["tag_name"] for r in wm.select_releases(rows, wm.APP_TAG, 10)], ["app-v1.16.0"])
-        rows.append({"tag_name": "app-v1.17.0", "name": "app-v1.17.0", "draft": False, "created_at": "2026-11-20T00:00:00Z"})
+        self.assertEqual(
+            [r["tag_name"] for r in wm.select_releases(rows, wm.APP_TAG, 10)], ["app-v1.16.0"]
+        )
+        rows.append(
+            {
+                "tag_name": "app-v1.17.0",
+                "name": "app-v1.17.0",
+                "draft": False,
+                "created_at": "2026-11-20T00:00:00Z",
+            }
+        )
         picked = wm.select_releases(rows, wm.APP_TAG, 10, up_to="app-v1.17.0")
-        self.assertEqual([(r["tag_name"], r["draft"]) for r in picked], [("app-v1.17.0", False), ("app-v1.16.0", False)])
+        self.assertEqual(
+            [(r["tag_name"], r["draft"]) for r in picked],
+            [("app-v1.17.0", False), ("app-v1.16.0", False)],
+        )
 
     def test_up_to_draft_is_included(self):
         # The Release workflow mirrors its own (still draft) release before publishing it.

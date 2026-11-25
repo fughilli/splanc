@@ -211,19 +211,31 @@ class ReleaseBodyTest(unittest.TestCase):
 
     def test_a_draft_links_its_own_urls_and_relink_moves_them_to_the_tag(self):
         m = github_release.build_manifest(ENTRIES, "app-v1.16.0")
-        draft = {"draft": True, "html_url": "https://github.com/fughilli/splanc/releases/tag/untagged-de0f20b6e5"}
+        draft = {
+            "draft": True,
+            "html_url": "https://github.com/fughilli/splanc/releases/tag/untagged-de0f20b6e5",
+        }
         base = github_release.release_download_base(draft, "fughilli/splanc", "app-v1.16.0")
-        self.assertEqual(base, "https://github.com/fughilli/splanc/releases/download/untagged-de0f20b6e5/")
+        self.assertEqual(
+            base, "https://github.com/fughilli/splanc/releases/download/untagged-de0f20b6e5/"
+        )
         sec = github_release.section_markdown(m, "fughilli/splanc", base)
         self.assertIn(f'<img src="{base}ai-tab-phone.gif"', sec)
         self.assertNotIn("/download/app-v1.16.0/", sec)
         body = github_release.splice_body("## What's Changed\n", sec)
         final = github_release.relink_body(body, "fughilli/splanc", "app-v1.16.0")
         self.assertNotIn("untagged-", final)
-        self.assertEqual(final, github_release.splice_body("## What's Changed\n", github_release.section_markdown(m, "fughilli/splanc")))
+        self.assertEqual(
+            final,
+            github_release.splice_body(
+                "## What's Changed\n", github_release.section_markdown(m, "fughilli/splanc")
+            ),
+        )
         # Published (or a draft without a placeholder): the tag's URLs.
         self.assertEqual(
-            github_release.release_download_base({"draft": False}, "fughilli/splanc", "app-v1.16.0"),
+            github_release.release_download_base(
+                {"draft": False}, "fughilli/splanc", "app-v1.16.0"
+            ),
             "https://github.com/fughilli/splanc/releases/download/app-v1.16.0/",
         )
 
@@ -296,7 +308,8 @@ class DraftLifecycleTest(unittest.TestCase):
     def test_the_draft_is_found_by_name_reused_and_published_under_the_tag(self):
         # The app-v1.17.0 failure: the draft's tag read untagged-<id>, the re-run
         # made a second draft, and publishing made a third, empty release.
-        old = {"id": 1, "draft": True, "tag_name": "untagged-aa", "name": "app-v1.17.0", "created_at": "2026-11-23", "assets": []}  # fmt: skip
+        old = {"id": 1, "draft": True, "tag_name": "untagged-aa", "name": "app-v1.17.0",
+               "created_at": "2026-11-23", "assets": []}  # fmt: skip
         new = {"id": 2, "draft": True, "tag_name": "untagged-bb", "name": "app-v1.17.0", "created_at": "2026-11-25",
                "upload_url": "https://u{?name}", "assets": [{"name": "splanc-webapp-1.17.0.tar.gz", "id": 9}],
                "body": "[v](https://github.com/fughilli/splanc/releases/download/untagged-bb/a.mp4)"}  # fmt: skip
@@ -311,8 +324,14 @@ class DraftLifecycleTest(unittest.TestCase):
         github_release.finalize(gh, "app-v1.17.0", [tar], log=log)
         self.assertIn(("delete", 9), gh.calls)
         self.assertIn(("upload", "splanc-webapp-1.17.0.tar.gz"), gh.calls)
-        self.assertIn(("update", {"draft": False, "tag_name": "app-v1.17.0", "make_latest": "false"}), gh.calls)
-        self.assertEqual(new["body"], "[v](https://github.com/fughilli/splanc/releases/download/app-v1.17.0/a.mp4)")
+        self.assertIn(
+            ("update", {"draft": False, "tag_name": "app-v1.17.0", "make_latest": "false"}),
+            gh.calls,
+        )
+        self.assertEqual(
+            new["body"],
+            "[v](https://github.com/fughilli/splanc/releases/download/app-v1.17.0/a.mp4)",
+        )
         self.assertFalse(any(k == "create" for k, _ in gh.calls))
         # Published now: it wins over the leftover draft.
         self.assertIs(gh.release_for_tag("app-v1.17.0"), new)
@@ -320,7 +339,10 @@ class DraftLifecycleTest(unittest.TestCase):
     def test_a_missing_draft_is_created_and_finalize_never_makes_a_release(self):
         gh = ApiGitHub([])
         r = github_release.ensure_draft(gh, "app-v1.18.0", "abc", log=lambda m: None)
-        self.assertEqual((r["draft"], r["name"], r["target_commitish"], r["generate_release_notes"]), (True, "app-v1.18.0", "abc", True))
+        self.assertEqual(
+            (r["draft"], r["name"], r["target_commitish"], r["generate_release_notes"]),
+            (True, "app-v1.18.0", "abc", True),
+        )
         with self.assertRaises(SystemExit):
             github_release.finalize(ApiGitHub([]), "app-v1.18.0", [], log=lambda m: None)
 

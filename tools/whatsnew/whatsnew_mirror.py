@@ -509,6 +509,7 @@ def select_releases(
         if cap is not None and v > cap:
             continue
         picked.append((v, r))
+
     # One row per tag: the published release, else the newest draft.
     def rank(r: dict) -> tuple:
         return (not r.get("draft"), r.get("created_at") or "")

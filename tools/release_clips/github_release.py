@@ -127,9 +127,7 @@ def section_markdown(manifest: dict, repo: str, base: Optional[str] = None) -> s
             f'<img src="{url(main["gif"])}" alt="{_attr(c["title"])}" width="{width}"></a>'
         )
         out.append("")
-        links = " · ".join(
-            f"[{v['framing']} video (MP4)]({url(v['mp4'])})" for v in vs
-        )
+        links = " · ".join(f"[{v['framing']} video (MP4)]({url(v['mp4'])})" for v in vs)
         out.append(f"{c['summary']}{' (' + prs + ')' if prs else ''} · {links}")
         out.append("")
     out.append(END)
@@ -252,7 +250,9 @@ def publish(gh: GitHub, tag: str, clips_dir: str, entries: list[dict], log=print
 
 def relink_body(body: str, repo: str, tag: str) -> str:
     """`body` with every draft placeholder download URL pointed at `tag`'s."""
-    pat = re.compile(re.escape(f"https://github.com/{repo}/releases/download/") + UNTAGGED_RE.pattern + "/")
+    pat = re.compile(
+        re.escape(f"https://github.com/{repo}/releases/download/") + UNTAGGED_RE.pattern + "/"
+    )
     return pat.sub(download_base(repo, tag), body or "")
 
 
@@ -281,7 +281,8 @@ def ensure_draft(gh: GitHub, tag: str, target: str, log=print) -> dict:
     draft beforehand are kept."""
     release = gh.release_for_tag(tag)
     if release is not None:
-        log(f"release_clips: using the existing {'draft' if release.get('draft') else 'release'} for {tag} ({release['id']})")
+        kind = "draft" if release.get("draft") else "release"
+        log(f"release_clips: using the existing {kind} for {tag} ({release['id']})")
         return release
     release = gh.create_release(
         {
@@ -311,7 +312,9 @@ def finalize(gh: GitHub, tag: str, files: list[str], log=print) -> dict:
         gh.upload_asset(release, path, name)
         log(f"release_clips: uploaded {name}")
     if release.get("draft"):
-        release = gh.update_release(release, {"draft": False, "tag_name": tag, "make_latest": "false"})
+        release = gh.update_release(
+            release, {"draft": False, "tag_name": tag, "make_latest": "false"}
+        )
         log(f"release_clips: published {tag} ({release['id']})")
     relink(gh, tag, log=log)
     return release
