@@ -108,14 +108,19 @@ const SPEED_SEMANTIC: SemanticControl = {
   control: CC74.control,
 };
 
-test("isDrivable accepts scalar slider/toggle, rejects vectors", () => {
+test("isDrivable accepts scalar slider/toggle, and colour per channel", () => {
   assert.equal(isDrivable(slider("s", 0, 0, 1)), true);
   assert.equal(
     isDrivable({ name: "t", slot: 1, width: 1, ui: { kind: "toggle" }, default: [0] }),
     true,
   );
+  // D-541 PR 3: colours are driven per channel (see midiColour.test.ts).
   assert.equal(
     isDrivable({ name: "tint", slot: 2, width: 3, ui: { kind: "color" }, default: [0, 0, 0] }),
+    true,
+  );
+  assert.equal(
+    isDrivable({ name: "pick", slot: 3, width: 1, ui: { kind: "dropdown", options: ["a"] }, default: [0] }),
     false,
   );
 });

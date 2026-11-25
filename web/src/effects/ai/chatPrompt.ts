@@ -126,9 +126,11 @@ export const MIDI_TOOLS = [
   {
     name: "list_midi_controls",
     description:
-      "List the effect's drivable uniforms (name, type, range), the available " +
-      "named MIDI controls, and the CURRENT uniform→control mappings. Call this " +
-      "before proposing a mapping so you map real uniforms to real controls.",
+      "List the effect's drivable uniforms (name, type, range; colour, vector and " +
+      "matrix uniforms with the channels a mapping may name, colours with their " +
+      "current rgb + hsv), the available named MIDI controls, and the CURRENT " +
+      "uniform→control mappings. Call this before proposing a mapping so you map " +
+      "real uniforms to real controls.",
     input_schema: { type: "object", additionalProperties: false, properties: {} },
   },
   {
@@ -139,7 +141,10 @@ export const MIDI_TOOLS = [
       "Provide one entry per uniform you want driven; omit a uniform to leave it " +
       "unmapped. Read the effect's uniforms and pick sensible controls (e.g. a " +
       "knob named 'speed' → a speed/rate uniform). Use min/max to sweep a " +
-      "sub-range and invert to flip direction.",
+      "sub-range and invert to flip direction. A colour, vector or matrix uniform " +
+      "takes one entry PER CHANNEL: a colour as hue only (channel 'h' + fixed " +
+      "{s, v} at the current values), as H/S/V on three knobs, or as R/G/B on " +
+      "request; a vector per component x/y/z/w; a matrix per index '0'...",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -156,6 +161,29 @@ export const MIDI_TOOLS = [
               min: { type: "number" },
               max: { type: "number" },
               invert: { type: "boolean" },
+              channel: {
+                type: "string",
+                description:
+                  "Colour/vector/matrix uniforms only: which part this control drives. " +
+                  "Colour: 'h' 's' 'v' (HSV, hue in turns) or 'r' 'g' 'b' 'a' (RGB); " +
+                  "vector: 'x' 'y' 'z' 'w'; matrix: component index '0'..'15'. Omit for scalars.",
+              },
+              space: {
+                type: "string",
+                enum: ["hsv", "rgb"],
+                description: "Colour space of a colour channel (implied by the channel).",
+              },
+              fixed: {
+                type: "object",
+                additionalProperties: false,
+                description:
+                  "HSV channels only: hold saturation and/or value (0..1) while the " +
+                  "control moves the rest, e.g. hue-only with s and v at their current values.",
+                properties: {
+                  s: { type: "number", minimum: 0, maximum: 1 },
+                  v: { type: "number", minimum: 0, maximum: 1 },
+                },
+              },
             },
             required: ["uniform", "control"],
           },
@@ -243,7 +271,7 @@ You are now in an interactive chat with the user inside the effect editor. You c
   4. re-estimate. Keep the change only if it improved AND still compiles (and, if visuals could shift, capture_preview to confirm it still looks right); otherwise revert and try the next hypothesis.
   5. Repeat until it fits the budget or stops improving (diminishing returns / a few rounds).
   6. Report back concisely: baseline → final (frame time and % budget on the binding device, plus RAM if that was the goal), and the specific changes that moved the needle with their numbers. Be honest if a target wasn't reachable and say what's binding.
-- When MIDI tools are available: call list_midi_controls to see the effect's uniforms and the named MIDI controls, then set_midi_mapping to wire controls to uniforms. MIDI mapping is a SEPARATE LAYER — never edit the effect source to wire MIDI; use set_midi_mapping. Match by meaning (a 'speed'/'rate' knob → a speed uniform; a 'brightness' knob → an intensity/gain uniform), and only map scalar (slider/toggle) uniforms.
+- When MIDI tools are available: call list_midi_controls to see the effect's uniforms and the named MIDI controls, then set_midi_mapping to wire controls to uniforms. MIDI mapping is a SEPARATE LAYER — never edit the effect source to wire MIDI; use set_midi_mapping. Match by meaning (a 'speed'/'rate' knob → a speed uniform; a 'brightness' knob → an intensity/gain uniform). Colour uniforms are mappable too, one entry per channel: one spare knob → hue only (channel 'h', fixed s/v at the colour's current values from list_midi_controls); three knobs → h, s, v; RGB (r, g, b) only when the user asks. Vectors map per component (x/y/z/w), matrices per index. Say which colour option you chose.
 Keep prose brief. When you change the script, prefer minimal, targeted edits.`;
 
 /**

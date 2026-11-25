@@ -57,10 +57,14 @@ import {
   resolveUniforms,
   withDeviceLock,
 } from "../../effects/devicePerf";
-import { isDrivable, MidiRouter } from "../../midi/router";
+import { isAutoBindable, MidiRouter } from "../../midi/router";
 import { ColorSwatch } from "../kit/hsvPicker";
-import { midiStore, type UniformBinding } from "../../store/midiStore";
-import { midiManager, controlLabel } from "../../midi/manager";
+import {
+  midiListSummary as sharedMidiListSummary,
+  validateMidiMappings,
+} from "../../midi/agentSummary";
+import { midiStore } from "../../store/midiStore";
+import { midiManager } from "../../midi/manager";
 import { effectStore } from "../../store/effectStore";
 import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { registerChatDriver } from "../../net/remoteChat";
@@ -683,7 +687,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     lastGoodSource = source;
     await swapPreview(r.bytecode, r.uniforms);
     midiRouter.setManifest(r.uniforms);
-    midiStore.autoBind(ACID_EFFECT_ID, r.uniforms.filter(isDrivable).map((u) => u.name));
+    midiStore.autoBind(ACID_EFFECT_ID, r.uniforms.filter(isAutoBindable).map((u) => u.name));
 
     // Persist so the effect survives the session + is findable in the library
     // (not for a kiosk visitor: their phone's library is not the owner's).
@@ -834,43 +838,16 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
 
   function midiListSummary(): string {
     void midiManager.enable().catch(() => undefined);
-    const uniforms = lastUniforms.filter(isDrivable).map((u) => ({
-      name: u.name,
-      type: u.ui.kind,
-      ...(u.ui.kind === "slider" ? { min: u.ui.min, max: u.ui.max } : {}),
-    }));
-    const controls = midiStore.semantics().map((s) => ({
-      name: s.name,
-      source: `${s.control.device} · ${controlLabel(s.control)}`,
-    }));
-    const current = midiStore.bindings(ACID_EFFECT_ID).map((b) => ({
-      uniform: b.uniform,
-      control: b.semantic,
-    }));
-    return JSON.stringify(
-      { uniforms, namedControls: controls, currentMappings: current, midiEnabled: midiManager.enabled },
-      null,
-      2,
-    );
+    return sharedMidiListSummary({
+      uniforms: lastUniforms,
+      semantics: midiStore.semantics(),
+      bindings: midiStore.bindings(ACID_EFFECT_ID),
+      midiEnabled: midiManager.enabled,
+    });
   }
 
   function applyMidiMappings(mappings: MidiMappingCall[]): string {
-    const drivable = new Set(lastUniforms.filter(isDrivable).map((u) => u.name));
-    const applied: UniformBinding[] = [];
-    const skipped: string[] = [];
-    for (const m of mappings) {
-      if (!drivable.has(m.uniform)) {
-        skipped.push(`${m.uniform} (not drivable)`);
-        continue;
-      }
-      applied.push({
-        uniform: m.uniform,
-        semantic: m.control,
-        ...(typeof m.min === "number" ? { min: m.min } : {}),
-        ...(typeof m.max === "number" ? { max: m.max } : {}),
-        ...(m.invert ? { invert: true } : {}),
-      });
-    }
+    const { applied, skipped } = validateMidiMappings(mappings, lastUniforms);
     midiStore.replaceBindings(ACID_EFFECT_ID, applied);
     return `Applied ${applied.length} mapping(s)${skipped.length ? `; skipped ${skipped.join(", ")}` : ""}.`;
   }

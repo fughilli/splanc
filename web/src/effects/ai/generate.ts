@@ -345,6 +345,12 @@ export interface MidiMappingCall {
   min?: number;
   max?: number;
   invert?: boolean;
+  /** Colour / vector / matrix channel: r g b a | h s v | x y z w | "0".."15". */
+  channel?: string;
+  /** Colour space; implied by the channel (h/s/v = hsv, r/g/b/a = rgb). */
+  space?: "rgb" | "hsv";
+  /** HSV only: hold saturation / value (0..1) while the knob moves the rest. */
+  fixed?: { s?: number; v?: number };
 }
 
 /** measure_on_device arguments (all optional). */

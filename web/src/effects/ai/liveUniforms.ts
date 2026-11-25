@@ -31,6 +31,8 @@ export interface LiveValue {
 export interface LiveBinding {
   uniform: string;
   semantic: string;
+  /** Colour/vector channel the control drives (absent for scalars). */
+  channel?: string | undefined;
 }
 
 /** The set_live_uniforms tool name. */
@@ -74,7 +76,12 @@ export function describeLiveUniforms(
 ): string {
   if (manifest.length === 0) return "";
   const bySlot = new Map(live.map((v) => [v.slot, v.value] as const));
-  const midi = new Map(bindings.map((b) => [b.uniform, b.semantic] as const));
+  // One uniform may carry several channel bindings (e.g. h, s, v knobs).
+  const midi = new Map<string, string[]>();
+  for (const b of bindings) {
+    const label = b.channel !== undefined ? `"${b.semantic}" (${b.channel})` : `"${b.semantic}"`;
+    midi.set(b.uniform, [...(midi.get(b.uniform) ?? []), label]);
+  }
   const lines = [
     "Live uniform values (EFFECTIVE values the preview and connected fixture use now — not the source " +
       "defaults). The panel keeps an existing control's live value across recompiles, so editing a " +
@@ -89,7 +96,7 @@ export function describeLiveUniforms(
     lines.push(
       `- ${u.name}${kindLabel(u)}: live ${fmtVal(cur)}; source default ${fmtVal(u.default)}${
         same ? "" : " ← LIVE DIFFERS FROM DEFAULT"
-      }${b ? ` [MIDI-mapped to "${b}"]` : ""}`,
+      }${b ? ` [MIDI-mapped to ${b.join(", ")}]` : ""}`,
     );
   }
   if (differ === 0) lines.push("(All live values equal their source defaults.)");
