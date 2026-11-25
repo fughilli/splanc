@@ -138,6 +138,7 @@ py_library(
         "ble_link_core.py",
         "ble_rename_core.py",
         "board_caps.py",
+        "clock_app_core.py",
         "ctrl_budget_core.py",
         "ctrl_budget_probe.py",
         "device_cert_core.py",
@@ -1415,6 +1416,43 @@ py_test(
     },
     imports = ["."],
     main = "hitl_lamp_power.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# The wall clock (docs/design/wall-clock.md, desk D-559): an app-style set_wall_clock
+# (time_sync_ping rounds, then UTC at a device-clock instant + a POSIX zone), readings
+# within the device's own error of the harness's UTC, a soft reset (console CLOCK RESTART)
+# that keeps the clock (the RTC no-init carry-over), and render running with no late frame.
+# Pure logic: clock_app_core.
+#   bazel run //pi/hitl/harness:clock_app_netstack -- --server http://hitl-rig-2:8087
+py_test(
+    name = "clock_app_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_clock_app.py",
+        "hitl_effect_store.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_clock_app.py",
     tags = [
         "hitl",
         "manual",

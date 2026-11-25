@@ -110,6 +110,9 @@ const CLIENT_ARMS: Record<string, string> = {
   set_power: "setPower",
   get_power: "getPower",
   set_power_config: "setPowerConfig",
+  // The wall clock (docs/design/wall-clock.md; net/wallClock.ts; the "wall_clock" feature).
+  set_wall_clock: "setWallClock",
+  get_clock: "getClock",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -152,6 +155,7 @@ const SERVER_ARMS: Record<string, string> = {
   mesh: "mesh",
   stored_effect_list: "storedEffectList",
   power_state: "powerState",
+  clock_state: "clockState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),

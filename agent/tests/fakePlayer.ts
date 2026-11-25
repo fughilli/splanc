@@ -121,6 +121,10 @@ export class FakePlayer {
     offTransition: { style: 1 },
     seq: 1,
   };
+  /** The wall clock (the "wall_clock" feature): the last set_wall_clock taken, as the
+   * firmware would keep it (UTC ms at a fake-device-clock ms). */
+  wallClock: { unixMs: number; atDeviceMs: number; tz: string; tzName: string; pushedBy: string } | null = null;
+
   /** Transition effects stored with submit_effect{powerSlot}: slot -> {id, fxb}. */
   powerEffects = new Map<number, { id: string; fxb: Uint8Array }>();
   /** Every blend_keypoints applied (for assertions). */
@@ -223,6 +227,24 @@ export class FakePlayer {
   /** Push an fps_state (FUG-82) to every connected session, as the autoscaler does. */
   pushFpsState(st: { targetFps: number; currentFps: number; auto: boolean; lagging: boolean; achievedFps?: number }): void {
     for (const c of this.wss.clients) this.reply(c, { type: "fps_state", minFps: 25, maxFps: 80, ...st });
+  }
+
+  private clockState(lastSet: string): Msg {
+    const c = this.wallClock;
+    if (!c) return { type: "clock_state", valid: false, lastSet };
+    const dev = performance.now() + this.clockOffsetMs;
+    return {
+      type: "clock_state",
+      valid: true,
+      unixMs: String(Math.round(c.unixMs + (dev - c.atDeviceMs))),
+      deviceMs: String(Math.round(dev)),
+      source: "CLOCK_SOURCE_PUSH",
+      pushedBy: c.pushedBy,
+      errMs: 12,
+      tz: c.tz,
+      tzName: c.tzName,
+      lastSet,
+    };
   }
 
   /** Push the current power_state to every connected session (a lid tap, another client). */
@@ -539,6 +561,27 @@ export class FakePlayer {
       }
       case "get_power":
         return this.reply(ws, { type: "power_state", ...this.power });
+      case "set_wall_clock": {
+        const dev = performance.now() + this.clockOffsetMs;
+        const at = m["atDeviceMs"] !== undefined ? Number(m["atDeviceMs"]) : dev;
+        const prev = this.wallClock;
+        if (Number(m["unixMs"]) !== 0) {
+          this.wallClock = {
+            unixMs: Number(m["unixMs"]),
+            atDeviceMs: at,
+            tz: prev?.tz ?? "",
+            tzName: prev?.tzName ?? "",
+            pushedBy: String(m["pushedBy"]),
+          };
+        }
+        if (m["tz"] !== undefined && this.wallClock) {
+          this.wallClock.tz = String(m["tz"]);
+          this.wallClock.tzName = String(m["tzName"] ?? "");
+        }
+        return this.reply(ws, this.clockState("CLOCK_SET_RESULT_ACCEPTED"));
+      }
+      case "get_clock":
+        return this.reply(ws, this.clockState("CLOCK_SET_RESULT_NONE"));
       case "set_power": {
         const on = m["toggle"] === true ? !(this.power["on"] as boolean) : m["on"] === true;
         this.power = { ...this.power, on, phase: on ? 1 : 0, source: 1, seq: (this.power["seq"] as number) + 1 };

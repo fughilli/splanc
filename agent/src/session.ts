@@ -67,6 +67,9 @@ import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { cancellation, progress } from "./progress";
 import type { ClockSync } from "./timesync";
+import { pushWallClock, type ClockState } from "../../web/src/net/wallClock";
+import { hostPosixTz } from "./hostTz";
+import { clockView, timeFromInput, zoneFromInput } from "./wallclock";
 import { applyAtOf, type Scheduled } from "./schedule";
 import {
   currentByName,
@@ -134,6 +137,7 @@ export type Feature =
   | "wifi_policy"
   | "power"
   | "apply_at"
+  | "wall_clock"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -369,6 +373,14 @@ export class DeviceSession {
       prevUp?.(w);
       if (this.has("power") && POWER_IN_PROTO) {
         void this.run(() => this.client.getPower(), true).catch(() => undefined);
+      }
+      // The lamp's wall clock: the bridge's UTC + zone on every (re)connect, quietly
+      // (not activity). The lamp keeps the best of its sources (a closer phone wins).
+      if (this.has("wall_clock") && CLOCK_IN_PROTO) {
+        void this.run(
+          () => pushWallClock(this.client, { pushedBy: "bridge", zone: hostPosixTz() }),
+          true,
+        ).catch(() => undefined);
       }
     };
   }
@@ -828,6 +840,54 @@ export class DeviceSession {
       );
     }
     if (!POWER_IN_PROTO) throw new ToolError("this agent bundle predates lamp power; update it");
+  }
+
+  private requireClock(): void {
+    if (!this.has("wall_clock")) {
+      throw new ToolError(
+        `the player's firmware (${this.fwVersion}) has no wall clock; update it (update_firmware)`,
+      );
+    }
+    if (!CLOCK_IN_PROTO) throw new ToolError("this agent bundle predates the wall clock; update it");
+  }
+
+  /** The lamp's wall clock (get_clock). */
+  async getClock(): Promise<Record<string, unknown>> {
+    this.requireClock();
+    return clockView(await this.run(() => this.client.getClock()));
+  }
+
+  /** Set the lamp's clock (set_clock): `time` (ISO 8601 with its zone) replaces it as an
+   * explicit set; without it the bridge's own UTC is pushed. `tz` (an IANA name or a
+   * POSIX rule) sets the zone; without it the bridge host's zone is sent. */
+  async setClock(opts: { time?: string; tz?: string }): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.requireClock();
+    let zone;
+    let at: number | undefined;
+    try {
+      zone = opts.tz !== undefined ? zoneFromInput(opts.tz) : hostPosixTz();
+      if (opts.time !== undefined) at = timeFromInput(opts.time);
+    } catch (e) {
+      throw new ToolError(e instanceof Error ? e.message : String(e));
+    }
+    const t0 = Date.now();
+    const st: ClockState | null = await this.run(() =>
+      pushWallClock(this.client, {
+        pushedBy: at !== undefined ? "manual" : "bridge",
+        zone,
+        // An explicit time is "now is T": carried forward from when it was asked for.
+        ...(at !== undefined ? { utcNow: () => at! + (Date.now() - t0) } : {}),
+      }),
+    );
+    if (!st) throw new ToolError("the player didn't answer the clock request");
+    const view = clockView(st);
+    if (st.lastSet === "not_better") {
+      view["note"] = "the lamp kept its time: it already has a more certain one (only the zone was applied)";
+    } else if (st.lastSet === "locked") {
+      view["note"] = "a kiosk session may only set an unset clock";
+    }
+    return view;
   }
 
   async getPower(): Promise<Record<string, unknown>> {
@@ -2336,6 +2396,7 @@ export const SENSORS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name ==
 export const DRIVERS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "submit_driver");
 export const WIFI_POLICY_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_wifi_policy");
 export const POWER_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_power");
+export const CLOCK_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_wall_clock");
 
 interface DriverStateReply {
   running?: boolean;

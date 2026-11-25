@@ -505,6 +505,43 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     () => guard(async () => ok(hub.driftStatus())),
   );
 
+  // -- the wall clock (docs/design/wall-clock.md; the "wall_clock" feature) --------------
+  server.registerTool(
+    "get_clock",
+    {
+      description:
+        "Read each lamp's wall clock (time of day, not the effect clock): whether it is set, UTC and the lamp's " +
+        "local time, its time zone (an IANA name and the POSIX rule it stores, so DST stays right offline), where " +
+        "the time came from (a phone, this bridge, set by hand, kept across a restart) and its error. A lamp " +
+        "without a hardware clock chip loses the time on a power loss until the app or this bridge reconnects.",
+      inputSchema: { players },
+    },
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.getClock()))),
+  );
+  server.registerTool(
+    "set_clock",
+    {
+      description:
+        "Set lamps' wall clock. With no arguments the bridge pushes its own UTC and time zone (it also does that " +
+        "on every connect). tz sets the zone: an IANA name (Europe/Berlin) or a POSIX TZ rule. time (ISO 8601 " +
+        "with its zone, e.g. 2026-11-25T07:00:00-05:00) sets the time explicitly, replacing a more accurate one: " +
+        "use it only when the user asks for a specific time.",
+      inputSchema: {
+        tz: z.string().max(64).optional().describe("IANA zone or POSIX TZ rule; default: the bridge's zone"),
+        time: z.string().optional().describe("ISO 8601 with a zone; default: the bridge's clock"),
+        players,
+      },
+    },
+    ({ tz, time, players: sel }) =>
+      guard(async () =>
+        ok(
+          await fan(sel, (s) =>
+            s.setClock({ ...(tz !== undefined ? { tz } : {}), ...(time !== undefined ? { time } : {}) }),
+          ),
+        ),
+      ),
+  );
+
   // -- device control ------------------------------------------------------------------
   server.registerTool(
     "set_brightness",

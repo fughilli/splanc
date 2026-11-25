@@ -103,6 +103,7 @@ exports_files([
 rust_static_library(
     name = "player_ffi",
     srcs = [
+        "clock_ffi.rs",
         "driver_ffi.rs",
         "effect_store.rs",
         "ffi.rs",
@@ -140,6 +141,7 @@ rust_static_library(
     deps = [
         "//firmware/arena",
         "//firmware/bss",
+        "//firmware/clock",
         "//firmware/fps",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
@@ -165,6 +167,7 @@ rust_static_library(
 rust_library(
     name = "player_ffi_host",
     srcs = [
+        "clock_ffi.rs",
         "driver_ffi.rs",
         "effect_store.rs",
         "ffi.rs",
@@ -186,6 +189,7 @@ rust_library(
     deps = [
         "//firmware/arena",
         "//firmware/bss",
+        "//firmware/clock",
         "//firmware/fps",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
@@ -266,6 +270,20 @@ rust_test(
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# The wall clock (clock_ffi.rs): set_wall_clock / get_clock, the zone and its record,
+# the esp_timer step guard, the soft-reset carry-over, the kiosk visitor rule. Own binary.
+rust_test(
+    name = "clock_test",
+    srcs = ["tests/clock.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],

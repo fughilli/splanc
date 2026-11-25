@@ -35,6 +35,8 @@
 
 import { firmwareCardFields, type FirmwareCardFields } from "../../buildInfo";
 import { ActionGrid, Button, IconButton, Sheet, icon, toast } from "../kit";
+import { ClockSection } from "./clockSection";
+import { deviceHasWallClock } from "../../net/wallClock";
 import { appState } from "../app/state";
 import { deviceProber } from "../../net/deviceProber";
 import {
@@ -774,9 +776,14 @@ function openDeviceDetail(dev: KnownDevice): void {
         })
       : null;
 
+  // -- Wall clock (firmware advertising "wall_clock"): the lamp's local time, its
+  // zone and where the time came from; the app pushes it on every connect.
+  const clockCard = isActive && client && deviceHasWallClock(client.welcome) ? ClockSection(client) : null;
+
   sheet.body.append(
     nameField,
     ...(powerCard ? [powerCard] : []),
+    ...(clockCard ? [clockCard] : []),
     actionGrid,
     divider,
     rowFor("LAN address", deviceHost(cur)),
