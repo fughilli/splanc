@@ -58,6 +58,7 @@ import {
   withDeviceLock,
 } from "../../effects/devicePerf";
 import { isDrivable, MidiRouter } from "../../midi/router";
+import { ColorSwatch } from "../kit/hsvPicker";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore } from "../../store/effectStore";
@@ -286,6 +287,42 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     }
   }
 
+  // -- live colour pickers ------------------------------------------------------
+  // One round swatch per colour uniform of the playing effect: it opens the
+  // live HSV picker (D-541) and streams every move to the preview and the
+  // lights, exactly like a MIDI knob. Reset to the defaults on each new effect.
+  const colorsRow = document.createElement("div");
+  colorsRow.className = "acid-colors";
+  colorsRow.hidden = true;
+  /** Live colour values by slot, for the current program (lastUniforms). */
+  const colorVals = new Map<number, number[]>();
+  function renderColors(uniforms: FxUniform[]): void {
+    colorVals.clear();
+    const colors = uniforms.filter((u) => u.ui.kind === "color");
+    colorsRow.replaceChildren(
+      ...colors.map((u) => {
+        const item = document.createElement("label");
+        item.className = "acid-color";
+        const swatch = ColorSwatch({
+          value: u.default,
+          alpha: u.width >= 4,
+          title: u.name.replace(/_/g, " "),
+          onInput: (v) => {
+            colorVals.set(u.slot, v);
+            preview?.setUniform(u.slot, v);
+            const c = appState.client;
+            if (c?.isConnected) c.live.setUniform(u.slot, v);
+          },
+        });
+        const name = document.createElement("span");
+        name.textContent = u.name.replace(/_/g, " ");
+        item.append(swatch.el, name);
+        return item;
+      }),
+    );
+    colorsRow.hidden = colors.length === 0;
+  }
+
   // -- mic + fallback ---------------------------------------------------------
   const micBtn = document.createElement("button");
   micBtn.type = "button";
@@ -393,7 +430,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
 
   overlay.append(top, title, sub);
   if (play) overlay.append(examples);
-  overlay.append(feed, busyCard, micBtn, micHint, fallback, freeNote);
+  overlay.append(feed, colorsRow, busyCard, micBtn, micHint, fallback, freeNote);
   el.append(canvas, scrim, overlay);
 
   // -- the agent turn ---------------------------------------------------------
@@ -674,7 +711,8 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
       await withDeviceLock(() => c.submitEffect(ACID_EFFECT_ID, bytecode, true));
       uploadedFxb = bytecode;
       uploadedTo = deviceStore.activeId();
-      const defaults = uniforms.map((u) => ({ slot: u.slot, value: u.default }));
+      // Defaults, except colours the user has picked live since (same program).
+      const defaults = uniforms.map((u) => ({ slot: u.slot, value: colorVals.get(u.slot) ?? u.default }));
       if (defaults.length > 0) c.setUniforms(defaults);
       appendMsg("think", "📤 Sent it to your lights");
       return null;
@@ -777,6 +815,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
       return;
     }
     for (const u of uniforms) preview.setUniform(u.slot, u.default);
+    renderColors(uniforms);
     if (currentTopo !== null) preview.setTopology(currentTopo);
     startT = performance.now();
     frame = 0;

@@ -723,33 +723,14 @@ body.is-locked {
   width: 100%;
   margin: 0;
 }
-/* Colour control: a styled swatch (consistent on iOS + Android) with the native
- * <input type="color"> overlaid invisibly so tapping still opens the OS picker. */
-.upanel-color {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 1.5rem;
-  cursor: pointer;
-}
-.upanel-color-swatch {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctrl);
-  box-sizing: border-box;
-}
-.upanel-color input[type="color"] {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  cursor: pointer;
+/* Colour control: a ColorSwatch (ui/kit/hsvPicker.ts) opening the live HSV
+ * picker; the value column shows its hex as a label. */
+.upanel-hex {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
 }
 .upanel-ctrl select {
   width: 100%;

@@ -95,31 +95,5 @@ export function snapToStep(v: number, min: number, max: number, step: number): n
   return Math.min(hi, Math.max(lo, v));
 }
 
-function byte(x: number): number {
-  return Math.max(0, Math.min(255, Math.round(x * 255)));
-}
-
-/** `#rrggbb` for showing a float colour in an `<input type=color>` (display
- * only: the 8-bit form must never be sent back unless the user moved it). */
-export function colorToHex(v: readonly number[]): string {
-  return `#${[v[0] ?? 0, v[1] ?? 0, v[2] ?? 0].map((c) => byte(c).toString(16).padStart(2, "0")).join("")}`;
-}
-
-/**
- * The float colour after the user picked `hex` in an 8-bit colour input that
- * was showing `prev`. A channel whose byte did not change keeps its exact
- * float value (no 8-bit round-trip), alpha (`width` 4) and any extra
- * components are kept as they were. A changed channel takes the new byte/255.
- */
-export function colorFromHex(hex: string, prev: readonly number[], width: number): number[] {
-  const w = Math.max(3, width);
-  const out: number[] = [];
-  for (let c = 0; c < 3; c++) {
-    const b = parseInt(hex.slice(1 + 2 * c, 3 + 2 * c), 16);
-    const old = prev[c];
-    out.push(old !== undefined && Number.isFinite(b) && byte(old) === b ? old : (Number.isFinite(b) ? b : 0) / 255);
-  }
-  // vec4 colours carry an alpha: keep it (default opaque).
-  for (let c = 3; c < w; c++) out.push(prev[c] ?? 1);
-  return out;
-}
+// Colour values are float RGB(A); the live HSV picker (ui/kit/hsvPicker.ts)
+// and its maths (color/hsv.ts) replace the 8-bit <input type=color> path.
