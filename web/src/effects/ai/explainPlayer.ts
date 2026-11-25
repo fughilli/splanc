@@ -5,8 +5,8 @@
  * playback queue (agent/src/stage/page.ts).
  *
  * Voice seam (PR 8): a `Narrator` decides how long a step lasts. The default
- * holds the text for reading time; a TTS narrator speaks it and resolves when
- * the speech ends. Nothing else changes.
+ * holds the text for reading time; the speaking narrator (tts.ts) speaks it
+ * and resolves when the speech ends.
  *
  * No DOM: the editor renders `PlayerView` snapshots (marks + current step).
  */
@@ -17,6 +17,9 @@ import type { ExplainMark, ExplainStep } from "./explain";
  * resolve promptly (or reject) once `signal` aborts. */
 export interface Narrator {
   present(text: string, signal: AbortSignal): Promise<void>;
+  /** A step was queued: get ready to present it (a voice synthesises ahead,
+   * so the next step starts without a gap). Optional. */
+  prepare?(text: string): void;
 }
 
 /** Reading time for `text`: about 62 ms a character plus a beat, capped
@@ -107,6 +110,8 @@ export class ExplainPlayer {
       this.render();
       return;
     }
+    // The step right after the one playing is the next to speak: start on it.
+    if (this.steps.length - 1 <= this.current + 1) this.narrator.prepare?.(step.say);
     this.render();
     void this.pump();
   }
@@ -175,6 +180,8 @@ export class ExplainPlayer {
       this.busy = true;
       this.current++;
       const step = this.steps[this.current]!;
+      const next = this.steps[this.current + 1];
+      if (next) this.narrator.prepare?.(next.say);
       const ac = new AbortController();
       this.abort = ac;
       this.render();

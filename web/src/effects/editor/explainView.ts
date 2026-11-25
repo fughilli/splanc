@@ -5,8 +5,8 @@
  * - a caption bar at the foot of the Code pane with the step being read, so the
  *   walkthrough reads on a phone where the chat sits in another tab;
  * - a step list in the chat log; tapping a step shows it.
- * Playback is ExplainPlayer at reading pace; PR 8 swaps in a speaking narrator
- * through `setNarrator` and changes nothing here.
+ * Playback is ExplainPlayer at reading pace, or spoken: the editor sets the
+ * speaking narrator (tts.ts) through `setNarrator`.
  */
 
 import { Button } from "../../ui/kit";
@@ -74,7 +74,7 @@ export class ExplainView {
     this.player = new ExplainPlayer({ onView: (v) => this.render(v) });
   }
 
-  /** PR 8 (voice): present steps by speaking them instead of reading time. */
+  /** Voice (PR 8): present steps by speaking them instead of reading time. */
   setNarrator(n: Narrator): void {
     this.player.narrator = n;
   }
@@ -102,6 +102,11 @@ export class ExplainView {
   syncScroll(): void {
     this.layer.scrollTop = this.o.codeEl.scrollTop;
     this.layer.scrollLeft = this.o.codeEl.scrollLeft;
+  }
+
+  /** Jump the walkthrough to its end (the user started talking). */
+  skip(): void {
+    if (this.player.view().playing) this.player.skip();
   }
 
   /** Remove the walkthrough and its highlights. */
