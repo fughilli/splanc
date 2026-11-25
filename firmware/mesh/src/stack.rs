@@ -567,7 +567,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// A connection holding a signing session, if any (the console's epochs go out under it).
     pub fn signing_conn(&self) -> Option<usize> {
-        (0..admin::MAX_CONNECTIONS).find(|&c| self.signing_session(c))
+        // Live connections first; then the grant an app left behind (D-534).
+        (0..admin::MAX_CONNECTIONS).chain(core::iter::once(admin::DETACHED)).find(|&c| self.signing_session(c))
     }
 
     /// The `mesh_follow` device setting (§7.2).
@@ -1084,6 +1085,23 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     }
 
     /// Send the epoch this gateway originated as its session's signed `TIME_BASE`.
+    /// A catch-up's show epoch, to `node` only, right before its scene: the member's clock
+    /// is then on the mesh's when the scene's state lands. The epoch this gateway holds,
+    /// whoever originated it (a member takes any epoch the admin session signs): the
+    /// gateway that started it may be the fixture that just rebooted. Unicast, so a
+    /// gateway holding an older epoch can't move the rest of the mesh back.
+    pub fn announce_epoch_to(&mut self, now_us: i64, node: NodeId) {
+        let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else { return };
+        if !self.node.net.mesh.can_send() {
+            return;
+        }
+        let mut b = [0u8; ShowEpoch::LEN];
+        let Some(n) = e.encode(&mut b) else { return };
+        if self.send_admin(now_us, conn, Port::TimeBase, &b[..n], Some(&[node])).is_ok() {
+            self.epochs_sent += 1;
+        }
+    }
+
     fn announce_epoch(&mut self, now_us: i64) {
         let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else {
             self.epoch_announce = false;
@@ -1482,7 +1500,16 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// Connection `conn` opened or closed: whatever session it held is gone.
     pub fn connection_changed(&mut self, conn: usize) {
-        self.gate.connection_changed(conn);
+        // The app went away, but the grant it unlocked is still good (members keep its
+        // session until it expires). Keep it on the detached slot so this gateway still
+        // catches up a member that reboots or rejoins, and re-announces its show epoch,
+        // while no app is connected. Nothing else can use that slot; a new unlock
+        // replaces the gateway session, and the old one then signs nothing.
+        if conn != admin::DETACHED && self.signing_session(conn) {
+            self.gate.detach(conn);
+        } else {
+            self.gate.connection_changed(conn);
+        }
     }
 
     /// A member's answer to relayed control `op_id` from `gateway` (ACKed unicast, desk #70).
