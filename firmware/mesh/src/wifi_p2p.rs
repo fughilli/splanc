@@ -1011,7 +1011,8 @@ impl Backhaul for WifiP2p {
     fn links(&self, now_us: i64, out: &mut [crate::topo::Link]) -> usize {
         let mut n = 0usize;
         for nb in self.neighbours.iter().flatten().filter(|nb| now_us - nb.last_us < LIVE_US) {
-            let l = crate::topo::Link { node: nb.id, rssi: nb.rssi_avg(), tx_pct: crate::topo::Link::tx_pct_of(nb.tx_ok, nb.tx_fail) };
+            let range = self.ranging.link(now_us, nb.id).map(|r| crate::topo::RangeC::from_link(&r));
+            let l = crate::topo::Link { node: nb.id, rssi: nb.rssi_avg(), tx_pct: crate::topo::Link::tx_pct_of(nb.tx_ok, nb.tx_fail), range };
             // Insert, strongest first (at most NEIGHBOURS: no sort needed).
             let mut i = n.min(out.len());
             while i > 0 && out[i - 1].rssi < l.rssi {
@@ -1370,7 +1371,7 @@ mod tests {
         w.neighbours.iter_mut().flatten().find(|n| n.id == 0x1130).unwrap().tx_fail = 1;
         let mut out = [Link::EMPTY; 8];
         let n = w.links(1_500_000, &mut out);
-        assert_eq!(&out[..n], &[Link { node: 0x2240, rssi: -35, tx_pct: TX_UNKNOWN }, Link { node: 0x1130, rssi: -60, tx_pct: 75 }]);
+        assert_eq!(&out[..n], &[Link { node: 0x2240, rssi: -35, tx_pct: TX_UNKNOWN, range: None }, Link { node: 0x1130, rssi: -60, tx_pct: 75, range: None }]);
         // Only room for one: the strongest.
         let mut one = [Link::EMPTY; 1];
         assert_eq!((w.links(1_500_000, &mut one), one[0].node), (1, 0x2240));
