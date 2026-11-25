@@ -12,6 +12,13 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# The controller driver and the bench model, stdlib-only: //pi/hitl/harness:mesh_range ships
+# them as data (its coax mode steps the delay bank) without the bench's numpy/opencv deps.
+exports_files([
+    "rfctl.py",
+    "scenarios.py",
+])
+
 py_library(
     name = "meshbench",
     srcs = [

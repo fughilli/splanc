@@ -731,6 +731,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     }
                     None => self.time.stats.bad += 1,
                 },
+                Rx::Range { src, body, .. } => self.node.backhaul.range_in(now_us, src, body),
             }
         }
         // 2. Membership timers (bounded).
@@ -778,6 +779,14 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             };
             if !sent {
                 self.time.cancel_pending();
+            }
+        }
+        // 3c. Link ranging (crate::ranging, off unless enabled on the backhaul): one probe or
+        // stamp report per pass at most, one hop, ACKed unicast.
+        if self.membership.is_member() {
+            let mut body = [0u8; crate::ranging::MSG_MAX];
+            if let Some((dst, n)) = self.node.backhaul.range_out(now_us, &mut body) {
+                self.node.send_range(now_us, dst, &body[..n], &mut self.plain_tx, &mut self.plain_sealed);
             }
         }
         // 4. The follower (guests).

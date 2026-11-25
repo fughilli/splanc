@@ -38,6 +38,7 @@ pub mod gap;
 pub mod mac;
 pub mod tx;
 pub mod p2p;
+pub mod ftm;
 pub mod coex;
 pub mod http;
 pub mod pb;

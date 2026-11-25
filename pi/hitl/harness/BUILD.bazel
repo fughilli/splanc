@@ -172,6 +172,7 @@ py_library(
         "mesh_effect_core.py",
         "mesh_gateway_core.py",
         "mesh_join_admin_core.py",
+        "mesh_range_core.py",
         "mesh_smoke_core.py",
         "mesh_spike_core.py",
         "no_reboot_no_park_core.py",
@@ -1850,6 +1851,44 @@ py_binary(
     },
     imports = ["."],
     main = "hitl_mesh_smoke.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Mesh link ranging (docs/design/mesh-ftm.md): two DUTs of one rig on the meshdev image with
+# `MESH RANGE on`. --mode gate (default): both sides' estimate of the link (n, sigma, A->B vs
+# B->A, phase states flagged, never "calibrated") with render cadence unchanged (no blipping);
+# --mode tape / coax: the owner's ground-truth runs (D-520 tape distances, D-521 the mesh rig's
+# delay bank or hand-swapped coax), fitting K per phase-state pair. Pure logic: mesh_range_core.
+py_binary(
+    name = "mesh_range",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_range.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "mesh_serial_bridge.py",
+        ":plasma_hue_fixed_fxb",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+        "//pi/hitl/meshbench:rfctl.py",
+        "//pi/hitl/meshbench:scenarios.py",
+    ],
+    env = {
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+    },
+    imports = ["."],
+    main = "hitl_mesh_range.py",
     tags = ["manual"],
     deps = [
         ":harness",

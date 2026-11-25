@@ -480,6 +480,17 @@ pub unsafe fn txq_result(queue: usize) -> u32 {
     mmio::read32(mac::txq_reg(mac::TXQ_PMD_BASE, queue, mac::TXQ_STATUS_STRIDE))
 }
 
+/// Queue `queue`'s FTM timestamp words (t1, t4 of its last ACKed frame; decode with
+/// `ftm::TxFtm::decode`): three loads, read right after the completion poll saw the frame
+/// done, before anything else is armed on the queue.
+///
+/// # Safety
+/// MMIO; the MAC must be initialized.
+pub unsafe fn txq_ftm_words(queue: usize) -> [u32; 3] {
+    let b = mac::txq_reg(mac::TXQ_FTM_BASE, queue, mac::TXQ_STATUS_STRIDE);
+    [mmio::read32(b), mmio::read32(b + 4), mmio::read32(b + 8)]
+}
+
 /// Clear queue `queue`'s completed bit (`hal_mac_clr_txq_state(2, queue)`).
 ///
 /// # Safety
@@ -654,5 +665,7 @@ mod tests {
         assert_eq!(mac::txq_reg(mac::TXQ_PLCP0_BASE, 0, mac::TXQ_STRIDE), 0x600A_4D6C);
         assert_eq!(mac::txq_reg(mac::TXQ_PLCP0_BASE, 1, mac::TXQ_STRIDE), 0x600A_4D5C);
         assert_eq!(mac::txq_reg(mac::TXQ_STATUS_BASE, 1, mac::TXQ_STATUS_STRIDE), 0x600A_546C);
+        assert_eq!(mac::txq_reg(mac::TXQ_FTM_BASE, 0, mac::TXQ_STATUS_STRIDE), 0x600A_54F0);
+        assert_eq!(mac::txq_reg(mac::TXQ_FTM_BASE, 1, mac::TXQ_STATUS_STRIDE), 0x600A_547C);
     }
 }
