@@ -22,6 +22,7 @@ import { MemoryMeshBackend, MeshStore } from "../src/store/meshStore";
 import { acceptShare, fixtureShareBody, meshShareBody, previewShare, type FixtureShareBody, type ShareDeps } from "../src/store/shareAccess";
 import { CertPinStore } from "../src/net/deviceTrust";
 import { toHex } from "../src/net/meshKeys";
+import { appLinkHash } from "../src/net/appLinks";
 
 const BASE = "https://splanc.io/app/";
 
@@ -178,4 +179,12 @@ test("the old backup text still imports, and carries the tokens now", async () =
   const b = phone();
   await b.meshes.importBackup(await a.meshes.exportBackup(rec.meshId));
   assert.ok(await b.meshes.provisionerToken(rec.meshId, 3));
+});
+
+test("a universal link opens its in-app route; other links don't", () => {
+  assert.equal(appLinkHash("https://splanc.io/app/#/share?s=1.x&c=y"), "#/share?s=1.x&c=y");
+  assert.equal(appLinkHash("https://splanc.io/app/"), null);
+  assert.equal(appLinkHash("https://evil.example/app/#/share?s=1.x"), null);
+  assert.equal(appLinkHash("http://splanc.io/app/#/share"), null);
+  assert.equal(appLinkHash("not a url"), null);
 });

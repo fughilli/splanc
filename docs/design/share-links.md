@@ -77,22 +77,25 @@ means nothing on another phone).
 
 ## Decisions for the owner
 
-1. **Default mode.** Built as: the link opens by itself, and "Send a code separately" is an
-   opt-in switch (smoothest handoff, as asked). Alternative: code on by default for `mesh`
-   links (they grant everything) and off for `fixture` links. Recommendation: code on by
-   default for `mesh`.
-2. **Delegated admins instead of copying the key** (needs firmware). The owner's admin key
+1. **Default mode. Decided (2026-11-24): code on by default for `mesh` links**, which grant
+   everything; the sender can turn it off. `fixture` links open by themselves unless the
+   sender turns the code on.
+2. **Delegated admins instead of copying the key** (needs firmware). Decided (2026-11-24):
+   build it; see "Revocable access" below. The owner's admin key
    signs a sub-admin certificate `{pubkey, rights, not_after}`, and members accept grants from
    it until `not_after` or until a revocation order names it. The link then carries the
    receiver's *own* key (or the receiver sends back its public key) instead of the owner's
    secret, so it can expire and be revoked. That is the only way to get "share for the
    weekend". Recommendation: yes, as mesh M9, after the bench PRs land.
-3. **Opening the native app.** On iOS, `https://splanc.io/app/…` opens Safari, not the
-   Capacitor app, until the app has the Associated Domains entitlement
-   (`applinks:splanc.io`) and splanc.io serves `/.well-known/apple-app-site-association` for
-   `/app/*` (the Studio-Fug/splanc.io repo). Android needs `assetlinks.json` plus an intent
-   filter once there is an Android build. The installed PWA on Android already takes links
-   in its scope. Both are small, but they touch the release and site repos. Proceed?
+3. **Opening the native app. Decided (2026-11-24): yes.** splanc.io serves
+   `/.well-known/apple-app-site-association` naming `D9JWD94AGX.dev.splanc.app` for
+   `/app/` with fragment `/share?*` only (Studio-Fug/splanc.io#15), so other `/app` links
+   still open the web app. The app gets `applinks:splanc.io` from `web/ios-config/apply.sh`
+   behind `SPLANC_IOS_ASSOCIATED_DOMAINS=1`: like Sign in with Apple, the distribution
+   profile must include Associated Domains first, or a signed build fails. `@capacitor/app`
+   reports the opened link (`web/src/net/appLinks.ts`), and the app applies its fragment
+   as the route. Android needs `assetlinks.json` plus an intent filter once there is an
+   Android build; the installed PWA on Android already takes links in its scope.
 
 ## The wider social feature set
 

@@ -44,7 +44,9 @@ export function openShareSheet(opts: ShareSheetOpts): void {
   );
 
   let made: MadeLink | null = null;
-  let withCode = false;
+  // Owner decision (2026-11-24): a mesh link grants everything, so it needs a code unless
+  // the sender turns it off. A fixture link opens by itself unless they turn it on.
+  let withCode = opts.kind === "mesh";
   let gen = 0;
 
   const codeRow = h("div", "mesh-row");
@@ -56,7 +58,7 @@ export function openShareSheet(opts: ShareSheetOpts): void {
     h("span", "mesh-row-hint", "The link then needs a code to open. Say it, or send it another way, so the link alone (say, a chat's history) isn't enough."),
   );
   const sw = Switch({
-    on: false,
+    on: withCode,
     label: "Send a code separately",
     onChange: (v) => {
       withCode = v;
