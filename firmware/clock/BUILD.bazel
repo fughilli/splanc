@@ -1,0 +1,50 @@
+"""The device wall clock: UTC civil time (unix µs <-> Y/M/D h:m:s, weekday), the
+software-RTC discipline (source offers with age-grown error, lowest-error
+selection, step > 1 s / slew below, sanity bounds, crystal-rate fit), the
+monotonic step-back guard and the soft-reset carry-over record.
+
+no_std, zero-dependency, host-tested only for now: the firmware wiring (esp_timer
+base, lm_clock_observe shift, protocol arms) is a later PR. Time zones (D-562: a
+stored POSIX TZ rule) are a follow-up behind the LocalOffset seam in src/local.rs."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "clock",
+    srcs = [
+        "src/carry.rs",
+        "src/civil.rs",
+        "src/discipline.rs",
+        "src/guard.rs",
+        "src/lib.rs",
+        "src/local.rs",
+    ],
+    crate_name = "ledmapper_clock",
+    edition = "2021",
+    # Not on the render path (one i64 add per read): built for size on the ESP32 images.
+    rustc_flags = COLD_CRATE_RUSTC_FLAGS,
+)
+
+rust_test(
+    name = "civil_test",
+    srcs = ["tests/civil.rs"],
+    edition = "2021",
+    deps = [":clock"],
+)
+
+rust_test(
+    name = "discipline_test",
+    srcs = ["tests/discipline.rs"],
+    edition = "2021",
+    deps = [":clock"],
+)
+
+rust_test(
+    name = "guard_test",
+    srcs = ["tests/guard.rs"],
+    edition = "2021",
+    deps = [":clock"],
+)
