@@ -488,6 +488,7 @@ export async function consumeOpenAiStream(
       }
       if (tc.function?.arguments) {
         acc.args += tc.function.arguments;
+        if (acc.name) hooks?.onToolInput?.(acc.name, acc.id || `call_${i}`, acc.args);
         if (acc.name === "set_script") {
           const s = partialField(acc.args, "summary");
           if (s && s !== lastSummary) {

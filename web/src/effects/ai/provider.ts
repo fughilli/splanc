@@ -71,6 +71,10 @@ export interface StreamHooks {
   /** The current status label, updated live: "Thinking…", a fixed tool verb, or
    * the model's own streamed set_script `summary`. */
   onStatus?: ((label: string) => void) | undefined;
+  /** A tool call's input JSON so far (the whole partial text, not a delta), as
+   * it streams: explain_code shows its steps before the call completes.
+   * Providers that only deliver whole tool calls never fire it. */
+  onToolInput?: ((name: string, id: string, json: string) => void) | undefined;
 }
 
 /** Options for one request round. */

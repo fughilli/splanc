@@ -23,7 +23,9 @@ import type {
   SendOptions,
   SendResult,
   StreamHooks,
+  ToolDef,
 } from "../provider";
+import { EXPLAIN_CODE } from "../explain";
 
 const API_URL = "https://api.anthropic.com/v1/messages";
 
@@ -56,6 +58,10 @@ export function toolLabel(name: string): string {
       return "Reading MIDI controls…";
     case "set_midi_mapping":
       return "Mapping MIDI controls…";
+    case "show_code":
+      return "Reading the code…";
+    case "explain_code":
+      return "Explaining the code…";
     default:
       return "Working…";
   }
@@ -180,6 +186,7 @@ export async function consumeChatStream(
           } else if (d.type === "input_json_delta") {
             const acc = (toolJson[ev.index] ?? "") + String(d.partial_json ?? "");
             toolJson[ev.index] = acc;
+            hooks?.onToolInput?.(String(b.name ?? ""), String(b.id ?? ""), acc);
             if (b.name === "set_script") {
               const s = partialField(acc, "summary");
               if (s !== null && s !== lastSummary) {
@@ -244,9 +251,18 @@ export function messagesRequestBody(model: string, messages: ChatMessage[], opts
     stream: true,
     // Frozen, cacheable system prefix so caching engages across turns.
     system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
-    ...(opts.tools.length ? { tools: opts.tools } : {}),
+    ...(opts.tools.length ? { tools: opts.tools.map(eagerTool) } : {}),
     messages: reqMessages,
   };
+}
+
+/** Tools whose input the UI uses while it streams: fine-grained (eager) input
+ * streaming sends their JSON as it is written instead of in validated chunks,
+ * so explain_code's first step shows while the rest is still coming. */
+const EAGER_TOOLS = new Set([EXPLAIN_CODE]);
+
+function eagerTool(t: ToolDef): ToolDef | (ToolDef & { eager_input_streaming: true }) {
+  return EAGER_TOOLS.has(t.name) ? { ...t, eager_input_streaming: true } : t;
 }
 
 /** Build an Anthropic provider from its config (BYO key: browser -> Anthropic). */

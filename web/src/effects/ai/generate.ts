@@ -23,6 +23,14 @@ import {
   selectTools,
 } from "./chatPrompt";
 import { parseLiveUniformCall, type LiveUniformCall } from "./liveUniforms";
+import {
+  EXPLAIN_CODE,
+  EXPLAIN_GUIDE,
+  ExplainSession,
+  SHOW_CODE,
+  explainAvailable,
+  type ExplainStep,
+} from "./explain";
 import { stripCodeFence } from "./providers/wllamaProtocol";
 import { isMobileUserAgent } from "../../flash/env";
 import {
@@ -406,6 +414,16 @@ export interface ChatHooks {
    * (preview + connected fixture) without a source edit. Return the result text,
    * honest about which sinks received it. Optional — omit to withhold the tool. */
   onSetLiveUniforms?: (call: LiveUniformCall) => Promise<string>;
+  /** Explain the code in the editor (explain.ts): offered when supplied and the
+   * provider can call tools (not the in-browser models, D-558). `source` is the
+   * code the steps point into; `onStep` gets each validated step once, as the
+   * input streams where the provider supports it, else when the call runs;
+   * `onEnd` follows a call's last step. */
+  explain?: {
+    source: () => string;
+    onStep: (step: ExplainStep) => void;
+    onEnd?: (call: string) => void;
+  };
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
   /** Live status label as the response streams — "Thinking…", a fixed tool verb,
@@ -636,6 +654,9 @@ export async function runChatTurn(
   if (bugs) system += `\n\n${BUG_REPORT_GUIDE}`;
   const liveUniforms = hooks.onSetLiveUniforms !== undefined;
   if (liveUniforms && provider.id !== "wllama") system += `\n\n${LIVE_UNIFORMS_GUIDE}`;
+  const explainHooks = hooks.explain !== undefined && explainAvailable(provider.id, caps) ? hooks.explain : undefined;
+  if (explainHooks) system += `\n\n${EXPLAIN_GUIDE}`;
+  const explain = explainHooks ? new ExplainSession(explainHooks.source, explainHooks.onStep) : undefined;
   // Advertise only tools the active provider can fulfill (see selectTools): the
   // vision `capture_preview` is withheld when the model can't see images, the
   // perf/MIDI groups only when the caller supplies their hooks, and nothing at
@@ -646,6 +667,7 @@ export async function runChatTurn(
     midi: hooks.onListMidi !== undefined && hooks.onSetMidiMapping !== undefined,
     bugs,
     liveUniforms,
+    explain: explain !== undefined,
   }), turnOpts.summaryDescription);
   try {
     hooks.onPrompt?.({ system, tools: tools.map((t) => t.name), provider: provider.id });
@@ -660,6 +682,7 @@ export async function runChatTurn(
     hooks.onTrace?.({ kind: "round", round: round + 1 });
     const lastIn = history[history.length - 1];
     if (lastIn) hooks.onTrace?.({ kind: "in", text: traceRenderContent(lastIn.content) });
+    explain?.beginResponse();
     const { content, stop_reason } = await provider.send(history, {
       system,
       tools,
@@ -674,6 +697,7 @@ export async function runChatTurn(
           hooks.onTrace?.({ kind: "delta", text: d });
         },
         onStatus: hooks.onStatus,
+        ...(explain ? { onToolInput: (name: string, id: string, json: string) => explain.streaming(name, id, json) } : {}),
       },
     });
     history.push({ role: "assistant", content });
@@ -770,6 +794,15 @@ export async function runChatTurn(
             type: "tool_result",
             tool_use_id: tu.id,
             content: [{ type: "text", text: summary }],
+          });
+        } else if ((tu.name === EXPLAIN_CODE || tu.name === SHOW_CODE) && explain) {
+          const r = tu.name === SHOW_CODE ? explain.showCode() : explain.finish(tu.id, tu.input);
+          if (tu.name === EXPLAIN_CODE) explainHooks?.onEnd?.(tu.id);
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: r.text }],
+            ...(r.isError ? { is_error: true } : {}),
           });
         } else if (tu.name === "list_midi_controls" && hooks.onListMidi) {
           const summary = await hooks.onListMidi();
