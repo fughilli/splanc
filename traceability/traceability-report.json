@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 3717,
-    "gaps": 41
+    "test_cases": 3718,
+    "gaps": 40
   },
   "levels": [
     {
@@ -7720,12 +7720,6 @@
       "kind": "no-implementation",
       "entity": "PR-41",
       "message": "no source annotation implements it",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:web_ota_journey",
-      "message": "//pi/hitl/harness:web_ota_journey pi/hitl/harness/web_ota_journey error and traces to no requirement",
       "route": "autonomous"
     },
     {

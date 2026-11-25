@@ -265,12 +265,6 @@
       "route": "autonomous"
     },
     {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:web_ota_journey",
-      "message": "//pi/hitl/harness:web_ota_journey pi/hitl/harness/web_ota_journey error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
       "kind": "high-risk-open",
       "entity": "RISK-1",
       "message": "high risk; mitigation is PARTIAL",
