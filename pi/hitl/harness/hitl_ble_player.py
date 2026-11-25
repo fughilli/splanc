@@ -80,6 +80,78 @@ class Reassembler:
         return out
 
 
+# Error text that means the BLE LINK went away under a request — as opposed to the
+# firmware answering it with an error. BlueZ fails every ATT request still outstanding
+# when the link drops with BT_ATT_ERROR_UNLIKELY, which reaches bleak as
+# "Operation failed with ATT error: 0x0e (Unlikely Error)". The netstack GATT server
+# (firmware/netstack/src/gatt.rs) never sends 0x0e itself (it only answers with
+# invalid-handle / invalid-length / write-not-permitted / not-supported / not-found),
+# so on these gates 0x0e is always the link, never the firmware. After BlueZ clears a
+# dropped device's services, bleak raises "Service Discovery has not been performed
+# yet"; a D-Bus stream closed under us surfaces as a message-less EOFError.
+_LINK_LOSS_MARKERS = (
+    "ATT error: 0x0e",
+    "Unlikely Error",
+    "Service Discovery has not been performed yet",
+    "Not connected",
+    "not connected",
+)
+
+
+class LinkLost(Exception):
+    """The BLE link dropped while a frame was in flight (see is_link_loss)."""
+
+
+def is_link_loss(exc: BaseException, connected: bool) -> bool:
+    """Whether a transport failure is the LINK dropping (resumable) rather than the
+    device refusing or never answering a request (a real failure)."""
+    if isinstance(exc, LinkLost) or not connected:
+        return True
+    if isinstance(exc, EOFError):
+        return True
+    msg = str(exc)
+    return any(m in msg for m in _LINK_LOSS_MARKERS)
+
+
+def resume_point(failed: int, upload_start: int | None) -> int:
+    """The frame index to resume at after a link loss while frame `failed` was in flight.
+
+    A request/reply frame is resent as is (configure/start/timing are idempotent: the
+    device applies the same options again). A sharded upload can NOT resume mid-stream:
+    the firmware drops a repeated or skipped window as out of order and stays silent
+    (main.cpp process_upload_chunk), while window 0 always restarts the upload — so a
+    loss anywhere in the upload restarts it from its first window."""
+    if upload_start is not None and failed >= upload_start:
+        return upload_start
+    return failed
+
+
+def adapter_identity() -> dict:
+    """Which BLE controller this container drives: {hci, path, usb_id} (best effort).
+
+    Logged with every exchange so a rig's link-loss rate can be tied to its actual
+    central (USB dongle vs the Pi's onboard controller, which hitl_improv only falls
+    back to when no USB controller is up)."""
+    hci = _adapter_kwargs().get("adapter") or "default"
+    out = {"hci": hci, "path": "", "usb_id": ""}
+    if hci == "default":
+        return out
+    try:
+        dev = os.path.realpath(os.path.join("/sys/class/bluetooth", hci, "device"))
+        out["path"] = dev
+        d = dev
+        for _ in range(4):  # the USB interface's parent device carries idVendor/idProduct
+            vid, pid = os.path.join(d, "idVendor"), os.path.join(d, "idProduct")
+            if os.path.exists(vid) and os.path.exists(pid):
+                with open(vid) as fv, open(pid) as fp:
+                    out["usb_id"] = f"{fv.read().strip()}:{fp.read().strip()}"
+                break
+            d = os.path.dirname(d)
+    except OSError:
+        pass
+    return out
+
+
 async def exchange(
     frames,
     address,
@@ -89,59 +161,149 @@ async def exchange(
     connect_tries,
     connect_timeout,
     gap_ms=0.0,
+    max_link_losses=0,
+    upload_start=None,
 ):
     """Send each (already protobuf-encoded) frame in order, awaiting one reply per
     frame — the player protocol is strictly request/reply, so a multi-frame
-    sequence (e.g. a hello then a sharded map/effect upload) drives cleanly."""
+    sequence (e.g. a hello then a sharded map/effect upload) drives cleanly.
+
+    Up to `max_link_losses` times, a dropped BLE link is ridden out the way the app's
+    LedMapperClient does it over BLE: reconnect, say hello again, and carry on from
+    the frame that was in flight (or the upload's first window, see resume_point).
+    Each loss is recorded in the result's `link_losses` (frame, error, seconds into
+    the exchange), so the gate reports them. A request the device refuses or never
+    answers on a live link is NOT a link loss and still fails at once."""
     dev, nm = await find(address, name_filter, scan_seconds)
     if dev is None:
         return {"ok": False, "error": "no player device found in scan"}
     device = {"name": nm, "address": dev.address}
-    log(f"[ble-player] using {nm} ({dev.address})")
+    adapter = adapter_identity()
+    log(f"[ble-player] using {nm} ({dev.address}) via central {adapter}")
 
-    reasm = Reassembler()
-    got: asyncio.Queue = asyncio.Queue()
+    t_start = time.monotonic()
+    losses: list[dict] = []
+    replies: list[str] = []
+    rtts_ms: list[float] = []
+    state: dict = {}
 
-    def on_tx(_sender, data):
-        for frame in reasm.push(bytes(data)):
-            log(f"[ble-player] <- frame {len(frame)}B")
-            got.put_nowait(frame)
+    def base(ok: bool, **kw) -> dict:
+        return {"ok": ok, "device": device, "adapter": adapter, "link_losses": losses, **kw}
 
-    client = None
-    try:
-        client = await _connect(dev, connect_tries, connect_timeout)
+    async def open_link():
+        """Connect + subscribe; returns (client, reply queue, link-lost event)."""
+        lost = asyncio.Event()
+        got: asyncio.Queue = asyncio.Queue()
+        reasm = Reassembler()  # fresh per link: never splice a dead link's partial frame
+
+        def on_tx(_sender, data):
+            for frame in reasm.push(bytes(data)):
+                log(f"[ble-player] <- frame {len(frame)}B")
+                got.put_nowait(frame)
+
+        client = await _connect(
+            dev, connect_tries, connect_timeout, disconnected_callback=lambda _c: lost.set()
+        )
+        state["client"] = client
         log(f"[ble-player] connected={client.is_connected}")
         # Subscribe to TX BEFORE writing so the reply is never missed.
         await client.start_notify(PLAYER_TX, on_tx)
-        replies = []
-        rtts_ms = []
-        for i, payload in enumerate(frames):
-            if i > 0 and gap_ms > 0:
-                # Paced sequences (e.g. a capture's phase rotation) — the device
-                # keeps rendering between requests, as it does for the app.
-                await asyncio.sleep(gap_ms / 1000.0)
-            t0 = time.monotonic()
-            wire = frame_with_length(payload)
-            log(
-                f"[ble-player] -> frame {i + 1}/{len(frames)} {len(wire)}B ({len(payload)}B payload)"
+        return client, got, lost
+
+    async def request(client, got, lost, payload: bytes) -> bytes:
+        wire = frame_with_length(payload)
+        for off in range(0, len(wire), WRITE_CHUNK):
+            await client.write_gatt_char(PLAYER_RX, wire[off : off + WRITE_CHUNK], response=True)
+        reply_t = asyncio.ensure_future(got.get())
+        lost_t = asyncio.ensure_future(lost.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {reply_t, lost_t}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
             )
-            for off in range(0, len(wire), WRITE_CHUNK):
-                await client.write_gatt_char(
-                    PLAYER_RX, wire[off : off + WRITE_CHUNK], response=True
+        finally:
+            for t in (reply_t, lost_t):
+                if not t.done():
+                    t.cancel()
+        if reply_t in done:
+            return reply_t.result()
+        if lost_t in done:
+            raise LinkLost("BLE link dropped while awaiting the reply")
+        raise asyncio.TimeoutError()
+
+    i = 0
+    link = None
+    try:
+        while i < len(frames):
+            try:
+                if link is None:
+                    link = await open_link()
+                    if losses and i > 0:
+                        # A fresh link is a fresh session for the app: hello first.
+                        log("[ble-player] re-hello on the new link")
+                        await request(*link, frames[0])
+                if i > 0 and gap_ms > 0:
+                    # Paced sequences (e.g. a capture's phase rotation) — the device
+                    # keeps rendering between requests, as it does for the app.
+                    await asyncio.sleep(gap_ms / 1000.0)
+                t0 = time.monotonic()
+                log(
+                    f"[ble-player] -> frame {i + 1}/{len(frames)} "
+                    f"{len(frames[i]) + 4}B ({len(frames[i])}B payload)"
                 )
-            reply = await asyncio.wait_for(got.get(), timeout=timeout)
-            rtts_ms.append(round((time.monotonic() - t0) * 1000.0, 1))
-            replies.append(base64.b64encode(reply).decode("ascii"))
-        return {"ok": True, "replies_b64": replies, "rtts_ms": rtts_ms, "device": device}
-    except asyncio.TimeoutError:
-        return {"ok": False, "error": "timed out waiting for a reply over BLE", "device": device}
-    except _TRANSPORT_ERRORS as e:
-        return {
-            "ok": False,
-            "error": f"BLE transport failed: {type(e).__name__}: {e or '(no message)'}",
-            "device": device,
-        }
+                reply = await request(*link, frames[i])
+            except asyncio.TimeoutError as e:
+                if link is None:  # bleak's message-less connect timeout (after _connect's retries)
+                    return base(
+                        False, error=f"BLE transport failed: {type(e).__name__}: (connect timeout)"
+                    )
+                if not link[0].is_connected:
+                    err: BaseException = LinkLost("BLE link dropped (reply wait timed out)")
+                else:
+                    return base(False, error="timed out waiting for a reply over BLE")
+            except (LinkLost, *_TRANSPORT_ERRORS) as e:
+                if link is None:
+                    # The (re)connect itself failed — _connect already retried it; a
+                    # board that will not take a link is not a dropped link.
+                    return base(
+                        False,
+                        error=f"BLE transport failed: {type(e).__name__}: {e or '(no message)'}",
+                    )
+                err = e
+            else:
+                rtts_ms.append(round((time.monotonic() - t0) * 1000.0, 1))
+                replies.append(base64.b64encode(reply).decode("ascii"))
+                i += 1
+                continue
+            # A transport failure: resumable only if it is the link and budget remains.
+            connected = bool(link[0].is_connected)
+            msg = f"{type(err).__name__}: {err or '(no message)'}"
+            if not is_link_loss(err, connected):
+                return base(False, error=f"BLE transport failed: {msg}")
+            losses.append(
+                {"frame": i + 1, "error": msg, "t_s": round(time.monotonic() - t_start, 1)}
+            )
+            log(f"[ble-player] LINK LOST at frame {i + 1}/{len(frames)} ({msg})")
+            if len(losses) > max_link_losses:
+                return base(False, error=f"BLE transport failed: {msg}")
+            resume = resume_point(i, upload_start)
+            del replies[resume:]
+            del rtts_ms[resume:]
+            log(
+                f"[ble-player] reconnecting; resuming at frame {resume + 1} "
+                f"(link loss {len(losses)}/{max_link_losses})"
+            )
+            try:
+                if link is not None:
+                    await link[0].disconnect()
+            except Exception:  # noqa: BLE001 — the link is already gone
+                pass
+            link = None
+            i = resume
+        return base(True, replies_b64=replies, rtts_ms=rtts_ms)
+    except _TRANSPORT_ERRORS as e:  # a reconnect that never came up
+        return base(False, error=f"BLE transport failed: {type(e).__name__}: {e or '(no message)'}")
     finally:
+        client = state.get("client")
         if client is not None:
             try:
                 await client.disconnect()
@@ -165,6 +327,18 @@ def main() -> int:
     ex.add_argument("--connect-tries", type=int, default=5)
     ex.add_argument("--connect-timeout", type=float, default=12.0)
     ex.add_argument("--gap-ms", type=float, default=0.0, help="pause between frames")
+    ex.add_argument(
+        "--max-link-losses",
+        type=int,
+        default=0,
+        help="BLE link drops to ride out by reconnecting + resuming (0 = fail on the first)",
+    )
+    ex.add_argument(
+        "--upload-start",
+        type=int,
+        default=None,
+        help="0-based index of the first sharded-upload window (a loss in the upload restarts it)",
+    )
     a = ap.parse_args()
     try:
         frames = [base64.b64decode(f) for f in a.frames_b64.split(",") if f]
@@ -178,6 +352,8 @@ def main() -> int:
                 a.connect_tries,
                 a.connect_timeout,
                 a.gap_ms,
+                a.max_link_losses,
+                a.upload_start,
             )
         )
     except Exception as e:  # noqa: BLE001 — report to the harness as a failed result

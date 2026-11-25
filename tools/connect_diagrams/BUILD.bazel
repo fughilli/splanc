@@ -1,0 +1,20 @@
+# Connect-flow pictograms (the app's connect picker + "Flash a new device" sheet),
+# rendered as line art from the Splanc Mini's mechanical design. A `bazel run` tool
+# that writes web/public/connect/*.png into the source tree:
+#   bazel run //tools/connect_diagrams:render
+#   bazel run //tools/connect_diagrams:render -- --mesh /abs/path/mini.stl   # exact CAD
+# See README.md for the inputs and their precedence.
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+py_binary(
+    name = "render",
+    srcs = ["render.py"],
+    data = ["mini_mechanical.json"],
+    main = "render.py",
+    deps = [
+        requirement("numpy"),
+        requirement("pillow"),
+    ],
+)

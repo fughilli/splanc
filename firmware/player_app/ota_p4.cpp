@@ -12,7 +12,7 @@
 // A new P4 that crashes, hangs (RTC watchdog) or isn't healthy by the deadline is rolled
 // back by the IDF bootloader; the old P4 then finds the new C6 image and puts its own back.
 //
-// The C6 forwards the OTA arms here (main.cpp, LM_FRONTEND). The decisions (offer
+// The C6 forwards the OTA arms here (relay_main.cpp, the front end). The decisions (offer
 // checks, session bookkeeping, key epochs, the health verdict, the wire) are the
 // host-tested Rust core (firmware/ota) the C6 loader uses; this file is the glue.
 #include <Arduino.h>

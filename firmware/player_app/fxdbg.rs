@@ -370,7 +370,7 @@ unsafe fn write_state(now_ms: u32, out: *mut u8, cap: usize) -> i32 {
         let (c0, c1) = channel_split();
         w.uint(16, c0 as u64);
         w.uint(17, c1 as u64);
-        let f: FxFrame = (*addr_of!(FX_SHADE_FRAME)).unwrap_or_default();
+        let f: FxFrame = (*addr_of!(FX_SHADE_FRAME)).as_ref().copied().unwrap_or_default();
         w.key(18, 2);
         w.varint(FRAME_CTX_BYTES as u64);
         for i in 0..FRAME_CTX_BYTES {
@@ -783,7 +783,7 @@ pub(crate) unsafe fn handle_debug_led(frame: &[u8], now_ms: i64, out: *mut u8, c
     let jit_rgb = fx_shade_one(p, i as u32, xyz[0], xyz[1], xyz[2]);
     led_restore(p, i, &saved);
     // The Led that run used (the deck's per-LED scratch), for the record.
-    let led: FxLed = (*p).shade_led.unwrap_or_default();
+    let led: FxLed = (*p).shade_led.as_ref().copied().unwrap_or_default();
     // 2) The interpreter, JIT patches undone, zeroed scratch: locals to compare.
     let Some(vm) = (*p).vm.as_mut() else {
         return encode_reply(&fx_error("no_effect", "no VM on that deck"), out, cap);
@@ -795,7 +795,7 @@ pub(crate) unsafe fn handle_debug_led(frame: &[u8], now_ms: i64, out: *mut u8, c
     }
     vm.clear_jit();
     vm.clear_scratch();
-    let f: FxFrame = (*addr_of!(FX_SHADE_FRAME)).unwrap_or_default();
+    let f: FxFrame = (*addr_of!(FX_SHADE_FRAME)).as_ref().copied().unwrap_or_default();
     let (rgb, outcome, counters) = match Program::parse(&(*p).bytes[..(*p).len]) {
         Ok(prog) => vm.run_shade_counted(&prog, &f, &led, &fx_budget()),
         Err(_) => ((0, 0, 0), ledmapper_fx_vm::Outcome::Ok, Default::default()),

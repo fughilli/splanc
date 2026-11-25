@@ -1,7 +1,7 @@
 /**
  * App shell (design doc §3.2 / §7.3) — the persistent chrome around screens:
  * a top app bar (contextual title + back affordance + device status pill) and
- * a bottom tab bar (Maps / Effects / Device). The router mounts screens into
+ * a bottom tab bar (Effects / Maps / Device). The router mounts screens into
  * the shell's outlet.
  *
  * Per the owner's DECISION (§9 Q1): the device surface is BOTH an app-bar pill
@@ -22,9 +22,10 @@ interface Tab {
   route: string;
 }
 
+// Effects first: it's the home (see my fixture → pick an effect → tune it).
 const TABS: Tab[] = [
-  { id: "maps", label: "Maps", icon: "map", route: "/maps" },
   { id: "effects", label: "Effects", icon: "sparkles", route: "/effects" },
+  { id: "maps", label: "Maps", icon: "map", route: "/maps" },
   { id: "device", label: "Device", icon: "device", route: "" }, // opens the sheet
 ];
 

@@ -47,6 +47,8 @@ import {
   decodeMappingBundle,
   type BlendOptions,
   type EffectListMessage,
+  type LoadStoredEffectMessage,
+  type StoredEffectListMessage,
   type EffectUniformsMessage,
   type KeypointListMessage,
   type KeypointMessage,
@@ -74,8 +76,28 @@ import {
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
+import {
+  flatPowerState,
+  type PowerState,
+  type PowerStateMessage,
+  type SetPowerConfigMessage,
+} from "./proto";
 import { LiveControl, applyAt } from "./liveControl";
-import { meshResultError, wrapForMesh, type MeshInfoMessage, type MeshResultInfo, type MeshStateInfo } from "./mesh";
+import {
+  meshAdminMessage,
+  meshTopologyRequest,
+  readMeshTopology,
+  meshResultError,
+  meshLargeSender,
+  meshRoute,
+  type MeshAdminOp,
+  type MeshAdminResultInfo,
+  type MeshInfoMessage,
+  type MeshResultInfo,
+  type MeshStateInfo,
+} from "./mesh";
+import { meshEffectMessage, meshShareMessage, type MeshShareOptions } from "./meshEffect";
+export type { MeshShareOptions } from "./meshEffect";
 export { applyAt } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
@@ -136,6 +158,21 @@ export const OTA_TRANSFER_TIMEOUT_MS = 30_000;
  * time. Distinct from a generic failure so callers (e.g. Hardware Setup) can
  * tell "the firmware never answered this request" (likely too old to implement
  * it) apart from "the firmware answered, with nothing to report". */
+/** Most blocks one set_counting_pattern may carry (proto SetCountingPattern):
+ * players refuse more with error bad_message; firmware before that silently
+ * drew only the first 32. A pattern REPLACES the previous one, so a bigger set
+ * can't be split across calls — callers send several frames instead. */
+export const MAX_COUNTING_BLOCKS = 32;
+
+/** set_counting_pattern was handed more than MAX_COUNTING_BLOCKS blocks. Thrown
+ * before anything is sent, so older firmware can't truncate it silently. */
+export class TooManyCountingBlocksError extends Error {
+  constructor(readonly count: number) {
+    super(`set_counting_pattern takes at most ${MAX_COUNTING_BLOCKS} blocks (got ${count})`);
+    this.name = "TooManyCountingBlocksError";
+  }
+}
+
 export class RequestTimeoutError extends Error {
   constructor(
     readonly replyType: string,
@@ -380,6 +417,8 @@ export class LedMapperClient {
   /** Live control drives every fixture meshed with this one (mesh M5; net/mesh.ts). */
   private meshAll_ = false;
   private meshState_: MeshStateInfo | null = null;
+  // Lamp power: power_state replies AND the device's unsolicited pushes.
+  private powerSubs = new Set<(s: PowerState) => void>();
 
   /**
    * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
@@ -862,6 +901,8 @@ export class LedMapperClient {
     // Sharded like submit_map: a compiled effect can exceed one window, and on
     // the BLE transport a whole-frame send would blow the small per-frame cap.
     // Small effects still take the single-window fast path inside sendChunked.
+    // Whole-mesh control (mesh M6): every member loads it, all on one frame.
+    if (this.meshAll_) return this.meshShareEffect(effectId, fxb, { activate, deck });
     this.live.resetDeck(deck);
     // A sharded upload goes out as upload_chunk frames: count it as activity here.
     for (const fn of this.activitySubs) fn();
@@ -872,6 +913,19 @@ export class LedMapperClient {
       activate,
       deck,
     } as unknown as ClientMessage);
+  }
+
+  /** Share a compiled effect with the whole mesh through this fixture (mesh M6;
+   * net/meshEffect.ts): any size up to the player's effect limit. This fixture answers as
+   * a load would (result_ready{effectId}, or the error); it and every member then load it
+   * on one show-clock frame once all of them hold it (members joining later catch up).
+   * With `wantReply` (the default) the per-member outcome is pushed to
+   * {@link onMeshResult} subscribers. Only for players in a mesh (see {@link getMesh}). */
+  async meshShareEffect(effectId: string, fxb: Uint8Array, opts: MeshShareOptions = {}): Promise<ResultReadyMessage> {
+    this.live.resetDeck(opts.deck ?? 0);
+    for (const fn of this.activitySubs) fn();
+    const inner = encodeClient(meshEffectMessage(effectId, fxb, opts));
+    return this.sendChunked("EFFECT", meshShareMessage(inner, opts));
   }
 
   /** Select the active effect by id ("" or "off" clears it). `deck` (FUG-110)
@@ -1107,6 +1161,47 @@ export class LedMapperClient {
     )) as unknown as EffectListMessage;
   }
 
+  /** Keep a compiled effect in the device's effect store WITHOUT loading it
+   * (submit_effect{store: true}; the "effect_store" feature,
+   * docs/design/effect-store.md). An effect with the same id is replaced. Sharded
+   * like submitEffect. Reply: result_ready (id=effectId). */
+  async storeEffect(effectId: string, name: string, fxb: Uint8Array): Promise<ResultReadyMessage> {
+    for (const fn of this.activitySubs) fn();
+    return this.sendChunked("EFFECT", {
+      type: "submit_effect",
+      effectId,
+      fxb,
+      store: true,
+      name,
+    } as unknown as ClientMessage);
+  }
+
+  /** The effects in the device's store, with their names and uniform names. */
+  async listStoredEffects(): Promise<StoredEffectListMessage> {
+    return (await this.request(
+      { type: "list_stored_effects" } as unknown as ClientMessage,
+      "stored_effect_list",
+    )) as unknown as StoredEffectListMessage;
+  }
+
+  /** Load a stored effect onto `deck` (0 = A) as if it had been submitted there;
+   * `activate` makes it the running effect. Landing on deck A, activated, it is
+   * also what the device resumes on boot. Reply: result_ready. */
+  async loadStoredEffect(effectId: string, deck = 0, activate = true): Promise<ResultReadyMessage> {
+    this.live.resetDeck(deck);
+    const msg: LoadStoredEffectMessage = { type: "load_stored_effect", effectId, deck, activate };
+    return (await this.request(msg as unknown as ClientMessage, "result_ready")) as ResultReadyMessage;
+  }
+
+  /** Remove an effect from the store (a deck it is loaded on keeps it). Reply: what
+   * is left. */
+  async deleteStoredEffect(effectId: string): Promise<StoredEffectListMessage> {
+    return (await this.request(
+      { type: "delete_stored_effect", effectId } as unknown as ClientMessage,
+      "stored_effect_list",
+    )) as unknown as StoredEffectListMessage;
+  }
+
   /** The device's TLS identity: its state ("generating" until the first-boot key +
    * certificate exist, then "ready") and the certificate SHA-256 to pin per device
    * id (net/deviceTrust.ts). Needs the "tls_info" feature; answers over BLE too. */
@@ -1323,6 +1418,26 @@ export class LedMapperClient {
     return this.meshState_;
   }
 
+  /** The mesh with its topology (the mesh map): every member's room pose, hops and radio
+   * neighbours, and this fixture's own; read in as many pages as the mesh needs. Older
+   * firmware answers a plain state (no topology fields). */
+  async getMeshTopology(timeoutMs = 5000): Promise<MeshStateInfo> {
+    const s = await readMeshTopology(async (from) => {
+      const r = (await this.request(meshTopologyRequest(from), "mesh", timeoutMs)) as unknown as MeshInfoMessage;
+      return r.state ?? {};
+    });
+    this.meshState_ = s;
+    return s;
+  }
+
+  /** Membership and administration (mesh M7): provision this fixture into a mesh, unlock
+   * it as the gateway with the admin's grant, admit, revoke, leave. Resolves with the
+   * fixture's answer (check it with net/mesh.ts meshAdminError). */
+  async meshAdmin(op: MeshAdminOp, timeoutMs = 8000): Promise<MeshAdminResultInfo> {
+    const r = (await this.request(meshAdminMessage(op), "mesh", timeoutMs)) as unknown as MeshInfoMessage;
+    return r.admin ?? {};
+  }
+
   /** The last mesh state read with {@link getMesh} (null before). */
   get meshState(): MeshStateInfo | null {
     return this.meshState_;
@@ -1349,6 +1464,56 @@ export class LedMapperClient {
   onKioskStatus(fn: (s: KioskStatusMessage) => void): () => void {
     this.kioskSubs.add(fn);
     return () => this.kioskSubs.delete(fn);
+  }
+
+  // -- Lamp power (docs/design/lamp-power.md; the "power" feature) -------------
+
+  /** Turn the lamp on (`on`) / off, or `toggle` it. The configured ON/OFF
+   * transition plays unless `instant`; `durationMs` overrides its length for
+   * this change. Reply: the new power state. */
+  async setPower(
+    req: { on?: boolean; toggle?: boolean; instant?: boolean; durationMs?: number },
+    timeoutMs = 5000,
+  ): Promise<PowerState> {
+    const msg = { type: "set_power", ...req } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** The lamp's power state + config. */
+  async getPower(timeoutMs = 5000): Promise<PowerState> {
+    const msg = { type: "get_power" } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** Configure boot behaviour / the ON + OFF transitions (unset fields keep
+   * their value). Reply: the new power state. */
+  async setPowerConfig(cfg: Omit<SetPowerConfigMessage, "type">, timeoutMs = 5000): Promise<PowerState> {
+    const msg = { type: "set_power_config", ...cfg } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** Store a compiled effect on the device as the ON (`slot` 1) or OFF (2)
+   * transition effect (SubmitEffect.power_slot). It is validated and kept, not
+   * played: a transition with style EFFECT plays it. deck 1 + activate false
+   * keep it harmless on firmware without the "power" feature. Reply:
+   * result_ready (the new power state is pushed too). */
+  async storeTransitionEffect(slot: 1 | 2, effectId: string, fxb: Uint8Array): Promise<ResultReadyMessage> {
+    for (const fn of this.activitySubs) fn();
+    return this.sendChunked("EFFECT", {
+      type: "submit_effect",
+      effectId,
+      fxb,
+      activate: false,
+      deck: 1,
+      powerSlot: slot,
+    } as unknown as ClientMessage);
+  }
+
+  /** Subscribe to power_state frames: replies AND the unsolicited pushes (a lid
+   * tap, another client, a transition settling). Returns an unsubscribe fn. */
+  onPowerState(fn: (s: PowerState) => void): () => void {
+    this.powerSubs.add(fn);
+    return () => this.powerSubs.delete(fn);
   }
 
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
@@ -1512,12 +1677,17 @@ export class LedMapperClient {
    * `colorOrder` (a permutation of "RGB") drives the probe through its OWN wire
    * order, independent of the channel's committed color order — so the color-
    * order test previews a candidate (or drives raw with "RGB") without mutating
-   * the persisted config. Omit -> identity "RGB" (raw wire bytes). */
+   * the persisted config. Omit -> identity "RGB" (raw wire bytes).
+   *
+   * At most MAX_COUNTING_BLOCKS blocks: more rejects with
+   * TooManyCountingBlocksError before sending (and the player refuses them with
+   * a bad_message error, the current pattern untouched). */
   async setCountingPattern(
     blocks: ColorBlock[],
     channel?: number,
     colorOrder?: ColorOrder,
   ): Promise<ServerMessage> {
+    if (blocks.length > MAX_COUNTING_BLOCKS) throw new TooManyCountingBlocksError(blocks.length);
     const msg: Record<string, unknown> = { type: "set_counting_pattern", blocks };
     if (channel !== undefined) msg.channel = channel;
     if (colorOrder !== undefined) msg.colorOrder = colorOrder;
@@ -1741,10 +1911,12 @@ export class LedMapperClient {
   private send(msg: ClientMessage): boolean {
     if (this.sock === null || this.sock.readyState !== SOCKET_OPEN) return false;
     try {
-      // Whole-mesh control: relayable messages go through this fixture to every member;
-      // the reply is still this fixture's own (net/mesh.ts).
-      const wire = this.meshAll_ ? (wrapForMesh(msg, encodeClient) ?? msg) : msg;
-      this.sock.send(encodeClient(wire));
+      // Whole-mesh control: relayable messages go through this fixture to every member; the
+      // reply is still this fixture's own (net/mesh.ts). One too big for a mesh packet (an
+      // effect program) goes here directly and to the others through mesh effect sharing.
+      const route = this.meshAll_ ? meshRoute(msg, encodeClient) : ({ kind: "direct" } as const);
+      this.sock.send(encodeClient(route.kind === "wrap" ? route.wire : msg));
+      if (route.kind === "large") meshLargeSender()?.share(this, msg, route.inner);
       if (KIOSK_ACTIVITY_TYPES.has(msg.type as string)) for (const fn of this.activitySubs) fn();
       return true;
     } catch {
@@ -1818,6 +1990,11 @@ export class LedMapperClient {
     if ((msg.type as string) === "kiosk_status") {
       // Subscribers see every kiosk_status (pushes included), then any waiter.
       for (const fn of this.kioskSubs) fn(msg as unknown as KioskStatusMessage);
+    }
+    if ((msg.type as string) === "power_state" && this.powerSubs.size > 0) {
+      // Likewise power_state: every push reaches the subscribers, then a waiter.
+      const st = flatPowerState(msg as unknown as PowerStateMessage);
+      for (const fn of this.powerSubs) fn(st);
     }
     const w = this.waiters.get(msg.type);
     if (w) {

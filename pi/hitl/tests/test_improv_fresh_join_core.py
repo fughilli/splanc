@@ -171,3 +171,74 @@ def test_no_scanmiss_ack_is_infra():
 def test_absent_budget_is_reported_in_the_hang_problem():
     hang = core.grade(OK, _all(OK, absent=TIMEOUT), None, 20.0, 45.0)
     assert any("45s budget (the app hangs)" in p for p in hang["problems"])
+
+
+def test_parse_counts_mid_join_ble_drops_and_names_them():
+    # 0x08 with no lease = the central lost mid-join; after a lease it is the central
+    # closing while the DUT missed LL_TERMINATE (benign) and does not count.
+    drop = "[t=72327] [ble] link state=6 connected=0 leased=0 disc=0x08\n"
+    benign = "[t=27441] [ble] link state=6 connected=0 leased=1 disc=0x08\n"
+    closed = "[t=70646] [ble] link state=6 connected=0 leased=0 disc=0x13\n"
+    s = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND + drop + benign + closed)
+    assert s["ble_drops"] == 1
+    g = core.grade(OK, _all(OK, absent=TIMEOUT), s, 20.0)
+    assert g["verdict"] == "FAIL"
+    assert any("BLE link was lost" in p for p in g["problems"])
+    quiet = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND + benign)
+    assert quiet["ble_drops"] == 0
+    g = core.grade(OK, _all(OK, absent=TIMEOUT), quiet, 20.0)
+    assert not any("BLE link was lost" in p for p in g["problems"])
+
+
+def test_metrics_notify_acks_report_time_and_absent_drops():
+    log = (
+        "[t=9000] [ble] wifi-settings received (ssid=hitl-rig-1) -> fresh join: scan now\n"
+        "[t=9100] [ble] improv notify acked in 40 ms\n"
+        "[t=12000] [ble] link state=6 connected=0 leased=1 disc=0x08\n"  # post-lease: no
+        "[t=20000] [ble] wifi-settings received (ssid=hitl-absent-7) -> fresh join: scan now\n"
+        "[t=20100] [ble] improv notify acked in 2100 ms\n"
+        '[t=50760] [ble] "hitl-absent-7" not found in 3 sweeps over 30 s (directed probe '
+        "incl.) — Improv error UNABLE_TO_CONNECT; creds kept\n"
+        "[t=52000] [ble] link state=6 connected=0 leased=0 disc=0x08\n"  # dead before it
+        "[t=60000] [ble] improv notify acked in 60 ms\n"
+    )
+    m = core.metrics(log)
+    assert m["ble_notify_ack_ms"] == [40, 2100, 60]
+    assert m["ble_notify_ack_ms_max"] == 2100 and m["ble_notify_ack_ms_p50"] == 60
+    assert m["absent_report_ms"] == [30760]
+    assert m["absent_ble_drops"] == 1
+    # A central that closed after getting the report (the DUT missed LL_TERMINATE): the
+    # 0x08 fires > 6 s after the report, so the report was delivered — not a drop.
+    late = log.replace("[t=52000]", "[t=58000]")
+    assert core.metrics(late)["absent_ble_drops"] == 0
+    assert core.metrics("")["ble_notify_ack_ms_max"] is None
+
+
+def test_join_s_budget_is_graded_and_metric_records():
+    s = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND)
+    slow = dict(OK, join_s=21.5)
+    ph = _all(dict(OK, join_s=2.1), absent=dict(UNABLE, join_s=30.9))
+    ph["joined"] = slow
+    g = core.grade(OK, ph, s, 20.0, 45.0)
+    assert g["verdict"] == "FAIL" and any("joined: joined in 21.5s" in p for p in g["problems"])
+    mx = core.metrics(
+        "[t=1] [ble] improv notify acked in 40 ms\n[t=2] [ble] improv notify acked in 900 ms\n"
+    )
+    recs = core.metric_records(ph, mx, 20.0, 45.0)
+    by = {(r["metric"], r.get("phase"), r.get("stat")): r for r in recs}
+    assert by[("join_latency", "joined", None)]["ok"] is False
+    assert by[("join_latency", "stored", None)] == {
+        "v": 1,
+        "gate": "improv_fresh_join",
+        "metric": "join_latency",
+        "unit": "s",
+        "value": 2.1,
+        "phase": "stored",
+        "limit": 20.0,
+        "cmp": "<=",
+        "ok": True,
+    }
+    assert by[("not_found_report_latency", "absent", None)]["value"] == 30.9
+    assert by[("ble_notify_latency", "improv", "max")]["value"] == 900
+    assert by[("ble_notify_latency", "improv", "p50")]["n"] == 2
+    assert by[("ble_drops", "absent", None)]["value"] == 0

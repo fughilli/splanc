@@ -97,6 +97,8 @@ export const MAX_CAPTURE_STRIDE = 16;
 export const DEFAULT_CAPTURE_STRIDE = 4;
 
 const KEY = "ledmapper.devices";
+/** deviceEffects.ts's store (id -> effects sent to that device). */
+const DEVICE_EFFECTS_KEY = "ledmapper.deviceEffects";
 const ACTIVE_KEY = "ledmapper.activeDevice";
 /** The device most recently made active; kept after a disconnect (unlike ACTIVE_KEY). */
 const LAST_KEY = "ledmapper.lastDevice";
@@ -172,6 +174,60 @@ function idForUrl(wssUrl: string): string {
   return `dev-${wssUrl.replace(/[^a-z0-9]+/gi, "-")}`;
 }
 
+/** The id a record moves to when its address is taken over by another device
+ * (applyWelcome): keyed by the hardware MAC, so it can't collide with any URL id. */
+function idForMac(mac: string): string {
+  return `dev-mac-${mac.replace(/[^0-9a-f]/gi, "").toUpperCase()}`;
+}
+
+/** Same hardware MAC, whatever the case / separators. */
+function sameMac(a: string, b: string): boolean {
+  const n = (m: string): string => m.replace(/[^0-9a-f]/gi, "").toUpperCase();
+  return n(a) === n(b);
+}
+
+/** Move `old` off its URL id (another device now answers at its address) to a
+ * MAC-keyed id, keeping its fields and per-id settings but not its certificate
+ * trust (that was the old device's certificate). Returns the list without `old` and
+ * with the moved record (unless one for that MAC already exists, or it never had a
+ * MAC: then nothing identifies it and it is dropped). */
+function displace(list: KnownDevice[], old: KnownDevice): KnownDevice[] {
+  const rest = list.filter((x) => x !== old);
+  if (!old.bleMac) return rest;
+  const movedId = idForMac(old.bleMac);
+  if (rest.some((x) => x.id === movedId)) return rest;
+  const moved: KnownDevice = { ...old, id: movedId };
+  delete moved.wssOkAt;
+  moveDeviceData(old.id, movedId);
+  return [...rest, moved];
+}
+
+/** Carry a device's per-id settings stored outside its record (brightness set point,
+ * colour-correction profile, the effects sent to it) from `from` to `to`. A setting
+ * `to` already has is kept (a merge never overwrites the survivor's own). */
+function moveDeviceData(from: string, to: string): void {
+  try {
+    for (const prefix of ["brightness:", "cc:profile:"]) {
+      const v = localStorage.getItem(prefix + from);
+      if (v !== null) {
+        if (localStorage.getItem(prefix + to) === null) localStorage.setItem(prefix + to, v);
+        localStorage.removeItem(prefix + from);
+      }
+    }
+    const raw = localStorage.getItem(DEVICE_EFFECTS_KEY);
+    if (raw) {
+      const m = JSON.parse(raw) as Record<string, unknown>;
+      if (m && typeof m === "object" && from in m) {
+        if (!(to in m)) m[to] = m[from];
+        delete m[from];
+        localStorage.setItem(DEVICE_EFFECTS_KEY, JSON.stringify(m));
+      }
+    }
+  } catch {
+    /* non-fatal: the record itself still moves */
+  }
+}
+
 /** The host[:port] of a device's LAN address (for the detail view). */
 export function deviceHost(dev: KnownDevice): string {
   try {
@@ -236,12 +292,27 @@ class DeviceStore {
   }
 
   /** Add (or refresh lastSeen for) a device by URL; returns its id. Does not
-   * change the active selection. */
-  upsert(wssUrl: string, label?: string): KnownDevice {
-    const list = read();
+   * change the active selection.
+   *
+   * `expect` is who the caller knows is at that address (Improv provisioning: the
+   * Bluetooth device it just set up, by its own name and Web Bluetooth id). When
+   * the saved record for the URL is visibly another fixture (a reused DHCP lease),
+   * that record moves aside (see `displace`) and the address gets a fresh one, so
+   * the app never shows the old fixture's name while it connects to the new one. */
+  upsert(wssUrl: string, label?: string, expect?: { name?: string; bleId?: string }): KnownDevice {
+    let list = read();
     const id = idForUrl(wssUrl);
     const now = new Date().toISOString();
-    const existing = list.find((d) => d.id === id);
+    let existing = list.find((d) => d.id === id);
+    if (existing && expect) {
+      const otherName =
+        !!expect.name && existing.named && !existing.pendingName && existing.label !== expect.name;
+      const otherBle = !!expect.bleId && !!existing.bleId && existing.bleId !== expect.bleId;
+      if (otherName || otherBle) {
+        list = displace(list, existing);
+        existing = undefined;
+      }
+    }
     if (existing) {
       existing.lastSeen = now;
       existing.wssUrl = wssUrl;
@@ -250,7 +321,12 @@ class DeviceStore {
       this.emit();
       return existing;
     }
-    const dev = normalize({ id, wssUrl, label: label ?? labelForUrl(wssUrl), lastSeen: now });
+    const dev = normalize({
+      id,
+      wssUrl,
+      label: label ?? expect?.name ?? labelForUrl(wssUrl),
+      lastSeen: now,
+    });
     list.push(dev);
     write(list);
     this.emit();
@@ -280,9 +356,23 @@ class DeviceStore {
       fwVersion?: string;
     },
   ): void {
-    const list = read();
-    const d = list.find((x) => x.id === id);
+    let list = read();
+    let d = list.find((x) => x.id === id);
     if (!d) return;
+    // A DIFFERENT device answered at this record's address: the old one's DHCP lease
+    // went to another fixture (CalvinLamp moved .71 -> .75 and PixieLamp2 got .71).
+    // Records are keyed by URL, so without this the newcomer's welcome overwrote the
+    // old fixture's record (name, MAC, folder, settings) and the app showed the old
+    // name while connecting. Move the old fixture's record to a MAC-keyed id (its
+    // per-id settings go with it; its certificate trust stays behind, since it is the
+    // old device's), and give this address a fresh record for the device that is
+    // here. The old record folds back into whichever URL that fixture answers at next
+    // (the MAC merge below).
+    if (d.bleMac && welcome.mac && !sameMac(d.bleMac, welcome.mac)) {
+      list = displace(list, d);
+      d = normalize({ id, wssUrl: d.wssUrl, lastSeen: new Date().toISOString() });
+      list.push(d);
+    }
     if (welcome.mac) d.bleMac = welcome.mac;
     if (welcome.deviceName && !d.pendingName) {
       d.label = welcome.deviceName;
@@ -294,8 +384,11 @@ class DeviceStore {
     if (welcome.fwGitDirty !== undefined) d.fwGitDirty = welcome.fwGitDirty;
     if (welcome.fwVersion !== undefined) d.fwVersion = welcome.fwVersion;
     d.lastSeen = new Date().toISOString();
-    const dups = welcome.mac ? list.filter((x) => x.id !== id && x.bleMac === welcome.mac) : [];
+    const cur = d;
+    const dups = welcome.mac ? list.filter((x) => x.id !== id && x.bleMac && sameMac(x.bleMac, welcome.mac!)) : [];
     for (const dup of dups) {
+      const d = cur;
+      moveDeviceData(dup.id, id);
       if (!d.folder && dup.folder) d.folder = dup.folder;
       if (!d.bleId && dup.bleId) d.bleId = dup.bleId;
       if (!d.pendingName && dup.pendingName) d.pendingName = dup.pendingName;

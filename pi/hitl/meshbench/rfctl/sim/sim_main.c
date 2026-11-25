@@ -3,6 +3,7 @@
  *
  *   rfctl_sim            real time (CLOCK_MONOTONIC), for driver demos
  *   rfctl_sim --virtual  time moves only on `sim.advance <us>` (deterministic tests)
+ *   --board jeanoko-n4 (default) | jeanoko-n6 | pe4302 (the PR #578 three-DSA table)
  *
  * Extra sim-only commands (never sent to real hardware):
  *   sim.advance <us>            virtual mode: run the clock forward, committing steps
@@ -11,6 +12,11 @@
  *   sim.edge <line> <t_us>      inject a frame-start edge (honours mask + holdoff)
  *   sim.loopback pass|fail|absent
  *   sim.jitter <us>             commit this many us after the armed time
+ *   sim.uart [n]                the last n UART attenuator commands: t, unit, gpio, text
+ *   sim.uartack ok|none|stuck [latency_us]   how the units answer `attcheck`
+ *
+ * UART units are modelled at 115200 8N1: a unit is busy for 694 us after a command
+ * starts (8 bytes x 10 bits), and refuses a new one until then.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -23,6 +29,18 @@
 #include "pi/hitl/meshbench/rfctl/rfctl_core.h"
 
 static rfctl g_c;
+static const rfctl_board *g_board = &rfctl_default_board;
+#define UART_BUSY_US 694 /* 8 bytes x 10 bits at 115200 baud */
+static uint64_t g_uart_busy_until[RFCTL_UART_MAX];
+static const char *g_uart_ack = "ok";
+static uint32_t g_uart_ack_latency = 1500;
+#define UHIST 4096
+static struct {
+  uint64_t t;
+  uint8_t unit, gpio;
+  char cmd[RFCTL_UART_CMD_LEN + 1];
+} g_uhist[UHIST];
+static unsigned g_uhist_n, g_uhist_head;
 static int g_virtual;
 static uint64_t g_vnow;
 static uint64_t g_t_start;
@@ -93,6 +111,34 @@ void rfctl_hal_serial_atten(uint8_t clk, uint8_t data, uint8_t le, uint8_t word6
   (void)word6;
 }
 
+bool rfctl_hal_uart_send(uint8_t unit, uint8_t tx_gpio, const char *cmd, uint8_t n) {
+  uint64_t now = rfctl_hal_now_us();
+  if (unit >= RFCTL_UART_MAX) return false;
+  if (now < g_uart_busy_until[unit]) return false;
+  g_uart_busy_until[unit] = now + UART_BUSY_US;
+  unsigned i = g_uhist_head;
+  g_uhist[i].t = now;
+  g_uhist[i].unit = unit;
+  g_uhist[i].gpio = tx_gpio;
+  size_t k = n < RFCTL_UART_CMD_LEN ? n : RFCTL_UART_CMD_LEN;
+  memcpy(g_uhist[i].cmd, cmd, k);
+  g_uhist[i].cmd[k] = 0;
+  g_uhist_head = (g_uhist_head + 1) % UHIST;
+  if (g_uhist_n < UHIST) g_uhist_n++;
+  return true;
+}
+
+int rfctl_hal_uart_txn(uint8_t unit, uint8_t tx_gpio, const char *cmd, uint8_t n,
+                       uint32_t timeout_us, uint32_t *latency_us) {
+  if (!strcmp(g_uart_ack, "stuck")) return -1;
+  /* blocking on hardware; here the unit is simply idle by the time we ask */
+  if (unit < RFCTL_UART_MAX) g_uart_busy_until[unit] = 0;
+  if (!rfctl_hal_uart_send(unit, tx_gpio, cmd, n)) return 0;
+  if (!strcmp(g_uart_ack, "none") || g_uart_ack_latency > timeout_us) return 0;
+  *latency_us = g_uart_ack_latency;
+  return 1;
+}
+
 bool rfctl_hal_chain_loopback(const uint8_t *outb, uint8_t *in, uint16_t nbits) {
   if (!strcmp(g_loopback, "absent")) return false;
   memcpy(in, outb, nbits / 8);
@@ -126,7 +172,7 @@ static void service(uint64_t now) {
 }
 
 static void hexdump(const uint8_t *chain, char *buf, size_t n) {
-  size_t bytes = rfctl_default_board.chain_bits / 8, k = 0;
+  size_t bytes = g_board->chain_bits / 8, k = 0;
   for (size_t i = bytes; i-- > 0 && k + 3 < n;) k += (size_t)snprintf(buf + k, n - k, "%02x", chain[i]);
 }
 
@@ -181,6 +227,24 @@ static int sim_cmd(const char *line) {
   } else if (!strncmp(line, "sim.jitter ", 11)) {
     g_jitter = (uint32_t)strtoul(line + 11, NULL, 0);
     printf("ok sim.jitter us=%u\n", g_jitter);
+  } else if (!strncmp(line, "sim.uartack ", 12)) {
+    char mode[16] = {0};
+    unsigned lat = g_uart_ack_latency;
+    sscanf(line + 12, "%15s %u", mode, &lat);
+    g_uart_ack = !strcmp(mode, "none") ? "none" : !strcmp(mode, "stuck") ? "stuck" : "ok";
+    g_uart_ack_latency = lat;
+    printf("ok sim.uartack %s latency_us=%u\n", g_uart_ack, g_uart_ack_latency);
+  } else if (!strncmp(line, "sim.uart", 8)) {
+    unsigned n = line[8] ? (unsigned)strtoul(line + 9, NULL, 0) : 16;
+    if (n > g_uhist_n) n = g_uhist_n;
+    for (unsigned i = n; i > 0; i--) {
+      unsigned k = (g_uhist_head + UHIST - i) % UHIST;
+      size_t len = strlen(g_uhist[k].cmd);
+      printf("uart %llu %u %u %.*s\n", (unsigned long long)g_uhist[k].t, g_uhist[k].unit,
+             g_uhist[k].gpio, (int)(len && g_uhist[k].cmd[len - 1] == '\n' ? len - 1 : len),
+             g_uhist[k].cmd);
+    }
+    printf("ok sim.uart n=%u\n", n);
   } else {
     printf("err unknown_cmd %s\n", line);
   }
@@ -189,10 +253,21 @@ static int sim_cmd(const char *line) {
 }
 
 int main(int argc, char **argv) {
-  for (int i = 1; i < argc; i++)
+  for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--virtual")) g_virtual = 1;
+    if (!strcmp(argv[i], "--board") && i + 1 < argc) {
+      const char *b = argv[++i];
+      if (!strcmp(b, "pe4302")) g_board = &rfctl_board_pe4302;
+      else if (!strcmp(b, "jeanoko-n6")) g_board = &rfctl_board_jeanoko_n6;
+      else if (!strcmp(b, "jeanoko-n4")) g_board = &rfctl_default_board;
+      else {
+        fprintf(stderr, "rfctl_sim: unknown board %s\n", b);
+        return 2;
+      }
+    }
+  }
   g_t_start = real_us();
-  rfctl_init(&g_c, &rfctl_default_board, write_stdout, NULL);
+  rfctl_init(&g_c, g_board, write_stdout, NULL);
   char line[RFCTL_LINE_MAX * 2];
   size_t len = 0;
   for (;;) {

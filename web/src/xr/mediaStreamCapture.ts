@@ -54,6 +54,10 @@ export class MediaStreamCaptureSource implements CaptureSource {
 
   private stream: MediaStream | null = null;
   private texture: WebGLTexture | null = null;
+  /** Frames alternate between two textures: detection is pipelined (cv/detect.ts
+   * DetectPipeline), so frame N's passes may still be queued on the GPU when
+   * frame N+1 uploads — into the OTHER texture, never one a pending draw reads. */
+  private textureB: WebGLTexture | null = null;
   private frameCb: ((f: CaptureFrame) => void) | null = null;
   private endCb: (() => void) | null = null;
   private running = false;
@@ -106,6 +110,7 @@ export class MediaStreamCaptureSource implements CaptureSource {
     await this.video.play();
     await this.applyExposure();
     this.texture = this.gl.createTexture();
+    this.textureB = this.gl.createTexture();
     this.running = true;
     this.scheduleNext();
   }
@@ -228,6 +233,7 @@ export class MediaStreamCaptureSource implements CaptureSource {
       this.scheduleNext();
       return;
     }
+    if (this.textureB !== null) [this.texture, this.textureB] = [this.textureB, this.texture];
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.video);

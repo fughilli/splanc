@@ -194,16 +194,23 @@ class FakeHost(su.Host):
             top = os.path.dirname(os.path.dirname(argv[0]))
             if top in self.fail_boot_for:
                 raise su.UpdateError("installBootLoader failed")
-            # The Pi 5 'kernel' loader: default = this system, plus the newest generation.
+            # nixos-raspberrypi's 'kernel' loader (the Pi 5's): default = this system
+            # (its store path), plus the newest generation through its profile link
+            # (init=<profile>/system-<N>-link/init, the resolved path in
+            # system-link); an existing generation directory is left as it is.
             newest = self._gens()[-1]
-            target = os.path.realpath(os.path.join(self.profile_dir, f"system-{newest}-link"))
-            for name, sys_ in (("default", top), (f"{newest}-default", target)):
+            link = os.path.join(self.profile_dir, f"system-{newest}-link")
+            for name, sys_ in (("default", top), (f"{newest}-default", link)):
                 g = os.path.join(self.firmware, "nixos", name)
+                if name != "default" and os.path.isdir(g):
+                    continue
                 os.makedirs(g, exist_ok=True)
                 for f in ("kernel.img", "initrd"):
                     open(os.path.join(g, f), "w").close()
                 with open(os.path.join(g, "cmdline.txt"), "w") as f:
                     f.write(f"console=tty1 init={sys_}/init\n")
+                with open(os.path.join(g, "system-link"), "w") as f:
+                    f.write(os.path.realpath(sys_) + "\n")
             return ""
         raise AssertionError(f"unexpected command {argv}")
 
@@ -617,6 +624,10 @@ def test_tryboot_apply_keeps_the_old_default(tmp_path):
     # ... and tryboot.txt boots generation 2 once, with the NEW config.txt.
     tb = open(os.path.join(b.fw, "tryboot.txt")).read()
     assert "os_prefix=nixos/2-default/" in tb and "dtparam=new=on" in tb
+    # The trial directory boots the new system through its profile link, as the
+    # real builder writes it.
+    trial = open(os.path.join(b.fw, "nixos/2-default/cmdline.txt")).read().split()
+    assert f"init={b.prof}/system-2-link/init" in trial
 
 
 # ---- device: confirm ----------------------------------------------------------

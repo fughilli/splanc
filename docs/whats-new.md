@@ -3,6 +3,32 @@
 Notable changes, newest first. Each entry links the PRs and the doc that covers
 it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md).
 
+## November 2026
+
+### Effect language: state initial values and `init()`
+
+- **`state float level = 0.5;`** gives a state variable its starting value
+  (scalars, vectors, matrices). The value is a constant (`0.5`, `vec3(0.1, 0.2, 0.3)`);
+  starting values that come from a uniform or `time` go in `init()`. A state
+  without one still starts at zero.
+- **`void init() { ... }`** runs once when the effect loads, before the first
+  `update()`: seed arrays and agents there instead of a hand-rolled
+  `state bool inited;` flag.
+- Plain bytecode, no firmware update needed: it runs the same on the device,
+  the JIT and the editor preview, on old firmware too.
+- Details: [EFFECTS.md § State initialisation](../EFFECTS.md#state-initialisation).
+
+### Effects stored on the device
+
+- **A player keeps up to 8 compiled effects on its own flash.** **Store on device**
+  in the effect editor puts one there without running it. **Device settings →
+  Stored effects** lists them, opens one (it plays, its uniforms appear as live
+  controls, and the device resumes it on boot) or deletes one. New firmware
+  feature `effect_store`.
+- Shows that live on the fixture don't need the phone's library to come back.
+  This is how demo effects get pre-installed on a fixture.
+- Details: [effect-store.md](design/effect-store.md).
+
 ## October 2026
 
 ### Heavy effects no longer lock players off the network (1.12.4)

@@ -191,6 +191,10 @@ pub enum UiKind {
     /// `min..max` (the declared range, else [`MAT_DEFAULT_RANGE`]). Usually set
     /// by an API / OSC / tracker stream rather than by hand.
     Matrix { min: f32, max: f32 },
+    /// A `uniform trigger` (docs/design/lamp-power.md): a float COUNTER a
+    /// producer bumps (a driver's `fire()`, a client "fire" button); update()
+    /// asks `fired(t)` whether it moved since the last frame.
+    Trigger,
 }
 
 /// The range of a `mat3`/`mat4` uniform declared without one (`uniform mat4
@@ -324,6 +328,10 @@ impl Default for CompileOptions {
 enum Tok {
     Ident(String),
     Num(f32, bool), // value, is_int
+    /// A numeric literal with a fixed-point suffix: `0.6fx` (fixed, Q16.16),
+    /// `0.6fx16` (fixed16, Q1.14), `0.6fx8` (fixed8, Q1.6) — sugar for
+    /// `fixed(0.6)` / `fixed16(0.6)` / `fixed8(0.6)`, folded to the same constant.
+    FixNum(f32, bool, Ty), // value, is_int, target type
     Str(String),
     Sym(char),
     Sym2([char; 2]), // == <= >= != && ||
@@ -414,6 +422,41 @@ impl<'a> Lexer<'a> {
                 col,
                 msg: format!("bad number '{num}'"),
             })?;
+            // Fixed-point suffix: `fx`, `fx16` or `fx8`, ending the literal.
+            if self.peek(0) == b'f' && self.peek(1) == b'x' {
+                let mut j = self.i + 2;
+                while j < self.s.len() && ((self.s[j] as char).is_ascii_alphanumeric() || self.s[j] == b'_') {
+                    j += 1;
+                }
+                let suffix = std::str::from_utf8(&self.s[self.i..j]).unwrap_or("");
+                let ty = match suffix {
+                    "fx" => Ty::Fixed,
+                    "fx16" => Ty::Fixed16,
+                    "fx8" => Ty::Fixed8,
+                    _ => {
+                        return Err(Diagnostic {
+                            line,
+                            col,
+                            msg: format!(
+                                "unknown fixed-point suffix '{suffix}' on '{num}': use fx (fixed), fx16 (fixed16) or fx8 (fixed8)"
+                            ),
+                        })
+                    }
+                };
+                // The narrow types hold [-2, 2): a literal at or past 2 would wrap.
+                if matches!(ty, Ty::Fixed8 | Ty::Fixed16) && v >= 2.0 {
+                    let name = if ty == Ty::Fixed8 { "fixed8" } else { "fixed16" };
+                    return Err(Diagnostic {
+                        line,
+                        col,
+                        msg: format!("'{num}{suffix}' is out of range: {name} holds [-2, 2)"),
+                    });
+                }
+                while self.i < j {
+                    self.bump();
+                }
+                return Ok((Tok::FixNum(v, is_int, ty), line, col));
+            }
             return Ok((Tok::Num(v, is_int), line, col));
         }
         if c == b'"' {
@@ -521,6 +564,9 @@ pub struct Compiler {
     n_uniform_slots: u8,
     n_state: u8,
     n_locals: u8,
+    // `shared state` declarations (slot, width): the .fxb's shared-state footer
+    // (FLAG_SHARED_STATE).
+    shared_state: Vec<(u8, u8)>,
     // FX debugger symbol table (cur_fn above names each entry's function).
     dbg_syms: Vec<DebugSym>,
     // const pool (raw 32-bit words: f32 bits, or i32/Q16.16 bit patterns)
@@ -549,7 +595,24 @@ pub struct Compiler {
     // FUG-107: driver exports, and the poll() entry (stored in the shade slot
     // of the header with FLAG_DRIVER — no format-version bump).
     exports: Vec<ExportInfo>,
+    /// `uniform trigger` name -> the hidden state slot holding the count
+    /// `fired()` last saw.
+    trigger_last: HashMap<String, u8>,
     poll_entry: u16,
+    /// `state T x = expr;` initialisers (D-500), in declaration order: the
+    /// slot, type, token index of `expr` and the state's name. Compiled into
+    /// the init block (see [`Compiler::emit_init_block`]).
+    state_inits: Vec<(u8, Ty, usize, String)>,
+    /// `void init() { ... }` (D-500): the token index of its `{`. Its body is
+    /// compiled into the init block after the program's other declarations.
+    init_body: Option<usize>,
+    /// While compiling init()'s body: the `return;` jumps to patch to its end.
+    init_returns: Option<Vec<usize>>,
+    /// While compiling a state initial value (D-506): it must be a compile-time
+    /// constant, so anything that reads the program's inputs is an error.
+    const_init: bool,
+    /// The init block was emitted: the `.fxb` gets [`FLAG_INIT`].
+    has_init: bool,
     // FUG-125: run the bytecode optimizer in `finish`. Off only for the
     // differential test harness / instruction-count measurements.
     optimize: bool,
@@ -723,6 +786,7 @@ impl Compiler {
             n_uniform_slots: 0,
             n_state: 0,
             n_locals: 0,
+            shared_state: Vec::new(),
             dbg_syms: Vec::new(),
             consts: Vec::new(),
             code: Vec::new(),
@@ -734,7 +798,13 @@ impl Compiler {
             uses_uv: false,
             uses_room: false,
             exports: Vec::new(),
+            trigger_last: HashMap::new(),
             poll_entry: NO_ENTRY,
+            state_inits: Vec::new(),
+            init_body: None,
+            init_returns: None,
+            const_init: false,
+            has_init: false,
             optimize,
             memo,
             lint: lint::Lint::default(),
@@ -917,7 +987,14 @@ impl Compiler {
             match self.cur().clone() {
                 Tok::Eof => break,
                 Tok::Ident(kw) if kw == "uniform" => self.uniform_decl()?,
-                Tok::Ident(kw) if kw == "state" => self.state_decl()?,
+                Tok::Ident(kw) if kw == "state" => self.state_decl(false)?,
+                Tok::Ident(kw) if kw == "shared" => {
+                    self.advance(); // 'shared'
+                    if !matches!(self.cur(), Tok::Ident(k) if k == "state") {
+                        return self.err("`shared` qualifies a state declaration: `shared state float phase;`");
+                    }
+                    self.state_decl(true)?
+                }
                 Tok::Ident(kw) if kw == "export" => self.export_decl()?,
                 Tok::Ident(kw) if kw == "buffer" => self.buffer_decl()?,
                 Tok::Ident(kw) if kw == "texture" => self.texture_decl()?,
@@ -945,7 +1022,7 @@ impl Compiler {
         if !is_driver && self.shade_entry == NO_ENTRY {
             return self.err("program must define `vec3 shade(Led led)` (or `void poll()` for a driver)");
         }
-        Ok(())
+        self.emit_init_block()
     }
 
     // export float temperature "°C";   export vec3 imu_raw_accel;
@@ -953,7 +1030,13 @@ impl Compiler {
     fn export_decl(&mut self) -> Result<(), Diagnostic> {
         self.advance(); // 'export'
         let tyname = self.eat_ident()?;
-        let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
+        // `export trigger tap;`: a float counter poll() bumps with `fire(tap)`.
+        let is_trigger = tyname == "trigger";
+        let ty = if is_trigger {
+            Ty::Float
+        } else {
+            Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?
+        };
         if !matches!(ty, Ty::Float | Ty::Int | Ty::Vec2 | Ty::Vec3 | Ty::Vec4) {
             return self.err("export must be float, int or vecN");
         }
@@ -964,6 +1047,9 @@ impl Compiler {
             unit = s;
         }
         self.expect_sym(';')?;
+        if is_trigger && unit.is_empty() {
+            unit = "trigger".to_string();
+        }
         let slot = self.alloc_state(ty.width())?;
         self.note_sym("state", &name, slot, ty.width());
         self.syms.insert(name.clone(), Sym { kind: SymKind::State, slot, ty });
@@ -974,11 +1060,15 @@ impl Compiler {
     // uniform float speed : 0..5 = 1.0;   uniform vec3 tint : color = vec3(..);
     // uniform bool x = false;   uniform int mode : {"a","b"} = 0;
     // uniform float x : -2.0 .. 2.0 = 0.0;   uniform vec3 dir : -1..1 = 0, 1, 0;
+    // uniform int n : 0..8 step 2 = 4;   (a slider grid; default = the type's native step)
     // uniform vec3 p : vec3(-1,-1,0) .. vec3(1,1,2) = vec3(0);   uniform mat4 pose;
     fn uniform_decl(&mut self) -> Result<(), Diagnostic> {
         let first_line = self.lx_toks[self.p].1;
         self.advance(); // 'uniform'
         let tyname = self.eat_ident()?;
+        if tyname == "trigger" {
+            return self.trigger_uniform_decl(first_line);
+        }
         let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
         if matches!(ty, Ty::Void) {
             return self.err("a uniform cannot be void");
@@ -1019,6 +1109,88 @@ impl Compiler {
         );
         self.uniforms.push(UniformInfo { name, ty, slot, ui, default, doc, unit, comp_range });
         Ok(())
+    }
+
+    // uniform trigger tap;   uniform trigger tap "lid tap";
+    // A float counter bound by name like any uniform (the uniform pool feeds a
+    // driver's `export trigger` into it); `fired(tap)` in update() is true once
+    // per change. Its last-seen count lives in a hidden state slot.
+    fn trigger_uniform_decl(&mut self, first_line: u32) -> Result<(), Diagnostic> {
+        let name = self.eat_ident()?;
+        let mut unit = String::new();
+        if let Tok::Str(u) = self.cur().clone() {
+            self.advance();
+            unit = u;
+        }
+        self.expect_sym(';')?;
+        let end_line = self.lx_toks[self.p.saturating_sub(1)].1;
+        let doc = self.uniform_doc(first_line, end_line);
+        let slot = self.n_uniform_slots;
+        if slot as usize + 1 > MAX_UNIFORM_SLOTS {
+            return self.err(format!("too many uniforms (over the VM's {MAX_UNIFORM_SLOTS} uniform slots)"));
+        }
+        self.n_uniform_slots += 1;
+        let last = self.alloc_state(1)?;
+        self.trigger_last.insert(name.clone(), last);
+        self.syms.insert(name.clone(), Sym { kind: SymKind::Uniform, slot, ty: Ty::Float });
+        self.uniforms.push(UniformInfo {
+            name,
+            ty: Ty::Float,
+            slot,
+            ui: UiKind::Trigger,
+            default: vec![0.0],
+            doc,
+            unit,
+            comp_range: None,
+        });
+        Ok(())
+    }
+
+    // fired(tap): did the trigger move since the last frame (update() only)?
+    // fire(tap): bump an `export trigger` (a driver's poll()).
+    fn trigger_call(&mut self, name: &str) -> Result<Ty, Diagnostic> {
+        use fx_vm_op::*;
+        let arg = self.eat_ident()?;
+        self.expect_sym(')')?;
+        if name == "fired" {
+            if self.in_per_led_code() {
+                return self.err("fired() is only valid in update() (a trigger fires once per frame, not per LED)");
+            }
+            let Some(&last) = self.trigger_last.get(&arg) else {
+                return self.err(format!("fired() needs a `uniform trigger`; '{arg}' is not one"));
+            };
+            let slot = self.syms[&arg].slot;
+            // count != last  ->  bool;  then last = count.
+            self.emit(LOAD_UNIFORM);
+            self.emit(slot);
+            self.emit(1);
+            self.emit(LOAD_STATE);
+            self.emit(last);
+            self.emit(1);
+            self.emit(CMP);
+            self.emit(5);
+            self.emit(LOAD_UNIFORM);
+            self.emit(slot);
+            self.emit(1);
+            self.emit(STORE_STATE);
+            self.emit(last);
+            self.emit(1);
+            return Ok(Ty::Bool);
+        }
+        let Some(e) = self.exports.iter().find(|e| e.name == arg && e.unit == "trigger") else {
+            return self.err(format!("fire() needs an `export trigger`; '{arg}' is not one"));
+        };
+        let slot = e.slot;
+        self.emit(LOAD_STATE);
+        self.emit(slot);
+        self.emit(1);
+        self.push_const(1.0f32.to_bits());
+        self.emit(ADD);
+        self.emit(1);
+        self.emit(STORE_STATE);
+        self.emit(slot);
+        self.emit(1);
+        Ok(Ty::Void)
     }
 
     /// A uniform's doc string: the comment trailing its declaration on the end
@@ -1134,7 +1306,8 @@ impl Compiler {
                 }
                 let mn = lo.iter().cloned().fold(f32::INFINITY, f32::min);
                 let mx = hi.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                Ok((UiKind::Slider { min: mn, max: mx, step: (mx - mn) / 100.0 }, Some((lo, hi))))
+                let step = self.parse_step_annotation(ty)?;
+                Ok((UiKind::Slider { min: mn, max: mx, step }, Some((lo, hi))))
             }
             Tok::Num(..) | Tok::Sym('-') => {
                 let Some(lo) = self.eat_signed_num() else {
@@ -1153,11 +1326,33 @@ impl Compiler {
                 if ty.is_mat() {
                     return Ok((UiKind::Matrix { min: lo, max: hi }, None));
                 }
-                let step = (hi - lo) / 100.0;
+                let step = self.parse_step_annotation(ty)?;
                 Ok((UiKind::Slider { min: lo, max: hi, step }, None))
             }
             _ => Ok((default_ui(ty), None)),
         }
+    }
+
+    /// The optional `step N` after a slider range (`uniform float n : 0..8 step
+    /// 1 = 2;`): the UI grid the editor, MIDI and the keypoint blend snap to.
+    /// Without it the slider has the uniform's native precision
+    /// ([`native_step`]): continuous (0) for a float, 1 for an int, the LSB for
+    /// a fixed type. `step 0` asks for continuous explicitly.
+    fn parse_step_annotation(&mut self, ty: Ty) -> Result<f32, Diagnostic> {
+        if !matches!(self.cur(), Tok::Ident(k) if k == "step") {
+            return Ok(native_step(ty));
+        }
+        self.advance();
+        let Some(step) = self.eat_signed_num() else {
+            return self.err("expected a number after `step`");
+        };
+        if !step.is_finite() || step < 0.0 {
+            return self.err("`step` must be 0 (continuous) or positive");
+        }
+        if ty == Ty::Int && step.fract() != 0.0 {
+            return self.err("an int uniform's `step` must be a whole number");
+        }
+        Ok(step)
     }
 
     fn parse_uniform_default(&mut self, ty: Ty) -> Result<Vec<f32>, Diagnostic> {
@@ -1274,7 +1469,10 @@ impl Compiler {
     }
 
     // state float phase;   state Agent agents[16];   (arrays allowed here)
-    fn state_decl(&mut self) -> Result<(), Diagnostic> {
+    /// `state T name;`, or `shared state T name;` (`shared`): a mesh rejoin copies a
+    /// shared declaration from the gateway's VM (docs/design/fx-mesh-state-and-agents.md);
+    /// plain state is this fixture's own and starts from zero.
+    fn state_decl(&mut self, shared: bool) -> Result<(), Diagnostic> {
         self.advance(); // 'state'
         let tyname = self.eat_ident()?;
         let base_ty = self
@@ -1282,12 +1480,223 @@ impl Compiler {
             .ok_or_else(|| self.mkdiag("unknown type"))?;
         let name = self.eat_ident()?;
         let ty = self.maybe_array_suffix(base_ty)?;
+        // `state float x = 0.5;` (D-500): the initialiser is compiled later,
+        // into the init block that runs once before the first update().
+        let init_at = if *self.cur() == Tok::Sym('=') {
+            if matches!(ty, Ty::Struct(_) | Ty::Array(_)) {
+                return self.err("only a scalar, vector or matrix `state` can have an initial value; set arrays and structs in `void init()`");
+            }
+            self.advance();
+            let at = self.p;
+            self.skip_to_semicolon()?;
+            Some(at)
+        } else {
+            None
+        };
         self.expect_sym(';')?;
         let w = self.ty_width(ty);
         let slot = self.alloc_state(w)?;
+        if shared {
+            self.shared_state.push((slot, w));
+        }
         self.note_sym("state", &name, slot, w);
+        if let Some(at) = init_at {
+            self.state_inits.push((slot, ty, at, name.clone()));
+        }
         self.syms.insert(name, Sym { kind: SymKind::State, slot, ty });
         Ok(())
+    }
+
+    /// Skip an expression's tokens up to (not including) the `;` that ends it
+    /// at bracket depth 0 — a state initialiser, compiled later.
+    fn skip_to_semicolon(&mut self) -> Result<(), Diagnostic> {
+        let start = self.p;
+        let mut depth = 0i32;
+        loop {
+            match self.cur() {
+                Tok::Eof => return self.err("expected ';'"),
+                Tok::Sym(';') if depth == 0 => break,
+                Tok::Sym('(' | '[' | '{') => depth += 1,
+                Tok::Sym(')' | ']' | '}') => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return self.err("expected ';'");
+                    }
+                }
+                _ => {}
+            }
+            self.advance();
+        }
+        if self.p == start {
+            return self.err("expected an initial value after '='");
+        }
+        Ok(())
+    }
+
+    /// Skip a `{ ... }` block (the cursor on its `{`), through the matching `}`.
+    fn skip_braced(&mut self) -> Result<(), Diagnostic> {
+        let mut depth = 0i32;
+        loop {
+            match self.cur() {
+                Tok::Eof => return self.err("expected '}'"),
+                Tok::Sym('{') => depth += 1,
+                Tok::Sym('}') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        self.advance();
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+            self.advance();
+        }
+    }
+
+    /// The init block (D-500): the program's real update() (or a driver's
+    /// poll()) entry becomes
+    ///
+    /// ```text
+    /// E:  LoadState done 1    ; hidden flag, 0 when the state is fresh
+    ///     BrFalse I
+    /// U:  Jmp update          ; (Ret 0 when there is no update())
+    /// I:  PushConst 1; StoreState done 1
+    /// S:  state initial values, in declaration order (constants, D-506)
+    ///     init() body         ; its `return;` jumps to R
+    /// R:  LoadState done 1
+    ///     BrFalse X
+    ///     Jmp update          ; (Ret 0)
+    /// X:  Ret 0               ; entered at S by the host: stop here
+    /// ```
+    ///
+    /// The `.fxb` carries [`FLAG_INIT`]: a host runs from `S` (with `done`
+    /// still 0, so it stops at `X`) when it loads the effect
+    /// (`fx_vm::Vm::run_init`, which then sets `done`), so init happens at load, before anything
+    /// else touches the state (a mesh catch-up's `shared state` restore must win
+    /// over it). A host that doesn't (older firmware, a bare `run_update`) still
+    /// gets it from the guard on its first update(), so every execution path
+    /// that runs the bytecode (VM, JIT, preview, old firmware) initialises once.
+    /// Steady state costs three ops per frame. The flag is set first, so an init
+    /// that blows the instruction budget is not retried every frame (the effect
+    /// keeps running).
+    fn emit_init_block(&mut self) -> Result<(), Diagnostic> {
+        use fx_vm_op::*;
+        if self.state_inits.is_empty() && self.init_body.is_none() {
+            return Ok(());
+        }
+        let is_driver = self.poll_entry != NO_ENTRY;
+        let target = if is_driver { self.poll_entry } else { self.update_entry };
+        let save_p = self.p;
+        self.cur_fn = "init".to_string();
+        self.cur_fn_is_entry = false;
+        self.mat_scratch = None;
+        let done = self.alloc_state(1)?;
+        let entry = self.code.len() as u16;
+        self.emit(LOAD_STATE);
+        self.emit(done);
+        self.emit(1);
+        self.emit(BR_FALSE);
+        let patch_init = self.code.len();
+        self.emit_u16(0);
+        self.emit_continue(target);
+        let rel = (self.code.len() as isize - (patch_init + 2) as isize) as i16;
+        self.code[patch_init..patch_init + 2].copy_from_slice(&rel.to_le_bytes());
+        // I: done = 1 (the lazy path), then S.
+        self.push_const(1.0f32.to_bits());
+        self.emit(STORE_STATE);
+        self.emit(done);
+        self.emit(1);
+        for (slot, ty, at, name) in self.state_inits.clone() {
+            self.p = at;
+            self.const_init = true;
+            let r = self.expr().and_then(|t| self.coerce(t, ty));
+            self.const_init = false;
+            r?;
+            let taint = std::mem::take(&mut self.lint.taint);
+            self.lint.vars.insert(name, taint);
+            let w = self.ty_width(ty);
+            self.emit(STORE_STATE);
+            self.emit(slot);
+            self.emit(w);
+        }
+        if let Some(at) = self.init_body {
+            self.p = at;
+            self.expect_sym('{')?;
+            self.init_returns = Some(Vec::new());
+            let r = self.block(Ty::Void).and_then(|_| self.expect_sym('}'));
+            let returns = self.init_returns.take().unwrap_or_default();
+            r?;
+            for patch in returns {
+                let rel = (self.code.len() as isize - (patch + 2) as isize) as i16;
+                self.code[patch..patch + 2].copy_from_slice(&rel.to_le_bytes());
+            }
+            self.syms.retain(|_, s| !matches!(s.kind, SymKind::Local));
+            let syms = &self.syms;
+            self.lint.vars.retain(|n, _| syms.contains_key(n));
+        }
+        // R: continue into update() on the lazy path; stop when entered at S.
+        self.emit(LOAD_STATE);
+        self.emit(done);
+        self.emit(1);
+        self.emit(BR_FALSE);
+        let patch_x = self.code.len();
+        self.emit_u16(0);
+        self.emit_continue(target);
+        let rel = (self.code.len() as isize - (patch_x + 2) as isize) as i16;
+        self.code[patch_x..patch_x + 2].copy_from_slice(&rel.to_le_bytes());
+        self.emit(RET);
+        self.emit(0);
+        if is_driver {
+            self.poll_entry = entry;
+        } else {
+            self.update_entry = entry;
+        }
+        self.has_init = true;
+        self.p = save_p;
+        Ok(())
+    }
+
+    /// D-506: a `state` initial value is a compile-time constant (literals,
+    /// constant maths over them, vector/matrix constructors and casts). This is
+    /// the error for the input `id` (the token at `at`) it read instead.
+    fn not_constant<T>(&self, at: usize, what: String) -> Result<T, Diagnostic> {
+        let (_, line, col) = &self.lx_toks[at.min(self.lx_toks.len() - 1)];
+        Err(Diagnostic {
+            line: *line,
+            col: *col,
+            msg: format!(
+                "a state's initial value must be a compile-time constant, and {what}; \
+                 set it in `void init() {{ ... }}` instead (init() may read uniforms, time and state)"
+            ),
+        })
+    }
+
+    /// Why identifier `id` (not a call) is not a compile-time constant.
+    fn non_const_ident(&self, id: &str) -> String {
+        match id {
+            "time" | "dt" | "frame" => format!("`{id}` changes every frame"),
+            "led" | "imu" | "room" => format!("`{id}.*` is not known at compile time"),
+            _ => match self.syms.get(id).map(|s| s.kind) {
+                Some(SymKind::Uniform) => format!("`{id}` is a uniform"),
+                Some(SymKind::State) => format!("`{id}` is a state (initial values can't read state)"),
+                Some(SymKind::Buffer) => format!("`{id}` is a buffer"),
+                Some(SymKind::Local) => format!("`{id}` is a variable"),
+                None => format!("`{id}` is not a constant"),
+            },
+        }
+    }
+
+    /// The init block's exit: jump into the program's own update() / poll(), or
+    /// return from update() when the program has none.
+    fn emit_continue(&mut self, target: u16) {
+        if target == NO_ENTRY {
+            self.emit(fx_vm_op::RET);
+            self.emit(0);
+        } else {
+            self.emit(fx_vm_op::JMP);
+            let rel = (target as isize - (self.code.len() + 2) as isize) as i16;
+            self.emit_u16(rel as u16);
+        }
     }
 
     /// Resolve a buffer/texture element type name to its on-stack element type,
@@ -1416,6 +1825,9 @@ impl Compiler {
     fn func_decl(&mut self) -> Result<(), Diagnostic> {
         let ret_ty = Self::ty_from_ident(&self.eat_ident()?).unwrap();
         let name = self.eat_ident()?;
+        if name == "init" {
+            return self.init_decl(ret_ty);
+        }
         self.cur_fn = name.clone();
         self.mat_scratch = None;
         self.expect_sym('(')?;
@@ -1497,6 +1909,28 @@ impl Compiler {
         Ok(())
     }
 
+    /// `void init() { ... }` (D-500): runs once, before the first update(). Its
+    /// body is compiled after every other declaration, into the init block
+    /// ([`Compiler::emit_init_block`]); here it is only checked and skipped.
+    fn init_decl(&mut self, ret_ty: Ty) -> Result<(), Diagnostic> {
+        if ret_ty != Ty::Void {
+            return self.err("init() returns nothing: declare it `void init()`");
+        }
+        self.expect_sym('(')?;
+        if *self.cur() != Tok::Sym(')') {
+            return self.err("init() takes no parameters");
+        }
+        self.advance();
+        if self.init_body.is_some() {
+            return self.err("init() is defined twice");
+        }
+        if *self.cur() != Tok::Sym('{') {
+            return self.err("expected '{'");
+        }
+        self.init_body = Some(self.p);
+        self.skip_braced()
+    }
+
     fn block(&mut self, ret: Ty) -> Result<(), Diagnostic> {
         while *self.cur() != Tok::Sym('}') && *self.cur() != Tok::Eof {
             self.stmt(ret)?;
@@ -1508,6 +1942,20 @@ impl Compiler {
         match self.cur().clone() {
             Tok::Ident(kw) if kw == "return" => {
                 self.advance();
+                if self.init_returns.is_some() {
+                    // init(): `return;` leaves the init code (patched to its end).
+                    if *self.cur() != Tok::Sym(';') {
+                        return self.err("init() returns nothing");
+                    }
+                    self.advance();
+                    self.emit(fx_vm_op::JMP);
+                    let at = self.code.len();
+                    self.emit_u16(0);
+                    if let Some(r) = self.init_returns.as_mut() {
+                        r.push(at);
+                    }
+                    return Ok(());
+                }
                 if *self.cur() == Tok::Sym(';') {
                     self.advance();
                     if self.cur_fn_is_entry {
@@ -2042,7 +2490,7 @@ impl Compiler {
     /// Per-LED code only: shade() and the helper functions (update()/poll()
     /// run once per frame, where a conversion is noise).
     fn in_per_led_code(&self) -> bool {
-        self.cur_fn != "update" && self.cur_fn != "poll"
+        !matches!(self.cur_fn.as_str(), "update" | "poll" | "init")
     }
 
     fn warn_at(&mut self, line: u32, col: u32, msg: String) {
@@ -2066,19 +2514,25 @@ impl Compiler {
             .map(|(t, _)| *t);
         let lit = args.iter().find_map(|(t, l)| if *t == Ty::Float { *l } else { None });
         if let (Some(ft), Some(v)) = (fixed, lit) {
-            let fname = match ft {
-                Ty::Fixed8 => "fixed8",
-                Ty::Fixed16 => "fixed16",
-                _ => "fixed",
+            let (fname, sfx) = match ft {
+                Ty::Fixed8 => ("fixed8", "fx8"),
+                Ty::Fixed16 => ("fixed16", "fx16"),
+                _ => ("fixed", "fx"),
             };
             let shown = fmt_lit(v);
+            // The suffix form only where it is valid: fixed8/fixed16 literals hold [-2, 2).
+            let fix = if ft == Ty::Fixed || v.abs() < 2.0 {
+                format!("{shown}{sfx} (or {fname}({shown}))")
+            } else {
+                format!("{fname}({shown})")
+            };
             self.warn_at(
                 line,
                 col,
                 format!(
                     "{PERF_WARNING_PREFIX}`{what}` mixes a {fname} value with the float literal {shown}, so it runs in \
                      soft-float (~3x the cycles, with fixed<->float conversions) on every LED; write \
-                     {fname}({shown}) to keep it integer"
+                     {fix} to keep it integer"
                 ),
             );
         }
@@ -2711,7 +3165,7 @@ impl Compiler {
                 }
                 _ => lint::Taint::default(),
             }),
-            Tok::Num(..) => Some(lint::Taint::default()),
+            Tok::Num(..) | Tok::FixNum(..) => Some(lint::Taint::default()),
             _ => None,
         };
         let ty = self.primary_expr()?;
@@ -2732,6 +3186,17 @@ impl Compiler {
                 self.last_const = Some(ConstProv { pos, bits, is_int });
                 Ok(if is_int { Ty::Int } else { Ty::Float })
             }
+            Tok::FixNum(v, is_int, ty) => {
+                // Exactly `fixed8(v)` & co.: push the literal, then the cast, which
+                // the constant-cast fold rewrites into the fixed constant.
+                self.advance();
+                let pos = self.code.len();
+                let bits = if is_int { v as i32 as u32 } else { v.to_bits() };
+                self.push_const(bits);
+                self.last_const = Some(ConstProv { pos, bits, is_int });
+                self.coerce(if is_int { Ty::Int } else { Ty::Float }, ty)?;
+                Ok(ty)
+            }
             Tok::Ident(id) if id == "true" || id == "false" => {
                 self.advance();
                 self.push_const(if id == "true" { 1.0f32 } else { 0.0f32 }.to_bits());
@@ -2742,6 +3207,9 @@ impl Compiler {
                 let t = self.expr()?;
                 self.expect_sym(')')?;
                 Ok(t)
+            }
+            Tok::Ident(id) if self.const_init && (id == "led" || id == "imu" || id == "room") => {
+                self.not_constant(self.p, self.non_const_ident(&id))
             }
             Tok::Ident(id) if id == "led" || id == "imu" || id == "room" => {
                 // namespace access: led.pos / led.idx / imu.accel ... (further
@@ -2755,6 +3223,9 @@ impl Compiler {
                 self.advance();
                 if *self.cur() == Tok::Sym('(') {
                     return self.call(&id);
+                }
+                if self.const_init {
+                    return self.not_constant(self.p - 1, self.non_const_ident(&id));
                 }
                 if let Some(sym) = self.syms.get(&id).copied() {
                     // Buffer element read: `buf[i]` -> LoadBuf, result = elem type.
@@ -2829,7 +3300,44 @@ impl Compiler {
     }
 
     fn call(&mut self, name: &str) -> Result<Ty, Diagnostic> {
+        if self.const_init && Self::ty_from_ident(name).is_none() && !CONST_BUILTINS.contains(&name) {
+            let what = if self.funcs.contains_key(name) {
+                format!("`{name}()` is a helper function call")
+            } else {
+                format!("`{name}()` is not a constant function")
+            };
+            return self.not_constant(self.p - 1, what);
+        }
         self.expect_sym('(')?;
+        // Trigger ops take the trigger's NAME.
+        if name == "fired" || name == "fire" {
+            return self.trigger_call(name);
+        }
+        // GPIO driver intrinsics (docs/design/lamp-power.md): the I2C ops aimed at
+        // the pseudo device GPIO_DEV (no 7-bit I2C address reaches 0x80), which
+        // the driver host routes to the pins. gpio_read(pin) -> 0 / 1 (-1 when
+        // unavailable); gpio_mode(pin, mode) (0 input, 1 input + pull-up, 2 input
+        // + pull-down) -> 1 when applied. Only live in a driver's poll().
+        if name == "gpio_read" || name == "gpio_mode" {
+            self.push_const(GPIO_DEV as u32);
+            let args = self.call_args()?;
+            self.expect_sym(')')?;
+            self.lint.taint = self.lint.builtin(name);
+            if args.iter().any(|a| !matches!(a, Ty::Int)) {
+                return self.err("gpio arguments must be int (wrap with int(...))");
+            }
+            if name == "gpio_read" {
+                self.need(&args, 1)?;
+                // reg = pin; the read's "mode" byte 1 = one byte.
+                self.emit(fx_vm_op::I2C_READ);
+                self.emit(1);
+            } else {
+                self.need(&args, 2)?;
+                // reg = pin, val = mode.
+                self.emit(fx_vm_op::I2C_WRITE);
+            }
+            return Ok(Ty::Int);
+        }
         // Texture ops take a texture NAME (not a value) as their first argument.
         if name == "sample" || name == "paint" {
             let ty = self.texture_call(name)?;
@@ -3725,9 +4233,15 @@ impl Compiler {
         if is_driver {
             flags |= FLAG_DRIVER;
         }
+        if self.has_init {
+            flags |= FLAG_INIT;
+        }
         let has_memo = report.led_cache_words > 0 || report.prep_entry != NO_ENTRY;
         if has_memo {
             flags |= FLAG_MEMO;
+        }
+        if !self.shared_state.is_empty() {
+            flags |= FLAG_SHARED_STATE;
         }
         b.extend_from_slice(b"FXB1");
         b.push(FXB_FORMAT_VERSION);
@@ -3776,6 +4290,17 @@ impl Compiler {
             b.push(report.led_cache_words);
             b.push(report.led_cache_groups.len() as u8);
             b.extend_from_slice(&report.led_cache_groups);
+        }
+        // Optional shared-state footer (FLAG_SHARED_STATE), read from the END of the
+        // file (fx_vm::Program::shared_state): (slot, width) × n, then n. At the end
+        // so nothing before it moves: firmware that predates it ignores the flag and
+        // the trailing bytes, and runs the effect as before (no restore).
+        if !self.shared_state.is_empty() {
+            for &(slot, w) in &self.shared_state {
+                b.push(slot);
+                b.push(w);
+            }
+            b.push(self.shared_state.len() as u8);
         }
         let mut warnings = self.lint.warnings;
         warnings.extend(self.perf_warnings);
@@ -4123,7 +4648,19 @@ fn default_ui(ty: Ty) -> UiKind {
         Ty::Bool => UiKind::Toggle,
         Ty::Vec3 | Ty::Vec4 => UiKind::Color,
         Ty::Mat3 | Ty::Mat4 => UiKind::Matrix { min: -MAT_DEFAULT_RANGE, max: MAT_DEFAULT_RANGE },
-        _ => UiKind::Slider { min: 0.0, max: 1.0, step: 0.01 },
+        _ => UiKind::Slider { min: 0.0, max: 1.0, step: native_step(ty) },
+    }
+}
+
+/// A slider's default step: the uniform type's own resolution. Uniform values
+/// travel and persist as f32, so a float slider is continuous (`step` 0, which
+/// the app, MIDI router and firmware keypoint blend all treat as "no snap"); an
+/// int steps by 1 and a fixed type by its LSB (`2^-frac`).
+fn native_step(ty: Ty) -> f32 {
+    match ty.fixed_frac() {
+        Some(0) => 1.0,
+        Some(frac) => 1.0 / (1u32 << frac) as f32,
+        None => 0.0,
     }
 }
 
@@ -4149,6 +4686,10 @@ pub fn exports_manifest_json(exports: &[ExportInfo]) -> String {
     s
 }
 
+/// The pseudo I2C address the GPIO driver intrinsics use (gpio_read /
+/// gpio_mode): outside the 7-bit range, so the driver host routes it to pins.
+pub const GPIO_DEV: u8 = 0x80;
+
 pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
     let mut s = String::from("[");
     for (i, u) in uniforms.iter().enumerate() {
@@ -4162,6 +4703,7 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
             UiKind::Color => "{\"kind\":\"color\"}".to_string(),
             UiKind::Toggle => "{\"kind\":\"toggle\"}".to_string(),
             UiKind::Matrix { min, max } => format!("{{\"kind\":\"matrix\",\"min\":{min},\"max\":{max}}}"),
+            UiKind::Trigger => "{\"kind\":\"trigger\"}".to_string(),
             UiKind::Dropdown(o) => {
                 let opts: Vec<String> = o.iter().map(|x| format!("\"{x}\"")).collect();
                 format!("{{\"kind\":\"dropdown\",\"options\":[{}]}}", opts.join(","))
@@ -4173,6 +4715,8 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
         let (min, max) = match &u.ui {
             UiKind::Slider { min, max, .. } | UiKind::Matrix { min, max } => (*min, *max),
             UiKind::Color | UiKind::Toggle => (0.0, 1.0),
+            // A counter: any non-negative count.
+            UiKind::Trigger => (0.0, 16_777_216.0),
             UiKind::Dropdown(o) => (0.0, o.len().saturating_sub(1) as f32),
         };
         let _ = write!(
@@ -4371,6 +4915,20 @@ const FLAG_USES_UV: u8 = 0x04;
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_USES_ROOM): the program reads the room
 /// frame (`led.room` / `room.min` / `room.max`).
 const FLAG_USES_ROOM: u8 = 0x08;
+/// Built-ins that are pure maths, allowed in a `state` initial value (D-506):
+/// no device, topology, texture, trigger or I2C input.
+const CONST_BUILTINS: &[&str] = &[
+    "sin", "cos", "tan", "abs", "sign", "floor", "ceil", "fract", "sqrt", "exp", "log", "min", "max",
+    "pow", "mod", "step", "atan2", "clamp", "mix", "smoothstep", "dot", "cross", "length", "normalize",
+    "distance", "hsv2rgb", "hash", "palette", "palette0", "palette1", "palette2", "transpose", "transform",
+];
+
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_INIT): the update() (driver: poll())
+/// entry starts with the init guard `LoadState done 1; BrFalse I`, and `I` is
+/// `PushConst; StoreState done 1`, followed by the init code a host runs at
+/// load ([`Compiler::emit_init_block`]).
+const FLAG_INIT: u8 = 0x80;
+
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_DRIVER): a sensor driver whose poll()
 /// entry sits in the shade slot and whose manifest is the export table.
 const FLAG_DRIVER: u8 = 0x10;
@@ -4378,6 +4936,9 @@ const FLAG_DRIVER: u8 = 0x10;
 /// `prep_entry(u16) words(u8) n_groups(u8) group_end(u8) × n_groups` — follows
 /// the buffer table (the variance pass's per-frame prep + per-LED cache).
 const FLAG_MEMO: u8 = 0x20;
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_SHARED_STATE): a `shared state` footer at the
+/// end of the file — `(slot u8, width u8) × n, n u8`.
+const FLAG_SHARED_STATE: u8 = 0x40;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;

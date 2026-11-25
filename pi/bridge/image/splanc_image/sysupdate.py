@@ -768,10 +768,21 @@ class Updater:
         cmdline = os.path.join(d, "cmdline.txt")
         try:
             with open(cmdline, encoding="utf-8") as f:
-                if f"init={new}/init" not in f.read():
-                    raise UpdateError(f"{gen_dir}/cmdline.txt does not boot {new}")
+                line = f.read()
         except OSError as e:
             raise UpdateError(f"the bootloader did not install {gen_dir}: {e}") from e
+        # The builder boots a generation directory through its profile link
+        # (init=/nix/var/nix/profiles/system-<N>-link/init) and records the
+        # store path it resolved to in system-link.
+        try:
+            with open(os.path.join(d, "system-link"), encoding="utf-8") as f:
+                resolved = f.read().strip()
+        except OSError:
+            resolved = None
+        inits = [a[5:] for a in line.split() if a.startswith("init=")]
+        boots = resolved == new or any(os.path.realpath(os.path.dirname(i)) == new for i in inits)
+        if not boots:
+            raise UpdateError(f"{gen_dir}/cmdline.txt does not boot {new}")
         for name in ("kernel.img", "initrd"):
             if not os.path.isfile(os.path.join(d, name)):
                 raise UpdateError(f"{gen_dir}/{name} missing")

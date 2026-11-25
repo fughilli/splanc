@@ -10,6 +10,9 @@ void improv_ble_set_name(const char *) {}
 bool improv_ble_take_credentials(char *, size_t, char *, size_t) { return false; }
 bool improv_ble_central_connected() { return false; }
 void improv_ble_request_disconnect() {}
+void improv_ble_request_supervision_timeout(uint32_t) {}
+bool improv_ble_notify_hold(uint32_t, uint32_t) { return false; }
+bool improv_ble_take_notify_ack_ms(uint32_t *) { return false; }
 extern "C" uint32_t ns_ble_state() { return 0; }
 extern "C" uint32_t ns_ble_last_disc_reason() { return 0; }
 uint32_t improv_ble_last_acl_ms() { return 0; }
@@ -19,3 +22,7 @@ void improv_ble_set_error(uint8_t) {}
 void improv_ble_set_join_error(uint8_t) {}
 void improv_ble_send_redirect(const char *) {}
 void player_ble_poll() {}
+// Improv Identify (the picker's Blink): never requested without BLE, and the loader
+// draws no LEDs, so there's nothing to blink.
+bool improv_ble_take_identify() { return false; }
+void player_identify_start() {}

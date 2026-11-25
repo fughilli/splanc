@@ -117,6 +117,16 @@
               "type": ["string", "null"],
               "enum": ["on_off", "stagger_pilot", null],
               "description": "Requested sync pattern (see code_params.json; hue code v2 phase 2). A player that does not support 'stagger_pilot' runs v1 'on_off' and says so in mapping_started.codeParams.syncPattern, which is what the client decodes. Null/omitted -> 'on_off'."
+            },
+            "strideMode": {
+              "type": ["string", "null"],
+              "enum": ["phased", "rolling", null],
+              "description": "Requested stride schedule (see code_params.json). 'rolling' on players advertising the 'stride_rolling' feature; a player without it runs 'phased' and says so in mapping_started.codeParams.strideMode. Null/omitted -> 'phased'."
+            },
+            "dwellCycles": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "description": "Rolling dwell D in code cycles. Null -> the kernel default (4)."
             }
           }
         }
@@ -143,7 +153,9 @@
               "description": "Diffuse striding (see StartMapping); re-sent each epoch to ADVANCE the phase."
             },
             "anchorDensity": { "type": ["integer", "null"], "minimum": 0 },
-            "stridePhase": { "type": ["integer", "null"], "minimum": 0 }
+            "stridePhase": { "type": ["integer", "null"], "minimum": 0 },
+            "strideMode": { "type": ["string", "null"], "enum": ["phased", "rolling", null] },
+            "dwellCycles": { "type": ["integer", "null"], "minimum": 1 }
           }
         }
       }

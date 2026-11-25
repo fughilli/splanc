@@ -76,7 +76,7 @@ unsafe extern "C" fn h_scan(out: *mut u8, cap: usize) -> usize {
     n
 }
 static HOST: LmDrvHost =
-    LmDrvHost { alloc: Some(h_alloc), free: Some(h_free), bus_ensure: Some(h_bus_ensure), scan: Some(h_scan), cycles: None };
+    LmDrvHost { alloc: Some(h_alloc), free: Some(h_free), bus_ensure: Some(h_bus_ensure), scan: Some(h_scan), cycles: None, gpio_read: None, gpio_mode: None };
 
 fn handle(msg: CMsg) -> Option<SMsg> {
     let env = pb::ClientMessage { r#msg: Some(msg) };

@@ -20,21 +20,37 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import connect_scenarios  # noqa: E402
 import credits_scenarios  # noqa: E402
+import editor_scenarios  # noqa: E402
 import layout_guard  # noqa: E402
+import mesh_scenarios  # noqa: E402
+import newfixture_scenarios  # noqa: E402
+import oobe_scenarios  # noqa: E402
 
-SCENARIO_MODULES = [credits_scenarios]
+SCENARIO_MODULES = [
+    connect_scenarios,
+    credits_scenarios,
+    editor_scenarios,
+    mesh_scenarios,
+    newfixture_scenarios,
+    oobe_scenarios,
+]
 
 
 def find_dist() -> Path:
-    """The built //web:dist from runfiles (bazel run), else bazel-bin."""
+    """The built app with its wasm bundles (//web:ios_payload: the effect editor compiles)
+    from runfiles (bazel run), else bazel-bin."""
     for base in (os.environ.get("RUNFILES_DIR"), os.path.abspath(__file__) + ".runfiles"):
         if base:
-            for cand in (Path(base) / "_main" / "web" / "dist", Path(base) / "web" / "dist"):
+            for cand in (
+                Path(base) / "_main" / "web" / "ios_payload",
+                Path(base) / "web" / "ios_payload",
+            ):
                 if (cand / "index.html").exists():
                     return cand
     ws = os.environ.get("BUILD_WORKSPACE_DIRECTORY", ".")
-    return Path(ws) / "bazel-bin" / "web" / "dist"
+    return Path(ws) / "bazel-bin" / "web" / "ios_payload"
 
 
 def ensure_browser() -> None:
@@ -54,7 +70,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--dist", type=Path, help="built web app (default: //web:dist)")
+    ap.add_argument("--dist", type=Path, help="built web app (default: //web:ios_payload)")
     ap.add_argument("--shots", type=Path, help="write <scenario>-<viewport>-<theme>.png here")
     ap.add_argument(
         "--only", default="", help="only scenarios whose id starts with this (comma-separated)"
@@ -69,7 +85,7 @@ def main() -> int:
     a = ap.parse_args()
     dist = a.dist or find_dist()
     if not (dist / "index.html").exists():
-        sys.exit(f"no built app at {dist} (bazel build //web:dist)")
+        sys.exit(f"no built app at {dist} (bazel build //web:ios_payload)")
     prefixes = [p for p in a.only.split(",") if p]
     scenarios = [
         s

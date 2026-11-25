@@ -39,7 +39,9 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from typing import NamedTuple
 
+import hitl_metrics
 import serial_capture
 
 
@@ -374,6 +376,85 @@ def _unit_serves(u: dict, unit_type: str, caps: list[str]) -> bool:
     return True
 
 
+class HostSlot(NamedTuple):
+    """One pool host rated for one request (see host_slot)."""
+
+    base: str
+    admit: int  # free matching units the daemon could activate right now (caps applied)
+    ahead: int  # waiters already queued there that compete with us
+    capacity: int  # most matching reservations the host can ever run at once
+    cordoned: bool
+
+    @property
+    def room(self) -> int:
+        """Units left for us after the waiters ahead: > 0 = we'd start at once."""
+        return self.admit - self.ahead
+
+    @property
+    def wait(self) -> float:
+        """Expected-wait proxy for a full host: waiters ahead per unit of capacity."""
+        return (self.ahead - self.admit + 1) / max(self.capacity, 1)
+
+
+def host_slot(base: str, st: dict, queue: dict | None, matches, priority: str = "dev") -> HostSlot:
+    """Rate one host's /status (+ optional /queue summary) for a request whose unit
+    filter is `matches` (pure; unit-tested).
+
+    A free unit only counts if the daemon would ADMIT a reservation onto it: the
+    host-wide `max_concurrent` and the per-class `max_concurrent_per_class` caps
+    both apply (rig-2 once had 5 C6s under a cap of 4, so one unit always looked
+    free and every reservation piled onto it while rig-1 idled). The competing
+    queue is the per-type `queued` from GET /queue, limited to the waiters in
+    classes that schedule at or ahead of ours; without /queue, the host's whole
+    queue_length."""
+    units = st.get("units") or []
+    active = [u for u in units if u.get("active") is not None]
+    active_by_type: dict[str, int] = {}
+    for u in active:
+        active_by_type[u.get("type")] = active_by_type.get(u.get("type"), 0) + 1
+    class_cap = {k: int(v) for k, v in (st.get("max_concurrent_per_class") or {}).items() if v}
+    host_cap = int(st.get("max_concurrent") or 0)
+    free_by_type: dict[str, int] = {}
+    all_by_type: dict[str, int] = {}
+    for u in units:
+        if not matches(u):
+            continue
+        t = u.get("type")
+        all_by_type[t] = all_by_type.get(t, 0) + 1
+        if u.get("active") is None:
+            free_by_type[t] = free_by_type.get(t, 0) + 1
+    admit = 0
+    for t, n in free_by_type.items():
+        if t in class_cap:
+            n = max(0, min(n, class_cap[t] - active_by_type.get(t, 0)))
+        admit += n
+    capacity = sum(min(n, class_cap.get(t, n)) for t, n in all_by_type.items())
+    if host_cap > 0:
+        admit = min(admit, max(0, host_cap - len(active)))
+        capacity = min(capacity, host_cap)
+    if queue:
+        ahead = sum(
+            int(t.get("queued") or 0)
+            for t in queue.get("types") or []
+            if t.get("type") in all_by_type
+        )
+        try:
+            rank = PRIORITY_CLASSES.index(priority)
+        except ValueError:
+            rank = len(PRIORITY_CLASSES) - 1
+        classes = queue.get("classes") or []
+        if classes:
+            at_or_above = sum(
+                int(c.get("queued") or 0)
+                for c in classes
+                if c.get("class") in PRIORITY_CLASSES[: rank + 1]
+            )
+            ahead = min(ahead, at_or_above)
+    else:
+        ahead = int(st.get("queue_length") or 0)
+    return HostSlot(base, admit, ahead, capacity, bool(st.get("cordoned")))
+
+
 class Reservation:
     """One reservation held for the session; see the module docstring."""
 
@@ -424,6 +505,7 @@ class Reservation:
         self.endpoint: str | None = None
         self._unit: str | None = None
         self._reserve_body: dict | None = None  # kept so a lost queued slot can re-queue
+        self._next_rebalance = 0.0  # next cross-rig work-stealing check (see _try_rebalance)
         self._hb_stop: threading.Event | None = None
         self._hb_thread: threading.Thread | None = None
         self._keydir: str | None = None
@@ -472,29 +554,17 @@ class Reservation:
             f"reserved: id={self.id} on {self.server} unit={self._unit} class={self.priority}",
             flush=True,
         )
+        # Default the gate's HITL_METRIC records to this rig + DUT.
+        hitl_metrics.set_context(rig=_host_of(self.server or "") or None, dut=self._unit)
         self._start_hold_watchdog()
         self._serial_start()
 
-    def _pick_server(self, pool: list[str] | None = None, allow_cordoned: bool = True) -> str:
-        """Pick a host to reserve on. Prefer a host with the MOST free matching units
-        (spreads load), else one with a matching busy unit (to queue on), else fail
-        immediately. Break ties RANDOMLY so a burst of concurrent reservations (the
-        CI suite fires the whole set at once) fans out across the fleet instead of all
-        piling onto the first rig. `allow_cordoned=False` refuses to fall back to a
-        cordoned host (used when migrating OFF a cordoned one)."""
-        if pool is None:
-            pool = [self.server] if self.server else _pool()
-        if not pool:
-            raise ReserveError(
-                "no hosts: set --server, $HITL_HOSTS/$HITL_SERVERS, or join a tailnet "
-                f"with rigs tagged {os.environ.get('HITL_TAG') or DEFAULT_TAG}"
-            )
-        free: list[tuple[str, int]] = []  # (host, free-matching-unit count)
-        queueable, inventories, errs = [], [], []
-        # A cordoned (maintenance/drain) host activates nothing until it's released, and
-        # its idle units would otherwise read as FREE and attract every new reservation
-        # — the opposite of draining it. Use one only if no other host can serve us.
-        cordoned: list[str] = []
+    def _survey(self, pool: list[str]) -> tuple[list[HostSlot], list[str], list[str]]:
+        """GET every pool host's /status (+ /queue on a priority-aware daemon) and rate
+        it for THIS request (see host_slot). Returns (matching slots, inventories,
+        errors); a host with no unit that could ever serve us is left out."""
+        slots: list[HostSlot] = []
+        inventories, errs = [], []
         for base in pool:
             try:
                 st = _get(base + "/status")
@@ -509,20 +579,50 @@ class Reservation:
                     for u in units
                 )
             )
-            n = sum(1 for u in units if self._unit_matches(u) and u.get("active") is None)
-            if st.get("cordoned"):
-                if any(self._unit_matches(u) for u in units):
-                    cordoned.append(base)
+            if not any(self._unit_matches(u) for u in units):
                 continue
-            if n:
-                free.append((base, n))
-            elif any(self._unit_matches(u) for u in units):
-                queueable.append(base)
+            q = None
+            if "queue_by_class" in st:  # priority-aware daemon: per-type queue depth
+                try:
+                    q = _get(base + "/queue", timeout=5)
+                except Exception:  # noqa: BLE001 (fall back to /status queue_length)
+                    q = None
+            slots.append(host_slot(base, st, q, self._unit_matches, self.priority))
+        return slots, inventories, errs
+
+    def _pick_server(self, pool: list[str] | None = None, allow_cordoned: bool = True) -> str:
+        """Pick a host to reserve on, by what the daemons can actually ADMIT now:
+
+        1. a host whose free matching units, after its host-wide and per-class
+           concurrency caps (a unit that is free but capped-out is NOT free) and the
+           waiters already queued ahead of us, still has room — chosen at random
+           WEIGHTED by that room, so a burst (the CI suite fires the whole set at once
+           against one /status snapshot) splits across rigs in proportion to their
+           free capacity instead of herding onto the single best one;
+        2. else the host with the shortest expected wait (waiters ahead per unit of
+           matching capacity), ties broken at random;
+        3. a cordoned host only if nothing else can serve us (`allow_cordoned=False`
+           refuses even that: used when migrating OFF one).
+        Fails immediately when no reachable host has a matching unit.
+
+        The pick is a snapshot; a queued reservation keeps re-checking the pool and
+        moves when another host could start it at once (see _try_rebalance)."""
+        if pool is None:
+            pool = [self.server] if self.server else _pool()
+        if not pool:
+            raise ReserveError(
+                "no hosts: set --server, $HITL_HOSTS/$HITL_SERVERS, or join a tailnet "
+                f"with rigs tagged {os.environ.get('HITL_TAG') or DEFAULT_TAG}"
+            )
+        slots, inventories, errs = self._survey(pool)
+        live = [s for s in slots if not s.cordoned]
+        free = [s for s in live if s.room > 0]
         if free:
-            most = max(n for _, n in free)
-            return random.choice([b for b, n in free if n == most])
-        if queueable:
-            return random.choice(queueable)
+            return random.choices([s.base for s in free], weights=[s.room for s in free])[0]
+        if live:
+            best = min(s.wait for s in live)
+            return random.choice([s.base for s in live if s.wait == best])
+        cordoned = [s.base for s in slots if s.cordoned]
         if cordoned and allow_cordoned:
             print(f"all matching hosts are cordoned; queueing on one: {cordoned}", flush=True)
             return random.choice(cordoned)
@@ -687,6 +787,9 @@ class Reservation:
                 requeues += 1
                 watch.reset_progress(time.time())
                 continue
+            if self._rebalance_due(time.time()) and self._try_rebalance():
+                watch.reset_progress(time.time())
+                continue
             time.sleep(2)
         reservation_id = self.id
         try:
@@ -720,6 +823,75 @@ class Reservation:
         self.server, self.id = target, res["id"]
         print(
             f"migrated: {old_server} is cordoned; re-queued on {target} as {self.id}",
+            flush=True,
+        )
+        return True
+
+    # --- cross-rig work stealing --------------------------------------------
+    # The daemons schedule per host, so a waiter queued on a busy rig stays there
+    # even after another rig frees up (2026-11-23: 103 queued on rig-2 while 3 of
+    # rig-1's C6s sat idle). A queued, unpinned client re-surveys the pool every
+    # $HITL_REBALANCE_EVERY s (default 30, jittered; 0 disables) and moves when
+    # another host could START it right now (room > 0 after caps and its queue).
+    # It never gives up its place blindly: it reserves there first, keeps the old
+    # slot until the new one is ACTIVE, and drops the new one if it queues instead
+    # (someone else got the unit first).
+    _REBALANCE_PROBE_S = 12.0
+
+    def _rebalance_due(self, now: float) -> bool:
+        every = _env_float("HITL_REBALANCE_EVERY", 30.0) or 0.0
+        if every <= 0 or self._pinned_server or not self._reserve_body:
+            return False
+        if self._next_rebalance == 0.0:  # first check one interval after enqueueing
+            self._next_rebalance = now + every * random.uniform(0.5, 1.0)
+            return False
+        if now < self._next_rebalance:
+            return False
+        self._next_rebalance = now + every * random.uniform(0.8, 1.2)
+        return True
+
+    def _try_rebalance(self) -> bool:
+        """Move to another host that can start us now. Returns whether we moved."""
+        others = [b for b in _pool() if b != self.server]
+        if not others:
+            return False
+        try:
+            slots, _, _ = self._survey(others)
+        except Exception:  # noqa: BLE001
+            return False
+        free = [s for s in slots if not s.cordoned and s.room > 0]
+        if not free:
+            return False
+        target = random.choices([s.base for s in free], weights=[s.room for s in free])[0]
+        try:
+            res = _post(f"{target}/reserve", self._reserve_body)
+        except Exception:  # noqa: BLE001
+            return False
+        new_id = res.get("id")
+        if not new_id:
+            return False
+        state = res.get("state")
+        give_up = time.time() + self._REBALANCE_PROBE_S
+        while state != "active" and time.time() < give_up:
+            time.sleep(2)
+            try:
+                state = _get(f"{target}/reservation/{new_id}").get("state")
+            except Exception:  # noqa: BLE001
+                break
+        if state != "active":
+            try:  # lost the race for that unit: keep our original place
+                _post(f"{target}/reservation/{new_id}/release")
+            except Exception:  # noqa: BLE001 (its lease will lapse)
+                pass
+            return False
+        old_server, old_id = self.server, self.id
+        self.server, self.id = target, new_id  # the heartbeat thread follows these
+        try:
+            _post(f"{old_server}/reservation/{old_id}/release")
+        except Exception:  # noqa: BLE001 (its lease will lapse)
+            pass
+        print(
+            f"rebalanced: {old_server} still queued; started on {target} as {self.id}",
             flush=True,
         )
         return True

@@ -36,6 +36,7 @@ rust_library(
     crate_name = "ledmapper_netstack",
     crate_root = "src/lib.rs",
     edition = "2021",
+    deps = ["//firmware/bss"],  # BssOption: tcp_slots' table stays .bss
 )
 
 # Host unit tests (the crate's inline #[cfg(test)] modules: parsers, rings,
@@ -291,7 +292,27 @@ rust_static_library(
     crate_name = "wifi_sta_ffi",
     edition = "2021",
     target_compatible_with = _C6,
-    deps = [":netstack"],
+    deps = [
+        ":netstack",
+        "//firmware/bss",
+    ],
+)
+
+# The same FFI with two TCP server slots (concurrent wss clients): the P4's C6 front end,
+# which has the RAM the players don't (docs/design/p4-c6-split.md §4.3.1).
+rust_static_library(
+    name = "wifi_sta_ffi_sessions2",
+    srcs = ["examples/wifi_sta_ffi.rs"],
+    crate_features = ["sessions2"],
+    # Its own crate name: the archive is named after it, and :wifi_sta_ffi's would collide.
+    crate_name = "wifi_sta_ffi_sessions2",
+    crate_root = "examples/wifi_sta_ffi.rs",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [
+        ":netstack",
+        "//firmware/bss",
+    ],
 )
 
 cc_binary(
@@ -572,5 +593,36 @@ esptool_flash(
 flash_bundle(
     name = "wifi_tx_rate_probe_flashbundle",
     flash = ":wifi_tx_rate_probe_flash",
+    tags = ["manual"],
+)
+
+# mesh_frame_probe — the C6's view of Splanc mesh frames for the Pi transport bench
+# (docs/design/mesh-pi-transport.md): promiscuous RX with RSSI, and periodic TX of the
+# reference frame, on the vendor stack (an oracle until M3's netstack backhaul).
+cc_binary(
+    name = "mesh_frame_probe",
+    srcs = ["examples/mesh_frame_probe.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "mesh_frame_probe_esp32c6",
+    binary = ":mesh_frame_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "mesh_frame_probe_flash",
+    app = ":mesh_frame_probe_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "mesh_frame_probe_flashbundle",
+    flash = ":mesh_frame_probe_flash",
     tags = ["manual"],
 )

@@ -15,7 +15,7 @@ Firmware-target build check (also in CI):
   bazel build -c opt --platforms=@embedded//platforms:esp32p4 //firmware/mesh/...
 """
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -36,6 +36,15 @@ rust_library(
         "//firmware/netstack",
         "@player_crates//:p256",
     ],
+)
+
+# The admin side on the host (mesh M7): admin key, session grants, rotation orders. The
+# mesh_join_admin HITL signs with it; the app signs itself in M8.
+rust_binary(
+    name = "mesh_admin_tool",
+    srcs = ["tool/main.rs"],
+    edition = "2021",
+    deps = [":mesh"],
 )
 
 rust_test(

@@ -1,0 +1,45 @@
+wifi: brcmfmac: do not wait for an ACK of group-addressed action frames
+
+The firmware completes every action frame with
+BRCMF_E_ACTION_FRAME_COMPLETE and reports a group-addressed frame,
+which is never acknowledged, with BRCMF_E_STATUS_NO_ACK.
+brcmf_p2p_notify_action_tx_complete() takes that as a failed
+transmission, so brcmf_p2p_send_action_frame() retries the frame up to
+P2P_AF_TX_MAX_RETRY times and finally reports it to cfg80211 as not
+acknowledged although it was sent every time. This affects broadcast
+frames such as DPP presence announcements and vendor-specific Public
+Action frames.
+
+Treat NO_ACK for a group-addressed destination as a successful
+transmission.
+
+On a CYW43455 (firmware 7.45.265, Raspberry Pi 3B+) the firmware
+reported NO_ACK for 300 of 300 broadcast action frames that a peer
+received. With this change, NL80211_CMD_FRAME reports 100 of 100
+broadcast frames as sent, each transmitted once.
+
+Tool use: this change was prepared with the help of an AI coding
+assistant (Claude), which read the driver, wrote the change and the
+changelog, and ran the test described in the cover letter; the
+submitter reviewed and tested it.
+
+(Upstream series for wireless-next, carried in Splanc's Pi images: pi/provisioning/nix/brcmfmac-actframe.nix.)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+index ac5ecda6c..37cf6549e 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+@@ -1536,7 +1536,12 @@ int brcmf_p2p_notify_action_tx_complete(struct brcmf_if *ifp,
+ 		return 0;
+ 
+ 	if (e->event_code == BRCMF_E_ACTION_FRAME_COMPLETE) {
+-		if (e->status == BRCMF_E_STATUS_SUCCESS) {
++		/* Group-addressed frames are never acknowledged; the firmware
++		 * reports them with BRCMF_E_STATUS_NO_ACK once sent.
++		 */
++		if (e->status == BRCMF_E_STATUS_SUCCESS ||
++		    (e->status == BRCMF_E_STATUS_NO_ACK &&
++		     is_multicast_ether_addr(p2p->afx_hdl.tx_dst_addr))) {
+ 			set_bit(BRCMF_P2P_STATUS_ACTION_TX_COMPLETED,
+ 				&p2p->status);
+ 			if (!p2p->wait_for_offchan_complete)

@@ -115,6 +115,7 @@ _GOLDENS = {
     "stagger16": "golden_stagger16.json",
     "stagger16_sym4": "golden_stagger16_sym4.json",
     "stride": "golden_stride.json",
+    "stride_rolling": "golden_stride_rolling.json",
 }
 
 [
@@ -163,9 +164,15 @@ rust_test(
 rust_test(
     name = "golden_stride_test",
     srcs = ["tests/golden_stride.rs"],
-    data = ["testdata/golden_stride.json"],
+    data = [
+        "testdata/golden_stride.json",
+        "testdata/golden_stride_rolling.json",
+    ],
     edition = "2021",
-    env = {"GOLDEN_STRIDE": "$(rootpath testdata/golden_stride.json)"},
+    env = {
+        "GOLDEN_STRIDE": "$(rootpath testdata/golden_stride.json)",
+        "GOLDEN_STRIDE_ROLLING": "$(rootpath testdata/golden_stride_rolling.json)",
+    },
     deps = [
         ":pattern_app",
         "@crates//:serde_json",

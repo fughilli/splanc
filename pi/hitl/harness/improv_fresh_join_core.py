@@ -62,6 +62,12 @@ BLIND_ACK_RE = re.compile(r"\[wifi\] console: the next ([1-9]\d*) sweep\(s\) hea
 REDIRECT_RE = re.compile(r"\[ble\] PROVISIONED -> redirect (\S+)")
 LEASE_RE = re.compile(r"DHCP LEASE ACQUIRED.*?IP\s+(\d{1,3}(?:\.\d{1,3}){3})")
 RESTORED_RE = re.compile(r"\[wifi\] restored stored credentials \(ssid=([^)]*)\)")
+# BLE supervision timeouts (0x08) while the board held no lease: either the link died
+# mid-join (every Improv result/error after it is lost: the absent phase's ~33 s of sweeps
+# before the WiFi-idle coex handover) or a central that closed after the not-found report
+# while the DUT missed its LL_TERMINATE. The leased=1 kind (the central closing after the
+# redirect) is not counted. Telemetry; it names the cause when the absent phase hangs.
+BLE_DROP_RE = re.compile(r"\[ble\] link state=6 connected=0 leased=0 disc=0x08")
 CRASH_RE = re.compile(
     r"Guru Meditation|abort\(\) was called|Backtrace:|rst:0x[0-9a-f]+ \((?:PANIC|TG|LP_WDT|RTC_WDT)"
 )
@@ -85,6 +91,118 @@ RECOVER = "recover"
 ALL_PHASES = PHASES + (ABSENT, RECOVER)
 
 
+# Metric lines (each carries the firmware's [t=ms] uptime stamp).
+T_RE = re.compile(r"\[t=(\d+)\]")
+NOTIFY_ACK_RE = re.compile(r"\[ble\] improv notify acked in (\d+) ms")
+DROP_ANY_RE = re.compile(r"\[ble\] link state=6 connected=0 leased=(\d) disc=0x08")
+SUPERVISION_MS = 6000  # the connect-time supervision timeout (ble_ffi.rs)
+
+
+def metrics(log: str, absent_prefix: str = "hitl-absent-") -> dict:
+    """Numbers for the HITL dashboards (units in the names):
+
+    ble_notify_ack_ms: every Improv notification burst, firmware send -> the central's LL
+      ack (it has the bytes); ble_notify_ack_ms_max / _p50 summarize it.
+    absent_report_ms: Improv write of the absent SSID -> the firmware's not-found report.
+    absent_ble_drops: BLE supervision timeouts (0x08) that killed the link inside the
+      absent window (the window open, or the timeout firing < 6 s after the report: the
+      link was already dead when the report went out).
+    """
+    acks: list[int] = []
+    reports: list[int] = []
+    drops = 0
+    absent_t = None  # fresh-join time of the absent SSID, while its window is open
+    report_t = None
+    for line in (log or "").splitlines():
+        m = NOTIFY_ACK_RE.search(line)
+        if m:
+            acks.append(int(m.group(1)))
+            continue
+        t = T_RE.search(line)
+        if t is None:
+            continue
+        now = int(t.group(1))
+        m = FRESH_RE.search(line)
+        if m:
+            absent_t = now if m.group(1).startswith(absent_prefix) else None
+            report_t = None
+            continue
+        if absent_t is not None and NOT_FOUND_RE.search(line):
+            reports.append(now - absent_t)
+            absent_t, report_t = None, now
+            continue
+        m = DROP_ANY_RE.search(line)
+        if m and m.group(1) == "0":
+            if absent_t is not None or (report_t is not None and now - SUPERVISION_MS < report_t):
+                drops += 1
+            absent_t = report_t = None
+    srt = sorted(acks)
+    return {
+        "ble_notify_ack_ms": acks,
+        "ble_notify_ack_ms_max": srt[-1] if srt else None,
+        "ble_notify_ack_ms_p50": srt[len(srt) // 2] if srt else None,
+        "absent_report_ms": reports,
+        "absent_ble_drops": drops,
+    }
+
+
+GATE = "improv_fresh_join"
+
+
+def _rec(metric: str, value, unit: str, phase: str | None = None, limit=None, **kw) -> dict:
+    r = {"v": 1, "gate": GATE, "metric": metric, "unit": unit, "value": value}
+    if phase:
+        r["phase"] = phase
+    if limit is not None:
+        r.update(limit=limit, cmp="<=", ok=value <= limit)
+    r.update(kw)
+    return r
+
+
+def metric_records(phases: dict, mx: dict | None, budget_s: float, absent_budget_s: float):
+    """The gate's metrics as schema-v1 records (pi/hitl/observability metrics README):
+    join_latency / not_found_report_latency (s, the provisioner's write ack -> PROVISIONED or
+    UNABLE_TO_CONNECT, rig-side; a timeout records the elapsed budget, not ok), and from the
+    DUT serial ble_notify_latency (ms, firmware send -> the central's LL ack; p50 + max) and
+    ble_drops (count, phase absent: supervision timeouts that killed the absent window's link).
+    """
+    out: list[dict] = []
+    for name in PHASES + (RECOVER,):
+        r = phases.get(name) or {}
+        if r.get("join_s") is not None and classify(r) != "infra":
+            out.append(_rec("join_latency", r["join_s"], "s", name, budget_s))
+    ra = phases.get(ABSENT) or {}
+    if ra.get("join_s") is not None and classify(ra) != "infra":
+        out.append(_rec("not_found_report_latency", ra["join_s"], "s", ABSENT, absent_budget_s))
+    if mx:
+        acks = mx["ble_notify_ack_ms"]
+        if acks:
+            out.append(
+                _rec(
+                    "ble_notify_latency",
+                    mx["ble_notify_ack_ms_p50"],
+                    "ms",
+                    "improv",
+                    stat="p50",
+                    n=len(acks),
+                )
+            )
+            out.append(
+                _rec(
+                    "ble_notify_latency",
+                    mx["ble_notify_ack_ms_max"],
+                    "ms",
+                    "improv",
+                    stat="max",
+                    n=len(acks),
+                )
+            )
+        out.append(_rec("ble_drops", mx["absent_ble_drops"], "count", ABSENT))
+        for ms in mx["absent_report_ms"]:
+            out.append(_rec("not_found_report_fw_latency", round(ms / 1000, 2), "s", ABSENT))
+    return out
+
+
 def parse_serial(log: str) -> dict:
     """The Improv facts the DUT serial log shows (whole run)."""
     log = log or ""
@@ -98,6 +216,7 @@ def parse_serial(log: str) -> dict:
         "blind_ack": len(BLIND_ACK_RE.findall(log)),
         "redirects": len(REDIRECT_RE.findall(log)),
         "leases": len(LEASE_RE.findall(log)),
+        "ble_drops": len(BLE_DROP_RE.findall(log)),
         "restored": RESTORED_RE.search(log) is not None,
         "crashed": CRASH_RE.search(log) is not None,
     }
@@ -169,8 +288,10 @@ def grade(
         if ca == "ok":
             problems.append(f"{ABSENT}: an SSID that is not on the air reported PROVISIONED")
         elif JOIN_TIMEOUT in err:
+            lost = serial is not None and serial.get("ble_drops")
             problems.append(
                 f"{ABSENT}: no Improv error within the {absent_budget_s:g}s budget (the app hangs)"
+                + (" — the BLE link was lost mid-join (supervision timeout)" if lost else "")
             )
         elif UNABLE not in err:
             problems.append(f"{ABSENT}: want error {UNABLE}, got {err}")
@@ -212,3 +333,22 @@ def grade(
         # but not the whole proof either.
         return {"verdict": "SKIP", "problems": [], "skip": "; ".join(infra)}
     return {"verdict": "PASS", "problems": [], "skip": None}
+
+
+def metric_points(phases: dict, serial: dict | None) -> list[dict]:
+    """The HITL_METRIC records of a run (hitl_metrics.emit kwargs): each phase's
+    provisioner wall time (BLE scan + connect + SendWifi -> outcome; the budgets
+    apply from the write ack inside the provisioner, so no limit here), and the BLE
+    supervision drops seen while unleased. An infra phase (the provisioner never
+    reached the firmware) is left out."""
+    out: list[dict] = []
+    for name in ALL_PHASES:
+        p = phases.get(name)
+        if not p or "wall_s" not in p or classify(p) == "infra":
+            continue
+        out.append({"metric": "phase_wall_time", "value": p["wall_s"], "unit": "s", "phase": name})
+    if serial and serial.get("ble_drops") is not None:
+        # parse_serial's count: supervision timeouts while unleased (the absent
+        # window's link losses, plus a central that closed after the report).
+        out.append({"metric": "ble_drops_unleased", "value": serial["ble_drops"], "unit": "count"})
+    return out

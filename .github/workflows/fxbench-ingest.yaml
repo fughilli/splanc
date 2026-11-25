@@ -48,12 +48,26 @@ jobs:
             --max-pages "${{ github.event.inputs.max_pages || '2' }}" \
             --seed-from-release \
             --upload-release
+      # The per-gate HITL performance metrics (pi/hitl/observability/metrics) ride the
+      # same schedule, release and job-log cache (the fx_bench step above already
+      # fetched the new logs), into hitl-metrics-* / hitlm-* assets on fxbench-data.
+      - name: Ingest HITL gate metrics + refresh their release assets
+        continue-on-error: true # never block the fx_bench refresh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 pi/hitl/observability/metrics/ingest_hitl_metrics.py \
+            --max-pages "${{ github.event.inputs.max_pages || '2' }}" \
+            --seed-from-release \
+            --upload-release
       - name: Commit the refreshed run-id ledger
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pi/hitl/observability/fxbench/data/ingest_state.json
+          git add pi/hitl/observability/fxbench/data/ingest_state.json \
+            pi/hitl/observability/metrics/data/ingest_state.json
           if git diff --cached --quiet; then
             echo "no new fx_bench runs; nothing to commit."
             exit 0

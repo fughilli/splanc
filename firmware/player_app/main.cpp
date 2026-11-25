@@ -66,12 +66,16 @@
 #include "firmware/player_app/agent_bundle.h"  // generated: LM_AGENT_BUNDLE_URL / _SHA256
 #endif
 #include "firmware/player_app/color_correction.h"
+#include "firmware/player_app/identify_blink.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/board_caps_res.h"  // board_caps_binaryproto[] / _len
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/ota_app.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
+#if defined(LM_FLASH_SUSPEND)
+#include "firmware/player_app/flash_suspend/lm_flash_suspend.h"
+#endif
 #if defined(LM_SENSORS)
 #include "firmware/player_app/sensor_bus.h"  // sensor core: I2C IMU probe + task
 #endif
@@ -81,9 +85,6 @@
 #if defined(LM_NETOUT)
 // Ethernet + network LED outputs on the P4 (docs/design/p4-ethernet-ddp.md).
 #include "firmware/player_app/netout_app.h"
-#endif
-#if defined(LM_FRONTEND)
-#include "frontend_link.h"  // the C6 front end: player messages go to the P4 over SDIO
 #endif
 
 // FUG-125: executable-memory primitives for the on-device JIT. The Rust FFI
@@ -226,9 +227,6 @@ static const uint16_t kWsPort = 81;
 // persisted custom name, or a "Led Widget <6-hex>" default derived from the MAC.
 // Reflected to BLE + persisted whenever the app sends set_device_name.
 static char g_device_name[33] = "Led Widget";
-#if defined(LM_FRONTEND)
-static char g_macstr[18] = "";  // what the front end advertises; pushed to the P4 with the name
-#endif
 // The soft-AP SSID and mDNS/DHCP hostname, both derived from g_device_name
 // (see names_from_identity): SSID is "<name>-AP"; the hostname is a DNS-label-
 // safe slug of the name so that <hostname>.local resolves over mDNS. Recomputed
@@ -388,11 +386,24 @@ static constexpr uint32_t kMidFramePollMs = 4;
 // taken while waiting for player_mutex (render takes it INSIDE player_mutex).
 static SemaphoreHandle_t tex_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
-// render: static bound ~3.8 KB (stack_bound_test; render_once -> the FX VM -> a sensor
+
+// Background work that must never delay a frame (PR-40: the mesh's crypto, joins and
+// rotations) drops the calling task strictly below render for its span; render then preempts
+// it the moment a frame is due, whatever priority the data plane gave loopTask (#371).
+extern "C" uint32_t lm_prio_below_render() {
+  UBaseType_t p = uxTaskPriorityGet(nullptr);
+  if (p >= kRenderTaskPrio) vTaskPrioritySet(nullptr, kRenderTaskPrio - 1);
+  return (uint32_t)p;
+}
+extern "C" void lm_prio_restore(uint32_t prio) {
+  if (uxTaskPriorityGet(nullptr) != (UBaseType_t)prio) vTaskPrioritySet(nullptr, (UBaseType_t)prio);
+}
+// render: static bound ~3.9 KB (stack_bound_test; render_once -> the FX VM -> a sensor
 // driver's I2C bus recovery, whose Log().printf runs ROM vsnprintf, ~1.5 KB on its own;
-// JIT segments use no machine stack), so 5 KB is what the gate's x1.25 + ISR context
-// needs. The measured high-water (~0.8 KB, `[stack]` status line) is NOT a sizing basis.
-static const uint32_t kRenderTaskStack = 5120;
+// JIT segments use no machine stack), so 5.25 KB is what the gate's x1.25 + ISR context
+// needs (5 KB until the lamp-power trigger/GPIO intrinsics put the bound at 3,856 B).
+// The measured high-water (~0.8 KB, `[stack]` status line) is NOT a sizing basis.
+static const uint32_t kRenderTaskStack = 5376;
 // xmit: just stages/sends the LED frame; static bound ~0.9 KB (stack_bound_test; the gate
 // needs 1.4 KB), measured ~0.5 KB. It must never format a log line (ROM vsnprintf is
 // ~1.5 KB): its outcomes are handed to loop() to log (g_hw_reconfig_result).
@@ -580,6 +591,18 @@ static uint32_t upload_next_seq = 0;  // expected seq of the next window
 static int upload_kind = 0;           // 0 = map (submit_map), 1 = topology
 static size_t upload_total = 0;       // bytes written to the temp file so far
 static bool upload_active = false;    // a window sequence is in progress
+#if defined(LM_NETSTACK)
+// EFFECT uploads (kind 2) reassemble in RAM instead (owner rule: no blipping): a flash
+// write stalls the whole chip, so appending each window to upload.tmp dropped frames on the
+// connected fixture. An effect frame is at most kRxCap (4.5 KiB): one heap block of that,
+// held only while its windows arrive (freed at the last one, on a reset, or when idle).
+static uint8_t *upload_ram = nullptr;
+static int64_t upload_ram_ms = 0;
+static void upload_ram_free() {
+  if (upload_ram) rx_stage_put(upload_ram);
+  upload_ram = nullptr;
+}
+#endif
 #if !defined(LM_NETSTACK)
 static uint8_t hs[1024];        // handshake request accumulator
 static size_t hs_len = 0;
@@ -622,6 +645,12 @@ static const char *kPosePath = "/lfs/pose.pb";
 static const char *kKioskCfgPath = "/lfs/kiosk.cfg";
 static const char *kKioskFxPath = "/lfs/kiosk_fx.pb";
 static const char *kKioskUnPath = "/lfs/kiosk_un.pb";
+// Lamp power (power_ffi.rs, docs/design/lamp-power.md): the config record and
+// the ON / OFF transition effects (their submit_effect frames, replayed onto
+// deck B when a transition starts).
+static const char *kPowerCfgPath = "/lfs/power.cfg";
+static const char *kPowerOnFxPath = "/lfs/pw_on.pb";
+static const char *kPowerOffFxPath = "/lfs/pw_off.pb";
 // The connection the message being dispatched came in on (unlock is per connection):
 // BLE while lm_player_ble_reply runs, else the wss / ws session.
 static uint8_t g_kiosk_src = LM_KIOSK_SRC_WSS;
@@ -639,8 +668,13 @@ static const int32_t kArmEffectUniforms = 16;
 static const int32_t kArmWelcome = 1;
 static const int32_t kArmSetFixturePose = 37;
 static const int32_t kArmSetTimeBase = 38;
+static const int32_t kArmMeshSend = 99;
+#if defined(LM_NETSTACK)
+static int dispatch_mesh_upload(const uint8_t *msg, size_t len);  // a sharded mesh_send (M6)
+#endif
 static const int32_t kArmErrorReply = 9;  // ServerMessage.error
 static const int32_t kArmBlendKeypoints = 44;
+static const int32_t kArmLoadStoredEffect = 141;
 
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
 // re-send set_uniforms on every tick, so writing flash each time would thrash
@@ -731,7 +765,31 @@ static FILE *fs_open(const char *path, const char *mode) {
 // "esp_littlefs ... Corrupted dir pair at {0x0, 0x1}" on the next mount. The
 // temp path is derived from the destination so writers to different keys never
 // collide (writes are serialized on this task anyway).
+// Set by every littlefs write; the effect store's cached usage is re-measured (below).
+static bool g_fs_usage_stale = true;
+static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
+                           size_t more_len);
 static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
+  return fs_write_parts(path, data, len, nullptr, 0);
+}
+
+// fs_write_file of `data ++ more` (the effect store writes a record as its header
+// and the .fxb it came with, without staging them together).
+static bool fs_write_parts_(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
+                            size_t more_len, int64_t t0);
+// Below the render task (PR-41): a littlefs write is mostly CPU around the flash operations
+// (CRCs, a metadata compaction: up to ~200 ms), which at render's priority (loopTask's while
+// a client is on a settled link, #371) took turns with frames.
+static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
+                           size_t more_len) {
+  const uint32_t prio = lm_prio_below_render();
+  const bool ok = fs_write_parts_(path, data, len, more, more_len, esp_timer_get_time());
+  lm_prio_restore(prio);
+  return ok;
+}
+
+static bool fs_write_parts_(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
+                            size_t more_len, int64_t t0) {
   char tmp[64];
   int pn = snprintf(tmp, sizeof tmp, "%s.tmp", path);
   if (pn < 0 || (size_t)pn >= sizeof tmp) {
@@ -744,6 +802,8 @@ static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
     return false;
   }
   size_t w = fwrite(data, 1, len, f);
+  if (w == len && more_len > 0) w += fwrite(more, 1, more_len, f);
+  len += more_len;
   // Force the data + its metadata out to flash before we swap it in. Without
   // this the rename can commit ahead of the file's own contents, so a reset in
   // the window would leave the new name pointing at a short/empty file.
@@ -759,6 +819,10 @@ static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
     remove(tmp);
     return false;
   }
+  // Every power-loss-safe write, timed (PR-41: the HITL flash_render gate attributes late
+  // frames to flash writes with it).
+  Log().printf("[fs] wrote %s %u B us=%lu\n", path, (unsigned)len, (unsigned long)(esp_timer_get_time() - t0));
+  g_fs_usage_stale = true;
   return true;
 }
 
@@ -801,6 +865,132 @@ extern "C" uint32_t lm_mesh_counter_load(uint64_t *mark) {
 
 extern "C" uint32_t lm_mesh_counter_store(uint64_t mark) {
   return fs_write_file(kMeshCounterPath, reinterpret_cast<const uint8_t *>(&mark), sizeof mark) ? 1 : 0;
+}
+
+// The mesh membership (docs/design/mesh.md §7.2, mesh M7): one small file, written only when
+// membership changes (provision, join, rotation, groups), through the power-loss-safe writer
+// (temp + fsync + rename), so a reset mid-write leaves the old state or the new, never a
+// torn one. Present = this fixture is in a mesh: the transport turns the mesh on at boot.
+// Erased on leave or eject. mesh_glue.h calls these.
+static const char kMeshStatePath[] = "/lfs/mesh.bin";
+
+extern "C" uint32_t lm_mesh_state_load(uint8_t *buf, uint32_t cap) {
+  FILE *f = fs_open(kMeshStatePath, "rb");
+  if (f == nullptr) return 0;
+  size_t n = fread(buf, 1, cap, f);
+  fclose(f);
+  return (uint32_t)n;
+}
+
+extern "C" uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) {
+  if (buf == nullptr || len == 0) {
+    remove(kMeshStatePath);
+    FILE *f = fs_open(kMeshStatePath, "rb");
+    if (f == nullptr) return 1;
+    fclose(f);
+    return 0;
+  }
+  return fs_write_file(kMeshStatePath, buf, len) ? 1 : 0;
+}
+
+// Effect sharing (mesh M6, mesh_blob.rs): the persisted deck-A frame is a blob a member may
+// already hold (and what a gateway's catch-up sends), a shared effect is staged for the
+// render task, and the loaded one is persisted here (loopTask) like a deck-A upload.
+extern "C" uint32_t lm_mesh_effect_file(uint8_t *buf, uint32_t cap) {
+  if (!fs_ok) return 0;
+  FILE *f = fs_open(kEffectPath, "rb");
+  if (f == nullptr) return 0;
+  uint32_t n = 0;
+  if (buf == nullptr) {
+    if (fseek(f, 0, SEEK_END) == 0) {
+      long e = ftell(f);
+      n = e > 0 ? (uint32_t)e : 0;
+    }
+  } else {
+    n = (uint32_t)fread(buf, 1, cap, f);
+  }
+  fclose(f);
+  return n;
+}
+
+extern "C" int32_t lm_mesh_stage(const uint8_t *frame, uint32_t len, uint32_t apply_at_ms, const uint8_t **replaced) {
+  *replaced = nullptr;
+  if (player_mutex == nullptr) return -1;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t r = lm_fx_stage(frame, len, apply_at_ms, (int64_t)millis(), replaced);
+  xSemaphoreGive(player_mutex);
+  return r;
+}
+
+static void keep_deckb_frame(const uint8_t *req, size_t len);  // deck B for a catch-up (below)
+
+// The staged frame the render task applied (try-lock: the mesh asks again next pass).
+extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame) {
+  *frame = nullptr;
+  if (player_mutex == nullptr || xSemaphoreTake(player_mutex, 0) != pdTRUE) return 0;
+  size_t len = 0;
+  uint32_t deck = 0;
+  uint32_t r = lm_fx_staged_take(frame, &len, &deck);
+  xSemaphoreGive(player_mutex);
+  if (r == 1 && deck == 0 && fs_ok && !lm_kiosk_msg_locked()) {
+    // As a deck-A upload (persist_if_upload): it resumes at boot; the old selection goes.
+    const int64_t t0 = esp_timer_get_time();
+    bool ok = fs_write_file(kEffectPath, *frame, len);
+    remove(kEffectSelPath);
+    Log().printf("[mesh] shared effect persisted %s %u B us=%lu\n", ok ? "ok" : "FAILED", (unsigned)len,
+                 (unsigned long)(esp_timer_get_time() - t0));
+  } else if (r == 1 && deck == 1) {
+    // As a deck-B upload: kept in RAM for a later catch-up (D-465). Without this, a deck B
+    // shared through the mesh was on every fixture but in no gateway's catch-up, so a
+    // rebooted member came back with deck A alone.
+    keep_deckb_frame(*frame, len);
+    Log().printf("[mesh] shared deck-B effect kept %u B\n", (unsigned)len);
+  }
+  return r;
+}
+
+// mesh_glue.h: run `fn` on the mesh's tick stack (14 KB, idle between ticks), under its lock.
+extern "C" uint32_t lm_mesh_on_tick_stack(uint32_t (*fn)(void)) __attribute__((weak));
+
+extern "C" void lm_mesh_staged_cancel() {
+  if (player_mutex == nullptr) return;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  (void)lm_fx_stage_cancel();
+  const uint8_t *f = nullptr;
+  size_t len = 0;
+  uint32_t deck = 0;
+  (void)lm_fx_staged_take(&f, &len, &deck);
+  xSemaphoreGive(player_mutex);
+}
+
+// Deck B's effect frame, kept while it is loaded (desk D-465): deck B is never persisted
+// (uniform-keypoints design), so this is what a gateway's catch-up hands a member that joins
+// or reboots later. Heap (<= the effect cap), replaced by the next deck-B load.
+static uint8_t *g_deckb_frame = nullptr;
+static size_t g_deckb_len = 0;
+
+static void keep_deckb_frame(const uint8_t *req, size_t len) {
+  uint8_t *c = static_cast<uint8_t *>(malloc(len));
+  if (c == nullptr) return;  // keep the old one: a catch-up without deck B is the old behaviour
+  memcpy(c, req, len);
+  free(g_deckb_frame);
+  g_deckb_frame = c;
+  g_deckb_len = len;
+}
+
+// mesh_blob.rs: deck B's frame for a catch-up (nullptr: none). Valid until the next
+// handled message (loopTask only).
+extern "C" const uint8_t *lm_mesh_deckb_frame(uint32_t *len) {
+  *len = (uint32_t)g_deckb_len;
+  return g_deckb_frame;
+}
+
+extern "C" int32_t lm_mesh_scene_frames(uint8_t *out, uint32_t cap) {
+  if (player_mutex == nullptr) return -1;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_fx_scene_frames(out, cap);
+  xSemaphoreGive(player_mutex);
+  return n;
 }
 
 // Mesh time (docs/design/mesh.md §6.3, mesh M4): mesh_ffi.rs maps the mesh's show epoch
@@ -899,6 +1089,9 @@ static uint32_t g_lut_seq = 0;
 static uint32_t g_cc_gen = 0;  // last color_correction_gen the poll acted on
 static uint32_t g_brightness_gen = 0;  // last brightness_gen the poll acted on
 static uint8_t g_brightness = 255;     // global output scale (255 = unattenuated)
+// This frame's content scale: g_brightness times the lamp power level (a power
+// transition fading; lamp-power.md). Set by render_once at each frame start.
+static uint8_t g_frame_scale = 255;
 
 // Hardware output config (set_hardware_config: GPIO + wire color order per RMT
 // channel). g_hw_gen tracks the last-applied lm_hw_config_gen. The GPIOs
@@ -1048,6 +1241,7 @@ static void poll_brightness() {
   if (gen == g_brightness_gen) return;
   g_brightness_gen = gen;
   g_brightness = lm_brightness_u8();
+  lm_power_note_brightness();  // a power_state push carries it (smart homes)
   Log().printf("[bright] output scale = %u/255 (gen=%u)\n", g_brightness, gen);
 }
 
@@ -1200,7 +1394,7 @@ static inline Rgb cc_apply(const uint8_t rgb[3]) {
   const uint8_t (*lut)[256] = g_lut;
   Rgb c = (lut == nullptr) ? Rgb(rgb[0], rgb[1], rgb[2])
                             : Rgb(lut[0][rgb[0]], lut[1][rgb[1]], lut[2][rgb[2]]);
-  if (g_brightness < 255) c.nscale8(g_brightness);
+  if (g_frame_scale < 255) c.nscale8(g_frame_scale);
   return c;
 }
 
@@ -1238,19 +1432,32 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
   // A locked kiosk persists nothing a visitor does: their effects / uniforms are
   // RAM-only and the idle revert (or a reboot) brings the attract snapshot back.
   if (lm_kiosk_msg_locked()) return;
+  if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect) {
+    // A transition effect (submit_effect power_slot): keep its frame.
+    const uint32_t slot = lm_power_take_store();
+    if (slot != 0) {
+      fs_write_file(slot == 1 ? kPowerOnFxPath : kPowerOffFxPath, req, req_len);
+      Log().printf("[power] stored the %s transition effect (%u B)\n", slot == 1 ? "ON" : "OFF",
+                   (unsigned)req_len);
+      return;
+    }
+  }
   if (reply_arm == kArmResultReady && req_arm == kArmSubmitMap) {
     fs_write_file(kMapPath, req, req_len);
     remove(kTopoPath);  // the previous topology no longer matches this map
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitTopology) {
     fs_write_file(kTopoPath, req, req_len);
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect &&
-             lm_fx_last_deck() == 0) {
+             lm_fx_last_deck() == 0 && !lm_fxs_last_was_store()) {
     // A validated deck-A effect upload: persist the raw .fxb frame (the effect
     // bytecode) so it auto-resumes on boot. A new effect supersedes any prior
     // selection/uniforms (they belong to the old effect). Deck B is runtime-only
     // (docs/design/uniform-keypoints.md): a show re-cues it.
     fs_write_file(kEffectPath, req, req_len);
     remove(kEffectSelPath);
+  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect && lm_fx_last_deck() == 1 &&
+             !lm_fxs_last_was_store()) {
+    keep_deckb_frame(req, req_len);  // deck B: RAM only, for a mesh catch-up (D-465)
   } else if (reply_arm == kArmWelcome && req_arm == kArmSetFixturePose) {
     // A validated room pose (or a clear): persist the frame unless commit=false.
     if (lm_fixture_pose_commit()) fs_write_file(kPosePath, req, req_len);
@@ -1327,7 +1534,22 @@ static void fs_replay(const char *path) {
 // the fx_bench hot loop's cache behaviour) doesn't move.
 static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap);
 static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n);
+// Flash writes the store hooks ask for while lm_player_handle holds the player mutex
+// (PR-41): queued, then done right after the mutex is released, before the reply goes out.
+static bool g_fs_defer = false;
+__attribute__((noinline)) static void fs_deferred_flush();
+// ...and the files they READ under it are read before it is taken (fs_prefetch).
+// Out of line (noinline): their frames stay off the dispatch path loopTask's stack bound sums.
+__attribute__((noinline)) static void fs_prefetch(const uint8_t *msg, size_t len);
+__attribute__((noinline)) static void fs_prefetch_drop();
+// littlefs usage for the effect store's space check, measured outside the player mutex
+// (esp_littlefs_info walks the filesystem: ~50 ms of flash reads, which under the mutex held
+// the render task off). Refreshed after each message that wrote, below render (PR-41).
+static size_t g_fs_total = 0, g_fs_used = 0;
+__attribute__((noinline)) static void fs_usage_refresh();
 static void kp_fs_remove(const uint8_t *name, size_t len);
+static int32_t fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
+                            size_t b_len);
 
 // Kiosk config from littlefs: true when the device should boot into the attract
 // snapshot (enabled, a snapshot recorded, and its effect frame present).
@@ -1362,6 +1584,7 @@ static void fs_begin_and_restore() {
   }
   fs_ok = true;
   lm_kp_set_store(kp_fs_read, kp_fs_write, kp_fs_remove);
+  lm_fxs_set_store(kp_fs_read, fxs_fs_write, kp_fs_remove);  // same files, same base
   fs_replay(kMapPath);
   fs_replay(kTopoPath);
   remove(kLegacyPlaybackPath);
@@ -1465,9 +1688,6 @@ static void poll_device_rename() {
   g_device_name[sizeof g_device_name - 1] = 0;
   prefs.putString("name", g_device_name);
   improv_ble_set_name(g_device_name);
-#if defined(LM_FRONTEND)
-  frontend_link_set_identity(g_macstr, g_device_name);
-#endif
   Log().printf("[player] renamed to \"%s\"\n", g_device_name);
   // Track the new name across the AP SSID, the STA/AP + mDNS hostnames, and the
   // BLE advertisement. The soft-AP is reconfigured live only while it's still up
@@ -1539,6 +1759,7 @@ static void poll_kiosk_config() {
 }
 
 static void poll_after_message() {
+  fs_usage_refresh();
   poll_kiosk_config();
   poll_device_rename();
   poll_color_correction();
@@ -1572,15 +1793,20 @@ static int dispatch_plain(const uint8_t *msg, size_t len) {
     xSemaphoreGive(tex_mutex);
     if (n >= 0) return (int)n;
   }
+  fs_prefetch(msg, len);  // keypoint / effect-store files, read before the lock
   uint32_t t0 = (uint32_t)micros();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   uint32_t t1 = (uint32_t)micros();
 #if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
   if (g_tr_cur) g_tr_cur->locked_us = tr_now();
 #endif
+  g_fs_defer = true;
   int32_t n = lm_player_handle(msg, len, now, now, tx, sizeof tx);
+  g_fs_defer = false;
   uint32_t t2 = (uint32_t)micros();
   xSemaphoreGive(player_mutex);
+  fs_prefetch_drop();
+  fs_deferred_flush();  // the store hooks' writes, without the render task waiting on them
   if (t1 - t0 > g_mtx_wait_max_us) g_mtx_wait_max_us = t1 - t0;
   if (t2 - t1 > g_handle_max_us) g_handle_max_us = t2 - t1;
 #if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
@@ -1619,7 +1845,79 @@ static int dispatch_plain(const uint8_t *msg, size_t len) {
 // off flash and, on success, renamed into place (persistence is free — the file
 // IS the frame). Fills `tx` with the reply to send and returns its length, or
 // -1 to drop the socket (fs error / out-of-order window / decode failure).
+#if defined(LM_NETSTACK)
+static int dispatch_effect_frame(uint8_t *buf, size_t n);
+
+// An EFFECT upload window, reassembled in RAM (no flash write while it arrives).
+static int32_t process_effect_chunk_ram(const LmUploadChunk *ch, const uint8_t *payload) {
+  if (ch->seq == 0) {
+    Log().printf("[upload] kind 2 id %u: first window %u B%s (ram)\n", (unsigned)ch->upload_id,
+                 (unsigned)ch->payload_len, ch->last ? " (the only one)" : "");
+    upload_ram_free();
+    upload_active = false;
+    upload_ram = rx_stage_get(kRxCap);
+    if (upload_ram == nullptr) {
+      Log().printf("[upload] no heap for a %u B effect upload\n", (unsigned)kRxCap);
+      return -1;
+    }
+    upload_total = 0;
+    upload_next_seq = 0;
+    upload_kind = 2;
+    upload_active = true;
+  } else if (!upload_active || upload_ram == nullptr || ch->seq != upload_next_seq) {
+    Log().printf("[upload] window %u out of order (expected %u, active %d): dropped\n", (unsigned)ch->seq,
+                 (unsigned)upload_next_seq, (int)upload_active);
+    upload_active = false;
+    upload_ram_free();
+    return -1;
+  }
+  if (upload_total + ch->payload_len > kRxCap) {
+    Log().printf("[upload] effect over %u B: dropped\n", (unsigned)kRxCap);
+    upload_active = false;
+    upload_ram_free();
+    return -1;
+  }
+  memcpy(upload_ram + upload_total, payload, ch->payload_len);
+  upload_total += ch->payload_len;
+  upload_next_seq = ch->seq + 1;
+  upload_ram_ms = (int64_t)millis();
+  if (!ch->last) return lm_encode_chunk_ack(ch->upload_id, ch->seq, tx, sizeof tx);
+  upload_active = false;
+  uint8_t *buf = upload_ram;
+  upload_ram = nullptr;
+  int32_t r = dispatch_effect_frame(buf, upload_total);
+  rx_stage_put(buf);
+  return r;
+}
+
+// Each loop pass: an EFFECT upload abandoned mid-way (the client went away) gives its
+// buffer back after 15 s.
+static void upload_ram_gc() {
+  if (upload_ram && (int64_t)millis() - upload_ram_ms > 15000) {
+    Log().printf("[upload] effect upload idle: buffer freed\n");
+    upload_active = false;
+    upload_ram_free();
+  }
+}
+#endif
+
+static int32_t process_upload_chunk_(const LmUploadChunk *ch, const uint8_t *payload);
+// Below the render task (PR-41, desk D-464): a map/topology window is a littlefs
+// open/append/close (the last a decode off flash), and an effect's last window loads and
+// persists it; at render's priority (loopTask's while a client is on a settled link, #371)
+// that work took turns with frames (the mesh gateway lost 2-7 frames of up to 31 ms per
+// 3-window upload before effect windows moved to RAM).
 static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payload) {
+  const uint32_t prio = lm_prio_below_render();
+  const int32_t n = process_upload_chunk_(ch, payload);
+  lm_prio_restore(prio);
+  return n;
+}
+static __attribute__((noinline)) int32_t process_upload_chunk_(const LmUploadChunk *ch,
+                                                               const uint8_t *payload) {
+#if defined(LM_NETSTACK)
+  if (ch->kind == 2) return process_effect_chunk_ram(ch, payload);
+#endif
   if (!fs_ok) return -1;  // uploads need the fs (stream-decode + persistence)
 
   if (ch->seq == 0) {
@@ -1724,63 +2022,116 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   return n;
 }
 
+// load_stored_effect (effect_store.rs): the record is up to the 4 KiB .fxb plus its
+// header, more than the player core has a buffer for, so it is staged here (like a
+// sharded effect upload) and handed to lm_fxs_load. Landing on deck A, activated, its
+// submit_effect frame becomes the boot effect, as a deck-A submit_effect does.
+// kNotStaged: not in the store (or no fs) — the player core answers not_found.
+static const int kNotStaged = -100;
+static int load_stored_effect(const uint8_t *in, size_t len) {
+  // The request is tiny (an effect id of <= 64 bytes, a deck, a flag); copy it out first,
+  // since on the vendor build the stage is the rx buffer the request may be sitting in.
+  // 128 B: this frame is on the relayed-upload path loopTask's stack bound sums (mesh M6).
+  uint8_t msg[128];
+  if (!fs_ok || len > sizeof msg) return kNotStaged;
+  memcpy(msg, in, len);
+  fs_prefetch(msg, len);  // the record headers lm_fxs_find / lm_fxs_load look through
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t slot = lm_fxs_find(msg, len);
+  xSemaphoreGive(player_mutex);
+  if (slot < 0) {
+    fs_prefetch_drop();
+    return kNotStaged;
+  }
+  char path[48];
+  snprintf(path, sizeof path, "%s/fxs.%d", kFsBase, (int)slot);
+  FILE *f = fs_open(path, "rb");
+  if (f == nullptr) return kNotStaged;
+  fseek(f, 0, SEEK_END);
+  long size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  uint8_t *rec = size > 0 && (size_t)size <= kRxCap ? rx_stage_get((size_t)size) : nullptr;
+  size_t rn = rec ? fread(rec, 1, (size_t)size, f) : 0;
+  fclose(f);
+  if (rec == nullptr || rn != (size_t)size) {
+    rx_stage_put(rec);
+    fs_prefetch_drop();
+    return kNotStaged;
+  }
+  size_t off = 0, plen = 0;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_fxs_load(msg, len, rec, rn, tx, sizeof tx, &off, &plen);
+  xSemaphoreGive(player_mutex);
+  fs_prefetch_drop();
+  if (plen > 0 && !lm_kiosk_msg_locked()) {
+    fs_write_file(kEffectPath, rec + off, plen);
+    remove(kEffectSelPath);  // the old effect's selection / uniforms
+  }
+  rx_stage_put(rec);
+  poll_after_message();
+  return (int)n;
+}
+
 // Compute the reply for the message msg[0..len), read in place. Returns the reply length
 // (bytes written to the global tx, >0), 0 (no reply / fire-and-forget), or -1 (fs error /
 // out-of-order upload window → the transport should drop the connection). Shared verbatim by
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
-static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
-#if defined(LM_FRONTEND)
-  // Firmware updates are the P4's (ota_p4.cpp, docs/design/p4-c6-split.md §5.1): its
-  // package carries this front end's images too, and it reflashes this C6 at its next
-  // boot. Writing a sector and the final read-back verify take a moment, hence the
-  // longer wait. While the P4 is down the status is answered here (a client watching an
-  // update sees the P4 come back); the other arms get no reply, so the client's resume
-  // retries them once it is up.
-  {
-    const int32_t arm = lm_envelope_arm(msg, len);
-    if (arm >= 70 && arm <= 75) {  // ota_begin .. ota_reboot
-      const int n = frontend_forward(1, msg, len, tx, sizeof tx, 10000);
-      if (n > 0) return n;
-      if (n == -2) return -1;  // undelivered: drop the session, the client resumes
-      if (n == 0 || arm != 74) return 0;  // 74: get_ota_status
-    }
-  }
-#endif
+// The arms answered ahead of the player core (OTA, network outputs): true with the reply
+// length in *out when handled.
+static bool ws_reply_pre(const uint8_t *msg, size_t len, int *out) {
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
-  if (ota != 0) return ota;
+  if (ota != 0) return *out = ota, true;
 #if defined(LM_NETOUT)
   // Ethernet + network outputs (arms 95-98): answered here, never by the core.
   {
     const int n = netout_app_dispatch(msg, len, tx, sizeof tx, g_hw_gpio0, g_hw_gpio1);
-    if (n > 0) return n;
+    if (n > 0) return *out = n, true;
   }
 #endif
-#if defined(LM_FRONTEND)
-  // The C6 front end (docs/design/p4-c6-split.md §2.2): the arms it owns are answered
-  // here; everything else is the P4's. A rename is applied here too (BLE and mDNS
-  // advertise the name), then forwarded. While the P4 is down this C6's own player core
-  // answers, so the app still reaches the device.
-  {
-    const int32_t arm = lm_envelope_arm(msg, len);
-    const bool local = arm == 45 || arm == 90 || arm == 91;
-    if (arm == 27) dispatch_plain(msg, len);
-    if (!local) {
-      const int n = frontend_forward(1, msg, len, tx, sizeof tx, 1000);
-      if (n >= 0) return n;
-      if (n == -2) return -1;  // the P4's, undelivered: drop the session, the client retries
-    }
+  return false;
+}
+
+static int ws_reply_tail(const uint8_t *msg, size_t len) {
+  if (lm_envelope_arm(msg, len) == kArmLoadStoredEffect) {
+    int n = load_stored_effect(msg, len);
+    if (n != kNotStaged) return n;
   }
-#endif
+  return dispatch_plain(msg, len);
+}
+
+static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
+  int n = 0;
+  if (ws_reply_pre(msg, len, &n)) return n;
   // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
   // and handles the final-decode + persist).
   LmUploadChunk ch;
   if (lm_parse_upload_chunk(msg, len, &ch) == 1) {
     return (int)process_upload_chunk(&ch, msg + ch.payload_off);
   }
-  return dispatch_plain(msg, len);
+  return ws_reply_tail(msg, len);
 }
+
+#if defined(LM_NETSTACK)
+// A frame relayed over the mesh (mesh M5/M6): as ws_compute_reply_body but never a sharded
+// upload (members dispatch allow-listed arms only), so the member path stays off the
+// upload/gateway frames (the stack bound) and cannot recurse into dispatch_mesh_upload.
+static int ws_reply_relayed(const uint8_t *msg, size_t len) {
+  int n = 0;
+  if (ws_reply_pre(msg, len, &n)) return n;
+  return ws_reply_tail(msg, len);
+}
+#endif
+
+#if defined(LM_NETSTACK)
+// A reassembled EFFECT upload: a submit_effect (dispatch_plain persists it), or a mesh_send
+// (mesh M6: an effect shared with the whole mesh) for the mesh gateway.
+static int dispatch_effect_frame(uint8_t *buf, size_t n) {
+  if (lm_envelope_arm(buf, n) == kArmMeshSend) return dispatch_mesh_upload(buf, n);
+  return dispatch_plain(buf, n);
+}
+#endif
 
 // The kiosk lock gate (kiosk_ffi.rs), ahead of EVERY handler (OTA and sharded uploads
 // included): 0 = handle the message, >0 = a kiosk_locked error reply is in tx.
@@ -1824,6 +2175,7 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // compute the reply into the shared tx, and hand back a pointer to it.
 static bool live_post(const uint8_t *in, size_t len);  // the live-move mailbox (below)
 static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply);
+static int dispatch_relayed(const uint8_t *in, size_t len, const uint8_t **reply);
 // The mesh gateway (netstack_transport.cpp, mesh M5).
 extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uint8_t *out, size_t cap,
                                const uint8_t **inner, uint32_t *inner_len);
@@ -1883,10 +2235,28 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   return n;
 }
 
+// A mesh_send reassembled from UploadChunk windows (mesh M6: an effect for the whole mesh,
+// sharded like any big effect upload): the kiosk gate, then the gateway, as lm_ws_dispatch.
+static int dispatch_mesh_upload(const uint8_t *msg, size_t len) {
+  int g = kiosk_gate(msg, len);
+  if (g > 0) return g;
+  const uint8_t *inner = nullptr;
+  uint32_t inner_len = 0;
+  int32_t r = lm_mesh_app(g_kiosk_src, msg, len, tx, sizeof tx, &inner, &inner_len);
+  if (r >= 0) return r;
+  if (r == -3) {
+    const uint8_t *reply = nullptr;
+    int n = dispatch_relayed(inner, inner_len, &reply);
+    lm_mesh_app_done(n < 0 || (n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmErrorReply) ? 1 : 0);
+    return n;
+  }
+  return dispatch_plain(msg, len);
+}
+
 // Everything after the kiosk gate (and the mesh arms): the live mailbox, or the shared handler.
-static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) {
-  // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
-  // now — never wait behind a render frame for the player mutex (lm_live_post).
+// A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack now —
+// never wait behind a render frame for the player mutex (lm_live_post). True if it was one.
+static bool live_gated(const uint8_t *in, size_t len, const uint8_t **reply, int *out) {
   if (live_post(in, len)) {
     fx_live_at = millis();
     int a = lm_take_control_ack(tx, sizeof tx);
@@ -1896,14 +2266,31 @@ static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) 
       g_tr_cur->flags |= 1;
     }
 #endif
+    *out = 0;
     if (a > 0) {
       g_reply_droppable = true;
       *reply = tx;
-      return a;
+      *out = a;
     }
-    return 0;
+    return true;
   }
-  int n = ws_compute_reply_body(in, len);
+  return false;
+}
+
+static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) {
+  int n = 0;
+  if (live_gated(in, len, reply, &n)) return n;
+  n = ws_compute_reply_body(in, len);
+  *reply = tx;
+  return n;
+}
+
+// dispatch_gated for a frame relayed over the mesh (or a reassembled mesh_send's inner):
+// never a sharded upload (ws_reply_relayed).
+static int dispatch_relayed(const uint8_t *in, size_t len, const uint8_t **reply) {
+  int n = 0;
+  if (live_gated(in, len, reply, &n)) return n;
+  n = ws_reply_relayed(in, len);
   *reply = tx;
   return n;
 }
@@ -1918,9 +2305,14 @@ extern "C" int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint
   *code = 0;
   const uint8_t *reply = nullptr;
   g_kiosk_src = LM_KIOSK_SRC_INTERNAL;
-  int n = dispatch_gated(in, len, &reply);
+  int n = dispatch_relayed(in, len, &reply);
   g_kiosk_src = LM_KIOSK_SRC_WSS;
   g_reply_droppable = false;
+  uint32_t lag_ms = 0;
+  if (uint32_t fs = lm_fx_state_restored(&lag_ms)) {
+    Log().printf("[mesh] shared state %s lag_ms=%lu\n",
+                 fs == 1 ? "restored" : "refused (not the same build of the effect)", (unsigned long)lag_ms);
+  }
   if (n < 0) {
     *code = 0xfffe;
     return 1;
@@ -1949,6 +2341,31 @@ extern "C" void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_
   uint32_t h = 2166136261u;
   for (const char *c = LM_VERSION; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
   *firmware = h;
+}
+
+// The room pose for the mesh topology (mesh_glue.h, once a second, loopTask). Copied out of
+// the player core only when its pose generation moved (set_fixture_pose, the boot replay of
+// /lfs/pose.pb), on this task, which is the one that handles messages: no player_mutex, so
+// nothing new waits on the render lock.
+extern "C" int32_t lm_mesh_pose_fill(float *t, float *q, uint8_t *room, uint32_t room_cap, uint32_t *room_len) {
+  static uint32_t gen = 0;
+  static bool have = false;
+  static int32_t posed = 0;
+  static float ct[3], cq[4];
+  static uint8_t croom[17];
+  static uint32_t clen = 0;
+  const uint32_t g = lm_fixture_pose_gen();
+  if (!have || g != gen) {
+    posed = lm_fixture_pose_get(ct, cq, croom, sizeof croom, &clen);
+    gen = g;
+    have = true;
+  }
+  memcpy(t, ct, sizeof ct);
+  memcpy(q, cq, sizeof cq);
+  const uint32_t n = clen < room_cap ? clen : room_cap;
+  memcpy(room, croom, n);
+  *room_len = n;
+  return posed;
 }
 
 // The mesh gateway's sessions belong to a connection (mesh M5): when the wss session or the
@@ -2157,6 +2574,10 @@ static void ws_poll() {
 static const uint32_t kStaticPollMs = 100;
 // Poll cadence while the FX debugger holds the engine paused.
 static const uint32_t kFxDbgHoldPollMs = 20;
+// Lamp off (power_ffi.rs): how often the idle render task looks again.
+static const uint32_t kPowerOffPollMs = 50;
+// The strip was blanked for "off" (re-armed by the next rendered frame).
+static bool g_power_dark = false;
 
 #if defined(LM_NETSTACK)
 static void osc_drain_frame();  // native OSC on the netstack build (below)
@@ -2178,7 +2599,11 @@ static void osc_drain_frame();  // native OSC on the netstack build (below)
 struct CadenceWin {
   uint32_t n, min_us, max_us;
   uint64_t sum_us;
-  void add(uint32_t us) {
+  // An interval read across a device-clock step back (see wall_span_us) is not an
+  // interval: skip it rather than log a wrapped 4.29e9 us.
+  void add(int64_t span_us) {
+    if (span_us < 0) return;
+    uint32_t us = span_us > 0xffffffffLL ? 0xffffffffu : (uint32_t)span_us;
     if (n == 0 || us < min_us) min_us = us;
     if (us > max_us) max_us = us;
     sum_us += us;
@@ -2188,8 +2613,24 @@ struct CadenceWin {
   uint32_t mean() const { return n ? (uint32_t)(sum_us / n) : 0; }
 };
 static CadenceWin g_cad_render, g_cad_wire;
+// A wall-clock span in us from two esp_timer reads, never negative. esp_timer (and
+// millis()) on the c6 has been seen to step BACK by whole multiples of 2^24 systimer
+// ticks (1.048576 s; 1..82 of them in CI logs, root cause in the clock itself), and a
+// span read across such a step wrapped to ~4.29e9 us when narrowed to u32. The
+// pacer then slept 25% of that — 18 minutes with the LEDs frozen (live_latency,
+// c6-2ce684, 2026-11-08). A negative span reads as 0 ("unknown, no cost").
+static inline uint32_t wall_span_us(int64_t from_us, int64_t to_us) {
+  int64_t d = to_us - from_us;
+  if (d <= 0) return 0;
+  return d > 0xffffffffLL ? 0xffffffffu : (uint32_t)d;
+}
 static int64_t g_wire_last_us = 0;   // last effect-frame transmit start (xmit task)
 static uint32_t g_fx_dt_max_ms = 0;  // largest effect time step this window
+// Late effect frames this window (PR-40): a render-start interval over 1.5 periods of the live
+// rung — a dropped frame. The `[late]` line (HITL gates: mesh_join_admin) says how many, the
+// worst, and how long before the line the worst one started.
+static uint32_t g_late_n = 0, g_late_max_us = 0;
+static int64_t g_late_at_us = 0;
 static uint32_t g_fx_delay_min = 0xffffffffu, g_fx_delay_max = 0;  // render sleeps this window
 // Last effect frame's render-start time, 0 when the previous frame wasn't an effect
 // frame (so the next one starts its time base fresh instead of seeing a "gap").
@@ -2231,6 +2672,66 @@ static void modules_frame(uint32_t leds) {
   }
 }
 
+// Improv Identify blink (D-259, identify_blink.h): millis() | 1 when the connect
+// picker's Blink asked (0 = none). Written on the app loop, read by render_once.
+static volatile uint32_t g_identify_start_ms = 0;
+
+void player_identify_start() {
+  g_identify_start_ms = (uint32_t)millis() | 1u;
+  Log().printf("[identify] blink requested\n");
+}
+
+// One Identify-blink frame (D-259, identify_blink.h): fills `leds` with this
+// moment's blink colour over min(each port's buffer share, the 60 fps wire
+// length) and says what render_once should transmit. Kept out of line so its
+// locals stay off render_once's frame, which sits under the deep FX-VM path the
+// render stack is sized for (stack_bound_test); for the same reason its input and
+// result are render-task statics, not render_once locals.
+struct IdentifyFrame {
+  uint32_t len;      // LEDs per port to send (0 = nothing drawn)
+  uint32_t np;       // ports (1 or 2)
+  uint32_t wake_ms;  // ms to the next blink edge (0 = none)
+  bool done;         // the closing black frame: the blink is over
+};
+
+// A mapping capture, a counting probe or a paused FX debugger owns the strip this
+// frame (set by render_once): an Identify blink must not draw over it (it would
+// corrupt the capture). Render task only.
+static bool s_strip_owned = false;
+static IdentifyFrame s_identify;  // identify_blink_frame's result (render task only)
+
+static __attribute__((noinline)) void identify_blink_frame() {
+  IdentifyFrame &f = s_identify;
+  f = {0, 0, 0, false};
+  if (s_strip_owned) {
+    g_identify_start_ms = 0;  // never over a capture / probe / paused debugger
+    Log().printf("[identify] skipped: the strip is in use\n");
+    return;
+  }
+  uint32_t elapsed = (uint32_t)millis() - g_identify_start_ms;
+  lm_identify::Phase ph = lm_identify::phase_at(elapsed);
+  int ports = ws2812_channels();
+  f.np = ports >= 2 ? 2 : (ports == 1 ? 1 : 0);
+  f.len = lm_identify::per_port_len(g_led_cap, f.np);
+  if (f.len > 0) {
+    Rgb c = ph == lm_identify::Phase::kOn
+                ? Rgb(lm_identify::kLevel, lm_identify::kLevel, lm_identify::kLevel)
+                : Rgb::Black;
+    fill_rgb(leds, f.len * f.np, c);  // channel 0's run, then channel 1's
+  }
+  if (ph == lm_identify::Phase::kClear) {
+    g_identify_start_ms = 0;
+    f.done = true;
+    // ms= is the device-measured blink (request -> this clear frame): the HITL gate
+    // grades it, not the gap between the two lines' host stamps (the serial capture
+    // stamps lines per 200 ms read, so that gap is the blink +-200 ms).
+    Log().printf("[identify] blink done (%u LEDs x %u ports) ms=%u\n", (unsigned)f.len,
+                 (unsigned)f.np, (unsigned)elapsed);
+  } else {
+    f.wake_ms = lm_identify::ms_to_next_edge(elapsed);
+  }
+}
+
 static uint32_t render_once() {
   static uint32_t last_shown_frame = 0xffffffff;
   static bool was_active = false;
@@ -2251,6 +2752,7 @@ static uint32_t render_once() {
   // split at the channel-0 boundary just before the transmit.
   bool direct_split = false;
   uint32_t direct0 = 0, direct1 = 0;
+  s_strip_owned = false;
 
   // Active strip length to clock out this frame, split across the two output
   // channels at the channel-0 boundary. Default total: set_led_count(0) +
@@ -2311,7 +2813,14 @@ static uint32_t render_once() {
     int64_t sched_k;
     int64_t sched_us = esp_timer_get_time();
     uint32_t sched_bits = lm_sched_apply(grid_sched_ms(sched_us, &sched_k));
+    // A shared effect due on this frame (mesh M6): loaded here, on the mesh's tick stack.
+    if ((sched_bits & 8) && lm_mesh_on_tick_stack) sched_bits |= lm_mesh_on_tick_stack(lm_fx_staged_apply);
     if (sched_bits & 2) poll_brightness();
+    // A shared effect (mesh M6) loaded on this frame: the mesh_effect HITL's observable
+    // (every member logs the same grid frame k) and the load's cost on this frame.
+    if (sched_bits & 4)
+      Log().printf("[mesh] fx applied us=%lld k=%lld ms=%lld load_us=%lld\n", (long long)sched_us, (long long)sched_k,
+                   (long long)millis(), (long long)(esp_timer_get_time() - sched_us));
 #if defined(LM_MESH_DEVKEY)
     // The mesh_apply_at_skew HITL's observable: when this frame applied a scheduled change.
     if (sched_bits & 1)
@@ -2322,6 +2831,13 @@ static uint32_t render_once() {
 #else
   if (lm_sched_apply((int64_t)millis()) & 2) poll_brightness();
 #endif
+  // Lamp power (power_ffi.rs): off = dark + the effect paused; a transition
+  // scales the content (and may drive the deck-B mix + uniforms of its effect).
+  uint16_t power_q8 = 256;
+  const bool power_render = (lm_power_frame(millis(), &power_q8) & 1) != 0;
+  if (power_render) g_power_dark = false;
+  g_frame_scale = power_q8 >= 256 ? g_brightness
+                                  : (uint8_t)(((uint32_t)g_brightness * power_q8) >> 8);
   // An active mapping capture (the gray-code flashing) and the counting probe
   // are deliberate, transient device takeovers for the phone's camera, so they
   // MUST preempt whatever show is playing. A persisted effect resumed on boot
@@ -2338,12 +2854,17 @@ static uint32_t render_once() {
     int64_t since_ms = (int64_t)millis() - epoch_ms;
     if (since_ms < 0) since_ms = 0;
     uint32_t seq = (uint32_t)(((uint64_t)since_ms * 1000ULL) / bit_period_us);
-    uint32_t frame_index = seq % cycle_frames;
-    if (frame_index != last_shown_frame) {
+    // Redraw on every new ABSOLUTE frame (not just a new cycle frame): the
+    // rolling stride's mask changes with seq, and a stall of exactly one cycle
+    // would otherwise leave a stale mask up.
+    (void)cycle_frames;
+    if (seq != last_shown_frame) {
       uint32_t n = led_count < g_led_cap ? led_count : g_led_cap;
       xmit_len = n;  // drive exactly the mapping strip
       for (uint32_t i = 0; i < n; i++) {
-        if (lm_pattern_color(i, frame_index, rgb)) {
+        // The ABSOLUTE frame: the rolling stride masks by it (the core reduces
+        // it modulo cycle_frames for the code itself).
+        if (lm_pattern_color(i, seq, rgb)) {
           leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
         }
       }
@@ -2356,7 +2877,7 @@ static uint32_t render_once() {
       // drained by the phone via get_frame_timing. micros() wraps ~71 min; the
       // analysis uses only deltas, so the one wrap-straddling gap is ignored.
       lm_pattern_frame_shown(seq, micros());
-      last_shown_frame = frame_index;
+      last_shown_frame = seq;
       show = true;
     }
     // Sleep until the NEXT frame boundary (seq+1), so we land on the clock.
@@ -2365,6 +2886,7 @@ static uint32_t render_once() {
     int64_t d = next_ms - (int64_t)millis();
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
+    s_strip_owned = true;
   }
 #if defined(LM_NETOUT)
   else if (lm_counting_channel() >= 2 && lm_counting_color(0, rgb)) {
@@ -2386,6 +2908,7 @@ static uint32_t render_once() {
     }
     xmit_len = end;
     net_probe = true;
+    s_strip_owned = true;
     lm_counting_color_order(net_probe_perm);
     show = true;
     was_active = true;
@@ -2436,14 +2959,28 @@ static uint32_t render_once() {
     // order doesn't matter there.)
     lm_counting_color_order(frame_order);
     use_frame_order = true;
+    s_strip_owned = true;
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
+  } else if (!power_render) {
+    // Lamp OFF: blank once, then idle. Nothing renders or transmits, so the
+    // effect's clock stops (it resumes where it was) and the CPU sleeps; Wi-Fi,
+    // BLE and the session keep running. Mapping / the counting probe above
+    // still take over the strip.
+    if (!g_power_dark) {
+      fill_rgb(leds, g_led_cap, Rgb::Black);
+      show = true;
+      g_power_dark = true;
+      was_active = false;
+    }
+    next_delay_ms = kPowerOffPollMs;
   } else if (lm_fx_active() && lm_fxdbg_hold(millis())) {
     // FX debugger pause (fx_debug_control): the frame clock is frozen and nothing
     // renders or transmits — the strip latches the last frame. Re-check soon for
     // a step / resume / lease expiry.
     next_delay_ms = kFxDbgHoldPollMs;
+    s_strip_owned = true;
   } else if (lm_fx_active()) {
     // User effect (.fxb shader): run update() once, then shade() per LED over the
     // stored map position. Bounded execution guards each invocation (instruction budget + wall-time
@@ -2460,8 +2997,23 @@ static uint32_t render_once() {
     // substitute 33 ms for any gap over 200 ms, which slowed a < 5 fps effect's
     // animation and made a stalled frame lose time. Only a fresh entry (the
     // previous frame wasn't an effect frame) starts with a nominal 33 ms step.
+    // A step back of the device clock (see wall_span_us) is not elapsed time: take
+    // the frame's step as the last good one instead of a wrapped ~49-day dt.
+    static uint32_t s_fx_good_dt_ms = 33;
     uint32_t dt_ms = s_fx_last_ms == 0 ? 33 : now - s_fx_last_ms;
-    if (s_fx_last_ms != 0 && fx_last_us != 0) g_cad_render.add((uint32_t)(now_us - fx_last_us));
+    if (s_fx_last_ms != 0 && (int32_t)(now - s_fx_last_ms) < 0) dt_ms = s_fx_good_dt_ms;
+    else if (s_fx_last_ms != 0) s_fx_good_dt_ms = dt_ms;
+    if (s_fx_last_ms != 0 && fx_last_us != 0) {
+      g_cad_render.add(now_us - fx_last_us);
+      const uint32_t iv = (uint32_t)(now_us - fx_last_us);
+      const uint32_t period_us = lm_fps_budget_cycles() / (kCpuHz / 1000000u);
+      // A clock step (mesh time's `[clock] millis() stepped`) makes one interval negative:
+      // not a late frame.
+      if (period_us != 0 && now_us > fx_last_us && iv > period_us + period_us / 2) {
+        g_late_n++;
+        if (iv > g_late_max_us) g_late_max_us = iv, g_late_at_us = fx_last_us;
+      }
+    }
     s_fx_last_ms = now == 0 ? 1 : now;
     fx_last_us = now_us;
     s_fx_frame_start_us = now_us;
@@ -2575,6 +3127,12 @@ static uint32_t render_once() {
                      (unsigned)g_fx_dt_max_ms, (unsigned)lm_fps_current_fps(),
                      (unsigned)(g_fx_delay_min == 0xffffffffu ? 0 : g_fx_delay_min),
                      (unsigned)g_fx_delay_max);
+        if (g_late_n != 0) {
+          Log().printf("[late] n=%u max=%u ago_ms=%u\n", (unsigned)g_late_n, (unsigned)g_late_max_us,
+                       (unsigned)((esp_timer_get_time() - g_late_at_us) / 1000));
+          g_late_n = 0;
+          g_late_max_us = 0;
+        }
         g_fx_delay_min = 0xffffffffu;
         g_fx_delay_max = 0;
         g_cad_render.clear();
@@ -2607,6 +3165,27 @@ static uint32_t render_once() {
         leds[0] = Rgb(0, 0, breath);
         show = true;
       }
+    }
+  }
+  // Improv Identify blink (D-259): replace this frame's OUTPUT with the blink on
+  // every port for min(the port's buffer share, the 60 fps wire length). Whatever
+  // branch ran above still ran (an effect's update()/shade() keep its animation
+  // going), so the show resumes where it would have been. One black frame over the
+  // same span ends it, so LEDs past the show's own length don't stay lit.
+  s_identify.wake_ms = 0;  // read again at the frame pacing below
+  if (g_identify_start_ms != 0) {
+    identify_blink_frame();
+    const IdentifyFrame &idf = s_identify;
+    if (idf.len > 0) {
+      direct_split = true;
+      direct0 = idf.len;
+      direct1 = idf.np == 2 ? idf.len : 0;
+      use_frame_order = false;  // grey/black read the same in any wire order
+      show = true;
+    }
+    if (idf.done) {
+      was_active = true;              // idle: blank again next frame
+      last_shown_frame = 0xffffffff;  // a static pattern repaints
     }
   }
   if (!fx_frame_rendered) s_fx_last_ms = 0;  // the next effect frame starts fresh
@@ -2682,7 +3261,8 @@ static uint32_t render_once() {
     // miss the waits, so frame starts drifted with background load.)
     int64_t fx_elapsed_us = esp_timer_get_time() - s_fx_frame_start_us;
     uint32_t show_us = g_show_us;
-    uint32_t cost_us = fx_elapsed_us > (int64_t)show_us ? (uint32_t)fx_elapsed_us : show_us;
+    uint32_t elapsed_us = wall_span_us(s_fx_frame_start_us, s_fx_frame_start_us + fx_elapsed_us);
+    uint32_t cost_us = elapsed_us > show_us ? elapsed_us : show_us;
     xSemaphoreTake(player_mutex, portMAX_DELAY);
     // Sleep = target period − work (≥ the controller's minimum yield), so frame
     // starts land one period apart. An effect that can't hold the floor / pinned
@@ -2733,6 +3313,8 @@ static uint32_t render_once() {
     }
     xSemaphoreGive(player_mutex);
   }
+  // Wake for the blink's next on/off edge (an idle board otherwise sleeps 100 ms).
+  if (s_identify.wake_ms != 0 && s_identify.wake_ms < next_delay_ms) next_delay_ms = s_identify.wake_ms;
   return next_delay_ms;
 }
 
@@ -2797,10 +3379,6 @@ static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
   if (len == 0 || len > kOscRxCap) return;
-#if defined(LM_FRONTEND)
-  frontend_link_osc(data, len);  // the P4 owns the uniforms (and any module's addresses)
-  return;
-#endif
   for (int i = 0; i < g_n_modules; i++) {
     if (g_modules[i]->osc && g_modules[i]->osc(data, len)) return;  // a module's own address
   }
@@ -2892,7 +3470,7 @@ static void xmit_task(void *) {
     int64_t t0 = g_show_timed ? esp_timer_get_time() : 0;
     if (g_show_timed) {  // an effect frame: its wire-out start feeds the cadence stats
       int64_t w = esp_timer_get_time();
-      if (g_wire_last_us != 0) g_cad_wire.add((uint32_t)(w - g_wire_last_us));
+      if (g_wire_last_us != 0) g_cad_wire.add(w - g_wire_last_us);
       g_wire_last_us = w;
     } else {
       g_wire_last_us = 0;
@@ -2903,7 +3481,7 @@ static void xmit_task(void *) {
 #endif
     const int64_t staged_start_us = g_staged_start_us;
     ws2812_send();
-    if (g_show_timed) g_show_us = (uint32_t)(esp_timer_get_time() - t0);
+    if (g_show_timed) g_show_us = wall_span_us(t0, esp_timer_get_time());
     if (g_show_timed && staged_start_us != 0) {
       // The frame's last bit is out; it shows once the line has been low for the latch.
       const int64_t lit = esp_timer_get_time() + kLatchUs;
@@ -3024,6 +3602,110 @@ static void poll_fx_debugger() {
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   lm_fxdbg_poll(millis(), open);
   xSemaphoreGive(player_mutex);
+}
+
+// -- Lamp power (power_ffi.rs, docs/design/lamp-power.md) -----------------------
+// Every loop pass: watch the toggle trigger (a driver's export, e.g. the touch
+// driver's touch_tap), load a transition effect the machine asked for (replay its
+// stored frame onto deck B), apply HITL pull simulations, persist the config /
+// the settled state, and push power_state to the sessions that asked for it.
+static uint32_t g_power_cfg_gen = 0;
+static int g_power_saved = -1;  // the pw_on value in NVS (-1 = unknown)
+
+// Push the power_state built in tx (n bytes) to the subscribed sessions. Outside
+// the player mutex: a full send window must never stall the render task.
+static void power_push_all(int32_t n) {
+  if (n <= 0) return;
+#if defined(LM_NETSTACK)
+  if (lm_power_subscribed(LM_KIOSK_SRC_WSS) && netstack_ws_open()) netstack_ws_send(tx, (size_t)n);
+#else
+  if (lm_power_subscribed(LM_KIOSK_SRC_WSS) && ws_state == WsState::kOpen) {
+    ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+  }
+#endif
+  if (lm_power_subscribed(LM_KIOSK_SRC_BLE) && improv_ble_central_connected()) {
+    player_ble_push(tx, (size_t)n);
+  }
+}
+
+static void poll_power() {
+  uint32_t now = millis();
+#if defined(LM_NETSTACK)
+  lm_power_tick(netstack_ws_open(), improv_ble_central_connected());
+#else
+  lm_power_tick(ws_state == WsState::kOpen, improv_ble_central_connected());
+#endif
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;  // a busy frame: next pass
+  lm_power_poll_trigger(now);
+  const uint32_t load = lm_power_take_load();
+  if (load != 0) {
+    lm_power_set_loading(true);
+    fs_replay(load == 1 ? kPowerOnFxPath : kPowerOffFxPath);
+    lm_power_set_loading(false);
+    lm_power_effect_loaded(millis());
+  }
+  const uint32_t clear = lm_power_take_clear();
+  int32_t sim_pin = -1;
+  uint32_t sim_pull = 0;
+  const bool sim = lm_power_take_sim(&sim_pin, &sim_pull);
+  bool settled = false;
+  const bool target = lm_power_target(&settled);
+  const uint32_t gen = lm_power_cfg_gen();
+  uint8_t rec[LM_POWER_RECORD_CAP];
+  int32_t rn = gen != g_power_cfg_gen ? lm_power_cfg_record(rec, sizeof rec) : -1;
+  int32_t push_n = 0;
+  if (lm_power_push_due()) {
+    push_n = lm_power_build_push(lm_power_subscribed(LM_KIOSK_SRC_WSS) ? LM_KIOSK_SRC_WSS
+                                                                         : LM_KIOSK_SRC_BLE,
+                                 now, tx, sizeof tx);
+    lm_power_push_done();
+  }
+  xSemaphoreGive(player_mutex);
+  power_push_all(push_n);
+
+  if (clear & 1) remove(kPowerOnFxPath);
+  if (clear & 2) remove(kPowerOffFxPath);
+#if defined(LM_SENSORS)
+  if (sim) sensor_gpio_sim(sim_pin, (int)sim_pull);
+#else
+  (void)sim;
+#endif
+  if (gen != g_power_cfg_gen) {
+    g_power_cfg_gen = gen;
+    if (rn > 0 && fs_ok) fs_write_file(kPowerCfgPath, rec, (size_t)rn);
+  }
+  // The settled state, once per change (NVS wear-levels; a burst of taps that
+  // ends where it started writes nothing).
+  if (settled && (int)target != g_power_saved) {
+    g_power_saved = target ? 1 : 0;
+    prefs.putUChar("pw_on", target ? 1 : 0);
+    Log().printf("[power] %s\n", target ? "on" : "off");
+  }
+}
+
+// Boot: the config, the last state and which transition effects are stored.
+// Before the render task starts.
+static void power_begin() {
+  uint8_t rec[LM_POWER_RECORD_CAP];
+  size_t n = 0;
+  if (fs_ok) {
+    FILE *f = fs_open(kPowerCfgPath, "rb");
+    if (f != nullptr) {
+      n = fread(rec, 1, sizeof rec, f);
+      fclose(f);
+    }
+  }
+  auto exists = [](const char *p) {
+    FILE *f = fs_ok ? fs_open(p, "rb") : nullptr;
+    if (f == nullptr) return false;
+    fclose(f);
+    return true;
+  };
+  int last = prefs.isKey("pw_on") ? (int)prefs.getUChar("pw_on", 1) : -1;
+  bool on = lm_power_seed(n ? rec : nullptr, n, last, exists(kPowerOnFxPath), exists(kPowerOffFxPath));
+  g_power_saved = last;
+  g_power_cfg_gen = lm_power_cfg_gen();
+  Log().printf("[power] boot %s (saved %d)\n", on ? "on (fade in)" : "off", last);
 }
 
 // -- Kiosk mode: idle revert + kiosk_status pushes (kiosk_ffi.rs) ---------------
@@ -3197,9 +3879,14 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
   // Ordinary single-frame message (control traffic, set_texture, or a small
   // unsharded submit_*). rx holds the whole frame.
   int64_t now = (int64_t)millis();
+  fs_prefetch(rx, frame.len);
   xSemaphoreTake(player_mutex, portMAX_DELAY);
+  g_fs_defer = true;
   int32_t n = lm_player_handle(rx, frame.len, now, now, tx, sizeof tx);
+  g_fs_defer = false;
   xSemaphoreGive(player_mutex);
+  fs_prefetch_drop();
+  fs_deferred_flush();
   poll_after_message();
   if (n > 0) {
     httpd_ws_frame_t out = {};
@@ -3774,6 +4461,16 @@ void netstack_console_hook(const char *line, size_t len) {
     poll_kiosk_config();  // persist an "off" now
     return;
   }
+  // "POWER ON|OFF|TOGGLE|STATUS [INSTANT]" (power_ffi.rs): the HITL / USB path.
+  if (len >= 6 && strncasecmp(line, "POWER ", 6) == 0) {
+    char pr[64];
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    int32_t k = lm_power_console(reinterpret_cast<const uint8_t *>(line) + 6, len - 6, millis(),
+                                 reinterpret_cast<uint8_t *>(pr), sizeof pr);
+    xSemaphoreGive(player_mutex);
+    Serial.printf("%s\n", k < 0 ? "[power] console: POWER ON|OFF|TOGGLE|STATUS [INSTANT]" : pr);
+    return;
+  }
   if (len < 5) return;
   char reply[200];
   int32_t n = lm_wifi_console(reinterpret_cast<const uint8_t *>(line) + 5, len - 5,
@@ -3788,6 +4485,12 @@ void netstack_console_hook(const char *line, size_t len) {
 }
 #endif
 
+#if defined(LM_FLASH_SUSPEND)
+// The flash's JEDEC id and whether erase auto-suspend is on (setup), for welcome.features.
+static uint32_t g_flash_jedec = 0;
+static bool g_flash_suspend = false;
+#endif
+
 void setup() {
   Serial.begin(115200);
   // Logging is async (serial_log.h): Log() only appends to an in-RAM ring, and
@@ -3800,9 +4503,23 @@ void setup() {
   // serial is disconnected.
   Serial.setTxTimeoutMs(100);
   log_drain_start();
-#if defined(LM_FRONTEND)
-  // The SDIO slave first: the P4 probes for this front end as soon as it boots.
-  frontend_link_begin();
+#if defined(LM_FLASH_SUSPEND)
+  // Flash auto-suspend (PR-41, desk D-459): before anything writes the flash, so a littlefs
+  // erase or program never stalls the render task (code keeps running from flash while the
+  // controller suspends the erase). Only on the flash it was measured on (C6FH4's XMC).
+  {
+    uint32_t jedec = 0;
+    const int fs = lm_flash_auto_suspend_enable(&jedec);
+    g_flash_jedec = jedec;
+    g_flash_suspend = fs == LM_FLASH_SUSPEND_ON;
+    Log().printf("[flash] auto-suspend %s jedec=%06lx\n",
+                 fs == LM_FLASH_SUSPEND_ON                  ? "on"
+                 : fs == LM_FLASH_SUSPEND_UNSUPPORTED_FLASH ? "off (flash not supported)"
+                 : fs == LM_FLASH_SUSPEND_OLD_CHIP          ? "off (chip < v0.2)"
+                 : fs == LM_FLASH_SUSPEND_SETUP_FAILED      ? "off (setup failed)"
+                                                            : "off (no flash driver)",
+                 (unsigned long)jedec);
+  }
 #endif
   // Self-report WHY we last reset, first thing each boot. A clean power-on/USB reset is
   // expected; a PANIC/INT_WDT/TASK_WDT/BROWNOUT means the firmware actually crashed. This
@@ -3956,10 +4673,6 @@ void setup() {
 
   lm_player_set_identity(reinterpret_cast<const uint8_t *>(macstr), strlen(macstr),
                          reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
-#if defined(LM_FRONTEND)
-  frontend_link_set_identity(macstr, g_device_name);
-  strncpy(g_macstr, macstr, sizeof g_macstr - 1);
-#endif
   // Build info stamped in at build time (FUG-126): the full git commit + dirty
   // flag + release version, echoed in every welcome so the app can show + link
   // the device's build.
@@ -3972,6 +4685,15 @@ void setup() {
   lm_player_set_build_info(reinterpret_cast<const uint8_t *>(LM_GIT_COMMIT), strlen(LM_GIT_COMMIT),
                            LM_GIT_DIRTY, reinterpret_cast<const uint8_t *>(kFwVersion),
                            strlen(kFwVersion));
+#if defined(LM_FLASH_SUSPEND)
+  {
+    // The app and agent read the flash and its auto-suspend from welcome.features (PR-41).
+    char ff[32];
+    int fn = snprintf(ff, sizeof ff, "flash_%06lx_suspend_%s", (unsigned long)g_flash_jedec,
+                      g_flash_suspend ? "on" : "off");
+    if (fn > 0 && fn < (int)sizeof ff) lm_player_set_extra_feature(reinterpret_cast<const uint8_t *>(ff), (size_t)fn);
+  }
+#endif
   Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local build %s%s\n", macstr,
                g_device_name, g_ap_ssid, g_hostname, LM_GIT_COMMIT_SHORT,
                LM_GIT_DIRTY ? "-dirty" : "");
@@ -4057,11 +4779,8 @@ void setup() {
   Log().printf("[ota] LM_OTA_FAULT=2: render task not started (fault-injection build)\n");
   (void)render_stack;
   (void)render_tcb;
-#elif defined(LM_FRONTEND)
-  // The front end renders nothing (the P4 does): no render task.
-  (void)render_stack;
-  (void)render_tcb;
 #else
+  power_begin();
   xTaskCreateStatic(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
                     render_stack, &render_tcb);
 #endif
@@ -4102,6 +4821,8 @@ void setup() {
 #if !defined(LM_NETSTACK)
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).
 static void provisioning_poll() {
+  // Improv Identify (the connect picker's Blink): a brief blink on every output.
+  if (improv_ble_take_identify()) player_identify_start();
   char ssid[33], pass[65];
   if (improv_ble_take_credentials(ssid, sizeof ssid, pass, sizeof pass)) {
     Log().printf("[player] provisioning: joining \"%s\"\n", ssid);
@@ -4323,9 +5044,6 @@ void loop() {
     return;
   }
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
-#if defined(LM_FRONTEND)
-  frontend_link_poll();
-#endif
   modules_publish();
   for (int i = 0; i < g_n_modules; i++) {
     if (g_modules[i]->poll) g_modules[i]->poll();
@@ -4351,12 +5069,7 @@ void loop() {
       seen_ticks = t;
       seen_at = now_ms;
     }
-#if defined(LM_FRONTEND)
-    bool render_alive = true;  // the front end renders nothing; the P4 does
-    (void)seen_at;
-#else
     bool render_alive = seen_at != 0 && now_ms - seen_at < 2000;
-#endif
 #if defined(LM_NETSTACK)
     // Offline / manual (outside a join window): the board isn't supposed to reach a
     // network, so a fresh update's health is judged on rendering alone — it must never
@@ -4377,7 +5090,9 @@ void loop() {
   poll_kiosk();
 #if defined(LM_NETSTACK)
   poll_mesh_sessions();
+  upload_ram_gc();
 #endif
+  poll_power();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {
@@ -4417,13 +5132,6 @@ void loop() {
                  (unsigned)LM_MODE.unmodeled);
     char net[200];
     netstack_net_stats(net, sizeof net);
-#if defined(LM_FRONTEND)
-    {
-      char ln[120];
-      frontend_link_stats(ln, sizeof ln);
-      Log().printf("[link] %s\n", ln);
-    }
-#endif
     Log().printf("[net] t=%lu %s mtx_wait_max=%uus handle_max=%uus\n", (unsigned long)millis(),
                  net, (unsigned)g_mtx_wait_max_us, (unsigned)g_handle_max_us);
     g_mtx_wait_max_us = 0;
@@ -4456,9 +5164,176 @@ static bool kp_path(char *path, size_t cap, const uint8_t *name, size_t len) {
   return n > 0 && (size_t)n < cap;
 }
 
+// The deferred-write queue (g_fs_defer above): the keypoint and effect-store hooks run inside
+// lm_player_handle, with the player mutex held, and a littlefs write there (tens of ms, more
+// with a compaction) held the render task off for that long: flash auto-suspend keeps code
+// running during the erase, but not a task waiting on a lock. The hooks queue their writes and
+// removals here (in order, data copied to the heap); fs_deferred_flush does them after the
+// mutex is released, before the reply is sent. A read of a queued path is served from the
+// queue. Full queue / no heap: written in place, as before.
+struct FsOp {
+  char path[48];
+  uint8_t *data;  // nullptr: a removal
+  size_t len;
+};
+static FsOp g_fs_ops[6];
+static int g_fs_nops = 0;
+
+static const FsOp *fs_deferred_find(const char *path) {
+  for (int i = g_fs_nops - 1; i >= 0; i--) {
+    if (strcmp(g_fs_ops[i].path, path) == 0) return &g_fs_ops[i];
+  }
+  return nullptr;
+}
+
+static bool fs_defer(const char *path, const uint8_t *a, size_t a_len, const uint8_t *b, size_t b_len, bool remove_op) {
+  if (!g_fs_defer || g_fs_nops >= (int)(sizeof g_fs_ops / sizeof g_fs_ops[0])) return false;
+  FsOp &op = g_fs_ops[g_fs_nops];
+  op.data = nullptr;
+  op.len = 0;
+  if (!remove_op) {
+    op.data = static_cast<uint8_t *>(malloc(a_len + b_len ? a_len + b_len : 1));
+    if (op.data == nullptr) return false;
+    if (a_len) memcpy(op.data, a, a_len);
+    if (b_len) memcpy(op.data + a_len, b, b_len);
+    op.len = a_len + b_len;
+  }
+  snprintf(op.path, sizeof op.path, "%s", path);
+  g_fs_nops++;
+  return true;
+}
+
+static void fs_usage_refresh() {
+  if (!g_fs_usage_stale || !fs_ok) return;
+  g_fs_usage_stale = false;
+  const uint32_t prio = lm_prio_below_render();
+  size_t total = 0, used = 0;
+  if (esp_littlefs_info(kFsPartition, &total, &used) == ESP_OK) {
+    g_fs_total = total;
+    g_fs_used = used;
+  }
+  lm_prio_restore(prio);
+}
+
+static void fs_deferred_flush() {
+  if (g_fs_nops == 0) return;
+  g_fs_usage_stale = true;  // removals change it too
+  const uint32_t prio = lm_prio_below_render();  // (fs_write_parts is too; removals here)
+  for (int i = 0; i < g_fs_nops; i++) {
+    FsOp &op = g_fs_ops[i];
+    if (op.data == nullptr) {
+      remove(op.path);
+    } else {
+      fs_write_file(op.path, op.data, op.len);
+      free(op.data);
+      op.data = nullptr;
+    }
+  }
+  g_fs_nops = 0;
+  lm_prio_restore(prio);
+}
+
+// Read-ahead for the keypoint and effect-store handlers (PR-41): they look through their
+// files (a keypoint save opens all 16 slots of its effect; a store listing reads 8 record
+// headers) from inside lm_player_handle, i.e. with the player mutex held, and the render
+// task waited out those littlefs reads (30-70 ms on hitl-rig-1). The files a message can
+// read are known before the lock (the effect's key needs the lock only for a moment, no
+// flash): read them first, on the heap for this message only, and serve the hooks from
+// here. A path not read ahead still goes to the flash (never the case for these arms).
+struct FsPre {
+  char name[20];
+  uint8_t *data;  // nullptr: no such file
+  uint16_t len;   // bytes held (a record header for fxs.<n>)
+  uint16_t size;  // the file's size (capped)
+};
+static FsPre *g_pre = nullptr;
+static int g_pre_n = 0;
+
+static void fs_prefetch_drop() {
+  for (int i = 0; i < g_pre_n; i++) free(g_pre[i].data);
+  free(g_pre);
+  g_pre = nullptr;
+  g_pre_n = 0;
+}
+
+static void fs_prefetch(const uint8_t *msg, size_t len) {
+  if (!fs_ok) return;
+  const int32_t arm = lm_envelope_arm(msg, len);
+  const bool kp = arm >= 40 && arm <= 44;  // save / delete / list / get / blend keypoints
+  const bool fxs = arm == kArmSubmitEffect || (arm >= 140 && arm <= 142);  // the effect store
+  if (!kp && !fxs) return;
+  uint32_t key = 0;
+  if (kp) {
+    xSemaphoreTake(player_mutex, portMAX_DELAY);  // the deck's effect: no flash
+    key = lm_kp_key(msg, len);
+    xSemaphoreGive(player_mutex);
+    if (key == 0) return;
+  }
+  const int n = kp ? 16 : 8;  // keypoint::MAX_KEYPOINTS / effect_store::MAX_STORED
+  const size_t cap = kp ? 2048 : lm_fxs_header_cap();
+  g_pre = static_cast<FsPre *>(calloc(n, sizeof(FsPre)));
+  if (g_pre == nullptr) return;
+  g_pre_n = n;
+  const uint32_t prio = lm_prio_below_render();  // littlefs lookups: below render too
+  for (int i = 0; i < n; i++) {
+    FsPre &e = g_pre[i];
+    if (kp) snprintf(e.name, sizeof e.name, "kp_%08lx.%d", (unsigned long)key, i);
+    else snprintf(e.name, sizeof e.name, "fxs.%d", i);
+    char path[48];
+    snprintf(path, sizeof path, "%s/%s", kFsBase, e.name);
+    FILE *f = fs_open(path, "rb");
+    if (f == nullptr) continue;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    size_t want = size > 0 ? ((size_t)size < cap ? (size_t)size : cap) : 0;
+    e.data = static_cast<uint8_t *>(malloc(want ? want : 1));
+    if (e.data != nullptr) {
+      e.len = (uint16_t)fread(e.data, 1, want, f);
+      e.size = (uint16_t)(size > 0xffff ? 0xffff : size);
+    } else {
+      g_pre_n = i;  // out of heap: the rest from flash, as before
+      fclose(f);
+      break;
+    }
+    fclose(f);
+  }
+  lm_prio_restore(prio);
+}
+
+// -1: not read ahead (use the flash), -2: read ahead and absent, else the bytes copied.
+static int32_t fs_prefetched(const char *name, uint8_t *buf, size_t cap) {
+  for (int i = 0; i < g_pre_n; i++) {
+    const FsPre &e = g_pre[i];
+    if (strcmp(e.name, name) != 0) continue;
+    if (e.data == nullptr) return -2;
+    if (cap > e.len && e.size > e.len) return -1;  // wants more than was read ahead
+    size_t got = e.len < cap ? e.len : cap;
+    memcpy(buf, e.data, got);
+    return (int32_t)got;
+  }
+  return -1;
+}
+
 static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap) {
   char path[48];
   if (!kp_path(path, sizeof path, name, len)) return -1;
+  if (const FsOp *op = fs_deferred_find(path)) {
+    if (op->data == nullptr || op->len == 0) return -1;
+    size_t got = op->len < cap ? op->len : cap;
+    memcpy(buf, op->data, got);
+    return (int32_t)got;
+  }
+  if (g_pre_n) {
+    char nm[20];
+    if (len < sizeof nm) {
+      memcpy(nm, name, len);
+      nm[len] = 0;
+      const int32_t p = fs_prefetched(nm, buf, cap);
+      if (p == -2) return -1;
+      if (p >= 0) return p > 0 ? p : -1;
+    }
+  }
   FILE *f = fs_open(path, "rb");
   if (f == nullptr) return -1;
   size_t got = fread(buf, 1, cap, f);
@@ -4469,6 +5344,7 @@ static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t 
 static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n) {
   char path[48];
   if (!kp_path(path, sizeof path, name, len)) return false;
+  if (fs_defer(path, buf, n, nullptr, 0, false)) return true;
   fs_write_file(path, buf, n);
   FILE *f = fs_open(path, "rb");  // fs_write_file logs, not returns, a failure
   if (f == nullptr) return false;
@@ -4478,5 +5354,50 @@ static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, siz
 
 static void kp_fs_remove(const uint8_t *name, size_t len) {
   char path[48];
-  if (kp_path(path, sizeof path, name, len)) remove(path);
+  if (kp_path(path, sizeof path, name, len) && !fs_defer(path, nullptr, 0, nullptr, 0, true)) remove(path);
+}
+
+// Effect store hooks (ffi.rs lm_fxs_set_store): read / remove are the keypoint ones
+// (a record is a small file under the same base, "fxs.<n>"); a write is the record
+// header plus the .fxb, as one power-loss-safe file.
+//
+// The store must never take the room a map upload needs (docs/design/effect-store.md
+// "Flash budget"): a 2048-LED map is ~122 KB, and replacing it stages the new one in
+// upload.tmp next to the old. So a store is refused (-2, store_no_space) unless, after
+// it, the filesystem keeps kFsUploadReserve free plus, while the map is smaller than the
+// largest one, the difference.
+static const size_t kFsUploadReserve = 128 * 1024;
+static const size_t kFsMapMax = 128 * 1024;
+static const size_t kFsBlock = 4096;
+static int32_t fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
+                            size_t b_len) {
+  char path[48];
+  if (!kp_path(path, sizeof path, name, len)) return -1;
+  // The usage measured after the last write (fs_usage_refresh), plus what this message
+  // already queued: never a filesystem walk under the player mutex.
+  if (g_fs_usage_stale && !g_fs_defer) fs_usage_refresh();
+  size_t total = g_fs_total, used = g_fs_used;
+  for (int i = 0; i < g_fs_nops; i++) used += ((g_fs_ops[i].len + kFsBlock - 1) / kFsBlock) * kFsBlock;
+  if (total > 0) {
+    // The temp copy is written before the rename frees an old record of the same slot,
+    // plus one block of metadata slack.
+    size_t need = ((a_len + b_len + kFsBlock - 1) / kFsBlock + 1) * kFsBlock;
+    FILE *mf = fs_open(kMapPath, "rb");
+    size_t map = 0;
+    if (mf != nullptr) {
+      fseek(mf, 0, SEEK_END);
+      long sz = ftell(mf);
+      fclose(mf);
+      map = sz > 0 ? (size_t)sz : 0;
+    }
+    size_t reserve = kFsUploadReserve + (map < kFsMapMax ? kFsMapMax - map : 0);
+    size_t free_b = total > used ? total - used : 0;
+    if (free_b < need + reserve) {
+      Log().printf("[fxs] store refused: %u B free of %u, need %u + %u reserved for a map upload\n",
+                   (unsigned)free_b, (unsigned)total, (unsigned)need, (unsigned)reserve);
+      return -2;
+    }
+  }
+  if (fs_defer(path, a, a_len, b, b_len, false)) return 0;
+  return fs_write_parts(path, a, a_len, b, b_len) ? 0 : -1;
 }

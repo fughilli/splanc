@@ -77,9 +77,25 @@ impl AdminSigner {
         swarm_net::crypto::signing::p256_sign(&self.secret, msg)
     }
 
+    /// A delegation certificate for `key` (this signer as the admin key).
+    pub fn delegation(&self, mesh_id: u32, key: PublicKey, not_after: u32) -> crate::admin::Delegation {
+        let mut d = crate::admin::Delegation { mesh_id, key, not_after, sig: [0; 64] };
+        let mut b = [0u8; 81];
+        let m = d.signed(&mut b).to_vec();
+        d.sig = self.sign(&m);
+        d
+    }
+
+    /// A session grant signed by this key as a delegate (it names itself in `by`).
+    pub fn delegated_grant(&self, mesh_id: u32, session: u32, gateway: u16, gateway_key: PublicKey, not_after: u32) -> crate::admin::Grant {
+        let mut g = self.grant(mesh_id, session, gateway, gateway_key, not_after);
+        g.by = Some(crate::crypto::key_hash(&self.public));
+        g
+    }
+
     /// A session grant for gateway `gateway` (§7.9).
     pub fn grant(&self, mesh_id: u32, session: u32, gateway: u16, gateway_key: PublicKey, not_after: u32) -> crate::admin::Grant {
-        let mut g = crate::admin::Grant { mesh_id, session, gateway, gateway_key, not_after, sig: [0; 64] };
+        let mut g = crate::admin::Grant { mesh_id, session, gateway, gateway_key, not_after, sig: [0; 64], by: None };
         let mut b = [0u8; 87];
         let m = g.signed(&mut b).to_vec();
         g.sig = self.sign(&m);

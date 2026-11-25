@@ -14,6 +14,8 @@
 //!   the inner arm and an error code.
 //! - **Member status** ([`StatusMsg`], `STATUS` port, broadcast every 10 s and on change):
 //!   firmware, uptime, heap, fps, brightness, mesh-time state and error, last error.
+//! - **Topology** ([`crate::topo::TopoMsg`], `STATUS` port next to the status): room pose and
+//!   radio neighbours, kept per member on every node.
 //! - **Aggregation** ([`Fanout`]): the gateway's member table (from adverts, status and
 //!   replies) and its pending operations; an operation completes when every expected member
 //!   answered or its timeout passed, and becomes one [`OpResult`] (the app's `MeshResult`).
@@ -22,6 +24,7 @@
 
 use crate::backhaul::NodeId;
 use crate::ports::Targets;
+use crate::topo::{Topo, TopoMsg};
 
 /// `ClientMessage` arm numbers (ledmapper.proto) the relay policy names.
 pub mod arm {
@@ -37,10 +40,22 @@ pub mod arm {
     pub const SET_WIFI_POLICY: u32 = 90;
     pub const MESH_SEND: u32 = 99;
     pub const GET_MESH: u32 = 100;
+    /// Membership and administration (mesh M7): never relayed.
+    pub const MESH_ADMIN: u32 = 101;
+    /// A deck's `shared state` (a catch-up's state blob; docs/design/fx-mesh-state-and-agents.md).
+    pub const SET_FX_STATE: u32 = 102;
 }
 
 /// The arms a member dispatches from the mesh (module docs).
-pub const RELAYED: [u32; 6] = [arm::SUBMIT_EFFECT, arm::SET_EFFECT, arm::SET_UNIFORMS, arm::SET_BRIGHTNESS, arm::SET_CROSSFADE, arm::BLEND_KEYPOINTS];
+pub const RELAYED: [u32; 7] = [
+    arm::SUBMIT_EFFECT,
+    arm::SET_EFFECT,
+    arm::SET_UNIFORMS,
+    arm::SET_BRIGHTNESS,
+    arm::SET_CROSSFADE,
+    arm::BLEND_KEYPOINTS,
+    arm::SET_FX_STATE,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refuse {
@@ -302,6 +317,8 @@ pub struct Member {
     pub seen_us: i64,
     pub status: Option<StatusMsg>,
     pub status_us: i64,
+    /// Its room pose, neighbours and hop count ([`crate::topo`]).
+    pub topo: Topo,
 }
 
 /// One relayed control the gateway is collecting answers for (or has finished).
@@ -381,12 +398,22 @@ impl<const N: usize> Fanout<N> {
             .position(|m| m.is_some_and(|m| m.node == node))
             .or_else(|| self.members.iter().position(|m| m.is_none()))
             .unwrap_or_else(|| (0..N).min_by_key(|&i| self.members[i].map_or(i64::MIN, |m| m.seen_us)).unwrap_or(0));
-        let m = self.members[i].get_or_insert(Member { node, seen_us: now_us, status: None, status_us: 0 });
+        let m = self.members[i].get_or_insert(Member { node, seen_us: now_us, status: None, status_us: 0, topo: Topo::EMPTY });
         if m.node != node {
-            *m = Member { node, seen_us: now_us, status: None, status_us: 0 };
+            *m = Member { node, seen_us: now_us, status: None, status_us: 0, topo: Topo::EMPTY };
         }
         m.seen_us = now_us;
         m
+    }
+
+    /// `node` left the mesh (ejected or revoked by the admin): stop listing it now, not
+    /// [`MEMBER_STALE_US`] later.
+    pub fn forget(&mut self, node: NodeId) {
+        for m in self.members.iter_mut() {
+            if m.is_some_and(|m| m.node == node) {
+                *m = None;
+            }
+        }
     }
 
     pub fn on_status(&mut self, now_us: i64, node: NodeId, s: StatusMsg) {
@@ -394,6 +421,23 @@ impl<const N: usize> Fanout<N> {
         let m = self.touch(now_us, node);
         m.status = Some(s);
         m.status_us = now_us;
+    }
+
+    /// A member's topology message ([`crate::topo`]).
+    pub fn on_topo(&mut self, now_us: i64, node: NodeId, t: &TopoMsg) {
+        self.touch(now_us, node).topo.apply(now_us, t);
+    }
+
+    /// Hops a status-port message from `node` took to get here (1 = a direct neighbour).
+    pub fn note_hops(&mut self, node: NodeId, hops: u8) {
+        if let Some(m) = self.members.iter_mut().flatten().find(|m| m.node == node) {
+            m.topo.hops = hops;
+        }
+    }
+
+    /// A live member's entry (its status and topology), e.g. a peer's pose.
+    pub fn member(&self, now_us: i64, node: NodeId) -> Option<&Member> {
+        self.live(now_us).find(|m| m.node == node)
     }
 
     /// Members heard within [`MEMBER_STALE_US`].
@@ -500,6 +544,13 @@ impl<const N: usize> Fanout<N> {
         self.done[i].take()
     }
 
+    /// Finished operation `op_id`, taken out of the queue (an operation the device consumes
+    /// itself: the first phase of an effect share, M6).
+    pub fn take_done_op(&mut self, op_id: u32) -> Option<OpResult<N>> {
+        let i = self.done.iter().position(|d| d.is_some_and(|d| d.op_id == op_id))?;
+        self.done[i].take()
+    }
+
     pub fn pending(&self) -> usize {
         self.ops.iter().flatten().count()
     }
@@ -577,6 +628,11 @@ mod tests {
         let r = f.take_done().unwrap();
         assert!(r.complete);
         assert_eq!((r.n, &r.status[..2], r.latency_ms[0], r.latency_ms[1]), (2, &[Status::Ok, Status::Refused][..], 5, 9));
+        // An ejected member drops out at once.
+        f.touch(200, 9);
+        assert_eq!(f.live(300).filter(|m| m.node == 9).count(), 1);
+        f.forget(9);
+        assert_eq!(f.live(300).filter(|m| m.node == 9).count(), 0);
         // A stale member drops out of "all"; a timeout reports the silent one missing.
         assert_eq!(f.begin(MEMBER_STALE_US + 10_000, 0, 8, 31, &Targets::All, 1_000, 1), 0);
         assert!(f.take_done().unwrap().complete);
