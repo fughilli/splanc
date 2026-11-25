@@ -375,6 +375,43 @@ bodies strip <code class="docutils literal notranslate"><span class="pre">&lt;vi
 real inline player on the GitHub page, drag the MP4 into the release editor
 by hand after publishing; the app keeps using the clip from the manifest.</p></li>
 </ul>
+<section id="output">
+<h3>Output<a class="headerlink" href="#output" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>File</p></th>
+<th class="head"><p>Phone</p></th>
+<th class="head"><p>Desktop</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>MP4</p></td>
+<td><p>780×1688, H.264</p></td>
+<td><p>1920×1200, H.264</p></td>
+</tr>
+<tr class="row-odd"><td><p>WebM</p></td>
+<td><p>780×1688, VP9</p></td>
+<td><p>1920×1200, VP9</p></td>
+</tr>
+<tr class="row-even"><td><p>GIF</p></td>
+<td><p>320 px wide, 15 fps</p></td>
+<td><p>640 px wide, 15 fps</p></td>
+</tr>
+<tr class="row-odd"><td><p>Poster</p></td>
+<td><p>780×1688 JPEG</p></td>
+<td><p>1920×1200 JPEG</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The MP4 and WebM are the screencast’s native device pixels (never upscaled) at a
+constant 30 fps. The screencast sends a frame only when the screen changes, so
+each frame is held until the next and the result is resampled to 30 fps. <code class="docutils literal notranslate"><span class="pre">record</span></code>
+prints, and <code class="docutils literal notranslate"><span class="pre">clips.json</span></code> keeps (<code class="docutils literal notranslate"><span class="pre">capture_fps</span></code>), the rate the screencast delivered
+while the screen was moving. Below 30, motion repeats frames, so record on a
+machine that isn’t busy.</p>
+</section>
 </section>
 <section id="adding-a-clip-for-your-feature">
 <h2>Adding a clip for your feature<a class="headerlink" href="#adding-a-clip-for-your-feature" title="Link to this heading">¶</a></h2>
@@ -460,7 +497,7 @@ Every recording starts from a fresh browser profile.</p></li>
 <td><p><code class="docutils literal notranslate"><span class="pre">?demo=</span></code> scenarios, comma-joined</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">framing</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">phone</span></code> (390×844 at 2×). Add <code class="docutils literal notranslate"><span class="pre">desktop</span></code> (1280×800) only for a desktop-only feature, with <code class="docutils literal notranslate"><span class="pre">why_not_phone_dark</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">phone</span></code> (390×844 at 2×). Add <code class="docutils literal notranslate"><span class="pre">desktop</span></code> (1280×800 at 1.5×) only for a desktop-only feature, with <code class="docutils literal notranslate"><span class="pre">why_not_phone_dark</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">theme</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">dark</span></code>. Use <code class="docutils literal notranslate"><span class="pre">light</span></code> only for a light-theme feature, with <code class="docutils literal notranslate"><span class="pre">why_not_phone_dark</span></code></p></td>
@@ -594,6 +631,20 @@ the same tag (<code class="docutils literal notranslate"><span class="pre">recor
 <code class="docutils literal notranslate"><span class="pre">publish</span> <span class="pre">--tag</span> <span class="pre">…</span></code>, or re-tag).</p></li>
 </ul>
 <p>Then <strong>Re-run failed jobs</strong>. The review is asked again with a new desk item.</p>
+<p><strong>The draft.</strong> <code class="docutils literal notranslate"><span class="pre">app_previews</span></code> makes the draft with <code class="docutils literal notranslate"><span class="pre">release_clips</span> <span class="pre">ensure-draft</span></code>
+(or reuses the tag’s existing one, keeping its notes), and the webapp job
+publishes that same draft with <code class="docutils literal notranslate"><span class="pre">release_clips</span> <span class="pre">finalize</span></code>. Both match a draft by
+its name as well as its tag, because GitHub reports a draft’s tag as
+<code class="docutils literal notranslate"><span class="pre">untagged-&lt;id&gt;</span></code> once another release claims it. softprops/action-gh-release
+isn’t used for app releases: it looks releases up by tag, which never finds a
+draft, so app-v1.17.0 shipped as a new, empty release beside the reviewed draft.</p>
+<p><strong>Clip links in the draft.</strong> A draft’s files are served only under the draft’s
+placeholder tag (<code class="docutils literal notranslate"><span class="pre">/releases/download/untagged-&lt;id&gt;/</span></code>), so the draft’s “Feature
+previews” link those URLs, which play for anyone who can see the draft. The
+final <code class="docutils literal notranslate"><span class="pre">/releases/download/&lt;tag&gt;/</span></code> URLs exist only once the release is
+published, so the publish step runs <code class="docutils literal notranslate"><span class="pre">release_clips</span> <span class="pre">relink</span> <span class="pre">--tag</span> <span class="pre">&lt;tag&gt;</span></code>, which
+points the notes at them. If that step fails (it doesn’t block the deploy), run
+<code class="docutils literal notranslate"><span class="pre">GH_TOKEN=…</span> <span class="pre">python3</span> <span class="pre">tools/release_clips/release_clips.py</span> <span class="pre">relink</span> <span class="pre">--tag</span> <span class="pre">&lt;tag&gt;</span></code>.</p>
 <p>TestFlight builds (<code class="docutils literal notranslate"><span class="pre">macos.yaml</span></code>) are not behind this gate.</p>
 <p>One-time setup: create the <code class="docutils literal notranslate"><span class="pre">release-review</span></code> environment (Settings →
 Environments) with the owner as a required reviewer. Add the
@@ -657,7 +708,10 @@ Environments) with the owner as a required reviewer. Add the
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Feature-preview clips</a><ul>
-<li><a class="reference internal" href="#how-it-works">How it works</a></li>
+<li><a class="reference internal" href="#how-it-works">How it works</a><ul>
+<li><a class="reference internal" href="#output">Output</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#adding-a-clip-for-your-feature">Adding a clip for your feature</a><ul>
 <li><a class="reference internal" href="#demo-data-only">Demo data only</a></li>
 </ul>
