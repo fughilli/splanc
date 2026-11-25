@@ -126,6 +126,9 @@
   #   - no sched_ext (needs BTF; unused, and its init cost ~0.12 s);
   #   - kallsyms for functions only (initcall_blacklist and stack traces work);
   #   - no Xen guest support.
+  #   - the splash's SPI built in (spi-bcm2835 + spidev): stage 1 doesn't wait
+  #     for module loads before the OLED can start (the initrd's modprobe of a
+  #     built-in is a no-op; the Pi 5's spi-dw-mmio stays a module).
   boot.kernelPatches = [
     {
       name = "splanc-bridge-slim";
@@ -135,6 +138,8 @@
         SCHED_CLASS_EXT = lib.mkForce no;
         KALLSYMS_ALL = lib.mkForce no;
         XEN = lib.mkForce no;
+        SPI_BCM2835 = lib.mkForce yes;
+        SPI_SPIDEV = lib.mkForce yes;
       };
     }
   ];
