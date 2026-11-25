@@ -31,6 +31,7 @@ import {
   midiSupported,
   controlKey,
   controlLabel,
+  raw7,
   type MidiControlEvent,
 } from "../../midi/manager";
 import {
@@ -222,7 +223,7 @@ export function ShowModeScreen(_router: Router): Screen {
     const { action, value } = resolved;
     const kind = showActionKind(action);
     if (kind === "encoder") {
-      const steps = encoders.delta(action, ev.raw, midiStore.showBindingMode(action));
+      const steps = encoders.delta(action, raw7(ev), midiStore.showBindingMode(action));
       if (action === "deckA.browse") browseDeck = 0;
       else if (action === "deckB.browse") browseDeck = 1;
       moveFocus(steps, false);
@@ -477,7 +478,7 @@ export function ShowModeScreen(_router: Router): Screen {
 
     unsub = midiManager.onControl((ev) => {
       if (sampling && controlKey(ev.control) === sampling.key) {
-        sampling.raws.push(ev.raw);
+        sampling.raws.push(raw7(ev));
         const g = detectEncoderMode(sampling.raws);
         if (g) {
           if (midiStore.showBindingMode(sampling.action) !== g.mode) {
@@ -494,7 +495,7 @@ export function ShowModeScreen(_router: Router): Screen {
       listening = null;
       guesses.delete(action);
       if (showActionKind(action) === "encoder" && ev.control.kind === "cc") {
-        sampling = { action, key: controlKey(ev.control), raws: [ev.raw] };
+        sampling = { action, key: controlKey(ev.control), raws: [raw7(ev)] };
         guesses.set(action, "Keep turning slowly, both ways, to detect its mode…");
         clearTimeout(learnTimer);
         learnTimer = setTimeout(() => {
