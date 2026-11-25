@@ -557,4 +557,3 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
   }
   return el;
 }
-
