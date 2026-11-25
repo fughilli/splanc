@@ -61,3 +61,31 @@ fn disabled_when_spacing_is_one() {
         assert!(pat::stride_lit(led, 0, 1, 3));
     }
 }
+
+fn golden_rolling() -> serde_json::Value {
+    let path = std::env::var("GOLDEN_STRIDE_ROLLING").expect("GOLDEN_STRIDE_ROLLING not set");
+    serde_json::from_str(&std::fs::read_to_string(&path).expect("read golden")).expect("golden is valid JSON")
+}
+
+#[test]
+fn matches_the_rolling_stride_golden() {
+    let g = golden_rolling();
+    for case in g["cases"].as_array().unwrap() {
+        let u = |k: &str| case[k].as_u64().unwrap() as u32;
+        let (n, s, a, d, off) = (u("ledCount"), u("spacing"), u("anchorDensity"), u("dwellCycles"), u("codeOffset"));
+        let sync = if case["syncPattern"] == "stagger_pilot" { pat::SyncPattern::StaggerPilot } else { pat::SyncPattern::OnOff };
+        let spec = pat::CodeSpec::derive_sync(n + off, u("symbols") as u8, true, sync);
+        assert_eq!((spec.bits, spec.cycle_frames), (u("bits"), u("cycleFrames")));
+        let rs = pat::RollingStride::new(s, a, d, n, off);
+        assert_eq!(rs.period_frames(&spec), u("periodFrames"));
+        for (t, row) in case["frames"].as_array().unwrap().iter().enumerate() {
+            let want = row.as_str().unwrap();
+            let got: String =
+                (0..n).map(|x| if pat::stride_lit_rolling(x, t as u32, &spec, &rs) { '#' } else { '.' }).collect();
+            assert_eq!(got, want, "S={s} A={a} D={d} frame {t}");
+            // The fixture itself keeps the spacing.
+            let lit: Vec<usize> = want.char_indices().filter(|&(_, c)| c == '#').map(|(i, _)| i).collect();
+            assert!(lit.windows(2).all(|w| w[1] - w[0] >= s as usize), "frame {t}: {want}");
+        }
+    }
+}

@@ -128,6 +128,13 @@ export const OPS_SCHEMA: Record<string, { component: OpsComponent; service?: str
   ai_checkout_failed: { component: "ai-billing", fields: { sku: "token" } },
   ai_webhook_rejected: { component: "ai-billing", fields: { channel: CHANNELS, reason: "token" } },
   ai_purchase_rejected: { component: "ai-billing", fields: { channel: CHANNELS, code: "token" } },
+  // Verified email + account recovery (billing/email.ts). Never the address,
+  // its hash, the account id or the provider's error text.
+  ai_recover_requested: { component: "ai-billing", fields: { known: "bool" } },
+  ai_account_recovered: { component: "ai-billing", fields: { revoked_others: "bool" } },
+  ai_email_verified: { component: "ai-billing", fields: { replaced: "bool" } },
+  ai_email_removed: { component: "ai-billing", fields: {} },
+  ai_email_failed: { component: "ai-billing", fields: {} },
 
   // -- agent feedback (agent/relay/src/feedback.ts) ---------------------------------
   fb_received: {

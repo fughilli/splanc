@@ -132,6 +132,28 @@ export interface ReleaseNotes {
   prerelease: boolean;
   body: NoteNode[];
   media: string[];
+  /** Feature-preview clips (docs/release-clips.md), played inline above the notes. */
+  clips?: FeatureClip[];
+}
+
+/** One recording of a clip: phone (390 px portrait) or desktop framing. */
+export interface ClipVariant {
+  framing: "phone" | "desktop";
+  /** Local `media/…` paths beside index.json (checked like every note medium). */
+  mp4: string;
+  webm?: string;
+  poster?: string;
+  width?: number;
+  height?: number;
+}
+
+/** A short, muted, looping demo of one feature of a release. */
+export interface FeatureClip {
+  id: string;
+  title: string;
+  summary: string;
+  prs: number[];
+  variants: ClipVariant[];
 }
 
 /** One product in the card's dropdown (a tag-prefix release stream). */
@@ -245,6 +267,67 @@ export function sanitizeNotes(nodes: unknown, depth = 0): NoteNode[] {
   return out;
 }
 
+const MAX_CLIPS = 12;
+
+function mediaPath(v: unknown, ext: RegExp): string | undefined {
+  return typeof v === "string" && MEDIA_PATH.test(v) && ext.test(v) ? v : undefined;
+}
+
+function dimension(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && v > 0 && v < 10000 ? v : undefined;
+}
+
+/**
+ * The release's preview clips, checked like the notes: media must be local
+ * `media/…` files of the right kind (MP4/WebM video, image poster), text is
+ * plain (rendered with textContent). A clip without a playable MP4 is dropped.
+ * Pure.
+ */
+export function parseClips(v: unknown): FeatureClip[] {
+  if (!Array.isArray(v)) return [];
+  const out: FeatureClip[] = [];
+  for (const raw of v.slice(0, MAX_CLIPS)) {
+    if (!raw || typeof raw !== "object") continue;
+    const c = raw as Record<string, unknown>;
+    const title = str(c.title).trim().slice(0, 80);
+    const summary = str(c.summary).trim().slice(0, 300);
+    if (!title) continue;
+    const variants: ClipVariant[] = [];
+    for (const rv of Array.isArray(c.variants) ? c.variants : []) {
+      if (!rv || typeof rv !== "object") continue;
+      const o = rv as Record<string, unknown>;
+      const framing = o.framing === "phone" || o.framing === "desktop" ? o.framing : null;
+      const mp4 = mediaPath(o.mp4, /\.mp4$/);
+      if (!framing || !mp4 || variants.some((x) => x.framing === framing)) continue;
+      const cv: ClipVariant = { framing, mp4 };
+      const webm = mediaPath(o.webm, /\.webm$/);
+      const poster = mediaPath(o.poster, /\.(jpg|png|webp|avif)$/);
+      const width = dimension(o.width);
+      const height = dimension(o.height);
+      if (webm) cv.webm = webm;
+      if (poster) cv.poster = poster;
+      if (width && height) {
+        cv.width = width;
+        cv.height = height;
+      }
+      variants.push(cv);
+    }
+    if (!variants.length) continue;
+    const prs = Array.isArray(c.prs)
+      ? c.prs.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n > 0).slice(0, 8)
+      : [];
+    out.push({ id: str(c.id).slice(0, 48), title, summary, prs, variants });
+  }
+  return out;
+}
+
+/** The recording to show inline: the desktop one in a wide card, else phone
+ * (whichever exists when there is only one). */
+export function pickClipVariant(clip: FeatureClip, wide: boolean): ClipVariant {
+  const want = wide ? "desktop" : "phone";
+  return clip.variants.find((v) => v.framing === want) ?? clip.variants[0]!;
+}
+
 function parseNotes(r: unknown): ReleaseNotes | null {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
@@ -258,6 +341,7 @@ function parseNotes(r: unknown): ReleaseNotes | null {
     prerelease: o.prerelease === true,
     body: sanitizeNotes(o.body),
     media: Array.isArray(o.media) ? o.media.filter((m): m is string => typeof m === "string" && MEDIA_PATH.test(m)) : [],
+    ...(Array.isArray(o.clips) ? { clips: parseClips(o.clips) } : {}),
   };
 }
 

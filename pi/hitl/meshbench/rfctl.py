@@ -6,9 +6,14 @@ same core. Every request carries an `@tag`; the reply is the lines with that tag
 to the `ok`/`err` line.
 
     with Rfctl.open("/dev/serial/by-id/usb-splanc_rfctl_mesh-bench_...-if00") as rf:
-        rf.set({"cut01": 1, "att01a": 12.5})
+        rf.set({"cut01": 1, "att0": 12.25})
         rf.load([(0, {"cut12": 0}), (2_000_000, {"cut12": 1})])
         t0 = rf.play(delay_us=500_000)
+        rf.attcheck()   # every UART attenuator acknowledged its value
+
+Attenuator kinds: `atten` / `atten_serial` (PE4302, 0.5 dB steps; the legacy
+`pe4302` board table) and `atten_uart` (the Jeanoko unit per DUT, 0.25 dB steps;
+the default board). Values are dB either way.
 
 Pure Python; pyserial only for a real port.
 """
@@ -161,7 +166,7 @@ class Reply:
 class Device:
     index: int
     name: str
-    kind: str  # switch | atten | atten_serial
+    kind: str  # switch | atten | atten_serial | atten_uart
     max: str
     safe: str
     value: str
@@ -170,6 +175,15 @@ class Device:
     @property
     def is_atten(self) -> bool:
         return self.kind.startswith("atten")
+
+    @property
+    def is_uart(self) -> bool:
+        """A UART attenuator: its change lands ms after the latch (design §5.4)."""
+        return self.kind == "atten_uart"
+
+    @property
+    def step_db(self) -> float:
+        return 0.25 if self.is_uart else 0.5
 
 
 def _kv(text: str) -> dict:
@@ -181,14 +195,18 @@ def _kv(text: str) -> dict:
     return out
 
 
-def fmt_value(v) -> str:
+def fmt_value(v, step_db: float = 0.5) -> str:
+    """Wire form of a value: switch codes as integers, attenuation (float) in dB as
+    the controller formats it (12.0, 12.5, 12.25). `step_db` is the device's step."""
     if isinstance(v, str):
         return v
     if isinstance(v, float):
-        if abs(v * 2 - round(v * 2)) > 1e-9:
-            raise ValueError(f"attenuation {v} dB is not a multiple of 0.5")
-        h = int(round(v * 2))
-        return f"{h // 2}.{5 if h % 2 else 0}"
+        q = v / step_db
+        if abs(q - round(q)) > 1e-9:
+            raise ValueError(f"attenuation {v} dB is not a multiple of {step_db}")
+        cdb = int(round(round(q) * step_db * 100))
+        whole, frac = divmod(cdb, 100)
+        return f"{whole}.{frac // 10}" if frac % 10 == 0 else f"{whole}.{frac:02d}"
     return str(int(v))
 
 
@@ -224,8 +242,13 @@ class Rfctl:
         return rf
 
     @classmethod
-    def sim(cls, virtual: bool = True, binary: str | None = None) -> "Rfctl":
+    def sim(
+        cls, virtual: bool = True, binary: str | None = None, board: str | None = None
+    ) -> "Rfctl":
+        """The host simulator. `board`: jeanoko-n4 (default), jeanoko-n6 or pe4302."""
         argv = [binary or sim_binary()] + (["--virtual"] if virtual else [])
+        if board:
+            argv += ["--board", board]
         rf = cls(ProcessTransport(argv))
         rf.virtual = virtual
         rf.hello()
@@ -324,7 +347,10 @@ class Rfctl:
         for k, v in values.items():
             if k not in self.devices:
                 raise KeyError(f"rfctl: no device {k!r} on board {self.info.get('board')}")
-            toks += [k, fmt_value(v)]
+            d = self.devices[k]
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and d.is_atten:
+                v = float(v)
+            toks += [k, fmt_value(v, d.step_db)]
         return " ".join(toks)
 
     def set(self, values: Mapping[str, object]) -> int:
@@ -382,7 +408,7 @@ class Rfctl:
                 while items and (not chunk or size + len(items[0][0]) + 8 < MAX_LINE - 24):
                     k, v = items.pop(0)
                     chunk[k] = v
-                    size += len(k) + len(fmt_value(v)) + 2
+                    size += len(k) + 8 + 2
                 r = self.cmd(f"at {int(t_rel)} " + self._pairs(chunk))
                 n = int(r.kv["n"])
         return n
@@ -429,6 +455,23 @@ class Rfctl:
     def selftest(self) -> str:
         return self.cmd("selftest").kv["chain"]
 
+    def attcheck(self, *devs: str) -> dict[str, dict]:
+        """Re-send each UART attenuator's value one unit at a time and wait for its
+        "ok" on the shared acknowledge line: {dev: {result, value, latency_us}}.
+        result is ok | timeout | stuck_low (an unpowered unit on the bus) | absent."""
+        r = self.cmd("attcheck " + " ".join(devs), timeout=max(self.timeout, 2.0))
+        out = {}
+        for ln in r.data:
+            if ln.startswith("att "):
+                parts = ln.split()
+                kv = _kv(ln)
+                out[parts[1]] = {
+                    "result": parts[2],
+                    "value": kv.get("value"),
+                    "latency_us": int(kv.get("latency_us", 0)),
+                }
+        return out
+
     def clock_map(self, n: int = 24, clock=time.monotonic) -> ClockMap:
         """Fit host time against controller time from `n` pings; the fastest round
         trips carry the least queueing, so the fit uses the best third."""
@@ -470,6 +513,15 @@ class Rfctl:
                 _, t, chain, gpio, sync = ln.split()
                 hist.append((int(t), chain, int(gpio, 0)))
         return hist
+
+    def sim_uart(self, n: int = 64) -> list[tuple[int, int, int, str]]:
+        """The last UART attenuator commands: [(t_us, unit, tx_gpio, text)]."""
+        out = []
+        for ln in self.raw(f"sim.uart {int(n)}"):
+            if ln.startswith("uart "):
+                _, t, unit, gpio, text = ln.split(" ", 4)
+                out.append((int(t), int(unit), int(gpio), text))
+        return out
 
     def sim_edge(self, line: int, t_us: int) -> bool:
         return _kv(self.raw(f"sim.edge {int(line)} {int(t_us)}")[-1]).get("accepted") == "1"

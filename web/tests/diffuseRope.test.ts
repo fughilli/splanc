@@ -25,23 +25,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { inflateSync } from "node:zlib";
-import { reducedToBlobs } from "../src/cv/detect";
 import { adaptiveDiffuseReduce } from "../src/cv/diffuseDetect";
-
-interface Frame {
-  file: string;
-  brightness: number;
-  exposure: number;
-  exposureMs: number;
-  kind: "stride3" | "stride2" | "palette";
-  lit: [number, [number, number, number]][];
-  detectable: number[];
-}
-interface Truth {
-  crop: { x: number; y: number; w: number; h: number };
-  centers: ([number, number] | null)[];
-  frames: Frame[];
-}
+import {
+  COLOR,
+  emptyScore,
+  hue4Line,
+  ropeBlobs,
+  scoreFrame,
+  scoreLine,
+  summarize,
+  type RopeFrame as Frame,
+  type RopeScore as Score,
+  type RopeSummary,
+  type RopeTruth as Truth,
+} from "./diffuseRopeScore";
 
 const REL = "tests/testdata/diffuse_rope";
 const DIR = [resolve(__dirname, "..", REL), resolve(__dirname, "../..", REL), resolve("web", REL), resolve(REL)].find((p) =>
@@ -51,7 +48,6 @@ assert.ok(DIR, "diffuse_rope dataset in test data");
 const TRUTH = JSON.parse(readFileSync(resolve(DIR, "truth.json"), "utf8")) as Truth;
 const W = TRUTH.crop.w / 2;
 const H = TRUTH.crop.h / 2;
-const MATCH_PX = 15;
 
 function loadRgb(f: Frame): Float32Array {
   const u8 = inflateSync(readFileSync(resolve(DIR!, f.file)));
@@ -93,120 +89,21 @@ function legacyTopHat(rgb: Float32Array, gain = 1, radiusPx = 8, threshold = 0.1
   return out;
 }
 
-interface Score {
-  detectable: number;
-  hits: number;
-  fp: number;
-  splits: number;
-  errs: number[];
-  byColor: Map<string, { n: number; hit: number }>;
-  /** Matched blobs of 4-symbol palette colours: classified to the right hue? */
-  hue4: Map<string, { n: number; ok: number }>;
-}
-
-/** Hue in degrees of an RGB triple (channelQuality.ts hueSat, in degrees). */
-function hueDeg(r: number, g: number, b: number): number | null {
-  const mx = Math.max(r, g, b);
-  const c = mx - Math.min(r, g, b);
-  if (mx <= 0 || c <= 0) return null;
-  const h = mx === r ? ((g - b) / c) % 6 : mx === g ? (b - r) / c + 2 : (r - g) / c + 4;
-  return (h * 60 + 360) % 360;
-}
-/** The 4-symbol palette's hues (firmware/pattern symbol_color: blue, magenta,
- * yellow, red) — the decoder picks the nearest. */
-const HUE4: Record<string, number> = { "001": 240, "101": 300, "110": 60, "100": 0 };
-const angDist = (a: number, b: number): number => Math.abs(((a - b + 540) % 360) - 180);
-
-function scoreFrame(f: Frame, detect: Uint8Array, s: Score): void {
-  const blobs = reducedToBlobs(detect, W, H, 2, TRUTH.crop.h, false, { minArea: 2, maxArea: 4000, maxBlobs: 2048, maxAspect: 3 });
-  const pts = blobs.map((b) => [b.u + TRUTH.crop.x, b.v + TRUTH.crop.y] as const);
-  const lit = f.lit.filter(([i]) => TRUTH.centers[i] !== null);
-  const det = new Set(f.detectable);
-  const pairs: [number, number, number][] = [];
-  let unnear = 0;
-  pts.forEach(([x, y], j) => {
-    let near = false;
-    for (const [i] of lit) {
-      const [cx, cy] = TRUTH.centers[i]!;
-      const d = Math.hypot(cx - x, cy - y);
-      if (d < MATCH_PX) {
-        pairs.push([d, j, i]);
-        near = true;
-      }
-    }
-    if (!near) unnear++;
-  });
-  pairs.sort((a, b) => a[0] - b[0]);
-  const usedB = new Set<number>();
-  const usedL = new Set<number>();
-  const nearB = new Set(pairs.map((p) => p[1]));
-  const colorOf = new Map(f.lit.map(([i, rgb]) => [i, rgb.join("")]));
-  for (const [d, j, i] of pairs) {
-    if (usedB.has(j) || usedL.has(i)) continue;
-    usedB.add(j);
-    usedL.add(i);
-    if (det.has(i)) {
-      s.hits++;
-      s.errs.push(d);
-      const key = colorOf.get(i)!;
-      const target = HUE4[key];
-      const h = hueDeg(blobs[j]!.r!, blobs[j]!.g!, blobs[j]!.b!);
-      if (target !== undefined && h !== null) {
-        const nearest = Object.values(HUE4).reduce((a, b) => (angDist(h, a) <= angDist(h, b) ? a : b));
-        const c = s.hue4.get(key) ?? { n: 0, ok: 0 };
-        c.n++;
-        if (nearest === target) c.ok++;
-        s.hue4.set(key, c);
-      }
-    }
-  }
-  s.detectable += det.size;
-  s.fp += unnear;
-  s.splits += [...nearB].filter((j) => !usedB.has(j)).length;
-  for (const [i, rgb] of lit) {
-    if (!det.has(i)) continue;
-    const key = rgb.join("");
-    const c = s.byColor.get(key) ?? { n: 0, hit: 0 };
-    c.n++;
-    if (usedL.has(i)) c.hit++;
-    s.byColor.set(key, c);
-  }
-}
-
-const emptyScore = (): Score => ({ detectable: 0, hits: 0, fp: 0, splits: 0, errs: [], byColor: new Map(), hue4: new Map() });
-const median = (a: number[]): number => {
-  const s = [...a].sort((x, y) => x - y);
-  return s.length ? s[s.length >> 1]! : NaN;
-};
-
-function run(detector: (rgb: Float32Array) => Uint8Array, pick: (f: Frame) => boolean): Score & { frames: number } {
+function run(detector: (rgb: Float32Array) => Uint8Array, pick: (f: Frame) => boolean): Score {
   const s = emptyScore();
-  let frames = 0;
   for (const f of TRUTH.frames) {
     if (!pick(f)) continue;
-    frames++;
-    scoreFrame(f, detector(loadRgb(f)), s);
+    scoreFrame(TRUTH, f, ropeBlobs(TRUTH, detector(loadRgb(f))), s);
   }
-  return { ...s, frames };
+  return s;
 }
 
 const adaptive = (rgb: Float32Array): Uint8Array => adaptiveDiffuseReduce(rgb, W, H).detect;
 const legacy = (rgb: Float32Array): Uint8Array => legacyTopHat(rgb);
-const COLOR = new Map([["100", "red"], ["001", "blue"], ["101", "magenta"], ["110", "yellow"], ["111", "white"], ["010", "green"]]);
 
-function report(name: string, r: Score & { frames: number }): { recall: number; fpPerFrame: number; splitPerFrame: number; medErr: number } {
-  const m = {
-    recall: r.hits / r.detectable,
-    fpPerFrame: r.fp / r.frames,
-    splitPerFrame: r.splits / r.frames,
-    medErr: median(r.errs),
-  };
-  const colors = [...r.byColor].map(([k, c]) => `${COLOR.get(k)} ${(c.hit / c.n).toFixed(2)}`).join(" ");
-  console.log(
-    `${name}: ${r.frames} frames, recall ${m.recall.toFixed(3)} (${r.hits}/${r.detectable}), fp/frame ${m.fpPerFrame.toFixed(1)}, ` +
-      `split/frame ${m.splitPerFrame.toFixed(2)}, median err ${m.medErr.toFixed(2)} px${colors ? ` | ${colors}` : ""}`,
-  );
-  return m;
+function report(name: string, r: Score): RopeSummary {
+  console.log(scoreLine(name, r));
+  return summarize(r);
 }
 
 test("dataset is intact: 40 frames, centres located for most LEDs, every frame has detectable truth", () => {
@@ -241,9 +138,8 @@ test("adaptive diffuse detector finds every code colour, white sync included", (
 test("adaptive blobs keep the 4-symbol palette's hues apart (4-symbol decoding)", () => {
   const r = run(adaptive, (f) => f.kind === "palette");
   const l = run(legacy, (f) => f.kind === "palette");
-  const line = (x: Score): string => [...x.hue4].map(([k, c]) => `${COLOR.get(k)} ${(c.ok / c.n).toFixed(2)} (n=${c.n})`).join(" ");
-  console.log(`hue4 adaptive: ${line(r)}`);
-  console.log(`hue4 legacy:   ${line(l)}`);
+  console.log(`hue4 adaptive: ${hue4Line(r)}`);
+  console.log(`hue4 legacy:   ${hue4Line(l)}`);
   // Magenta is the hard one (this rope reads it ~20 deg toward blue even raw).
   // Background-subtracted colour read it right 48% of the time and sank
   // 4-symbol decoding on-device; the spot-smoothed colour holds ~70% across the full sweep (88% on these frames).

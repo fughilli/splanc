@@ -1,0 +1,808 @@
+{
+  "title": "HITL performance",
+  "uid": "hitl-performance",
+  "tags": ["hitl", "splanc", "performance"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "",
+  "time": {
+    "from": "now-35d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "lane",
+        "label": "Lane",
+        "type": "custom",
+        "query": "all,main,pr",
+        "current": {
+          "text": "all",
+          "value": "all"
+        },
+        "options": [
+          {
+            "text": "all",
+            "value": "all",
+            "selected": true
+          },
+          {
+            "text": "main",
+            "value": "main",
+            "selected": false
+          },
+          {
+            "text": "pr",
+            "value": "pr",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "gate",
+        "label": "Gate filter (regex, table)",
+        "type": "textbox",
+        "query": ".*",
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        }
+      },
+      {
+        "name": "series",
+        "label": "Metric",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "grafanacloud-infinity"
+        },
+        "query": {
+          "refId": "variable",
+          "queryType": "infinity",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "grafanacloud-infinity"
+            },
+            "type": "json",
+            "source": "url",
+            "format": "table",
+            "parser": "backend",
+            "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/hitl-metrics-summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "$[lane='all' and rig='all']",
+            "columns": [
+              {
+                "selector": "series",
+                "text": "series",
+                "type": "string"
+              }
+            ],
+            "filters": []
+          }
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": null,
+        "sort": 1,
+        "current": {
+          "text": [
+            "ble_rename.name_seen_latency.adv",
+            "ble_rename.name_seen_latency.conn",
+            "live_latency.control_lag.live.p50",
+            "live_latency.control_lag.live.p99",
+            "improv_fresh_join.phase_wall_time.absent",
+            "ble_capture_e2e.ble_request_rtt.stage",
+            "rejoin_loop.lease_latency",
+            "tls_churn.wss_recovery",
+            "ota_gate.handoff_duration.upgrade",
+            "heavy_effect_reachability.connect_latency.idle"
+          ],
+          "value": [
+            "ble_rename.name_seen_latency.adv",
+            "ble_rename.name_seen_latency.conn",
+            "live_latency.control_lag.live.p50",
+            "live_latency.control_lag.live.p99",
+            "improv_fresh_join.phase_wall_time.absent",
+            "ble_capture_e2e.ble_request_rtt.stage",
+            "rejoin_loop.lease_latency",
+            "tls_churn.wss_recovery",
+            "ota_gate.handoff_duration.upgrade",
+            "heavy_effect_reachability.connect_latency.idle"
+          ]
+        },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "How to read this",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Each HITL gate reports the numbers it gates on (`HITL_METRIC` lines, `pi/hitl/harness/hitl_metrics.py`; older gates are parsed from the lines they already print). The ingest (`pi/hitl/observability/metrics/`) pulls them out of every `hitl.yaml` run's job log every 3 h.\n\n**Headroom** = limit / p50 and limit / p95 (for a floor, p50 / limit). Near 1 = the gate flakes. Above **3\u00d7 p50 or 2\u00d7 p95** the limit is so loose that a real regression can pass: watch the **drift** column (p50 of the last 7 days vs the 30 days before) instead. Audit: `docs/hitl/gate-thresholds.md`.\n\n**Lane**: `main` = pushes, merge queue and scheduled runs on main; `pr` = PR branches. Points are coloured by rig; the red dashed line is the gate's limit, the grey lines its p50 / p95 over the last 90 days."
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Threshold headroom per metric (last 90 days, lane $lane)",
+      "description": "Each HITL gate reports the numbers it gates on (`HITL_METRIC` lines, `pi/hitl/harness/hitl_metrics.py`; older gates are parsed from the lines they already print). The ingest (`pi/hitl/observability/metrics/`) pulls them out of every `hitl.yaml` run's job log every 3 h.\n\n**Headroom** = limit / p50 and limit / p95 (for a floor, p50 / limit). Near 1 = the gate flakes. Above **3\u00d7 p50 or 2\u00d7 p95** the limit is so loose that a real regression can pass: watch the **drift** column (p50 of the last 7 days vs the 30 days before) instead. Audit: `docs/hitl/gate-thresholds.md`.\n\n**Lane**: `main` = pushes, merge queue and scheduled runs on main; `pr` = PR branches. Points are coloured by rig; the red dashed line is the gate's limit, the grey lines its p50 / p95 over the last 90 days.",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/hitl-metrics-summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$[rig='all' and lane='$lane' and $match(series, /$gate/)]",
+          "columns": [
+            {
+              "selector": "series",
+              "text": "series",
+              "type": "string"
+            },
+            {
+              "selector": "unit",
+              "text": "unit",
+              "type": "string"
+            },
+            {
+              "selector": "n",
+              "text": "n",
+              "type": "number"
+            },
+            {
+              "selector": "n_fail",
+              "text": "fails",
+              "type": "number"
+            },
+            {
+              "selector": "p50",
+              "text": "p50",
+              "type": "number"
+            },
+            {
+              "selector": "p95",
+              "text": "p95",
+              "type": "number"
+            },
+            {
+              "selector": "max",
+              "text": "max",
+              "type": "number"
+            },
+            {
+              "selector": "cmp",
+              "text": "cmp",
+              "type": "string"
+            },
+            {
+              "selector": "limit",
+              "text": "limit",
+              "type": "number"
+            },
+            {
+              "selector": "limit_over_p50",
+              "text": "limit/p50",
+              "type": "number"
+            },
+            {
+              "selector": "limit_over_p95",
+              "text": "limit/p95",
+              "type": "number"
+            },
+            {
+              "selector": "drift_pct",
+              "text": "p50 drift %",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "series": 0,
+              "unit": 1,
+              "n": 2,
+              "fails": 3,
+              "p50": 4,
+              "p95": 5,
+              "max": 6,
+              "cmp": 7,
+              "limit": 8,
+              "limit/p50": 9,
+              "limit/p95": 10,
+              "p50 drift %": 11
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          },
+          "decimals": 3
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "limit/p50"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "x"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1.25
+                    },
+                    {
+                      "color": "orange",
+                      "value": 3
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "limit/p95"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "x"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1.25
+                    },
+                    {
+                      "color": "orange",
+                      "value": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p50 drift %"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 10
+                    },
+                    {
+                      "color": "red",
+                      "value": 25
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "series"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 380
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^(n|fails)$"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "limit/p95",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "type": "row",
+      "title": "Per-metric history",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "$series",
+      "description": "Every measurement (points, coloured by rig) with the gate's limit (red dashed) and the 90-day p50 / p95 (grey dashed).",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      },
+      "repeat": "series",
+      "repeatDirection": "h",
+      "maxPerRow": 2,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/hitlm-${series}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$[lane='ref' or '$lane'='all' or lane='$lane']",
+          "columns": [
+            {
+              "selector": "t",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "v",
+              "text": "value",
+              "type": "number"
+            },
+            {
+              "selector": "rig",
+              "text": "rig",
+              "type": "string"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": ["rig"],
+            "keepFields": false,
+            "naming": {
+              "asLabels": false
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^limit( value)?$"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "limit"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [10, 6]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^p50( value)?$"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p50"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [4, 4]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8e8e8e"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^p95( value)?$"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p95"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [12, 4]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5a5a5a"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "series": 0,
+              "rig / DUT": 1,
+              "n": 2,
+              "p50": 3,
+              "p95": 4,
+              "max": 5,
+              "limit": 6,
+              "limit/p95": 7
+            }
+          }
+        }
+      ],
+      "type": "table",
+      "title": "Per rig / DUT (lane $lane)",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/hitl-metrics-summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$[rig!='all' and lane='$lane' and $match(series, /$gate/)]",
+          "columns": [
+            {
+              "selector": "series",
+              "text": "series",
+              "type": "string"
+            },
+            {
+              "selector": "rig",
+              "text": "rig / DUT",
+              "type": "string"
+            },
+            {
+              "selector": "n",
+              "text": "n",
+              "type": "number"
+            },
+            {
+              "selector": "p50",
+              "text": "p50",
+              "type": "number"
+            },
+            {
+              "selector": "p95",
+              "text": "p95",
+              "type": "number"
+            },
+            {
+              "selector": "max",
+              "text": "max",
+              "type": "number"
+            },
+            {
+              "selector": "limit",
+              "text": "limit",
+              "type": "number"
+            },
+            {
+              "selector": "limit_over_p95",
+              "text": "limit/p95",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          },
+          "decimals": 3
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "limit/p95"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "x"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1.25
+                    },
+                    {
+                      "color": "orange",
+                      "value": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "n"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}

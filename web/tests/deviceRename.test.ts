@@ -22,7 +22,7 @@ after(() => mock.timers.reset());
 import { deviceStore } from "../src/store/deviceStore";
 import { appState } from "../src/ui/app/state";
 import { openDeviceSheet } from "../src/ui/screens/deviceSheet";
-import { FakeLan, all, buttonTitled, clearOverlays, settle, toasts, type FakePlayer } from "./deviceFakes";
+import { FakeLan, advance, all, buttonTitled, clearOverlays, settle, toasts, type FakePlayer } from "./deviceFakes";
 
 let lan: FakeLan;
 let restoreWs: () => void = () => undefined;
@@ -93,6 +93,10 @@ test("renaming a device that is not connected saves the name now and queues it f
   deviceStore.applyWelcome(rec.id, { mac: "AA:BB:CC:00:00:71", deviceName: "Led Widget 000071" });
 
   const input = startRename();
+  // Opening the device sheet looks for every known fixture once: let that probe
+  // find nothing and close before renaming.
+  await advance(10_500);
+  const socketsBefore = lan.sockets.length;
   typeInto(input, "Garage");
   fire(input, "keydown", { key: "Enter" });
   await settle();
@@ -101,7 +105,8 @@ test("renaming a device that is not connected saves the name now and queues it f
   assert.equal(saved.label, "Garage", "shown immediately");
   assert.equal(saved.pendingName, "Garage", "queued for the next connection");
   assert.ok(toasts().includes("Name saved — applies on next connection"));
-  assert.equal(lan.sockets.length, 0, "no connection is opened just to rename");
+  assert.equal(lan.sockets.length, socketsBefore, "no connection is opened just to rename");
+  assert.equal(lan.liveTo("10.0.0.71"), 0);
 });
 
 test("Escape or tapping away cancels a rename and nothing reaches the device [rr:PR-13]", async () => {

@@ -34,6 +34,7 @@ import os
 import sys
 
 import hitl_e2e  # flash() + default_bundle()
+from ble_link_core import MAX_LINK_LOSSES, link_loss_summary
 from hitl_client import Reservation
 from mapping_trigger_core import frame_ticks_in
 from provision import reserved_board_ble_mac
@@ -182,6 +183,12 @@ def main() -> int:
     ap.add_argument("--stride", type=int, default=4)
     ap.add_argument("--gap-ms", type=float, default=600.0, help="pause between requests")
     ap.add_argument("--timeout", type=float, default=40.0)
+    ap.add_argument(
+        "--max-link-losses",
+        type=int,
+        default=MAX_LINK_LOSSES,
+        help="BLE link drops ridden out by reconnect + resume (the app reconnects too)",
+    )
     args = ap.parse_args()
 
     if args.sku != "esp32c6":
@@ -219,9 +226,12 @@ def main() -> int:
             f"PYTHONPATH=/tmp python3 /tmp/hitl_ble_player.py exchange "
             f"--frames-b64 {frames_b64} --timeout {args.timeout:g} --gap-ms {args.gap_ms:g}"
         )
+        cmd += f" --max-link-losses {args.max_link_losses} --upload-start {len(seq)}"
         if mac:
             cmd += f" --address {mac}"
-        proc = res.ssh(cmd, capture=True, timeout=args.timeout * 2 + 300)
+        proc = res.ssh(
+            cmd, capture=True, timeout=args.timeout * 2 + 300 + 120 * args.max_link_losses
+        )
         out = (proc.stdout or "").strip()
         if proc.stderr:
             sys.stderr.write(proc.stderr)
@@ -231,6 +241,8 @@ def main() -> int:
             raise SystemExit(
                 f"BLE driver gave no JSON result (exit {proc.returncode}): {out!r}"
             ) from e
+        print(f"[ble-capture] central: {result.get('adapter')}", flush=True)
+        print(link_loss_summary(result.get("link_losses") or []), flush=True)
         if not result.get("ok"):
             raise SystemExit(f"BLE exchange failed: {result.get('error')}")
         replies = [proto_wire.decode_server(base64.b64decode(r)) for r in result["replies_b64"]]

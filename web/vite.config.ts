@@ -71,6 +71,20 @@ const buildInfo = resolveBuildInfo();
 
 export default defineConfig({
   plugins: [{
+    // esptool-js >= 0.7 loads its flasher stubs with
+    // `import("./targets/stub_flasher/<chip>.json", { with: { type: "json" } })`.
+    // The build leaves an import that carries an attribute unbundled, so the
+    // page asked for assets/targets/stub_flasher/*.json, which isn't there
+    // ("Failed to fetch dynamically imported module" after the chip was
+    // detected). Without the attribute, Vite's JSON plugin bundles each stub as
+    // its own lazily loaded chunk.
+    name: "esptool-js-stub-json",
+    enforce: "pre",
+    transform(code, id) {
+      if (!/esptool-js[\\/]lib[\\/]stubFlasher\.js$/.test(id)) return null;
+      return code.replace(/,\s*\{\s*with:\s*\{\s*type:\s*"json"\s*\}\s*\}/g, "");
+    },
+  }, {
     name: "standalone-scene",
     apply: "build",
     async closeBundle() {

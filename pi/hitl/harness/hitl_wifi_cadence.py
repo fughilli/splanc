@@ -285,7 +285,11 @@ def main() -> None:
     ap.add_argument("--effects", default="light,heavy")
     ap.add_argument("--phases", default=",".join(PHASES))
     ap.add_argument("--leds", type=int, default=250)
-    ap.add_argument("--steady-seconds", type=float, default=12.0)
+    # As long as the longest phase ("missing", 22 s): the device view compares each
+    # phase's render/wire-out interval MAXIMA with the steady phase's, and a maximum
+    # over fewer frames is biased low, so a short baseline flags a long phase's
+    # ordinary tail as an excursion (desk D-425). The limits themselves are unchanged.
+    ap.add_argument("--steady-seconds", type=float, default=22.0)
     ap.add_argument("--settle", type=float, default=4.0, help="after loading an effect (s)")
     ap.add_argument("--lease-timeout", type=float, default=90.0)
     ap.add_argument("--gate", action="store_true", help="exit 1 on FAIL")

@@ -18,12 +18,12 @@ here, put them beside a data directory with the same layout.
 
 ## Setup that was measured
 
-| Part           | What                                                                                                                                                                                                |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fixture        | DemoPixieLamp: a 250-LED WS2812 rope, wired GRB, inside a white braided diffuser coiled on a lamp form. About 190 LEDs are visible from the camera; the rest are hidden behind the form.            |
-| Camera         | Pixel 10 Pro Fold rear camera, 720x1280 portrait, Chrome `getUserMedia`, on a stand. `data/camera.json` holds its capabilities. Manual exposure (ISO 30, white balance locked 5000 K) unless noted. |
-| LED control    | `set_counting_pattern` through the app's own device client (found with `capture/findclient.mjs`). Note that the firmware keeps only the first 32 blocks.                                            |
-| Exposure scale | `x` in [0,1] is `planExposure`'s geometric map between the camera minimum (0.057 ms) and 55 ms. For example, x = 0.35 is about 0.63 ms and x = 0.45 about 1.3 ms.                                   |
+| Part           | What                                                                                                                                                                                                                                                             |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fixture        | DemoPixieLamp: a 250-LED WS2812 rope, wired GRB, inside a white braided diffuser coiled on a lamp form. About 190 LEDs are visible from the camera; the rest are hidden behind the form.                                                                         |
+| Camera         | Pixel 10 Pro Fold rear camera, 720x1280 portrait, Chrome `getUserMedia`, on a stand. `data/camera.json` holds its capabilities. Manual exposure (ISO 30, white balance locked 5000 K) unless noted.                                                              |
+| LED control    | `set_counting_pattern` through the app's own device client (found with `capture/findclient.mjs`). At most 32 blocks per call: the client and current firmware refuse more (older firmware kept the first 32 silently), and `runplan*.mjs` checks the plan first. |
+| Exposure scale | `x` in [0,1] is `planExposure`'s geometric map between the camera minimum (0.057 ms) and 55 ms. For example, x = 0.35 is about 0.63 ms and x = 0.45 about 1.3 ms.                                                                                                |
 
 There were two sessions with different phone placements, each with its own LED
 centres and reference scans:
@@ -38,7 +38,7 @@ centres and reference scans:
 | File                                             | What                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `centers_s1_clean.json`, `centers_s2_clean.json` | Exact per-LED spot centres (full-res px) for each session. Each is a merge of the dim (`centers_lo*`, white 0.6 at x = 0.35) and bright (`centers_hi*`, white 1.0 at x = 0.55) single-LED scans: the bright scan unless saturated, else the dim one. `src: "none"` marks LEDs that are hidden, too faint, or "ghosts" whose light only escapes at a shared indirect-glow point. Use these, not the raw scans. |
-| `plan_*.json`                                    | Capture plans, inputs to `capture/runplan.mjs`. **`plan_stride.json` is invalid**: it sends more than 32 blocks, which the firmware silently truncates. `plan_stride2.json` (32-block windows) replaced it, and `frames/stride` is the stride2 capture.                                                                                                                                                       |
+| `plan_*.json`                                    | Capture plans, inputs to `capture/runplan.mjs`. **`plan_stride.json` is invalid**: it sends more than 32 blocks, which older firmware silently truncated (current firmware refuses it). `plan_stride2.json` (32-block windows) replaced it, and `frames/stride` is the stride2 capture.                                                                                                                       |
 | `plans_done/<frames dir>.json`                   | What each capture actually did: per step, the exposure, exposure time and the exact lit blocks with their colours. The scorers read these as `frames/<dir>/plan_done.json`.                                                                                                                                                                                                                                   |
 | `detectable_<frames dir>.json`                   | Per step, the lit LEDs and the subset that is **detectable**: the known-location response (frame minus dark, max channel, gaussian σ 3) is above 5× noise. Recall is scored against these. The `ae` set uses per-frame matched darks.                                                                                                                                                                         |
 
@@ -133,7 +133,9 @@ way.
   `exposureCompensation` keeps 60 fps.
 - **Settings readback is stale.** `track.getSettings().exposureTime` can
   report stale values. Check the frame brightness instead.
-- **`set_counting_pattern` keeps 32 blocks**, silently.
+- **`set_counting_pattern` takes at most 32 blocks.** Firmware before
+  the fix kept the first 32 silently; the client now refuses more before
+  sending, and current firmware answers `bad_message`.
 - **White balance:** lock it before a scan. Continuous white balance changed
   spot peaks by about 3× between the two s1 scans.
 - **New origin:** a new dev-server origin means a new camera permission

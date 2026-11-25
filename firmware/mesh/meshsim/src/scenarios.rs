@@ -14,6 +14,7 @@ use splanc_mesh::ports::{Port, Targets};
 use splanc_mesh::rekey::{RekeyHead, RekeyOrder, RekeyWraps};
 use splanc_mesh::security::FrameGuard;
 use splanc_mesh::stack::SendError;
+use splanc_mesh::admin::UnlockError;
 use swarm_net::mesh::{Header as MeshHeader, PacketOf, BROADCAST};
 
 use super::*;
@@ -80,6 +81,13 @@ fn control(w: &mut World, op: u32, t: Targets) -> i64 {
     w.now()
 }
 
+/// Send control `op` from gateway `gw`'s connection 0.
+fn control_on(w: &mut World, gw: usize, op: u32, t: Targets) -> i64 {
+    let local = w.local(gw);
+    w.nodes[gw].stack.send_control(local, CONN, op, t, b"set_uniforms{speed=0.5}").expect("control");
+    w.now()
+}
+
 /// Who got control `op` (index, count, latency ms of the first).
 fn receivers(w: &World, op: u32, sent: i64) -> Vec<(usize, usize, f64)> {
     w.nodes
@@ -128,9 +136,9 @@ fn radiolarians_self_configure_and_take_control() {
     let t = w.local(GW);
     assert_eq!(w.nodes[GW].stack.send_control(t, CONN, 1, Targets::All, b"x"), Err(SendError::Locked));
     let rogue = AdminSigner::from_secret(b"not-the-admin!!!", w.mesh_id).grant(w.mesh_id, 9, id(GW), w.nodes[GW].stack.dev.public_key(), 99_999);
-    assert!(w.nodes[GW].stack.unlock(t, 1, &rogue).is_err());
+    assert!(w.nodes[GW].stack.unlock(t, 1, &rogue, None).is_err());
     let g = w.grant(GW, SESSION);
-    assert!(w.nodes[GW].stack.unlock(t + 1_000_000, CONN, &g).is_err(), "locked out");
+    assert!(w.nodes[GW].stack.unlock(t + 1_000_000, CONN, &g, None).is_err(), "locked out");
     w.run_ms(2_100);
     let sync_ms = w.unlock_and_sync(GW, SESSION, &all, 10_000).expect("members confirm the session");
     for n in &w.nodes[1..] {
@@ -463,6 +471,61 @@ fn removal_rekey_64_fixtures() {
     eprintln!("rekey 64 fixtures (8x8 grid, 4 m): converged in {ms} ms; {bytes} B in {packets} packets; rejoins refused {revoked}");
 }
 
+/// Revocable access (docs/design/share-links.md): a delegate the admin key certified
+/// administers the mesh through one gateway (its certificate travels ahead of its grant);
+/// the owner, through another gateway, rotates the keys with the delegate on the revocation
+/// list; every member drops the delegate's session, its gateway locks, and the delegate's
+/// grant is refused from then on.
+#[test]
+fn a_delegate_administers_until_the_owner_revokes_it() {
+    let n = 6;
+    let mut w = room(n, 21);
+    let all: Vec<usize> = (0..n).collect();
+    let c = creds(&w);
+    form(&mut w, &all, &c, 0, 30_000);
+
+    let delegate = AdminSigner::from_secret(b"a delegate's key", w.mesh_id);
+    let cert = w.admin.delegation(w.mesh_id, delegate.public(), admin::NO_EXPIRY);
+    let local_s = (w.local(GW) / 1_000_000) as u32;
+    let g = delegate.delegated_grant(w.mesh_id, SESSION, w.nodes[GW].id, w.nodes[GW].stack.dev.public_key(), local_s + 3600);
+
+    // Without its certificate the gateway refuses the grant.
+    let t = w.local(GW);
+    assert_eq!(w.nodes[GW].stack.unlock(t, CONN, &g, None), Err(UnlockError::BadGrant));
+    w.run_ms(2_100);
+    let t = w.local(GW);
+    w.nodes[GW].stack.unlock(t, CONN, &g, Some(&cert)).expect("a certified delegate's grant");
+    let members: Vec<usize> = (1..n).collect();
+    let ms = w.run_until(60_000, |w| members.iter().all(|&m| w.nodes[m].synced(SESSION))).expect("members synced to the delegate's session");
+    let sent = control(&mut w, 41, Targets::All);
+    w.run_ms(2_000);
+    assert_eq!(receivers(&w, 41, sent).len(), n - 1, "the delegate commands every member");
+    eprintln!("delegate: {} members synced in {ms} ms, commands reach all", n - 1);
+
+    // The owner, on another gateway, revokes it with a key rotation.
+    const OWNER_GW: usize = 1;
+    const OWNER_SESSION: u32 = 2;
+    w.unlock_and_sync(OWNER_GW, OWNER_SESSION, &all, 60_000).expect("owner session");
+    let dh = splanc_mesh::crypto::key_hash(&delegate.public());
+    let (mk, ss) = ([0xA6u8; 16], [0x6Au8; 32]);
+    let order = RekeyOrder::sign(&w.admin, w.mesh_id, 2, &mk, &ss, 1, &[dh]);
+    let t = w.local(OWNER_GW);
+    w.nodes[OWNER_GW].stack.rotate(t, CONN, order, &mk, &ss, &[], &mut |_| {}).unwrap();
+    let others: Vec<usize> = (0..n).filter(|&i| i != OWNER_GW).collect();
+    w.run_until(60_000, |w| others.iter().all(|&i| !w.nodes[i].synced(SESSION))).expect("every member dropped the delegate's session");
+    assert!(w.nodes[GW].stack.gateway.is_none(), "the delegate's gateway session is gone");
+    assert!(!w.nodes[GW].stack.signing_session(CONN), "its connection is locked");
+    assert!(w.nodes.iter().all(|x| x.stack.sessions.delegation(&dh).is_none()), "no member keeps its certificate");
+
+    // Its grant (and a fresh one) is refused from now on; the owner still commands.
+    w.run_ms(2_100);
+    let t = w.local(GW);
+    assert_eq!(w.nodes[GW].stack.unlock(t, CONN, &g, Some(&cert)), Err(UnlockError::BadGrant));
+    let sent = control_on(&mut w, OWNER_GW, 43, Targets::All);
+    w.run_ms(2_000);
+    assert_eq!(receivers(&w, 43, sent).len(), n - 1, "the owner's session is untouched");
+}
+
 /// A command for 64 members takes several packets (per-receiver MACs).
 #[test]
 fn per_receiver_mac_cost() {
@@ -602,8 +665,11 @@ fn mesh_time_and_apply_at_skew() {
     }
     assert!((0..6).all(|i| w.nodes[i].stack.time.state == SyncState::Synced));
     // Node 0's app sets the show epoch 2 s ahead; a change is scheduled for epoch + 1.5 s.
+    // On a mesh with an admin key the epoch is the admin session's (M7): node 0 holds one,
+    // and the members take the epoch from its signed TIME_BASE.
+    w.unlock_and_sync(0, SESSION, &all, 15_000).expect("session");
     let epoch_mesh = w.nodes[0].stack.time.mesh_us(w.local(0)) + 2_000_000;
-    w.nodes[0].stack.originate_epoch(splanc_mesh::stack::EpochSource::Console, Some(epoch_mesh)).expect("console may");
+    w.nodes[0].stack.originate_epoch(splanc_mesh::stack::EpochSource::Console, Some(epoch_mesh)).expect("console under a session");
     w.run_ms(2_000);
     let apply_mesh = epoch_mesh + 1_500_000;
     // Each member's local instant of the change, in global time.
@@ -721,4 +787,191 @@ fn gateway_fan_out_on_envelope_trust() {
     w2.run_ms(1_000);
     assert!(w2.nodes[1].controls().is_empty());
     assert_eq!(w2.nodes[1].stack.router.stats.untrusted, 1);
+}
+
+/// Mesh M7 (§7.3, §7.6, §7.9), the `mesh_join_admin` HITL's script on the simulated air: a
+/// closed mesh forms from the site secret; a fixture without it cannot join until the admin
+/// admits it; control and the show epoch need the admin's signed session (an insider with the
+/// mesh key can do neither: envelope framing and beacon epochs are refused); a revocation
+/// rotates the keys without the removed fixture and survives a reboot (through the persisted
+/// bytes); an eject sends one fixture out.
+#[test]
+fn join_admin_closed_mesh() {
+    use splanc_mesh::meshtime::ShowEpoch;
+    use splanc_mesh::stack::EpochSource;
+    let mut w = room(3, 11);
+    let c = creds(&w);
+    let formed_ms = form(&mut w, &[0, 1], &c, 300, 15_000);
+    assert!(!w.nodes[GW].stack.envelope_trust(), "an admin key: signed sessions only");
+    // c knows the mesh and the admin key, not the site secret: it asks, and waits.
+    let bare = Credentials { mesh_id: w.mesh_id, admin_key: Some(w.admin.public()), ..Credentials::default() };
+    w.power_on(2, Some((&bare, ProvisionSource::App)));
+    w.run_ms(15_000);
+    assert_eq!(w.nodes[2].stack.membership.phase(), Phase::Joining, "unapproved: not a member");
+    assert_eq!(w.nodes[2].stack.node.guard.epoch(), None, "holds no mesh key");
+    let p = *w.nodes[GW].pending().iter().find(|p| p.node == id(2)).expect("the gateway lists it");
+    assert_eq!(p.key_hash, w.nodes[2].stack.key_hash());
+    assert!(w.nodes[GW].stack.membership.gateway_pending.iter().flatten().any(|q| q.node == id(2)));
+
+    // Locked until a grant: no control, no admit, no epoch.
+    let t = w.local(GW);
+    assert_eq!(w.nodes[GW].stack.send_control(t, CONN, 1, Targets::All, b"x"), Err(SendError::Locked));
+    assert_eq!(w.nodes[GW].stack.admit(t, CONN, &p), Err(SendError::Locked));
+    assert_eq!(w.nodes[GW].stack.originate_epoch(EpochSource::Connection(CONN), Some(5)), None);
+    assert_eq!(w.nodes[GW].stack.originate_epoch(EpochSource::Console, Some(5)), None, "the console too");
+    // An insider (b, holding the mesh key) frames control for "the gateway" on envelope trust.
+    let brightness: &[u8] = &[0xfa, 0x01, 5, 0x0d, 0, 0, 0, 0x3f];
+    let mut body = [0u8; 64];
+    let bl = splanc_mesh::ports::ControlHeader::new(66, Targets::All).encode(brightness, &mut body).unwrap();
+    let mut buf = [0u8; 128];
+    let n = admin::seal_command(w.mesh_id, splanc_mesh::ports::SESSION_ENVELOPE, 1, Port::Control as u8, &body[..bl], &[], &mut buf).unwrap();
+    inject_as(&mut w, 1, id(1), Port::Control, &buf[..n]);
+    w.run_ms(1_000);
+    assert!(w.nodes[GW].controls().is_empty(), "refused");
+    assert_eq!(w.nodes[GW].stack.router.stats.untrusted, 1);
+
+    // The admin unlocks a, b syncs; the admin admits c; c joins (approval) and syncs too.
+    let sync_ms = w.unlock_and_sync(GW, SESSION, &[1], 10_000).expect("b syncs");
+    let t = w.local(GW);
+    w.nodes[GW].stack.admit(t, CONN, &p).expect("admit");
+    let admit_ms = w.run_until(15_000, |w| is_member(w, 2)).expect("admitted");
+    assert_eq!(w.nodes[2].stack.membership.admin_key(), Some(&w.admin.public()));
+    w.run_until(15_000, |w| w.nodes[2].synced(SESSION)).expect("c syncs");
+    let sent = control(&mut w, 2, Targets::All);
+    w.run_ms(1_000);
+    assert_eq!(receivers(&w, 2, sent).iter().map(|g| g.0).collect::<Vec<_>>(), [1, 2]);
+
+    // The show epoch: only a's session starts one, members take it from the signed TIME_BASE.
+    let t = w.local(GW);
+    let at = w.nodes[GW].stack.time.mesh_us(t) + 2_000_000;
+    assert_eq!(w.nodes[1].stack.originate_epoch(EpochSource::Connection(CONN), Some(at)), None, "b holds no grant");
+    let e = w.nodes[GW].stack.originate_epoch(EpochSource::Connection(CONN), Some(at)).expect("a's session");
+    w.run_ms(2_000);
+    for i in 1..3 {
+        assert_eq!(w.nodes[i].stack.time.epoch, Some(e), "node {i} follows the signed epoch");
+        assert!(w.nodes[i].stack.epochs_signed >= 1);
+    }
+    // b forges a later epoch into its beacons (what an insider's firmware could do): ignored.
+    let forged = w.nodes[1].stack.time.originate(Some(at + 9_000_000));
+    assert!(forged.newer_than(&e));
+    w.run_ms(4_000);
+    assert_eq!(w.nodes[GW].stack.time.epoch, Some(e));
+    assert_eq!(w.nodes[2].stack.time.epoch, Some(e));
+    assert!(w.nodes[2].stack.time.stats.unsigned >= 1);
+    let _ = ShowEpoch::LEN;
+
+    // Revoke c: a rotation to b only, c's key on the revocation list.
+    let kh2 = w.nodes[2].stack.key_hash();
+    let (mk, ss) = ([0x3cu8; 16], [0xc3u8; 32]);
+    let order = RekeyOrder::sign(&w.admin, w.mesh_id, 2, &mk, &ss, 1, &[kh2]);
+    let t = w.local(GW);
+    w.nodes[GW].stack.rotate(t, CONN, order, &mk, &ss, &[id(2)], &mut |_| {}).expect("rotate");
+    w.run_until(30_000, |w| w.nodes[1].stack.node.guard.epoch() == Some(2) && w.nodes[GW].stack.node.guard.epoch() == Some(2)).expect("a and b on epoch 2");
+    assert_eq!(w.nodes[2].stack.node.guard.epoch(), Some(1), "c keeps the old key");
+    w.run_ms(61_000);
+    let sent = control(&mut w, 3, Targets::All);
+    w.run_ms(1_500);
+    assert_eq!(receivers(&w, 3, sent).iter().map(|g| g.0).collect::<Vec<_>>(), [1], "c gets nothing");
+    let refused_before: u32 = (0..2).map(|i| w.nodes[i].stack.membership.stats.revoked).sum();
+    assert!(refused_before > 0, "c's rejoin is refused");
+
+    // Both members reboot: the revocation (and the new epoch) come back from the stored bytes.
+    w.reboot(GW);
+    w.reboot(1);
+    w.run_until(15_000, |w| is_member(w, 0) && is_member(w, 1)).expect("back in the mesh");
+    for i in 0..2 {
+        let s = w.nodes[i].stack.membership.state.unwrap();
+        assert_eq!((s.epoch, s.revoked.contains(&kh2)), (2, true), "node {i}");
+    }
+    w.run_ms(10_000);
+    let refused_after: u32 = (0..2).map(|i| w.nodes[i].stack.membership.stats.revoked).sum();
+    assert!(refused_after > 0, "still refused after the reboot");
+    assert!(!is_member(&w, 2) || w.nodes[2].stack.node.guard.epoch() == Some(1));
+    // The admin unlocks again (RAM sessions are gone) and b is commandable; c still is not.
+    w.unlock_and_sync(GW, SESSION + 1, &[1], 15_000).expect("b syncs again");
+    let t = w.local(GW);
+    w.nodes[GW].stack.send_control(t, CONN, 4, Targets::All, b"set_uniforms{speed=0.5}").expect("control");
+    let sent = w.now();
+    w.run_ms(1_500);
+    assert_eq!(receivers(&w, 4, sent).iter().map(|g| g.0).collect::<Vec<_>>(), [1]);
+
+    // Eject b (issue #571's seam): it leaves the mesh and forgets it.
+    let kh1 = w.nodes[1].stack.key_hash();
+    let t = w.local(GW);
+    w.nodes[GW].stack.eject(t, CONN, id(1), kh1).expect("eject");
+    w.run_until(3_000, |w| w.nodes[1].stack.membership.state.is_none()).expect("ejected");
+    assert!(w.nodes[1].events.iter().any(|(_, e)| *e == Ev::Ejected));
+    // The gateway stops listing it at once (not after MEMBER_STALE_US).
+    let t = w.local(GW);
+    assert!(w.nodes[GW].stack.fanout.live(t).all(|m| m.node != id(1)), "the ejected member is still listed");
+    eprintln!(
+        "join_admin: closed mesh formed in {formed_ms} ms; b synced {sync_ms} ms after unlock; c admitted {admit_ms} ms after the tap; \
+         insider control refused ({} untrusted), forged epoch ignored ({} unsigned); revocation refused {refused_before} rejoins, {refused_after} after a reboot",
+        w.nodes[GW].stack.router.stats.untrusted,
+        w.nodes[2].stack.time.stats.unsigned
+    );
+}
+
+/// Bytes that look like an effect program (deterministic per seed).
+fn effect_bytes(n: usize, seed: u8) -> Vec<u8> {
+    (0..n).map(|i| ((i * 31 + i / 97) as u8) ^ seed).collect()
+}
+
+/// Mesh M6: a 3.5 KB effect (with a state blob for catch-ups) shared through the gateway
+/// reaches every member, which all apply it on one show-clock instant; with 10 % loss too; a
+/// fixture that joins later and one that reboots catch up with the current scene (the reboot
+/// does not reload what it already shows).
+#[test]
+fn effect_share_and_late_joiner() {
+    let mut w = room(4, 21);
+    let c = creds(&w);
+    form(&mut w, &[0, 1, 2], &c, 300, 15_000);
+    w.unlock_and_sync(GW, SESSION, &[1, 2], 10_000).expect("b, c sync");
+    w.run_until(10_000, |w| (0..3).all(|i| w.nodes[i].stack.time.synced())).expect("mesh time");
+
+    let mut summary = Vec::new();
+    for (round, (op, size, loss)) in [(100u32, 3_500usize, 0.0), (101, 4_400, 0.1)].into_iter().enumerate() {
+        w.air.set_loss(loss);
+        let effect = effect_bytes(size, round as u8);
+        let state = effect_bytes(180, 0x55 ^ round as u8);
+        let t0 = w.now();
+        w.share_effect(GW, op, &effect, Some(&state)).expect("share");
+        let ms = w.run_until(15_000, |w| (0..3).all(|i| w.nodes[i].applied.iter().any(|a| a.op_id == op))).unwrap_or_else(|| {
+            let st: Vec<_> = (0..3).map(|i| (w.nodes[i].stack.blobs.fetching(), w.nodes[i].stack.blobs.stats)).collect();
+            panic!("round {round}: not applied everywhere: {st:?}")
+        });
+        let apps: Vec<&Applied> = (0..3).map(|i| w.nodes[i].applied.iter().rev().find(|a| a.op_id == op).unwrap()).collect();
+        let at = apps[0].mesh_ms;
+        for (i, a) in apps.iter().enumerate() {
+            assert_eq!(a.mesh_ms, at, "round {round} node {i}: the same show-clock instant");
+            assert!(!a.late, "round {round} node {i}: had it in time");
+        }
+        let h = sha256(&effect);
+        for i in 0..3 {
+            assert_eq!(w.nodes[i].blobs.get(&h), Some(effect.as_slice()), "round {round} node {i}: the bytes");
+            assert!(w.nodes[i].blobs.peak <= 2 * 4_608 + 400, "round {round} node {i}: blob RAM {}", w.nodes[i].blobs.peak);
+        }
+        let chunks: u32 = (0..3).map(|i| w.nodes[i].stack.blobs.stats.chunks_out).sum();
+        summary.push(format!("round {round} ({size} B, loss {loss}): applied on all 3 at one instant {ms} ms after the share, {chunks} chunks sent"));
+        let _ = t0;
+    }
+    w.air.set_loss(0.0);
+
+    // A fixture powered on after the show started: it joins, syncs, and gets the scene.
+    form(&mut w, &[3], &c, 0, 15_000);
+    let ms = w.run_until(20_000, |w| w.nodes[3].applied.iter().any(|a| a.blobs.len() == 2)).expect("late joiner caught up");
+    let a = w.nodes[3].applied.last().unwrap().clone();
+    let scene = w.nodes[GW].scene.clone();
+    assert_eq!(a.blobs, scene.iter().map(|b| b.0).collect::<Vec<_>>(), "effect and state");
+    assert_eq!(a.skipped, 0);
+    assert_eq!(w.nodes[3].blobs.get(&scene[0].0).map(|b| b.len()), Some(scene[0].1 as usize));
+
+    // A member reboots: it rejoins and is caught up, without reloading the effect it shows.
+    w.reboot(1);
+    let before = w.nodes[1].applied.len();
+    let rb = w.run_until(25_000, |w| w.nodes[1].applied.len() > before).expect("rebooted member caught up");
+    let a = w.nodes[1].applied.last().unwrap();
+    assert_eq!(a.skipped, 1, "the effect it already shows is not reloaded");
+    assert_eq!(w.nodes[GW].stack.scenes_failed + w.nodes[1].stack.scenes_failed + w.nodes[3].stack.scenes_failed, 0);
+    eprintln!("effect_share: {}; late joiner caught up {ms} ms after joining; rebooted member {rb} ms after its reboot (effect kept)", summary.join("; "));
 }

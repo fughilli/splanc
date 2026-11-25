@@ -119,6 +119,24 @@ impl<const N: usize> GattDb<N> {
         GattDb { attrs: [NONE; N], count: 0, next_handle: 1, mtu: 23 }
     }
 
+    /// Write the `new()` state into possibly-uninitialized storage at `p`, field
+    /// by field (no ~4 KiB temporary). Lets a static hold the table in zeroed
+    /// `.bss` storage instead of a const `new()` initializer, whose non-zero bytes
+    /// (`None`'s niche, `next_handle`, `mtu`) would put it in `.data` (flash).
+    ///
+    /// # Safety
+    /// `p` must be valid for writes and suitably aligned; any previous value is
+    /// overwritten without being dropped.
+    pub unsafe fn init_in_place(p: *mut Self) {
+        let attrs = core::ptr::addr_of_mut!((*p).attrs) as *mut Option<Attr>;
+        for i in 0..N {
+            attrs.add(i).write(None);
+        }
+        core::ptr::addr_of_mut!((*p).count).write(0);
+        core::ptr::addr_of_mut!((*p).next_handle).write(1);
+        core::ptr::addr_of_mut!((*p).mtu).write(23);
+    }
+
     /// Empty the table IN PLACE, back to the `new()` state. Rebuilding a live
     /// table this way never materializes a temporary `GattDb` on the caller's
     /// stack (at N = 32 one is ~4 KiB).

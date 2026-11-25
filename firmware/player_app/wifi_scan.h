@@ -287,6 +287,14 @@ inline size_t build_probe_req(uint8_t *f, size_t cap, const uint8_t mac[6], cons
 constexpr uint32_t kImprovSweeps = 3;
 constexpr uint32_t kImprovRescanGapMs = 3000;
 constexpr uint32_t kImprovReportMs = 30000;
+// The retry gap while the provisioning central waits on an SSID with no BSSID to auth to:
+// kImprovSweeps sweeps spread over the kImprovReportMs floor (0, ~14.6, ~29.2 s; the third
+// ends just past 30 s and reports) instead of one every ~4.6 s (8 sweeps). Each sweep's
+// channel switches are where the idle central's BLE link loses connection events (rig-2,
+// netstack_transport.cpp coex notes); with nothing to auth to between sweeps, more of them
+// only find a hotspot that comes up late sooner, and the background rescan after the report
+// covers that.
+constexpr uint32_t kImprovRescanSlowGapMs = 13000;
 
 class ImprovScanReport {
  public:
@@ -313,8 +321,8 @@ class ImprovScanReport {
     sweeping_ = false;
   }
   // Polled while no sweep is running: whether to start the next retry sweep now.
-  bool take_retry(uint32_t now) {
-    if (!armed_ || sweeping_ || misses_ == 0 || !at_or_after(now, last_ms_ + kImprovRescanGapMs))
+  bool take_retry(uint32_t now, uint32_t gap_ms = kImprovRescanGapMs) {
+    if (!armed_ || sweeping_ || misses_ == 0 || !at_or_after(now, last_ms_ + gap_ms))
       return false;
     sweeping_ = true;
     return true;

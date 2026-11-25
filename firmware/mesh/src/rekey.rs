@@ -28,6 +28,8 @@ use crate::codec::{R, W};
 
 /// Revoked device keys a member keeps (the latest list; older entries rotate out).
 pub const REVOKED_MAX: usize = 8;
+/// In a [`RekeyOrder`]'s `rev_version`: the order's list replaces the members' (D-443).
+pub const REV_REPLACE: u16 = 0x8000;
 /// Revocations one order carries.
 pub const ORDER_REVOKED: usize = 4;
 /// Wraps per packet (7 × 26 B + 7 B header fit a 192-byte payload).
@@ -55,11 +57,17 @@ impl Revocations {
     }
 
     /// Apply a newer signed list: its entries go in first, older ones are kept while room.
+    /// With [`REV_REPLACE`] in `version` the list becomes exactly `hashes` (desk D-443: when
+    /// the list nears capacity the app rolls the mesh key to the current members and starts
+    /// a fresh list, so blocked fixtures hold only a dead key and the list never fills).
+    /// Versions compare without the flag.
     pub fn apply(&mut self, version: u16, hashes: &[KeyHash]) {
+        let replace = version & REV_REPLACE != 0;
+        let version = version & !REV_REPLACE;
         if version <= self.version && self.n > 0 {
             return;
         }
-        let old = *self;
+        let old = if replace { Revocations::default() } else { *self };
         *self = Revocations { version, n: 0, h: [[0; 8]; REVOKED_MAX] };
         for h in hashes.iter().chain(old.h[..old.n as usize].iter()) {
             if !self.contains(h) && (self.n as usize) < REVOKED_MAX {
@@ -78,10 +86,8 @@ impl Revocations {
     }
 
     pub fn encode_into(&self, w: &mut W<'_>) {
-        w.u16(self.version).u8(self.n);
-        for h in &self.h {
-            w.put(h);
-        }
+        // The table as one run of bytes (no per-entry code: firmware flash, mesh M7).
+        w.u16(self.version).u8(self.n).put(self.h.as_flattened());
     }
 
     pub fn decode_from(r: &mut R<'_>) -> Option<Revocations> {
@@ -91,9 +97,7 @@ impl Revocations {
             return None;
         }
         let mut h = [[0u8; 8]; REVOKED_MAX];
-        for x in h.iter_mut() {
-            *x = r.arr()?;
-        }
+        h.as_flattened_mut().copy_from_slice(r.take(REVOKED_MAX * 8)?);
         Some(Revocations { version, n, h })
     }
 }
@@ -158,12 +162,24 @@ impl RekeyOrder {
         o
     }
 
+    /// The order on its own ([`RekeyOrder::LEN`] bytes): what the app hands the gateway
+    /// (`mesh_admin.revoke`, mesh M7).
+    pub fn encode(&self, out: &mut [u8]) -> Option<usize> {
+        let mut w = W::new(out);
+        self.encode_into(&mut w);
+        w.done()
+    }
+
+    pub fn decode(b: &[u8]) -> Option<RekeyOrder> {
+        let mut r = R::new(b);
+        let o = Self::decode_from(&mut r)?;
+        r.end()?;
+        Some(o)
+    }
+
     fn encode_into(&self, w: &mut W<'_>) {
         w.u32(self.mesh_id).u8(self.epoch).put(&self.keys_hash).u16(self.rev_version).u8(self.n_revoked);
-        for h in &self.revoked {
-            w.put(h);
-        }
-        w.put(&self.sig);
+        w.put(self.revoked.as_flattened()).put(&self.sig);
     }
 
     fn decode_from(r: &mut R<'_>) -> Option<RekeyOrder> {
@@ -173,9 +189,7 @@ impl RekeyOrder {
         let rev_version = r.u16()?;
         let n_revoked = r.u8()?;
         let mut revoked = [[0u8; 8]; ORDER_REVOKED];
-        for h in revoked.iter_mut() {
-            *h = r.arr()?;
-        }
+        revoked.as_flattened_mut().copy_from_slice(r.take(ORDER_REVOKED * 8)?);
         if n_revoked as usize > ORDER_REVOKED {
             return None;
         }
@@ -522,13 +536,13 @@ mod tests {
         let admin = AdminSigner::from_secret(b"0123456789abcdef", MESH);
         let gw = HostKey::from_seed(1);
         let g = admin.grant(MESH, 7, 1, gw.public_key(), 1000);
-        let mut gs = GatewaySession::<16>::new(g);
+        let mut gs = GatewaySession::<16>::new(g, None);
         let mut rng = TestRng(4);
         let ids: Vec<NodeId> = (2..=10).collect();
         let devs: Vec<HostKey> = ids.iter().map(|&i| HostKey::from_seed(i as u64)).collect();
         let mut sess: Vec<Sessions> = ids.iter().map(|_| Sessions::new()).collect();
         for ((s, d), &id) in sess.iter_mut().zip(&devs).zip(&ids) {
-            let ack = s.on_grant(0, 0, &g, Some(&admin.public()), MESH, id, d, &mut rng).unwrap().unwrap();
+            let ack = s.on_grant(0, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, id, d, &mut rng).unwrap().unwrap();
             let (_, conf) = gs.on_ack(&ack, &gw, MESH, 1, 50).unwrap();
             s.on_confirm(1, &conf, id);
         }
@@ -603,5 +617,36 @@ mod tests {
         assert_eq!(RekeyHead::LEN, 185);
         assert_eq!(RekeyWraps::len_for(7), 189);
         assert_eq!(RekeyWraps::len_for(1) - RekeyWraps::len_for(0), 26);
+    }
+
+    #[test]
+    fn order_roundtrips_on_its_own() {
+        let admin = crate::host_keys::AdminSigner::from_secret(b"0123456789abcdef", 7);
+        let o = RekeyOrder::sign(&admin, 7, 2, &[1; 16], &[2; 32], 3, &[[9; 8]]);
+        let mut b = [0u8; RekeyOrder::LEN + 4];
+        let n = o.encode(&mut b).unwrap();
+        assert_eq!(n, RekeyOrder::LEN);
+        let d = RekeyOrder::decode(&b[..n]).unwrap();
+        assert_eq!(d, o);
+        assert!(d.verify(&admin.public()));
+        assert_eq!(RekeyOrder::decode(&b[..n - 1]), None);
+        assert_eq!(RekeyOrder::decode(&b[..n + 1]), None);
+    }
+    /// D-443: a replacing order empties the list down to its own entries.
+    #[test]
+    fn a_replacing_order_starts_a_fresh_list() {
+        let mut r = Revocations::default();
+        for v in 1..=REVOKED_MAX as u16 {
+            r.apply(v, &[[v as u8; 8]]);
+        }
+        assert_eq!(r.len(), REVOKED_MAX);
+        r.apply(9 | REV_REPLACE, &[[0xaa; 8]]);
+        assert_eq!((r.version, r.len()), (9, 1));
+        assert!(r.contains(&[0xaa; 8]) && !r.contains(&[1; 8]));
+        // Versions compare without the flag: an older replacing order is ignored.
+        r.apply(5 | REV_REPLACE, &[]);
+        assert_eq!((r.version, r.len()), (9, 1));
+        r.apply(10, &[[0xbb; 8]]);
+        assert_eq!(r.len(), 2);
     }
 }

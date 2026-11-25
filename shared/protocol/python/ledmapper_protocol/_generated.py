@@ -68,6 +68,7 @@ class DetectionRecord(_StrictModel):
 Encoding = Literal["hue"]
 SyncPattern = Literal["on_off", "stagger_pilot"]
 Fec = Literal["none", "secded"]
+StrideMode = Literal["phased", "rolling"]
 
 
 class CodeParams(_StrictModel):
@@ -92,6 +93,9 @@ class CodeParams(_StrictModel):
     stridePhase: Union[int, None] = Field(default=None, ge=0)
     # Group capture: LED i transmits id (i + codeOffset); None = 0.
     codeOffset: Union[int, None] = Field(default=None, ge=0)
+    # Stride schedule (rolling-stride.md); None = phased. Rolling dwell D.
+    strideMode: Union[StrideMode, None] = None
+    dwellCycles: Union[int, None] = Field(default=None, ge=1)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +229,9 @@ class StartMappingOptions(_StrictModel):
     stopAfterMs: Union[int, None] = None
     # Requested sync pattern (hue code v2); the reply's codeParams say what runs.
     syncPattern: Union[SyncPattern, None] = None
+    # Requested stride schedule (feature stride_rolling) + rolling dwell D.
+    strideMode: Union[StrideMode, None] = None
+    dwellCycles: Union[int, None] = Field(default=None, ge=1)
 
 
 class StartMappingMessage(_StrictModel):
@@ -243,6 +250,8 @@ class ConfigureOptions(_StrictModel):
     strideSpacing: Union[int, None] = Field(default=None, ge=0)
     anchorDensity: Union[int, None] = Field(default=None, ge=0)
     stridePhase: Union[int, None] = Field(default=None, ge=0)
+    strideMode: Union[StrideMode, None] = None
+    dwellCycles: Union[int, None] = Field(default=None, ge=1)
 
 
 class ConfigureMessage(_StrictModel):
@@ -631,6 +640,7 @@ __all__ = [
     "Encoding",
     "SyncPattern",
     "Fec",
+    "StrideMode",
     "CodeParams",
     "LedEntry",
     "OutputMapStats",

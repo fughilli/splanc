@@ -1,0 +1,2 @@
+# The HA test harness (pins Home Assistant itself). Bump with HA releases.
+pytest-homeassistant-custom-component==0.13.375

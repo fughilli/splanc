@@ -33,6 +33,15 @@ void improv_ble_set_name(const char *device_name);
 // latched credentials out.
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap);
 
+// True exactly once per received Improv Identify RPC (polled from the app loop,
+// next to the credentials). The player answers with player_identify_start().
+bool improv_ble_take_identify();
+
+// Defined in main.cpp: blink every output briefly so a person can see which
+// fixture they picked (D-259). Safe to call from the app loop; the render task
+// draws the blink and then restores whatever was showing.
+void player_identify_start();
+
 // True while a central (provisioner / web app) is connected over BLE. Lets the
 // app defer BLE-disrupting work (soft-AP teardown, cert re-sign) until the peer
 // has taken the provisioning result and disconnected.
@@ -41,6 +50,17 @@ bool improv_ble_central_connected();
 // Gracefully disconnect the current BLE link (peripheral-initiated). No-op if not
 // connected; the host re-advertises afterward so the device stays connectable.
 void improv_ble_request_disconnect();
+
+// Ask the connected central for a BLE supervision timeout of `ms` (L2CAP Connection
+// Parameter Update Request; the central may decline). No-op if not connected.
+void improv_ble_request_supervision_timeout(uint32_t ms);
+
+// Improv notifications (state / error / RPC result) sent but not yet LL-acked by the
+// central, for at most cap_ms since the first went out: the coex arbiter gives BLE the
+// radio meanwhile. Safe from any task (reads two volatiles).
+bool improv_ble_notify_hold(uint32_t now_ms, uint32_t cap_ms);
+// Once per delivered burst: send -> LL ack in ms (the central has it).
+bool improv_ble_take_notify_ack_ms(uint32_t *ms);
 
 // Raw BLE link state (Rust FFI ns_ble_state): 7 == central connected+subscribed.
 // Exposed for diagnostics (distinguish link-drop vs notification-loss).

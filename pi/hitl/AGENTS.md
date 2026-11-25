@@ -222,12 +222,25 @@ reservation of each class would face plus a dev hint (`dev: go ahead` or
    turn.
 3. Hold at most one queued reservation per task; never queue on several rigs at once.
 4. Never kill a queued client; release its reservation
-   (`POST /reservation/<id>/release`). A killed waiter keeps its slot until the 30 min
-   lease lapses.
+   (`POST /reservation/<id>/release`). A killed waiter keeps its slot until the 5 min
+   heartbeat lease lapses (`lease_seconds` in reserve/catalog.json; it was 30 min
+   until 2026-11-23).
 
 `hitl_client.Reservation` applies 1–2 automatically for dev reservations
 (`HITL_BACKOFF=0` disables it, `HITL_BACKOFF_MAX` bounds it; default 1800 s). It
 also releases its queued slot on Ctrl-C/SIGTERM.
+
+**Rig choice is capacity-aware and revisited.** `_pick_server` counts only units a
+daemon would actually ADMIT, applying its `max_concurrent` and
+`max_concurrent_per_class` caps and the waiters already queued there (GET /queue).
+It picks among rigs with room at random, weighted by that room, so a CI burst splits
+across the fleet. When no rig has room, it queues where the wait per unit is
+shortest. While queued, an unpinned client re-surveys the pool every
+`HITL_REBALANCE_EVERY` s (default 30; 0 disables). If another rig could start it
+right now, it reserves there and drops its old slot only once the new one is
+active (`rebalanced: … started on …`). `HITL_SERVER` (or `--server`) pins a rig and
+disables this. Before 2026-11-23 the pick ignored caps and never moved: rig-2's
+capped 5th C6 looked free forever, so 100+ waiters queued there while rig-1 idled.
 
 **Waiting is progress-driven.** While queued, the harness logs
 `queued: position N class=… eta~…` and keeps waiting as long as the queue makes

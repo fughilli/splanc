@@ -197,12 +197,12 @@ export function normUniforms(v: unknown): LibUniform[] | undefined {
 }
 
 function normUi(v: unknown, i: number): LibUi {
-  const o = (v ?? { kind: "slider", min: 0, max: 1, step: 0.01 }) as Record<string, unknown>;
+  const o = (v ?? { kind: "slider", min: 0, max: 1, step: 0 }) as Record<string, unknown>;
   switch (o["kind"]) {
     case "slider": {
       const min = finite(o["min"]) ? o["min"] : 0;
       const max = finite(o["max"]) ? o["max"] : 1;
-      const step = finite(o["step"]) ? o["step"] : (max - min) / 100;
+      const step = finite(o["step"]) ? o["step"] : 0; // absent = continuous (D-541)
       return { kind: "slider", min, max, step };
     }
     case "color":
@@ -279,6 +279,12 @@ export function slugEffectId(name: string, fallback: string): string {
 
 // -- uniforms from source ---------------------------------------------------------------
 
+/** fx_compiler's `native_step`: a slider's default grid is the type's own
+ * resolution (float continuous = 0, int 1, fixedN its LSB), D-541. */
+function nativeStep(ty: string): number {
+  return ty === "int" ? 1 : ty === "fixed8" ? 1 / 64 : ty === "fixed16" ? 1 / 16384 : ty === "fixed" ? 1 / 65536 : 0;
+}
+
 const WIDTHS: Record<string, number> = {
   float: 1,
   int: 1,
@@ -327,14 +333,14 @@ export function uniformsFromSource(source: string): LibUniform[] {
       const opts = [...ann.matchAll(/"([^"]*)"/g)].map((x) => x[1]!);
       ui = { kind: "dropdown", options: opts };
     } else {
-      const r = /^(-?[0-9.]+(?:[eE][-+]?\d+)?)\s*\.\.\s*(-?[0-9.]+(?:[eE][-+]?\d+)?)/.exec(ann);
+      const r = /^(-?[0-9.]+(?:[eE][-+]?\d+)?)\s*\.\.\s*(-?[0-9.]+(?:[eE][-+]?\d+)?)(?:\s+step\s+([0-9.]+(?:[eE][-+]?\d+)?))?/.exec(ann);
       if (r) {
         const lo = Number(r[1]);
         const hi = Number(r[2]);
-        ui = { kind: "slider", min: lo, max: hi, step: (hi - lo) / 100 };
+        ui = { kind: "slider", min: lo, max: hi, step: r[3] !== undefined ? Number(r[3]) : nativeStep(ty) };
       } else if (ty === "bool") ui = { kind: "toggle" };
       else if (ty === "vec3" || ty === "vec4") ui = { kind: "color" };
-      else ui = { kind: "slider", min: 0, max: 1, step: 0.01 };
+      else ui = { kind: "slider", min: 0, max: 1, step: nativeStep(ty) };
     }
     let def: number[] = [];
     if (defText === "true" || defText === "false") def = [defText === "true" ? 1 : 0];

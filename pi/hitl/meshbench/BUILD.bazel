@@ -12,14 +12,23 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# The controller driver and the bench model, stdlib-only: //pi/hitl/harness:mesh_range ships
+# them as data (its coax mode steps the delay bank) without the bench's numpy/opencv deps.
+exports_files([
+    "rfctl.py",
+    "scenarios.py",
+])
+
 py_library(
     name = "meshbench",
     srcs = [
+        "atten_cal.py",
         "bench_core.py",
         "benchsim.py",
         "camsim.py",
         "flip_cv.py",
         "hitl_mesh_bench.py",
+        "jeanoko.py",
         "la_phase.py",
         "meshbench_rig.py",
         "rfctl.py",
@@ -43,6 +52,7 @@ py_test(
     size = "medium",
     srcs = [
         "pytest_main.py",
+        "test_atten.py",
         "test_bench.py",
         "test_flip_cv.py",
         "test_la_phase.py",
@@ -60,6 +70,14 @@ py_binary(
     name = "mesh_bench",
     srcs = ["hitl_mesh_bench.py"],
     main = "hitl_mesh_bench.py",
+    tags = ["manual"],
+    deps = [":meshbench"],
+)
+
+py_binary(
+    name = "atten_cal",
+    srcs = ["atten_cal.py"],
+    main = "atten_cal.py",
     tags = ["manual"],
     deps = [":meshbench"],
 )

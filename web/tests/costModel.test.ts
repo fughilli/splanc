@@ -96,6 +96,25 @@ test("walkEntry produces a min/max band across a forward BrFalse", () => {
   assert.equal(w.min["UnMath:sin"] ?? 0, 0);
 });
 
+test("walkEntry prices the init guard's steady state, not the one-time init arm", () => {
+  // The compiler's init block (D-500) in front of update():
+  //   0: LoadState 0 1 ; 3: StoreState 0 1 ; 6: Ret 0           <- the real update()
+  //   8: LoadState 1 1 ; 11: BrFalse +3 -> 17 ; 14: Jmp -> 0      <- entry
+  //  17: PushConst 0 ; 20: StoreState 1 1 ; 23: UnMath sin 1 ; 26: Jmp -> 0
+  const code = [
+    CODE["LoadState"]!, 0, 1, CODE["StoreState"]!, 0, 1, CODE["Ret"]!, 0,
+    CODE["LoadState"]!, 1, 1, CODE["BrFalse"]!, 3, 0, CODE["Jmp"]!, 0xef, 0xff,
+    CODE["PushConst"]!, 0, 0, CODE["StoreState"]!, 1, 1, CODE["UnMath"]!, 0, 1, CODE["Jmp"]!, 0xe3, 0xff,
+  ];
+  const w = walkEntry(Uint8Array.from(code), 8);
+  assert.equal(w.branched, false, "the guard is not a data-dependent branch");
+  assert.equal(w.looped, false, "its jump into update() is not a loop");
+  assert.equal(w.max["UnMath:sin"] ?? 0, 0, "the init arm is not priced per frame");
+  assert.equal(w.max["LoadState"], 2, "guard + update()");
+  assert.equal(w.max["Jmp"], 1);
+  assert.equal(w.opsMax, 6);
+});
+
 test("histCycles sums count*cost with a fallback", () => {
   const c = histCycles({ Mul: 3, Add: 2 }, { Mul: 10 }, 5);
   assert.equal(c, 3 * 10 + 2 * 5);

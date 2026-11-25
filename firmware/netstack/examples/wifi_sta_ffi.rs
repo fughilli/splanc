@@ -8,8 +8,9 @@
 #![no_std]
 #![allow(static_mut_refs)]
 
+use ledmapper_bss::BssOption;
 use ledmapper_netstack::lmac;
-use ledmapper_netstack::mac::{rx_frame, RxRing};
+use ledmapper_netstack::mac::{rx_frame, RxRing, SideQueue};
 use ledmapper_netstack::{p2p, tx};
 use ledmapper_netstack::sta::{Out, Sta};
 use ledmapper_netstack::tx::TxRing;
@@ -17,6 +18,47 @@ use ledmapper_netstack::wpa::PmkDeriv;
 
 const RX_SLOTS: usize = 16;
 static mut RX: RxRing<RX_SLOTS> = RxRing::new();
+/// Set while loopTask is inside an RX-ring operation (recv / pending / install). The only
+/// other user of the ring is `ns_mac_rx_shed`, called from the higher-priority esp_timer
+/// task on this single-core chip: it can preempt loopTask but never be preempted by it, so
+/// seeing the flag clear means loopTask is not mid-operation, and it skips otherwise.
+static RX_BUSY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Frames freed by `ns_mac_rx_shed` (read + reset by `ns_mac_rx_shed_count`).
+static mut RX_SHED: u32 = 0;
+/// Kept frames moved off the ring's head while loopTask was stalled (`ns_mac_rx_shed`), so
+/// the ring keeps draining behind them in arrival order; always served before the ring.
+/// Whole reaped buffers (RX vector included): ~3 full-size frames or dozens of small ones.
+static mut RX_SIDE: SideQueue<6144> = SideQueue::new();
+/// Frames moved into `RX_SIDE` / kept frames that found it full (read + reset with the
+/// shed count).
+static mut RX_SIDE_MOVED: u32 = 0;
+static mut RX_SIDE_FULL: u32 = 0;
+/// Shed passes that stopped at a kept head frame, by kind (see `ns_mac_rx_shed`).
+static mut RX_HEAD_KEPT: [u32; 5] = [0; 5];
+
+/// Copy + reset the head-kept histogram into `out[0..5]`.
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_head_kept(out: *mut u32) {
+    unsafe {
+        for i in 0..5 {
+            *out.add(i) = RX_HEAD_KEPT[i];
+            RX_HEAD_KEPT[i] = 0;
+        }
+    }
+}
+
+struct RxGuard;
+impl RxGuard {
+    fn take() -> Self {
+        RX_BUSY.store(true, core::sync::atomic::Ordering::SeqCst);
+        RxGuard
+    }
+}
+impl Drop for RxGuard {
+    fn drop(&mut self) {
+        RX_BUSY.store(false, core::sync::atomic::Ordering::SeqCst);
+    }
+}
 static mut TX: TxRing<4> = TxRing::new();
 
 /// Per-STA 802.11 transmit sequence number (12-bit, mod 4096). IEEE 802.11 §9.2.4.4
@@ -40,13 +82,15 @@ unsafe fn stamp_tx_seq(f: &mut [u8]) {
         TX_SEQ = (TX_SEQ + 1) & 0x0fff;
     }
 }
-static mut SUP: Option<Sta> = None;
+// BssOption (not Option): its empty state is all-zero, so these statics are .bss rather
+// than .data (which the image would also carry in flash; see //firmware/bss).
+static mut SUP: BssOption<Sta> = BssOption::NONE;
 
 // Incremental PMK derivation (PBKDF2 c=4096 ~1.8s): driven in small chunks off the transport
 // hot path so the BLE link stays serviced through the join. ns_pmk_begin latches ssid+pass the
 // moment they arrive; ns_pmk_step is pumped each loop; the finished PMK is cached in PMK_READY and
 // consumed by ns_wpa_init (fast, no derivation).
-static mut PMK_DERIV: Option<PmkDeriv> = None;
+static mut PMK_DERIV: BssOption<PmkDeriv> = BssOption::NONE;
 static mut PMK_READY: Option<[u8; 32]> = None;
 
 /// Start incrementally deriving the PMK for `ssid`/`pass`. Call as soon as credentials are known.
@@ -55,7 +99,7 @@ pub extern "C" fn ns_pmk_begin(ssid: *const u8, ssid_len: u32, pass: *const u8, 
     unsafe {
         let ssid = core::slice::from_raw_parts(ssid, ssid_len as usize);
         let pass = core::slice::from_raw_parts(pass, pass_len as usize);
-        PMK_DERIV = Some(PmkDeriv::new(pass, ssid));
+        PMK_DERIV.set(PmkDeriv::new(pass, ssid));
         PMK_READY = None;
     }
 }
@@ -108,7 +152,7 @@ pub extern "C" fn ns_wpa_init(
         // Fast path: if the PMK was precomputed off the hot path (ns_pmk_begin/step), use it so we
         // don't freeze the loop deriving it here. Fall back to synchronous derivation otherwise
         // (e.g. a caller that never pumped ns_pmk_step) so the handshake still works.
-        SUP = Some(match PMK_READY {
+        SUP.set(match PMK_READY {
             Some(pmk) => Sta::from_pmk(pmk, apm, sm, sn),
             None => Sta::new(ssid, pass, apm, sm, sn),
         });
@@ -165,8 +209,42 @@ pub extern "C" fn ns_sta_decrypt(frame: *const u8, frame_len: u32, out: *mut u8,
 
 // --- TCP client -------------------------------------------------------------
 use ledmapper_netstack::tcp::{State, TcpConn};
+use ledmapper_netstack::tcp_slots::TcpSlots;
 
-static mut TCP: Option<TcpConn> = None;
+/// Server connection slots (concurrent wss clients). One on the players, where RAM is
+/// tight; the P4's C6 front end builds `wifi_sta_ffi_sessions<N>` (docs/design/p4-c6-split.md
+/// §4.3.1). Every `ns_tcp_*` call below acts on the SELECTED slot (`ns_tcp_select`), except
+/// `ns_tcp_on_ip`, which demuxes an inbound datagram to its own slot (`TcpSlots::route`).
+#[cfg(not(feature = "sessions2"))]
+const SLOTS: usize = 1;
+#[cfg(feature = "sessions2")]
+const SLOTS: usize = 2;
+
+// Slots are BssOption (not Option): an empty table is all-zero, so TCPS is .bss rather
+// than .data (see //firmware/bss).
+static mut TCPS: TcpSlots<SLOTS> = TcpSlots::new();
+static mut CUR: usize = 0;
+
+/// The selected slot's connection.
+unsafe fn cur() -> &'static mut BssOption<TcpConn> {
+    &mut (*core::ptr::addr_of_mut!(TCPS)).slots[CUR]
+}
+
+/// How many server slots this build has.
+#[no_mangle]
+pub extern "C" fn ns_tcp_slots() -> u32 {
+    SLOTS as u32
+}
+
+/// Select the slot the other `ns_tcp_*` calls act on (out of range: ignored).
+#[no_mangle]
+pub extern "C" fn ns_tcp_select(slot: u32) {
+    unsafe {
+        if (slot as usize) < SLOTS {
+            CUR = slot as usize;
+        }
+    }
+}
 
 /// Open a TCP connection (src/dst are 4-byte IPv4). Builds the SYN into `out`.
 #[no_mangle]
@@ -178,7 +256,7 @@ pub extern "C" fn ns_tcp_connect(src: *const u8, dst: *const u8, sport: u16, dpo
         let mut conn = TcpConn::new([s[0], s[1], s[2], s[3]], [d[0], d[1], d[2], d[3]], sport, dport, iss);
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         let n = conn.connect(o);
-        TCP = Some(conn);
+        cur().set(conn);
         n as u32
     }
 }
@@ -189,7 +267,7 @@ pub extern "C" fn ns_tcp_connect(src: *const u8, dst: *const u8, sport: u16, dpo
 #[no_mangle]
 pub extern "C" fn ns_tcp_abort(out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         c.abort(o) as u32
     }
@@ -200,7 +278,7 @@ pub extern "C" fn ns_tcp_abort(out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_seq_diag(out: *mut u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_ref() else { return 0 };
+        let Some(c) = cur().as_ref() else { return 0 };
         let d = c.seq_diag();
         core::slice::from_raw_parts_mut(out, 3).copy_from_slice(&d);
         1
@@ -213,19 +291,19 @@ pub extern "C" fn ns_tcp_seq_diag(out: *mut u32) -> u32 {
 pub extern "C" fn ns_tcp_listen(src: *const u8, sport: u16, iss: u32) {
     unsafe {
         let s = core::slice::from_raw_parts(src, 4);
-        TCP = Some(TcpConn::listen([s[0], s[1], s[2], s[3]], sport, iss));
+        cur().set(TcpConn::listen([s[0], s[1], s[2], s[3]], sport, iss));
     }
 }
 
-/// Feed an inbound IPv4 datagram to the connection. Writes any reply to `out`.
+/// Feed an inbound IPv4 datagram to the slot it belongs to (by the peer's address and
+/// port; `TcpSlots::route`), whichever is selected. Writes any reply to `out`.
 /// `now_ms` is the caller's millis() at arrival (RTT/RTO timing).
 #[no_mangle]
 pub extern "C" fn ns_tcp_on_ip(now_ms: u32, ip: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
         let i = core::slice::from_raw_parts(ip, len as usize);
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
-        c.on_ip(now_ms, i, o) as u32
+        (*core::ptr::addr_of_mut!(TCPS)).on_ip(now_ms, i, o) as u32
     }
 }
 
@@ -235,7 +313,7 @@ pub extern "C" fn ns_tcp_on_ip(now_ms: u32, ip: *const u8, len: u32, out: *mut u
 #[no_mangle]
 pub extern "C" fn ns_tcp_enqueue(data: *const u8, len: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let d = core::slice::from_raw_parts(data, len as usize);
         c.enqueue(d) as u32
     }
@@ -246,14 +324,20 @@ pub extern "C" fn ns_tcp_enqueue(data: *const u8, len: u32) -> u32 {
 /// critical RPC replies aren't starved behind it.
 #[no_mangle]
 pub extern "C" fn ns_tcp_tx_room() -> u32 {
-    unsafe { TCP.as_ref().map(|c| c.tx_room() as u32).unwrap_or(0) }
+    unsafe { cur().as_ref().map(|c| c.tx_room() as u32).unwrap_or(0) }
 }
 
 /// Whether the send side still holds data (queued or unacknowledged): the RTO and the
 /// send window need servicing (`ns_tcp_tick` / `ns_tcp_pump_tx`) until it drains.
 #[no_mangle]
 pub extern "C" fn ns_tcp_tx_pending() -> u32 {
-    unsafe { TCP.as_ref().map(|c| c.tx_pending() as u32).unwrap_or(0) }
+    unsafe { cur().as_ref().map(|c| c.tx_pending() as u32).unwrap_or(0) }
+}
+
+/// `ns_tcp_tx_pending` over every slot: 1 if any of them still holds send data.
+#[no_mangle]
+pub extern "C" fn ns_tcp_tx_pending_any() -> u32 {
+    unsafe { (*core::ptr::addr_of!(TCPS)).slots.iter().any(|c| c.as_ref().is_some_and(|c| c.tx_pending())) as u32 }
 }
 
 /// Oldest unacked send sequence — advances on every peer ACK. The forward-progress
@@ -261,14 +345,14 @@ pub extern "C" fn ns_tcp_tx_pending() -> u32 {
 /// a healthy saturating stream (window full but snd_una climbing).
 #[no_mangle]
 pub extern "C" fn ns_tcp_snd_una() -> u32 {
-    unsafe { TCP.as_ref().map(|c| c.snd_una()).unwrap_or(0) }
+    unsafe { cur().as_ref().map(|c| c.snd_una()).unwrap_or(0) }
 }
 
 /// Next expected receive sequence — advances when the peer sends us data. Lets the pre-WS
 /// watchdog distinguish a live-but-slow handshake from a stalled one.
 #[no_mangle]
 pub extern "C" fn ns_tcp_rcv_nxt() -> u32 {
-    unsafe { TCP.as_ref().map(|c| c.rcv_nxt()).unwrap_or(0) }
+    unsafe { cur().as_ref().map(|c| c.rcv_nxt()).unwrap_or(0) }
 }
 
 /// Emit the next in-flight segment into `out` if the peer's window allows; returns its
@@ -276,7 +360,7 @@ pub extern "C" fn ns_tcp_rcv_nxt() -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_pump_tx(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         c.pump_tx(now_ms, o) as u32
     }
@@ -289,7 +373,7 @@ pub extern "C" fn ns_tcp_pump_tx(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_tick(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         c.tick(now_ms, o) as u32
     }
@@ -300,7 +384,7 @@ pub extern "C" fn ns_tcp_tick(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_window_ack(out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         c.window_ack(o) as u32
     }
@@ -310,7 +394,7 @@ pub extern "C" fn ns_tcp_window_ack(out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let d = c.rx_data();
         let n = d.len().min(cap as usize);
         core::ptr::copy_nonoverlapping(d.as_ptr(), out, n);
@@ -319,7 +403,7 @@ pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
     }
 }
 
-/// Arm/disarm graceful load-shedding for the single server slot. Pass `true` ONLY when the
+/// Arm/disarm graceful load-shedding for the selected server slot. Pass `true` ONLY when the
 /// WS/TLS session is genuinely up and actively serving a client; pass `false` the instant the
 /// app begins closing / reclaiming / re-listening (before close_notify). Only while armed AND
 /// Established does a SYN from a DIFFERENT peer get fast-REJECTED (RST|ACK) instead of silently
@@ -329,7 +413,7 @@ pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
     unsafe {
-        if let Some(c) = TCP.as_mut() {
+        if let Some(c) = cur().as_mut() {
             c.set_serving_live(live != 0);
         }
     }
@@ -340,7 +424,7 @@ pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
 #[no_mangle]
 pub extern "C" fn ns_tcp_set_takeover_ok(ok: u32) {
     unsafe {
-        if let Some(c) = TCP.as_mut() {
+        if let Some(c) = cur().as_mut() {
             c.set_takeover_ok(ok != 0);
         }
     }
@@ -349,36 +433,49 @@ pub extern "C" fn ns_tcp_set_takeover_ok(ok: u32) {
 /// 1 when a new peer asked to take over the live session since the last call (cleared).
 #[no_mangle]
 pub extern "C" fn ns_tcp_take_takeover_request() -> u32 {
-    unsafe { TCP.as_mut().map(|c| c.take_takeover_request() as u32).unwrap_or(0) }
+    unsafe { cur().as_mut().map(|c| c.take_takeover_request() as u32).unwrap_or(0) }
 }
 
-/// Copy the connection's diagnostics counters into `out[0..7]`: rx data segments,
-/// out-of-order (discarded), duplicate, truncated, zero-window ACKs, RTOs, fast
+/// Copy the diagnostics counters, summed over the slots, into `out[0..7]`: rx data
+/// segments, out-of-order (discarded), duplicate, truncated, zero-window ACKs, RTOs, fast
 /// retransmits. Zeros when there is no connection.
 #[no_mangle]
 pub extern "C" fn ns_tcp_stats(out: *mut u32) {
     unsafe {
-        let s = TCP.as_ref().map(|c| c.stats).unwrap_or_default();
-        let v = [s.rx_segs, s.rx_ooo, s.rx_dup, s.rx_trunc, s.zero_wnd, s.rto, s.fast_rexmit];
+        let mut v = [0u32; 7];
+        for s in (*core::ptr::addr_of!(TCPS)).slots.iter().filter_map(|c| c.as_ref()).map(|c| c.stats) {
+            let f = [s.rx_segs, s.rx_ooo, s.rx_dup, s.rx_trunc, s.zero_wnd, s.rto, s.fast_rexmit];
+            for (a, b) in v.iter_mut().zip(f) {
+                *a = a.wrapping_add(b);
+            }
+        }
         core::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());
+    }
+}
+
+fn state_code(c: Option<&TcpConn>) -> u32 {
+    match c.map(|c| c.state) {
+        Some(State::Closed) => 0,
+        Some(State::SynSent) => 1,
+        Some(State::Established) => 2,
+        Some(State::FinWait) => 3,
+        Some(State::Done) => 4,
+        Some(State::Listen) => 5,
+        Some(State::SynRcvd) => 6,
+        None => 0,
     }
 }
 
 /// Connection state: 0=Closed 1=SynSent 2=Established 3=FinWait 4=Done 5=Listen 6=SynRcvd.
 #[no_mangle]
 pub extern "C" fn ns_tcp_state() -> u32 {
-    unsafe {
-        match TCP.as_ref().map(|c| c.state) {
-            Some(State::Closed) => 0,
-            Some(State::SynSent) => 1,
-            Some(State::Established) => 2,
-            Some(State::FinWait) => 3,
-            Some(State::Done) => 4,
-            Some(State::Listen) => 5,
-            Some(State::SynRcvd) => 6,
-            None => 0,
-        }
-    }
+    unsafe { state_code(cur().as_ref()) }
+}
+
+/// `ns_tcp_state` of `slot`, without selecting it (0 when out of range).
+#[no_mangle]
+pub extern "C" fn ns_tcp_slot_state(slot: u32) -> u32 {
+    unsafe { state_code((*core::ptr::addr_of!(TCPS)).slots.get(slot as usize).and_then(|c| c.as_ref())) }
 }
 
 /// Copy the installed pairwise TK (16 bytes) into `out` for programming the hardware
@@ -437,6 +534,7 @@ pub extern "C" fn ns_aes_selftest(out: *mut u8) -> u32 {
 /// PHY/clock/channel up via the vendor blob and put the MAC in promiscuous filter).
 #[no_mangle]
 pub extern "C" fn ns_mac_rx_install() {
+    let _g = RxGuard::take();
     unsafe {
         lmac::datapath::disable_rx();
         RX.install();
@@ -475,20 +573,103 @@ unsafe fn rx_reap() {
     }
 }
 
+/// Free the junk frames at the head of the RX ring (`mac::is_junk`: other networks'
+/// beacons, other stations' traffic, ...), so the ring keeps room for our own frames while
+/// loopTask is busy (a TLS handshake's crypto holds it ~270 ms, long enough for the channel
+/// to fill all 16 slots). `own` / `bssid` are 6-byte MACs; `keep_ap_beacons` nonzero keeps
+/// our AP's beacons (the mesh's time reference). Call from the esp_timer task
+/// only, and only while associated and not sweeping. `stalled` nonzero (loopTask hasn't
+/// serviced RX for a while) also moves kept head frames into the side queue. Returns the
+/// frames freed (0 if loopTask was mid-operation on the ring).
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_shed(own: *const u8, bssid: *const u8, keep_ap_beacons: u32, stalled: u32) -> u32 {
+    if RX_BUSY.load(core::sync::atomic::Ordering::SeqCst) {
+        return 0;
+    }
+    unsafe {
+        let own = &*(own as *const [u8; 6]);
+        let bssid = &*(bssid as *const [u8; 6]);
+        rx_reap();
+        let junk = |buf: &[u8]| ledmapper_netstack::mac::is_junk(rx_frame(buf), own, bssid, keep_ap_beacons != 0);
+        let mut n = RX.shed_head(junk) as u32;
+        // loopTask stalled, or falling behind (the ring half full: a reply burst services RX
+        // one frame at a time while frames keep arriving): move the kept frame pinning the
+        // head aside and keep shedding behind it, so the ring keeps room for what arrives.
+        while stalled != 0 || RX.ready_count() >= RX_SLOTS / 2 {
+            let Some(buf) = RX.head_frame() else { break };
+            if !RX_SIDE.push(buf) {
+                RX_SIDE_FULL = RX_SIDE_FULL.wrapping_add(1);
+                break;
+            }
+            RX.drop_head();
+            RX_SIDE_MOVED = RX_SIDE_MOVED.wrapping_add(1);
+            n += RX.shed_head(junk) as u32;
+        }
+        RX_SHED = RX_SHED.wrapping_add(n);
+        // Diagnostic: what kind of kept frame is holding the head (0 data to us, 1 group data
+        // from our AP, 2 management to us, 3 action, 4 other kept).
+        if let Some(buf) = RX.head_frame() {
+            let f = rx_frame(buf);
+            let k = if f.len() < 24 {
+                4
+            } else {
+                let ftype = (f[0] >> 2) & 3;
+                let to_us = &f[4..10] == own;
+                match (ftype, to_us) {
+                    (2, true) => 0,
+                    (2, false) => 1,
+                    (0, _) if f[0] >> 4 == 13 || f[0] >> 4 == 14 => 3,
+                    (0, true) => 2,
+                    _ => 4,
+                }
+            };
+            RX_HEAD_KEPT[k] = RX_HEAD_KEPT[k].wrapping_add(1);
+        }
+        n
+    }
+}
+
+/// Frames freed by [`ns_mac_rx_shed`] since the last call (then reset); `side` (if
+/// non-null) gets [moved into the side queue, kept frames that found it full].
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_shed_count(side: *mut u32) -> u32 {
+    unsafe {
+        let n = RX_SHED;
+        RX_SHED = 0;
+        if !side.is_null() {
+            *side = RX_SIDE_MOVED;
+            *side.add(1) = RX_SIDE_FULL;
+        }
+        RX_SIDE_MOVED = 0;
+        RX_SIDE_FULL = 0;
+        n
+    }
+}
+
 /// Frames waiting in the RX ring (completed by the MAC, not yet taken by
 /// `ns_mac_recv`). One descriptor scan, no copy: lets the caller skip a whole
 /// service pass when nothing arrived. Same task as `ns_mac_recv`.
 #[no_mangle]
 pub extern "C" fn ns_mac_rx_pending() -> u32 {
+    let _g = RxGuard::take();
     unsafe {
         rx_reap();
-        RX.ready_count() as u32
+        (RX.ready_count() + RX_SIDE.len()) as u32
     }
 }
 
 #[no_mangle]
 pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
+    let _g = RxGuard::take();
     unsafe {
+        if let Some(n) = RX_SIDE.pop(|buf| {
+            let frame = rx_frame(buf);
+            let n = frame.len().min(cap as usize);
+            core::ptr::copy_nonoverlapping(frame.as_ptr(), out, n);
+            n as u32
+        }) {
+            return n;
+        }
         rx_reap();
         if let Some((idx, buf)) = RX.next_frame() {
             let frame = rx_frame(buf);
@@ -558,7 +739,20 @@ pub extern "C" fn ns_mac_send_sec(frame: *const u8, len: u32, queue: u32) -> u32
 /// (`p2p::RXV_LEN` bytes; skipped if null). Returns the frame length, or 0.
 #[no_mangle]
 pub extern "C" fn ns_mac_recv_rxv(out: *mut u8, cap: u32, rxv: *mut u8) -> u32 {
+    let _g = RxGuard::take();
     unsafe {
+        if let Some(n) = RX_SIDE.pop(|buf| {
+            let frame = rx_frame(buf);
+            let n = frame.len().min(cap as usize);
+            core::ptr::copy_nonoverlapping(frame.as_ptr(), out, n);
+            if !rxv.is_null() {
+                let v = buf.len().min(p2p::RXV_LEN);
+                core::ptr::copy_nonoverlapping(buf.as_ptr(), rxv, v);
+            }
+            n as u32
+        }) {
+            return n;
+        }
         rx_reap();
         if let Some((idx, buf)) = RX.next_frame() {
             let frame = rx_frame(buf);
@@ -632,6 +826,23 @@ pub extern "C" fn ns_mac_tx_done(queue: u32, pmd: *mut u32) -> u32 {
         }
         done as u32
     }
+}
+
+/// Queue `queue`'s FTM timestamp words into `out[0..3]` (t1/t4 of its last ACKed frame,
+/// `ftm::TxFtm::decode`). Call right after [`ns_mac_tx_done`] reported an ACKed completion.
+#[no_mangle]
+pub extern "C" fn ns_mac_tx_ftm(queue: u32, out: *mut u32) {
+    unsafe {
+        let w = tx::txq_ftm_words(queue as usize);
+        core::ptr::copy_nonoverlapping(w.as_ptr(), out, 3);
+    }
+}
+
+/// Force the FTM tick-phase state (41) with a baseband reset pulse (`ftm::force_phase`):
+/// 1 if done, 0 if `queue` has a frame armed (try again later).
+#[no_mangle]
+pub extern "C" fn ns_phy_force_tick_phase(queue: u32) -> u32 {
+    unsafe { ledmapper_netstack::ftm::force_phase(queue as usize) as u32 }
 }
 
 /// TX completion status from a PMD word: 0 = OK, 5 = ACK timeout, else the raw code.

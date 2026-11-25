@@ -5,6 +5,10 @@
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 const [tid, planPath, outdir] = process.argv.slice(2);
 const plan = JSON.parse(readFileSync(planPath, 'utf8'));
+// One set_counting_pattern holds at most 32 blocks (the player refuses more; old
+// firmware drew the first 32 silently): check the whole plan before capturing.
+const over = plan.filter(s => s.blocks.length > 32).map(s => `${s.name} (${s.blocks.length})`);
+if (over.length) { console.error('steps over 32 blocks:', over.join(', ')); process.exit(2); }
 mkdirSync(outdir, { recursive: true });
 const t = (await (await fetch('http://localhost:9222/json/list')).json()).find(x => x.id === tid);
 const ws = new WebSocket(t.webSocketDebuggerUrl);

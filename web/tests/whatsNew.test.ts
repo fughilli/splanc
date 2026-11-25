@@ -18,9 +18,11 @@ import {
   compareVersions,
   deserializeWhatsNewState,
   jumpTargets,
+  parseClips,
   parseIndex,
   parseProductNotes,
   parseReleaseVersion,
+  pickClipVariant,
   pickProduct,
   planBoot,
   productHistory,
@@ -316,5 +318,53 @@ describe("sanitizeNotes", () => {
     for (let i = 0; i < 100; i++) deep = { t: "p", c: [deep] };
     const out = JSON.stringify(sanitizeNotes([deep]));
     assert.ok(!out.includes('"x"'));
+  });
+});
+
+describe("feature-preview clips", () => {
+  const good = {
+    id: "ai-tab",
+    title: "AI settings have their own tab",
+    summary: "Pick where AI runs.",
+    prs: [558, "x", -1],
+    variants: [
+      { framing: "phone", mp4: "media/aaa.mp4", webm: "media/aaa.webm", poster: "media/aaa.jpg", width: 600, height: 1298 },
+      { framing: "desktop", mp4: "media/bbb.mp4", poster: "media/bbb.jpg", width: 1120, height: 700 },
+    ],
+  };
+
+  test("keeps local MP4/WebM/poster media, drops what isn't", () => {
+    const [c] = parseClips([good]);
+    assert.ok(c);
+    assert.deepEqual(c.prs, [558]);
+    assert.deepEqual(c.variants[0], {
+      framing: "phone", mp4: "media/aaa.mp4", webm: "media/aaa.webm", poster: "media/aaa.jpg", width: 600, height: 1298,
+    });
+    const bad = parseClips([
+      { ...good, variants: [{ framing: "phone", mp4: "https://evil.example/x.mp4" }] },
+      { ...good, variants: [{ framing: "phone", mp4: "media/x.png" }] },
+      { ...good, variants: [{ framing: "watch", mp4: "media/x.mp4" }] },
+      { ...good, title: "" },
+      { ...good, variants: [{ framing: "phone", mp4: "media/ok.mp4", poster: "javascript:alert(1)", webm: "media/x.mp4" }] },
+      "nope",
+    ]);
+    assert.equal(bad.length, 1);
+    assert.deepEqual(bad[0]!.variants, [{ framing: "phone", mp4: "media/ok.mp4" }]);
+  });
+
+  test("a release keeps its clips through parseProductNotes", () => {
+    const notes = parseProductNotes(
+      { schema: 2, product: "app", releases: [{ version: "1.16.0", tag: "app-v1.16.0", body: [], media: [], clips: [good] }] },
+      "app",
+    );
+    assert.equal(notes?.[0]?.clips?.[0]?.title, good.title);
+  });
+
+  test("the inline recording: desktop in a wide card, else phone, else whatever exists", () => {
+    const [c] = parseClips([good]);
+    assert.equal(pickClipVariant(c!, true).framing, "desktop");
+    assert.equal(pickClipVariant(c!, false).framing, "phone");
+    const [only] = parseClips([{ ...good, variants: [good.variants[1]] }]);
+    assert.equal(pickClipVariant(only!, false).framing, "desktop");
   });
 });

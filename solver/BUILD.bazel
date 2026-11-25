@@ -26,6 +26,9 @@ rust_library(
     edition = "2021",
     visibility = ["//visibility:public"],
     deps = [
+        # The hue-code kernel (no_std, zero-dep): scenario.rs draws its
+        # rolling-stride schedule from the same stride_lit_rolling the players run.
+        "//firmware/pattern",
         "@crates//:serde",
         "@crates//:serde_json",
     ],

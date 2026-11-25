@@ -165,7 +165,7 @@ export function ShowModeScreen(_router: Router): Screen {
   function setCrossfade(v: number, fromUser = false): void {
     if (fromUser) cancelAnimationFrame(fadeRaf);
     crossfade = Math.min(1, Math.max(0, v));
-    fader.value = String(Math.round(crossfade * 100));
+    fader.value = String(crossfade);
     xfReadout.textContent = crossfadeLabel();
     pushCrossfade();
   }
@@ -354,12 +354,13 @@ export function ShowModeScreen(_router: Router): Screen {
   const fader = document.createElement("input");
   fader.type = "range";
   fader.min = "0";
-  fader.max = "100";
-  fader.step = "1";
+  fader.max = "1";
+  // Continuous: set_crossfade carries a double; no 101-step grid (D-541).
+  fader.step = "any";
   fader.value = "0";
   fader.className = "show-xfader-input";
   fader.setAttribute("aria-label", "Crossfade A to B");
-  fader.addEventListener("input", () => setCrossfade(Number(fader.value) / 100, true));
+  fader.addEventListener("input", () => setCrossfade(Number(fader.value), true));
   const modeBtn = Button({ label: "RGB", variant: "quiet", onClick: toggleMode });
   modeBtn.classList.add("show-mode-btn");
   modeBtn.title = "Blend colour space: linear RGB vs linear HSV";

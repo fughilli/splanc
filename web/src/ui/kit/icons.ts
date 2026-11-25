@@ -10,6 +10,7 @@ export type IconName =
   | "effect-to-device"
   | "effect-from-device"
   | "link"
+  | "share"
   | "link-off"
   | "camera"
   | "map"
@@ -56,7 +57,8 @@ export type IconName =
   | "check"
   | "code"
   | "eye"
-  | "eye-off";
+  | "eye-off"
+  | "wifi";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content (map / sparkle) over a device pentagon, joined by a "cut" arrow) --
@@ -89,6 +91,7 @@ const PATHS: Record<IconName, string> = {
   "map-to-device": `${MAP_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
   "effect-to-device": `${SPARK_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
   "effect-from-device": `${SPARK_TOP}${DEVICE_MAP}${cut(MAP_ARROW_UP)}`,
+  share: `<path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M6 11H5v9h14v-9h-1"/>`,
   link: `<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>`,
   "link-off": `<path d="M9 15l6-6"/><path d="M11 6l1-1a5 5 0 0 1 7 7l-1 1"/><path d="M13 18l-1 1a5 5 0 0 1-7-7l1-1"/><path d="M3 3l18 18"/>`,
   camera: `<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>`,
@@ -158,6 +161,7 @@ const PATHS: Record<IconName, string> = {
   eye: `<path d="M2.5 12C4.8 7.6 8.1 5.5 12 5.5s7.2 2.1 9.5 6.5c-2.3 4.4-5.6 6.5-9.5 6.5S4.8 16.4 2.5 12Z"/><circle cx="12" cy="12" r="3"/>`,
   // Eye with a slash (hide password): the same eye, struck through.
   "eye-off": `<path d="M2.5 12C4.8 7.6 8.1 5.5 12 5.5s7.2 2.1 9.5 6.5c-2.3 4.4-5.6 6.5-9.5 6.5S4.8 16.4 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path d="M4 4 20 20"/>`,
+  wifi: `<path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.4a9.5 9.5 0 0 1 13 0"/><path d="M8.6 15.7a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19" r="1"/>`,
 };
 
 let installed = false;

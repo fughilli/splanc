@@ -280,27 +280,33 @@ impl MeshState {
 
     pub fn encode(&self) -> [u8; STATE_LEN] {
         let mut b = [0u8; STATE_LEN];
+        self.encode_into(&mut b);
+        b
+    }
+
+    /// [`MeshState::encode`] into `b` (at least [`STATE_LEN`] bytes; firmware: a heap buffer,
+    /// not an 0.8 KB stack temporary). Returns [`STATE_LEN`], or 0 if `b` is too small.
+    pub fn encode_into(&self, out: &mut [u8]) -> usize {
+        let Some(b) = out.get_mut(..STATE_LEN) else { return 0 };
+        b.fill(0);
         let flags = (self.site_secret.is_some() as u8)
             | ((self.admin_key.is_some() as u8) << 1)
             | ((self.pairwise.is_some() as u8) << 2)
             | ((self.owner_key.is_some() as u8) << 3);
         let (pw_peer, pw_key) = self.pairwise.unwrap_or((0, [0; 16]));
-        let mut w = msg::W::new(&mut b);
+        let mut w = msg::W::new(b);
         w.u8(STATE_VERSION).u32(self.mesh_id).u8(self.channel).u8(self.mode as u8).u32(self.generation).u8(self.epoch);
         w.put(&self.mesh_key).u8(flags).u8(self.source as u8);
         w.put(&self.site_secret.unwrap_or([0; 32])).put(&self.admin_key.unwrap_or([0; 65]));
         self.revoked.encode_into(&mut w);
         w.u16(pw_peer).put(&pw_key);
-        w.u8(self.groups.n).put(&self.groups.ids).u8(self.allow.n);
-        for h in &self.allow.h {
-            w.put(h);
-        }
+        w.u8(self.groups.n).put(&self.groups.ids).u8(self.allow.n).put(self.allow.h.as_flattened());
         w.put(&self.owner_key.unwrap_or([0; 65]));
         let n = w.done().unwrap_or(0);
         debug_assert_eq!(n, STATE_LEN - 4);
         let crc = crc32(&b[..STATE_LEN - 4]);
         b[STATE_LEN - 4..].copy_from_slice(&crc.to_be_bytes());
-        b
+        STATE_LEN
     }
 
     pub fn decode(b: &[u8]) -> Option<MeshState> {
@@ -329,9 +335,7 @@ impl MeshState {
             return None;
         }
         let mut allow = AllowList { n: an, ..AllowList::default() };
-        for h in allow.h.iter_mut() {
-            *h = r.arr()?;
-        }
+        allow.h.as_flattened_mut().copy_from_slice(r.take(ALLOW_MAX * 8)?);
         let owner: [u8; 65] = r.arr()?;
         r.end()?;
         Some(MeshState {
@@ -520,6 +524,11 @@ impl Membership {
         self.state.map(|s| s.groups).unwrap_or_default()
     }
 
+    /// The revocation list (device keys and delegates the admin removed); empty with no mesh.
+    pub fn revoked(&self) -> crate::rekey::Revocations {
+        self.state.map(|s| s.revoked).unwrap_or_default()
+    }
+
     pub fn admin_key(&self) -> Option<&PublicKey> {
         self.state.as_ref().and_then(|s| s.admin_key.as_ref())
     }
@@ -559,6 +568,19 @@ impl Membership {
             Phase::Searching { until_us: now_us + SEARCH_US }
         };
         Note::KeysChanged
+    }
+
+    /// Leave the mesh (the app's `mesh_admin.leave`, or the admin's `Eject`, mesh M7): forget
+    /// every credential; the device is unprovisioned again.
+    pub fn leave(&mut self) {
+        self.state = None;
+        self.phase = Phase::Unprovisioned;
+        self.best = None;
+        self.request = None;
+        self.pending = [None; PENDING];
+        self.admitted = [None; ADMITTED];
+        self.gateway_pending = [None; GATEWAY_PENDING];
+        (self.rx_ok, self.rx_bad, self.key_suspect) = (0, 0, false);
     }
 
     /// Restore persisted state at boot (as if provisioned; searching first).
@@ -859,6 +881,8 @@ impl Membership {
                 }
                 Note::StateChanged
             }
+            // The stack acts on an eject for this device (it knows its own key).
+            Command::Eject { .. } => Note::None,
         }
     }
 

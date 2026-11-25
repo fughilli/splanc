@@ -1,0 +1,169 @@
+{
+  "board": {
+    "components": [
+      {
+        "address": "board.usbc",
+        "position": [14.0, 3.5],
+        "ref": "USB1"
+      },
+      {
+        "address": "board.btn_user2",
+        "position": [59.0, 3.5],
+        "ref": "SW4"
+      },
+      {
+        "address": "board.btn_boot",
+        "position": [42.0, 3.5],
+        "ref": "SW1"
+      },
+      {
+        "address": "board.power_led",
+        "position": [22.0, 4.0],
+        "ref": "LED1"
+      },
+      {
+        "address": "board.btn_reset",
+        "position": [34.0, 3.5],
+        "ref": "SW2"
+      },
+      {
+        "address": "board.btn_user1",
+        "position": [51.0, 3.5],
+        "ref": "SW3"
+      },
+      {
+        "address": "board.status_led",
+        "position": [26.0, 4.0],
+        "ref": "LED2"
+      }
+    ],
+    "frame": "PCB lower-left, X right, Y towards rear, Z from PCB bottom",
+    "mounts": [
+      {
+        "diameter_mm": 2.7,
+        "x": 4.0,
+        "y": 4.0
+      },
+      {
+        "diameter_mm": 2.7,
+        "x": 66.0,
+        "y": 4.0
+      },
+      {
+        "diameter_mm": 2.7,
+        "x": 4.0,
+        "y": 51.0
+      },
+      {
+        "diameter_mm": 2.7,
+        "x": 66.0,
+        "y": 51.0
+      }
+    ],
+    "outline": {
+      "height_mm": 55.0,
+      "thickness_mm": 1.6,
+      "width_mm": 70.0
+    }
+  },
+  "edge_chamfer": 0.5,
+  "handheld": {
+    "assembly_z_shift_mm": -1.6,
+    "button": {
+      "aperture": [5.7, 2.9],
+      "center_z": 9.1,
+      "depth": 6.0,
+      "draft_deg": 0.95,
+      "land_z": 17.15,
+      "rail_height": 1.8,
+      "rail_z": 16.0,
+      "raised_seam_z": 15.5,
+      "rear_height": 2.4,
+      "rear_width": 5.2,
+      "rear_y": 1.45,
+      "retainer_depth": 0.8,
+      "retainer_z": 16.1,
+      "spring_path": [
+        [2.7, 15.4],
+        [2.7, 14],
+        [0.9, 14],
+        [0.9, 12.5],
+        [2.7, 12.5],
+        [2.7, 11],
+        [0.7, 11],
+        [0.7, 10.2]
+      ],
+      "spring_thickness": 0.3,
+      "spring_width": 0.8
+    },
+    "corner_radius": 3.0,
+    "floor": 1.6,
+    "mini": {
+      "board": [70, 55],
+      "button_overrides": {
+        "link_thickness": 0.3,
+        "link_width": 0.8,
+        "raised_seam_z": 11.2,
+        "retention": "linked",
+        "stop_travel": 0.6,
+        "stop_width": 1.2
+      },
+      "buttons": [34, 42, 51, 59],
+      "led_ports": [
+        [64, 20],
+        [64, 31]
+      ],
+      "lightpipes": [
+        [22, 4],
+        [26, 4]
+      ],
+      "logo_width": 34,
+      "outside_height_mm": 11.3,
+      "qwiic": {
+        "mouth_mm": [-0.5, 11, 8.88],
+        "normal": [-1, 0, 0],
+        "opening_inner_mm": [8, 4.8],
+        "opening_outer_mm": [9.2, 6],
+        "origin_mm": [1.975, 11, 7.4],
+        "part": "JST SM04B-SRSS-TB",
+        "pinout": ["GND", "3V3", "SDA", "SCL"],
+        "rotation_deg": -90,
+        "status": "mechanical provision; add and route in next electrical revision"
+      },
+      "rear_margin": 2.8,
+      "roof": 1.4,
+      "side_margin": 2.8,
+      "split": 9,
+      "top": 12.9,
+      "usb_x": 14
+    },
+    "roof": 1.6,
+    "wall": 2.2
+  },
+  "provenance": {
+    "commit": "311837b73aa3378e997928eda881ab229584e7bb",
+    "files": {
+      "hardware/mechanical/assets/mini-board-reference.json": "035e0fe430b1eac53055f385e304d0a3035a8d51651d458e5b9213e7010f72ba",
+      "hardware/mechanical/enclosure-spec.json": "ade27101abd89d1393c6ed3d79a3dfe4e29b22aa66f2fa5cd5e1066327398c8a"
+    },
+    "note": "Reduced snapshot of the Mini enclosure design parameters; regenerate with render.py --refresh-snapshot --git-ref <ref>.",
+    "ref": "origin/splanc-mini"
+  },
+  "revision": "qwiic-linked-r13",
+  "usb_c": {
+    "back_relief_mm": [12, 5.6],
+    "cable_overmold_corner_radius_mm": 1.5,
+    "cable_overmold_front_mm": 0.1,
+    "cable_overmold_test_mm": [16, 8],
+    "opening_draft_deg": 1,
+    "qualification": "Prototype envelope, not a universal cable or waterproof qualification. Shell clearance is nominal; cable mouldings vary.",
+    "radial_clearance_mm": 0.3,
+    "shell_height_mm": 3.16,
+    "shell_width_mm": 8.94,
+    "web_back_mm": -0.9,
+    "web_thickness_mm": 0.8,
+    "well_corner_radius_mm": 2,
+    "well_inner_mm": [18, 10],
+    "well_outer_mm": [20, 12]
+  }
+}

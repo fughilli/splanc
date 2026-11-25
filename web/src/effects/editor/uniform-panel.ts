@@ -13,7 +13,17 @@
 
 import type { FxUiKind, FxUniform } from "../../fx/preview";
 import { reassembleUniformValues } from "../../net/uniformWire";
-import { clampUniformValue, componentRanges, isRangedVector, matIndex, matrixDim } from "../uniformValues";
+import {
+  clampUniformValue,
+  colorFromHex,
+  colorToHex,
+  componentRanges,
+  isRangedVector,
+  matIndex,
+  matrixDim,
+  snapToStep,
+  stepAttr,
+} from "../uniformValues";
 
 interface Slot {
   uniform: FxUniform;
@@ -35,7 +45,15 @@ export class UniformPanel {
   constructor(
     private readonly root: HTMLElement,
     private readonly onChange: (slot: number, value: number[]) => void,
+    /** `label` renames controls for display (the Effects tab's tune sheet shows
+     * "Base color" for `base_color`); the editor shows the raw names. `empty`
+     * replaces the "No uniforms declared." line. */
+    private readonly opts: { label?: (name: string) => string; empty?: string } = {},
   ) {}
+
+  private label(name: string): string {
+    return this.opts.label ? this.opts.label(name) : name;
+  }
 
   /** Current live values, keyed by manifest slot. */
   values(): { slot: number; value: number[] }[] {
@@ -107,7 +125,7 @@ export class UniformPanel {
     if (this.slots.length === 0) {
       const p = document.createElement("p");
       p.className = "muted upanel-empty";
-      p.textContent = "No uniforms declared.";
+      p.textContent = this.opts.empty ?? "No uniforms declared.";
       this.root.appendChild(p);
       return;
     }
@@ -130,7 +148,7 @@ export class UniformPanel {
 
     const name = document.createElement("span");
     name.className = "upanel-name";
-    name.textContent = s.uniform.name;
+    name.textContent = this.label(s.uniform.name);
     name.title = s.uniform.name;
 
     if (s.uniform.ui.kind === "matrix") {
@@ -163,7 +181,7 @@ export class UniformPanel {
       row.className = "upanel-row";
       const name = document.createElement("span");
       name.className = "upanel-name";
-      name.textContent = `${u.name}.${COMPONENT[c] ?? c}`;
+      name.textContent = `${this.label(u.name)}.${COMPONENT[c] ?? c}`;
       name.title = name.textContent;
       const ctrl = document.createElement("span");
       ctrl.className = "upanel-ctrl";
@@ -231,24 +249,24 @@ export class UniformPanel {
   }
 
   /** A range slider (in `ctrl`) + an editable number field (in `value`) for one
-   * number in [min,max]; typing clamps + snaps to the step. Returns a mover
-   * that sets both from outside (MIDI / hydration). */
+   * number in [min,max]; typing clamps (and snaps when the uniform has a step
+   * grid). `step` 0 is continuous: the uniform's native f32 precision, no
+   * grid (D-541). Returns a mover that sets both from outside (MIDI / hydration). */
   private sliderPair(
     ctrl: HTMLElement,
     value: HTMLElement,
     min: number,
     max: number,
-    stepIn: number,
+    step: number,
     current: () => number,
     onValue: (v: number) => void,
   ): (v: number) => void {
-    const step = stepIn > 0 ? stepIn : 0.001;
     const cur = current();
     const el = document.createElement("input");
     el.type = "range";
     el.min = String(min);
     el.max = String(max);
-    el.step = String(step);
+    el.step = stepAttr(step);
     el.value = String(cur);
 
     const num = document.createElement("input");
@@ -256,7 +274,7 @@ export class UniformPanel {
     num.className = "upanel-num";
     num.min = String(min);
     num.max = String(max);
-    num.step = String(step);
+    num.step = stepAttr(step);
     num.value = fmtNum(cur);
 
     el.addEventListener("input", () => {
@@ -264,11 +282,14 @@ export class UniformPanel {
       num.value = fmtNum(v);
       onValue(v);
     });
-    // Commit the typed value on Enter/blur: clamp to [min,max] and snap to step.
+    // Commit the typed value on Enter/blur: clamp to [min,max] (+ snap to a
+    // declared step grid; a continuous uniform keeps exactly what was typed).
     const commit = (): void => {
-      let v = parseFloat(num.value);
+      // The field shows a rounded label: an unedited field (Enter / blur with
+      // no change) keeps the exact live value rather than the label.
+      let v = num.value === fmtNum(current()) ? current() : parseFloat(num.value);
       if (!Number.isFinite(v)) v = current();
-      v = snap(v, min, max, step);
+      v = snapToStep(v, min, max, step);
       el.value = String(v);
       num.value = fmtNum(v);
       onValue(v);
@@ -322,11 +343,14 @@ export class UniformPanel {
       swatch.className = "upanel-color-swatch";
       const el = document.createElement("input");
       el.type = "color";
-      el.value = rgbToHex(s.value);
+      // The 8-bit hex is display only: the live value stays the uniform's
+      // float colour, and a pick changes only the channels the user moved
+      // (an untouched channel and alpha keep full precision, D-541).
+      el.value = colorToHex(s.value);
       swatch.style.background = el.value;
       value.textContent = el.value;
       el.addEventListener("input", () => {
-        this.set(i, hexToRgb(el.value, s.uniform.width));
+        this.set(i, colorFromHex(el.value, this.slots[i]?.value ?? s.value, s.uniform.width));
         swatch.style.background = el.value;
         value.textContent = el.value;
       });
@@ -362,35 +386,8 @@ export class UniformPanel {
 
 const COMPONENT = ["x", "y", "z", "w"];
 
-function clampN(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
-}
-/** Clamp to [min,max] then snap to the slider's step grid. */
-function snap(v: number, min: number, max: number, step: number): number {
-  v = clampN(v, min, max);
-  if (step > 0) v = min + Math.round((v - min) / step) * step;
-  return clampN(v, min, max);
-}
 /** Compact numeric label (up to 4 decimals, trailing zeros trimmed). */
 function fmtNum(v: number): string {
   if (!Number.isFinite(v)) return "0";
   return String(Math.round(v * 1e4) / 1e4);
-}
-
-function clamp255(x: number): number {
-  return Math.max(0, Math.min(255, Math.round(x * 255)));
-}
-function rgbToHex(v: number[]): string {
-  const [r, g, b] = [v[0] ?? 0, v[1] ?? 0, v[2] ?? 0];
-  const h = (n: number): string => clamp255(n).toString(16).padStart(2, "0");
-  return `#${h(r)}${h(g)}${h(b)}`;
-}
-function hexToRgb(hex: string, width: number): number[] {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const out = [r, g, b];
-  // vec4 color uniforms carry an alpha slot; default it opaque.
-  if (width >= 4) out.push(1);
-  return out.slice(0, Math.max(3, width));
 }
