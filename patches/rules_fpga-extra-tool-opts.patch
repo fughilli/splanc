@@ -1,0 +1,38 @@
+rules_fpga: optional extra nextpnr / packer arguments on synthesizable_bitstream
+(nextpnr_opts, packer_opts). //fpga/spi_ws281x's 20-port top needs them to use the
+Gowin dual-purpose configuration pins (SSPI/CPU, Tang Nano 9K pins 53-57) as user
+I/O. Additive only: unset attrs build exactly as before. Fold upstream and drop.
+
+--- a/fpga/rules/bitstream.bzl
++++ b/fpga/rules/bitstream.bzl
+@@ -102,6 +102,7 @@
+             args += ["--freq", board.freq_mhz]
+     else:
+         fail("unsupported FPGA family: %s" % board.family)
++    args += ctx.attr.nextpnr_opts
+ 
+     ctx.actions.run(
+         executable = tc.nextpnr,
+@@ -120,7 +121,7 @@
+         args = [pnr_out.path, bit.path]
+     elif board.family == "gowin":
+         bit = ctx.actions.declare_file(ctx.label.name + ".fs")
+-        args = ["-d", board.packer_device, "-o", bit.path, pnr_out.path]
++        args = ["-d", board.packer_device] + ctx.attr.packer_opts + ["-o", bit.path, pnr_out.path]
+     else:
+         fail("unsupported FPGA family: %s" % board.family)
+ 
+@@ -175,6 +176,13 @@
+             allow_single_file = [".pcf", ".cst"],
+             doc = "Pin-constraint file: .pcf for ice40, .cst for gowin.",
+         ),
++        "nextpnr_opts": attr.string_list(
++            doc = "Extra nextpnr arguments, e.g. [\"--vopt\", \"sspi_as_gpio\"] (gowin).",
++        ),
++        "packer_opts": attr.string_list(
++            doc = "Extra packer arguments, e.g. [\"--sspi_as_gpio\", \"--cpu_as_gpio\"] " +
++                  "(gowin_pack: dual-purpose configuration pins as user I/O).",
++        ),
+         "_board": attr.label(
+             default = "//fpga/boards:current",
+             providers = [FpgaBoardInfo],

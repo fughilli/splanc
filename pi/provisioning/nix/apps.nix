@@ -101,6 +101,25 @@ let
   # trial check must roll it back. Read --impure, like every sbc-deploy seam.
   maxVariant = builtins.getEnv "SPLANC_MAX_VARIANT";
   unhealthyFlags = pkgs.lib.optionalString (maxVariant == "unhealthy") " --add-flags \"--health-file ''\"";
+
+  # Output pacing + userspace real-time (pi/player_rs pacing.rs / rt.rs; README
+  # "Frame-done pacing"). Frame-done: FPGA pin 28 -> Pi GPIO 22 (header pin 15),
+  # 3.3 V both sides. The player waits for its rising edge per frame and falls
+  # back to timed pacing by itself when the line never rises (unwired, old
+  # bitstream), so the flag is safe on every board. "none" disables it.
+  playerFrameDoneGpio = "22";
+  # The output thread runs SCHED_FIFO 45 pinned to the last CPU, with
+  # mlockall; the unit grants CAP_SYS_NICE + CAP_IPC_LOCK (below) instead of root.
+  # The SPI controller's message-pump kthread goes to FIFO 46: just above the
+  # output thread that blocks on it, below the IRQ threads (50).
+  playerRtPrio = 45;
+  spiPumpPrio = 46;
+  # OPTIONAL (default off): keep the scheduler's load balancing, unbound
+  # kworkers and IRQs off the output CPU (3 on every quad-core Pi). Costs that
+  # core for the FX VM's 4-core fallback; only worth it if measurements under
+  # load show interference the FIFO priority alone doesn't remove.
+  isolateOutputCpu = false;
+  outputCpu = 3;
   playerRsBin = sbcBuildData."player" or (throw
     "player binary missing from build_data — add //pi/player_rs/musl:player_musl "
   + "to sbc_application(build_data=…).");
@@ -111,7 +130,25 @@ let
       --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
       --add-flags "--start ${toString ledStartLeds}" \
       --add-flags "--fps ${toString ledFps}" \
-      --add-flags "--serve-port ${toString playerRsWssPort}"${unhealthyFlags}
+      --add-flags "--serve-port ${toString playerRsWssPort}"${unhealthyFlags} \
+      --add-flags "--frame-done-gpio ${playerFrameDoneGpio}" \
+      --add-flags "--rt on --rt-prio ${toString playerRtPrio} --rt-cpu ${toString outputCpu}"
+  '';
+
+  # Raise the SPI controller's message-pump kthread. The spi core names it after
+  # the controller device: `spi0` for SPI0 on the Pi 3/4 (spi-bcm2835) and on the
+  # Pi 5 (RP1's DesignWare SPI, spi-dw-mmio). Runs as root (ExecStartPre=+).
+  # Since ~6.0 an uncontended spi_sync runs in the CALLER's context (the output
+  # thread), so the pump matters only when transfers queue; the raise keeps a
+  # queued transfer from waiting behind normal tasks. Best-effort, never fatal.
+  spiPumpRt = pkgs.writeShellScript "spi-pump-rt" ''
+    for p in /proc/[0-9]*; do
+      if [ "$(cat "$p/comm" 2>/dev/null)" = spi0 ]; then
+        ${pkgs.util-linux}/bin/chrt -f -p ${toString spiPumpPrio} "''${p#/proc/}" \
+          && echo "[spi-pump-rt] spi0 (pid ''${p#/proc/}) -> SCHED_FIFO ${toString spiPumpPrio}" >&2
+      fi
+    done
+    exit 0
   '';
 
   # FPGA gateware shipped in this image; the DUT flashes its own Tang Nano 9K
@@ -230,7 +267,11 @@ in
   # past spidev's 4 KiB default buffer, which fails every write (EMSGSIZE) — the
   # player rendered but the Tang got nothing. (Found by the OTA health check, which
   # counts frames actually written: docs/design/max-ota.md "Health proof".)
-  boot.kernelParams = pkgs.lib.optionals (ledOutput == "fpga") [ "spidev.bufsiz=65536" ];
+  boot.kernelParams = pkgs.lib.optionals (ledOutput == "fpga") [ "spidev.bufsiz=65536" ]
+    ++ pkgs.lib.optionals isolateOutputCpu [
+    "isolcpus=${toString outputCpu}"
+    "irqaffinity=0-${toString (outputCpu - 1)}"
+  ];
 
   services.sbcApps = {
     # M1 — pattern driver. Real-time FIFO scheduling + CAP_SYS_NICE, owns SPI,
@@ -247,7 +288,14 @@ in
       exec = if ledOutput == "fpga" then "bin/player" else "bin/led-driver";
       user = "ledmapper";
       extraGroups = [ "spi" "gpio" ];
-      realtime = true;
+      # NOT sbc-deploy's `realtime = true`: that runs the WHOLE process at
+      # SCHED_FIFO 50 (the WSS server and render pool included, level with the
+      # IRQ threads). The player raises only its output thread (SCHED_FIFO
+      # ${toString playerRtPrio}) and needs just these two capabilities for it:
+      # CAP_SYS_NICE (FIFO + CPU affinity) and CAP_IPC_LOCK (mlockall). The
+      # apa102 path (the Python driver) keeps the whole-process FIFO.
+      realtime = ledOutput != "fpga";
+      extraCapabilities = pkgs.lib.optionals (ledOutput == "fpga") [ "CAP_SYS_NICE" "CAP_IPC_LOCK" ];
       # The Rust player serves WSS on this port (the phone + HITL harness reach it
       # over the net, via res.forward on the rig); opens the firewall.
       ports = pkgs.lib.optionals (ledOutput == "fpga") [ playerRsWssPort ];
@@ -264,9 +312,11 @@ in
       # ExecStart then opens /dev/spidev. Gating keeps the apa102 path (and its
       # bare eval) from needing SBC_FPGA_BITSTREAM.
       extraServiceConfig = pkgs.lib.optionalAttrs (ledOutput == "fpga") {
-        ExecStartPre = "+${fpgaCommission}";
+        ExecStartPre = [ "+${fpgaCommission}" "+${spiPumpRt}" ];
         # Headroom for the commission's 20 s FT2232 wait + a full reflash.
         TimeoutStartSec = 180;
+        # The player only mlockall()s when it can't hit this limit later.
+        LimitMEMLOCK = "infinity";
       };
     };
 
