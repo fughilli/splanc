@@ -1,0 +1,126 @@
+# Wall clock (software RTC, time zone, time from the app and the bridge)
+
+Status: PR-2 of the real-time effects plan (desk D-559). The clock is set from the
+app and the bridge; SNTP on the device, a hardware RTC, schedules and the `clock*`
+effect uniforms come in later PRs.
+
+## What the lamp keeps
+
+- **UTC on a software RTC**: `//firmware/clock`'s `WallClock` on `esp_timer` µs
+  (`firmware/player_app/clock_ffi.rs`). Sources make offers with an error bound that
+  grows with age at the crystal's rate; the clock keeps the lowest current error,
+  steps corrections over 1 s and slews smaller ones (≤ 500 ppm), and fits the
+  crystal's rate from successive samples.
+- **A time zone as a POSIX TZ rule** (D-562), e.g. `CET-1CEST,M3.5.0,M10.5.0/3`,
+  plus the IANA name for display. Persisted in NVS (`clk_tz`) on change only. A
+  rule keeps DST right for years with no network.
+- **Effect time never moves with it.** `time` / `dt` stay on the show epoch.
+
+## Sources in this PR
+
+| Source | How | Error |
+|---|---|---|
+| App push | `set_wall_clock{pushed_by: APP}` on every connect (wss and BLE), 2.5 s after the welcome | min-RTT/2 of 6 `time_sync_ping` rounds + 20 ms (the phone against UTC) |
+| Bridge push | `set_wall_clock{pushed_by: BRIDGE}` on every session connect, from the host's clock and `/etc/localtime` | the same |
+| Manual | the app's "Set from this phone", MCP `set_clock{time}`: replaces even a more certain time | as given |
+| Soft-reset carry-over | the `CarryRecord` in RTC no-init RAM, rewritten at 20 Hz, restored after SW / panic / watchdog resets | the carried error + 1 s |
+
+`set_wall_clock` carries `unix_ms` that was true at `at_device_ms` (the
+`TimeSyncPong` device-ms domain), exactly like `set_time_base`, so the push is as
+good as the sync. A later, worse push does not move the clock (`NOT_BETTER`).
+
+## Rules
+
+- **Who may set it (D-569).** Owners, the bridge, SNTP and an RTC always. A locked
+  kiosk session (a visitor) only while the clock is unset, and its zone only while
+  none is set. Both arms are Read-class at the kiosk gate; `clock_ffi.rs` enforces
+  the rest and answers `last_set = LOCKED`.
+- **Power loss (D-568).** Without a hardware RTC the clock is invalid after a cold
+  boot until a source returns. A soft reset keeps it.
+- **esp_timer step-backs.** The C6's esp_timer has been seen stepping back by whole
+  multiples of 2^24 systimer ticks. The clock reads esp_timer through its own
+  `StepGuard` on every read and on every loop pass, so the wall clock stays
+  continuous (reported as `mono_jumps`).
+- **Off the render path.** Every clock entry point runs on the loop task (the
+  handlers, and `lm_clock_tick` under a try-lock of the player mutex). Render
+  never touches the clock; the carry record is a 28-byte RAM write.
+
+## P4 + C6 split: the P4 owns the clock
+
+The P4 renders and owns the show epoch (`p4-c6-split.md` §2.1), so it owns wall
+time too: the same `clock_ffi.rs` runs in the P4 image, and its RTC no-init RAM
+carries the time over the P4's soft resets. The C6 front end forwards
+`set_wall_clock` / `get_clock` like any player arm. When SNTP lands on the C6
+(PR-4) the front end becomes a source: it forwards a `set_wall_clock` with
+`pushed_by = FRONTEND` over the link, whose latency is well under 1 ms.
+
+## Protocol
+
+`set_wall_clock` (C 111), `get_clock` (C 112) → `clock_state` (S 61); C 110 and S 60 are taken by the open OSC-over-wss PR; feature
+`wall_clock`. `clock_state` reports validity, the reading (`unix_ms` at
+`device_ms`), the source and who pushed it, the error and its age, the drift fit,
+the zone (rule, name, current offset and abbreviation), counters, and the result
+of the set it answers.
+
+## Status line and console
+
+`[clock] valid=1 src=push/app unix_ms=… local=2026-11-25T09:00:00 CET off=3600
+err_ms=25 age_s=0 drift_ppb=0 gen=1 steps=1 jumps=0 tz="CET-1CEST,…"`: at boot, on
+every accepted set and every 10 minutes. The USB console takes `CLOCK STATUS` and
+`CLOCK RESTART` (a soft reset with a fresh carry record, the HITL test's hook).
+
+## Tests
+
+- `//firmware/clock:tz_test`: the POSIX parser and evaluator against tzdata vectors.
+- `//firmware/player_app:clock_test`: the arms through the C ABI, the zone record,
+  the step guard, the carry-over, the kiosk visitor rule.
+- `//web:posixTz_test`, `//web:wallClock_test`, agent tests.
+- HITL `//pi/hitl/harness:clock_app_netstack`: an app-style sync, then a soft reset
+  keeps the clock, while render keeps running with no late frames.
+
+## Network time (SNTP, D-561)
+
+The lamp sets its own clock from the network (`Source::Sntp`, the best-ranked source), with
+no app or bridge needed. Feature `sntp`.
+
+- **Which server.** The owner's override (`set_clock_config.ntp_servers`, up to two host
+  names or IPv4 literals) when set. Otherwise the NTP servers the DHCP lease offers
+  (option 42, now requested), topped up with `pool.ntp.org`, resolved through the lease's
+  DNS servers (option 6), else the router. `use_dhcp_ntp` turns the option-42 part off;
+  `ntp_enabled` turns SNTP off. The settings persist in NVS (`clk_ntp`).
+- **Cross-check.** A round asks two servers when it can (two option-42 servers, or one
+  plus the pool, or two pool addresses) and takes the time only when they agree (offsets
+  within the two error bounds + 50 ms). A lone answer counts when the round had one server
+  or when it matches the last accepted sample within 1 s (+500 ppm of the time since).
+  Otherwise the round fails (`DISAGREE`, `UNCONFIRMED`) and the clock is left alone.
+- **Backoff.** After a good round 64 s, doubling to 1 h. After a failed round 15 s,
+  doubling to 5 min. A kiss-o'-death waits 5 min. A random 1/8 of the interval is added.
+- **Error.** δ/2 + the server's root delay/2 + root dispersion. T4 is the radio's
+  arrival: while a request is out, the netstack reaps with the MAC's RX vector and the
+  client maps its 1 MHz stamp onto esp_timer by the reap-lag floor (`firmware/sntp`
+  `stamp.rs`), so a TLS record or a flash write in the loop doesn't add to the error.
+- **Next hop.** The netstack now reads DHCP options 1, 3, 6 and 42 and sends a one-shot
+  ARP who-has for the router (up to 3 tries, never beside a live wss). Off-subnet traffic
+  to a peer it hasn't heard from goes to the router's MAC once known, else the BSSID as
+  before. That is what makes DNS and NTP work on mesh or commercial APs where the AP is
+  not the router.
+- **No blipping.** Everything runs on the loop task: a round is one small DNS query and
+  two 48-byte requests, a few times an hour. The sample is offered to the clock on the
+  next `lm_clock_tick` (under the player mutex); one measured across an esp_timer
+  step-back is dropped.
+- **Mesh-only members** never get a lease, so they never run SNTP; they take wall time
+  from the mesh (PR-8).
+- **P4.** With Ethernet the P4 runs IDF lwIP's `esp_sntp` with the same settings and
+  offers each sync through `lm_clock_offer_sntp` (error 50 ms: lwIP gives none). A P4 + C6
+  lamp without Ethernet gets its time from the app and the bridge (the front end runs no
+  SNTP yet).
+- **Protocol.** `set_clock_config` (C 113, owner only: kiosk refuses it) → `clock_state`,
+  which now carries `ntp` (`ClockNtp`: settings, the lease's servers, the last round's
+  result, server, round trip, age, next poll).
+- **Console.** `CLOCK SNTP` prints the `[sntp]` line (also logged after every round);
+  `CLOCK SNTP NOW` runs a round now.
+- **Tests.** `//firmware/sntp:codec_test` (golden DNS/NTP packets, KoD, LI 3, era
+  pivot, RX floor), `//firmware/sntp:client_test` (server choice, cross-check, backoff,
+  strays, spoofs), `//firmware/player_app:sntp_test` (the C ABI end to end into the
+  clock), `//firmware/player_app:dhcp_reply_test` (the options), HITL
+  `//pi/hitl/harness:clock_sntp_netstack`.
