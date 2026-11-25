@@ -131,7 +131,9 @@ export function MidiScreen(_router: Router): Screen {
 
     function refreshCaptured(): void {
       if (lastControl) {
-        capLabel.textContent = `${lastControl.control.device} · ${controlLabel(lastControl.control)}`;
+        // "14-bit" once the decoder has detected a 14-bit CC pair / NRPN.
+        const hi = lastControl.bits === 14 ? " · 14-bit" : "";
+        capLabel.textContent = `${lastControl.control.device} · ${controlLabel(lastControl.control)}${hi}`;
         nameInput.disabled = false;
         (assign as HTMLButtonElement).disabled = false;
       } else {
@@ -268,7 +270,9 @@ export function MidiScreen(_router: Router): Screen {
 
   function onControl(e: MidiControlEvent): void {
     const changed =
-      lastControl === null || controlKey(lastControl.control) !== controlKey(e.control);
+      lastControl === null ||
+      controlKey(lastControl.control) !== controlKey(e.control) ||
+      lastControl.bits !== e.bits;
     lastControl = e;
     liveValues.set(controlKey(e.control), e.value);
     scheduleMeterFlush();
