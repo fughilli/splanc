@@ -87,13 +87,22 @@ export async function previewShare(env: ShareEnvelope, deps: ShareDeps = live())
     const b = env.body as Partial<MeshBackupBody>;
     if (typeof b?.meshId !== "number" || !b.admin || !b.site) return { title: "A mesh", lines: [], blocked: "This link is damaged." };
     const name = (b.name ?? "").trim() || "A mesh";
+    const delegate = !!b.delegation;
     const lines = [
       `${plural(b.members?.length ?? 0, "fixture")}${b.members?.length ? `: ${b.members.map((m) => m.label).filter(Boolean).slice(0, 4).join(", ")}` : ""}`,
-      "This phone will be able to add, remove and control every fixture in it.",
+      delegate
+        ? `This phone will be able to add, remove and control its fixtures${b.until ? ` until ${new Date(b.until).toLocaleDateString()}` : ""}. The owner can take it back.`
+        : "This phone will be able to add, remove and control every fixture in it.",
     ];
     const have = await deps.meshes.get(b.meshId);
     if (have && have.keyEpoch > (b.keyEpoch ?? 1)) {
       return { title: name, lines, blocked: "This link is older than the copy of the mesh on this phone (its keys changed since). Ask for a new link." };
+    }
+    if (delegate && have?.role === "admin") {
+      return { title: name, lines, blocked: "This phone already administers this mesh, with more access than this link gives." };
+    }
+    if (delegate && b.until && Date.parse(b.until) <= Date.now()) {
+      return { title: name, lines, blocked: "This access has expired. Ask the owner for a new link." };
     }
     return { title: name, lines, note: have ? "This phone already has this mesh: its copy is updated." : undefined };
   }

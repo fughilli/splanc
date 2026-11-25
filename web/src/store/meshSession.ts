@@ -25,10 +25,11 @@ setMeshLargeSender({
 });
 
 /** The admin key for `meshId`, if this app holds it. */
-export async function meshSignerLookup(meshId: number): Promise<{ signer: MeshAdminSigner } | null> {
+export async function meshSignerLookup(meshId: number): Promise<{ signer: MeshAdminSigner; delegation: Uint8Array | null } | null> {
   try {
     if (!(await meshStore.get(meshId))) return null;
-    return { signer: await meshStore.signer(meshId) };
+    // A delegate (revocable access) signs with its own key and shows its certificate.
+    return { signer: await meshStore.signer(meshId), delegation: await meshStore.delegation(meshId) };
   } catch {
     return null;
   }

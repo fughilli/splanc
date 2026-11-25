@@ -16,13 +16,12 @@
 import { Button, Sheet, Switch, confirmDialog, icon, toast } from "../kit";
 import type { MeshAdminOp, MeshAdminResultInfo, MeshStateInfo } from "../../net/mesh";
 import { admitPending, ejectMember, ensureUnlocked, leaveMesh, revokeMembers, MeshAdminFailure } from "../../net/meshAdmin";
-import { meshStore, type MeshRecord } from "../../store/meshStore";
+import { keepRevoked, meshStore, type MeshRecord } from "../../store/meshStore";
 import { lastMeshResult, meshSignerLookup, onMeshResults, rememberMeshAll } from "../../store/meshSession";
 import { meshResultSummary, meshSectionModel, nodeLabel, type MeshMemberRow, type MeshResultSummary, type MeshSectionModel } from "./meshModel";
 import { installMeshStyles } from "./meshUi.css";
 import { toHex } from "../../net/meshKeys";
-import { meshShareBody } from "../../store/shareAccess";
-import { openShareSheet } from "./shareSheet";
+import { openShareMeshSheet } from "./shareMeshSheet";
 
 export interface MeshSectionClient {
   getMesh(timeoutMs?: number): Promise<MeshStateInfo>;
@@ -69,7 +68,7 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
     held: { meshId: number; node: number } | null,
   ): void => {
     // Re-render only on a visible change (the poll must not reset a focused button).
-    const key = JSON.stringify([m, meshes.map((x) => [x.meshId, x.name]), last, held]);
+    const key = JSON.stringify([m, meshes.map((x) => [x.meshId, x.name]), last, held, rec?.role, rec?.delegates]);
     if (key === lastKey) return;
     lastKey = key;
     el.replaceChildren();
@@ -163,24 +162,89 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
       actions.append(
         Button({ label: "Add a fixture to this mesh", icon: "plus", onClick: () => go(`#/mesh/add/${rec.meshId}`) }),
         Button({ label: "Remove from mesh", variant: "quiet", onClick: () => openMemberSheet(m.members[0]!, m, rec) }),
-        Button({ label: "Share admin access", icon: "share", variant: "quiet", onClick: () => void shareMesh(rec) }),
-        Button({ label: "Back up this mesh", variant: "quiet", onClick: () => void openBackupSheet(rec) }),
       );
+      if (rec.role === "delegate") {
+        // Revocable access someone shared (docs/design/share-links.md): no blocking, backups
+        // or sharing on; the owner can take it back.
+        el.append(
+          h(
+            "div",
+            "mesh-row-hint",
+            `Shared with you by this mesh's owner${rec.delegateUntil ? ` until ${new Date(rec.delegateUntil).toLocaleDateString()}` : ""}. ` +
+              "They can take it back. Blocking fixtures and sharing the mesh stay with them.",
+          ),
+        );
+      } else {
+        actions.append(
+          Button({ label: "Share admin access", icon: "share", variant: "quiet", onClick: () => void shareMesh(rec) }),
+          Button({ label: "Back up this mesh", variant: "quiet", onClick: () => void openBackupSheet(rec) }),
+        );
+      }
       el.append(actions);
+      if (rec.role === "admin" && rec.delegates.length) el.append(peopleBox(rec));
     }
   };
 
-  /** The mesh's admin access as a share link (docs/design/share-links.md). */
+  /** The mesh's admin access as a share link (docs/design/share-links.md): revocable
+   * access for one person (the default) or the full admin secret. */
   const shareMesh = async (rec: MeshRecord): Promise<void> => {
     if (!(await meshStore.exportable(rec.meshId))) {
       toast("This mesh was made before it could be shared. Create it again to share it.", { error: true });
       return;
     }
-    openShareSheet({
-      kind: "mesh",
-      title: rec.name,
-      grants: "Whoever opens this link in Splanc can add, remove and control every fixture in this mesh, as you can.",
-      body: () => meshShareBody(rec.meshId),
+    openShareMeshSheet(rec, async () => (await client.getMesh().catch(() => null))?.meshS ?? null);
+  };
+
+  /** "People with access": revocable access this phone shared, each revocable. */
+  const peopleBox = (rec: MeshRecord): HTMLElement => {
+    const box = h("div", "mesh-section");
+    box.append(h("div", "mesh-sub", "People with access"));
+    const ul = h("ul", "mesh-people");
+    for (const d of rec.delegates) {
+      const li = h("li", "mesh-person");
+      const text = h("div", "mesh-row-text");
+      const expired = !!d.expiresAt && Date.parse(d.expiresAt) <= Date.now();
+      const status = d.revoked
+        ? "Revoked"
+        : expired
+          ? "Expired"
+          : d.expiresAt
+            ? `Until ${new Date(d.expiresAt).toLocaleDateString()}`
+            : "Until you revoke it";
+      text.append(h("span", "mesh-row-title", d.label), h("span", "mesh-row-hint", status));
+      li.append(text);
+      if (!d.revoked && !expired) {
+        const revoke = Button({ label: "Revoke", variant: "danger", onClick: () => void revokePerson(revoke, rec, d.keyHash, d.label) });
+        li.append(revoke);
+      } else if (expired && !d.revoked) {
+        li.append(Button({ label: "Remove", variant: "quiet", onClick: () => void meshStore.dropDelegate(rec.meshId, d.keyHash).then(() => ((lastKey = ""), refresh())) }));
+      }
+      ul.append(li);
+    }
+    box.append(ul);
+    return box;
+  };
+
+  const revokePerson = async (btn: HTMLButtonElement, rec: MeshRecord, keyHash: string, label: string): Promise<void> => {
+    const ok = await confirmDialog({
+      title: `Revoke ${label}'s access?`,
+      message:
+        "The mesh changes its keys and every fixture stops taking their commands within a minute. " +
+        "Fixtures that are off right now miss the new keys and need adding again.",
+      confirmLabel: "Revoke",
+      danger: true,
+    });
+    if (!ok) return;
+    await act(btn, async () => {
+      const signer = await meshStore.signer(rec.meshId);
+      const r = await revokeMembers(client, signer, rec, [{ node: 0, keyHash }], undefined, keepRevoked(rec));
+      try {
+        await meshStore.rotated(rec.meshId, r);
+      } finally {
+        r.siteSecret.fill(0);
+      }
+      await meshStore.markDelegateRevoked(rec.meshId, keyHash);
+      toast(`${label}'s access revoked; the mesh has new keys`);
     });
   };
 
@@ -397,7 +461,7 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
         })(),
     });
     actions.append(remove);
-    if (!row.self && row.keyHash !== null) {
+    if (!row.self && row.keyHash !== null && rec.role === "admin") {
       const block = Button({
         label: "Block it for good…",
         variant: "quiet",
@@ -414,7 +478,7 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
             if (!ok) return;
             await act(block, async () => {
               const signer = await meshStore.signer(rec.meshId);
-              const r = await revokeMembers(client, signer, rec, [{ node: row.node, keyHash: row.keyHash! }]);
+              const r = await revokeMembers(client, signer, rec, [{ node: row.node, keyHash: row.keyHash! }], undefined, keepRevoked(rec));
               try {
                 await meshStore.rotated(rec.meshId, r);
               } finally {
@@ -493,3 +557,4 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
   }
   return el;
 }
+

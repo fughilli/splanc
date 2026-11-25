@@ -115,12 +115,57 @@ export function grantSignedBytes(g: GrantFields): Uint8Array {
   return new W().put(enc.encode("SMgrant1")).u32(g.meshId).u32(g.session).u16(g.gateway).put(g.gatewayKey).u32(g.notAfter).done();
 }
 
-/** The grant `mesh_admin.unlock` carries (SessionMsg::Grant: 0x40 ‖ fields ‖ signature, 144 B). */
-export async function signGrant(signer: MeshAdminSigner, g: GrantFields): Promise<Uint8Array> {
+/** The grant `mesh_admin.unlock` carries (SessionMsg::Grant: 0x40 ‖ fields ‖ signature, 144 B).
+ * With `by` (a delegate's key hash, the signer being that delegate), the delegated form:
+ * 0x44 ‖ fields ‖ signature ‖ by (152 B; admin.rs T_GRANT_D). */
+export async function signGrant(signer: MeshAdminSigner, g: GrantFields, opts: { by?: Uint8Array } = {}): Promise<Uint8Array> {
   const sig = await signer.sign(grantSignedBytes(g));
-  const out = new W().u8(T_GRANT).u32(g.meshId).u32(g.session).u16(g.gateway).put(g.gatewayKey).u32(g.notAfter).put(sig).done();
-  if (out.length !== GRANT_LEN) throw new Error("grant length");
+  const w = new W().u8(opts.by ? T_GRANT_D : T_GRANT).u32(g.meshId).u32(g.session).u16(g.gateway).put(g.gatewayKey).u32(g.notAfter).put(sig);
+  if (opts.by) {
+    if (opts.by.length !== 8) throw new Error("a key hash is 8 bytes");
+    w.put(opts.by);
+  }
+  const out = w.done();
+  if (out.length !== (opts.by ? GRANT_LEN_DELEGATED : GRANT_LEN)) throw new Error("grant length");
   return out;
+}
+
+// -- Delegation (revocable access; docs/design/share-links.md) ---------------------------
+
+export const GRANT_LEN_DELEGATED = GRANT_LEN + 8;
+const T_GRANT_D = 0x44;
+const T_DELEGATION = 0x45;
+export const DELEGATION_LEN = 1 + 4 + 65 + 4 + 64;
+/** A certificate that never expires (admin.rs NO_EXPIRY). */
+export const NO_EXPIRY = 0;
+
+export interface DelegationFields {
+  meshId: number;
+  /** The delegate's public key (65 B). */
+  key: Uint8Array;
+  /** Mesh seconds; NO_EXPIRY: until revoked. */
+  notAfter: number;
+}
+
+/** The 81 signed bytes: "SMdeleg1" ‖ mesh id ‖ key ‖ not_after (admin.rs Delegation::signed). */
+export function delegationSignedBytes(d: DelegationFields): Uint8Array {
+  if (d.key.length !== 65) throw new Error("the delegate key must be 65 bytes");
+  return new W().put(enc.encode("SMdeleg1")).u32(d.meshId).put(d.key).u32(d.notAfter).done();
+}
+
+/** The admin key certifies a delegate (SessionMsg::Delegation: 0x45 ‖ fields ‖ signature, 138 B). */
+export async function signDelegation(admin: MeshAdminSigner, d: DelegationFields): Promise<Uint8Array> {
+  const sig = await admin.sign(delegationSignedBytes(d));
+  const out = new W().u8(T_DELEGATION).u32(d.meshId).put(d.key).u32(d.notAfter).put(sig).done();
+  if (out.length !== DELEGATION_LEN) throw new Error("delegation length");
+  return out;
+}
+
+/** A certificate's fields (null: not one). */
+export function decodeDelegation(b: Uint8Array): (DelegationFields & { sig: Uint8Array }) | null {
+  if (b.length !== DELEGATION_LEN || b[0] !== T_DELEGATION) return null;
+  const u32 = (o: number): number => ((b[o]! << 24) | (b[o + 1]! << 16) | (b[o + 2]! << 8) | b[o + 3]!) >>> 0;
+  return { meshId: u32(1), key: b.slice(5, 70), notAfter: u32(70), sig: b.slice(74) };
 }
 
 // -- The key-rotation order (revoke) ----------------------------------------------------

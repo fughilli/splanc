@@ -19,7 +19,13 @@ export interface ShareSheetOpts {
   title: string;
   /** What whoever opens the link can do. */
   grants: string;
+  /** Made once per sheet (the code switch re-seals the same body). */
   body: () => Promise<unknown>;
+  /** Called once, the first time the link is shared or copied (a revocable share is
+   * recorded only then, so an abandoned sheet leaves nothing behind). */
+  onShared?: () => Promise<void> | void;
+  /** The access can be revoked (a delegate): the warning says so instead. */
+  revocable?: boolean;
 }
 
 function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
@@ -40,10 +46,23 @@ export function openShareSheet(opts: ShareSheetOpts): void {
   const sheet = Sheet(`Share “${opts.title}”`);
   const body = h("div", "mesh-sheet");
   body.append(
-    h("div", "mesh-row-hint", `${opts.grants} Send it only to someone you'd give your own phone to: a link can't be taken back.`),
+    h(
+      "div",
+      "mesh-row-hint",
+      opts.revocable
+        ? `${opts.grants} Whoever gets the link can use it, so send it only to them.`
+        : `${opts.grants} Send it only to someone you'd give your own phone to: a link can't be taken back.`,
+    ),
   );
 
   let made: MadeLink | null = null;
+  let bodyP: Promise<unknown> | null = null;
+  let shared = false;
+  const markShared = (): void => {
+    if (shared) return;
+    shared = true;
+    void Promise.resolve(opts.onShared?.()).catch((e: unknown) => toast(`Couldn't record the share: ${(e as Error).message}`, { error: true }));
+  };
   // Owner decision (2026-11-24): a mesh link grants everything, so it needs a code unless
   // the sender turns it off. A fixture link opens by itself unless they turn it on.
   let withCode = opts.kind === "mesh";
@@ -82,7 +101,8 @@ export function openShareSheet(opts: ShareSheetOpts): void {
     const mine = ++gen;
     share.disabled = copy.disabled = true;
     try {
-      const m = await makeShareLink({ kind: opts.kind, title: opts.title, body: await opts.body() }, { base: shareBase(), withCode });
+      bodyP ??= opts.body();
+      const m = await makeShareLink({ kind: opts.kind, title: opts.title, body: await bodyP }, { base: shareBase(), withCode });
       if (mine !== gen) return;
       made = m;
       codeBox.replaceChildren();
@@ -105,6 +125,7 @@ export function openShareSheet(opts: ShareSheetOpts): void {
     navigator
       .share({ title: `Splanc: ${opts.title}`, text: text(), url: made.url })
       .then(() => {
+        markShared();
         if (made?.code) toast("Now send the code another way");
       })
       .catch((e: unknown) => {
@@ -117,7 +138,10 @@ export function openShareSheet(opts: ShareSheetOpts): void {
     if (!made) return;
     void navigator.clipboard
       ?.writeText(made.url)
-      .then(() => toast(made?.code ? "Link copied. Send the code another way" : "Link copied"))
+      .then(() => {
+        markShared();
+        toast(made?.code ? "Link copied. Send the code another way" : "Link copied");
+      })
       .catch(() => toast("Couldn't copy the link", { error: true }));
   };
 

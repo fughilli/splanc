@@ -81,7 +81,7 @@ means nothing on another phone).
    everything; the sender can turn it off. `fixture` links open by themselves unless the
    sender turns the code on.
 2. **Delegated admins instead of copying the key** (needs firmware). Decided (2026-11-24):
-   build it; see "Revocable access" below. The owner's admin key
+   built; see "Revocable access" below. The owner's admin key
    signs a sub-admin certificate `{pubkey, rights, not_after}`, and members accept grants from
    it until `not_after` or until a revocation order names it. The link then carries the
    receiver's *own* key (or the receiver sends back its public key) instead of the owner's
@@ -96,6 +96,50 @@ means nothing on another phone).
    reports the opened link (`web/src/net/appLinks.ts`), and the app applies its fragment
    as the route. Android needs `assetlinks.json` plus an intent filter once there is an
    Android build; the installed PWA on Android already takes links in its scope.
+
+## Revocable access
+
+Built (owner decision 2026-11-24): firmware #655, app on `agent/share-revocable`.
+
+**Sharing.** "Share admin access" now asks what kind of access to give:
+
+- **Access you can take back** (the default). The sender says who it's for and for how
+  long: 1 day, 1 week, 30 days (the default) or until revoked. The owner's app makes a
+  fresh delegate key, and its admin key signs a certificate (`Delegation`, 138 B:
+  `"SMdeleg1" ‖ mesh ‖ delegate key ‖ not_after`, mesh seconds, 0 = until revoked). The
+  link carries the delegate's secret, the certificate, the owner's admin public key, the
+  site secret and the roster. It carries no provisioner tokens. The person is listed under
+  "People with access" only once the link is actually shared or copied.
+- **Full admin**: the admin secret itself, as before. It can't be taken back.
+
+**On the delegate's phone** the mesh has role `delegate`. Its app signs grants with the
+delegate key; a grant names the delegate (`T_GRANT_D`) and never outlives the certificate,
+which `MeshUnlock.delegation` carries. The delegate can add, remove and control fixtures.
+It can't block fixtures (rotation orders need the admin key), back the mesh up or share it
+on. A delegate link can't replace a phone's full admin copy of the same mesh, and a
+certificate that doesn't verify under the stated owner key is refused.
+
+**Firmware.** Members verify the certificate once, on the low-priority crypto task. It
+travels on its own, ahead of the grant: the two together don't fit a 192 B packet. A member
+missing it asks with the existing `Request`. Refused: a grant that outlives its
+certificate, an expired certificate, a delegate on the revocation list, and a delegate
+renewing the admin's session. The gateway checks both signatures at unlock.
+
+**Revoking.** "Revoke" under People with access is the owner's key rotation with the
+delegate's key hash on the revocation list, the same order "Block it for good" sends. On
+every fixture, `Stack::install` drops the delegate's certificate and sessions; its gateway
+drops the gateway session and every connection holding it, the detached slot too. The
+rotation also changes the site secret, so the revoked person can't provision new fixtures.
+Fixtures that are off at the time miss the new keys and need adding again, as with a
+block.
+
+**Limits.**
+
+- Revoked delegates share the 8-entry revocation list with blocked fixtures. When a rotation
+  starts a fresh list (D-443), the app carries along every revoked delegate that could
+  still sign (`keepRevoked`), or it would work again. An order carries at most 4 hashes,
+  so a delegate that never expires holds a slot for good. That's why 30 days is the default.
+- Expiry is in mesh time, so setting one needs a connected fixture.
 
 ## The wider social feature set
 

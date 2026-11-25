@@ -20,6 +20,12 @@
 
 import {
   adminSignerFromSecret,
+  decodeDelegation,
+  keyHash,
+  NO_EXPIRY,
+  signDelegation,
+  verifyAdminSignature,
+  delegationSignedBytes,
   fromHex,
   randomBytes,
   randomU32,
@@ -40,10 +46,30 @@ export interface MeshMemberRecord {
 }
 
 /** What screens see of a mesh (no secrets). */
+/** Someone the owner shared revocable access with (docs/design/share-links.md). */
+export interface DelegateRecord {
+  /** The delegate key's hash (hex): what its grants name and a revocation lists. */
+  keyHash: string;
+  /** Who it is for, as the owner typed it. */
+  label: string;
+  issuedAt: string;
+  /** Its expiry on the wall clock (ISO; absent: until revoked). */
+  expiresAt?: string;
+  /** Revoked by a key rotation (it stays listed so later rotations keep it revoked). */
+  revoked?: boolean;
+}
+
 export interface MeshRecord {
   meshId: number;
   name: string;
   createdAt: string;
+  /** "admin": this phone holds the admin secret. "delegate": it holds revocable access
+   * someone shared (a delegate key and its certificate). */
+  role: "admin" | "delegate";
+  /** A delegate's expiry (ISO; absent: until revoked). */
+  delegateUntil?: string;
+  /** The people the owner shared revocable access with (admin role). */
+  delegates: DelegateRecord[];
   /** The admin public key (65 B) the fixtures hold. */
   adminPublic: Uint8Array;
   keyEpoch: number;
@@ -58,7 +84,11 @@ interface Sealed {
   ct: Uint8Array;
 }
 
-interface StoredMesh extends MeshRecord {
+interface StoredMesh extends Omit<MeshRecord, "role" | "delegates"> {
+  /** A delegate's certificate (138 B): present when `admin` holds a delegate key, not the
+   * admin secret. */
+  delegation?: Uint8Array;
+  delegates?: DelegateRecord[];
   /** The admin secret (D-442), sealed. */
   admin?: Sealed;
   /** A device-bound key from before D-442 (non-extractable; such a mesh cannot be exported). */
@@ -99,6 +129,11 @@ export interface MeshBackupBody {
   members: { label: string; node: number; keyHash: string }[];
   /** Provisioner tokens (hex) by node; absent in backups made before share links. */
   tokens?: Record<string, string>;
+  /** Revocable access (a delegate): `admin` is the delegate's secret, this its certificate
+   * (hex), `adminPublic` the owner's admin key (hex) and `until` its expiry (ISO). */
+  delegation?: string;
+  adminPublic?: string;
+  until?: string;
 }
 
 function utf8ToB64(s: string): string {
@@ -175,16 +210,20 @@ export class MemoryMeshBackend implements MeshBackend {
 }
 
 function publicView(s: StoredMesh): MeshRecord {
-  return {
+  const v: MeshRecord = {
     meshId: s.meshId,
     name: s.name,
     createdAt: s.createdAt,
+    role: s.delegation ? "delegate" : "admin",
+    delegates: (s.delegates ?? []).map((d) => ({ ...d })),
     adminPublic: s.adminPublic,
     keyEpoch: s.keyEpoch,
     revVersion: s.revVersion,
     members: s.members.map((m) => ({ ...m })),
     revoked: [...s.revoked],
   };
+  if (s.delegateUntil) v.delegateUntil = s.delegateUntil;
+  return v;
 }
 
 type Listener = () => void;
@@ -338,7 +377,8 @@ export class MeshStore {
 
   /** Whether the mesh's admin key can be backed up (made after D-442). */
   async exportable(meshId: number): Promise<boolean> {
-    return (await this.stored(meshId)).admin !== undefined;
+    const s = await this.stored(meshId);
+    return s.admin !== undefined && !s.delegation;
   }
 
   /** The mesh as one text a second phone imports (D-442): its id, name, admin secret, site
@@ -351,6 +391,7 @@ export class MeshStore {
    * backup fields plus the provisioner tokens this app holds, by node. */
   async exportBody(meshId: number): Promise<MeshBackupBody> {
     const s = await this.stored(meshId);
+    if (s.delegation) throw new Error("access shared with you can't be shared or backed up: ask the mesh's owner");
     if (!s.admin) throw new Error("this mesh was made before admin backups: re-create it to back it up");
     const admin = await this.unseal(s.admin, meshId);
     const site = await this.unseal(s.site, meshId);
@@ -400,9 +441,26 @@ export class MeshStore {
     const site = fromHex(b.site);
     if (admin.length !== 16 || site.length !== 32) throw new Error("this mesh backup is damaged");
     await this.load();
-    const adminPublic = (await adminSignerFromSecret(admin, meshId)).publicKey;
     const be = this.be();
     const prev = (await be.get(MESH_PREFIX + meshId)) as StoredMesh | undefined;
+    // Revocable access: the secret is a delegate's, certified by the owner's admin key.
+    let delegation: Uint8Array | undefined;
+    let adminPublic: Uint8Array;
+    if (b.delegation) {
+      const cert = fromHex(b.delegation);
+      const d = decodeDelegation(cert);
+      const owner = b.adminPublic ? fromHex(b.adminPublic) : new Uint8Array(0);
+      const mine = (await adminSignerFromSecret(admin, meshId)).publicKey;
+      const ok =
+        d !== null && owner.length === 65 && d.meshId === meshId && toHex(d.key) === toHex(mine) &&
+        (await verifyAdminSignature(owner, delegationSignedBytes(d), d.sig));
+      if (!ok) throw new Error("this mesh backup is damaged");
+      if (prev && !prev.delegation) throw new Error("this phone already administers this mesh");
+      delegation = cert;
+      adminPublic = owner;
+    } else {
+      adminPublic = (await adminSignerFromSecret(admin, meshId)).publicKey;
+    }
     const tokens: Record<string, Sealed> = { ...(prev?.tokens ?? {}) };
     for (const [node, hex] of Object.entries(b.tokens ?? {})) {
       const raw = fromHex(hex);
@@ -430,10 +488,75 @@ export class MeshStore {
       revoked: [...(b.revoked ?? [])],
     };
     if (Object.keys(tokens).length) rec.tokens = tokens;
+    if (delegation) {
+      rec.delegation = delegation;
+      if (b.until) rec.delegateUntil = b.until;
+    } else if (prev?.delegates?.length) {
+      rec.delegates = prev.delegates;
+    }
     admin.fill(0);
     site.fill(0);
     this.signers.delete(meshId);
     return this.write(rec);
+  }
+
+  /** A delegate's certificate (null: this phone holds the admin secret itself). */
+  async delegation(meshId: number): Promise<Uint8Array | null> {
+    return (await this.stored(meshId)).delegation ?? null;
+  }
+
+  /** Revocable access for someone (docs/design/share-links.md): a fresh delegate key,
+   * certified by this mesh's admin key until `notAfter` (mesh seconds; NO_EXPIRY: until
+   * revoked). Returns the share body and `commit`, which lists the delegate here: call it
+   * once the link was actually sent, so an abandoned share leaves nothing behind. */
+  async issueDelegate(
+    meshId: number,
+    opts: { label: string; notAfter: number; expiresAt?: string },
+  ): Promise<{ body: MeshBackupBody; keyHash: string; commit: () => Promise<void> }> {
+    const owner = await this.exportBody(meshId);
+    delete owner.tokens;
+    const secret = randomBytes(16);
+    const delegate = await adminSignerFromSecret(secret, meshId);
+    const cert = await signDelegation(await this.signer(meshId), {
+      meshId: meshId >>> 0,
+      key: delegate.publicKey,
+      notAfter: opts.expiresAt ? opts.notAfter >>> 0 : NO_EXPIRY,
+    });
+    const kh = toHex(await keyHash(delegate.publicKey));
+    const rec = await this.get(meshId);
+    const body: MeshBackupBody = {
+      ...owner,
+      admin: toHex(secret),
+      delegation: toHex(cert),
+      adminPublic: toHex(rec!.adminPublic),
+    };
+    if (opts.expiresAt) body.until = opts.expiresAt;
+    secret.fill(0);
+    const entry: DelegateRecord = { keyHash: kh, label: opts.label.trim() || "Someone", issuedAt: new Date().toISOString() };
+    if (opts.expiresAt) entry.expiresAt = opts.expiresAt;
+    return {
+      body,
+      keyHash: kh,
+      commit: async () => {
+        const s = await this.stored(meshId);
+        s.delegates = [...(s.delegates ?? []).filter((d) => d.keyHash !== kh), entry];
+        await this.write(s);
+      },
+    };
+  }
+
+  /** A delegate revoked by a rotation (rotated() already holds the new keys). */
+  async markDelegateRevoked(meshId: number, keyHash: string): Promise<MeshRecord> {
+    const s = await this.stored(meshId);
+    s.delegates = (s.delegates ?? []).map((d) => (d.keyHash === keyHash ? { ...d, revoked: true } : d));
+    return this.write(s);
+  }
+
+  /** Forget a delegate that expired (nothing to revoke any more). */
+  async dropDelegate(meshId: number, keyHash: string): Promise<MeshRecord> {
+    const s = await this.stored(meshId);
+    s.delegates = (s.delegates ?? []).filter((d) => d.keyHash !== keyHash);
+    return this.write(s);
   }
 
   /** The site secret, for a provision about to go to a fixture. Callers zero it after use. */
@@ -517,6 +640,12 @@ export class MeshStore {
     this.cache.delete(meshId >>> 0);
     this.emit();
   }
+}
+
+/** Revoked people whose access hasn't expired: a rotation that starts a fresh revocation
+ * list (D-443) must carry them, or their access would work again. */
+export function keepRevoked(rec: Pick<MeshRecord, "delegates">, now = Date.now()): string[] {
+  return rec.delegates.filter((d) => d.revoked && (!d.expiresAt || Date.parse(d.expiresAt) > now)).map((d) => d.keyHash);
 }
 
 export const meshStore = new MeshStore();

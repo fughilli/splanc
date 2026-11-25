@@ -1565,6 +1565,9 @@ message MeshProvision {
 // session S until T", 144 bytes, mesh.md §7.9). Lasts until the connection drops.
 message MeshUnlock {
   bytes grant = 1;
+  // A grant signed by a delegate (docs/design/share-links.md, "Revocable access") comes with
+  // the delegate's certificate from the admin key (138 bytes, admin.rs Delegation).
+  bytes delegation = 2;
 }
 
 // Admit a fixture waiting to join (MeshState.pending).
