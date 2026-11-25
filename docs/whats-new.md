@@ -5,6 +5,18 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## November 2026
 
+### MIDI: 14-bit controls, colours and vectors on knobs
+
+- **14-bit knobs and NRPN are detected automatically** (#665). A CC pair
+  (CC n + CC n+32) or an NRPN parameter gets 16,384 steps instead of 128; plain
+  7-bit controls work as before, and a knob you already learned keeps its binding.
+- **Colour uniforms are MIDI-mappable** (#666): one knob on the hue (saturation
+  and value held), three knobs as hue/saturation/value, or red/green/blue. The
+  Uniforms pane's MIDI rows bind a knob to a colour's hue; ✨ Remap (and the AI
+  in chat and Acid Mode) offers all three options and also maps vector and matrix
+  uniforms one knob per component. The app converts HSV to RGB, so no firmware
+  update is needed.
+
 ### Effect language: state initial values and `init()`
 
 - **`state float level = 0.5;`** gives a state variable its starting value

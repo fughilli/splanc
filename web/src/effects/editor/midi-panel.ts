@@ -11,6 +11,10 @@
  * Bindings live in {@link midiStore}, keyed by effectId + uniform NAME, so they
  * survive recompiles and code edits. The pane also shows a live meter per bound
  * uniform. All hardware access is the shared {@link midiManager}.
+ *
+ * Colour uniforms get a row too, binding one knob to HUE (S and V stay where
+ * they are). Richer colour/vector mappings (three knobs as H/S/V, RGB, vector
+ * components) come from ✨ Remap and are listed under the rows.
  */
 
 import type { FxUniform } from "../../fx/preview";
@@ -21,8 +25,8 @@ import {
   controlLabel,
   type MidiControlEvent,
 } from "../../midi/manager";
-import { midiStore } from "../../store/midiStore";
-import { isDrivable } from "../../midi/router";
+import { midiStore, sameTarget, type UniformBinding } from "../../store/midiStore";
+import { isAutoBindable, isColorUniform } from "../../midi/router";
 import { installMidiStyles } from "../../ui/screens/midi";
 
 export interface MidiMapPanelOpts {
@@ -34,6 +38,8 @@ export interface MidiMapPanelOpts {
 export class MidiMapPanel {
   readonly node: HTMLElement;
   private manifest: FxUniform[] = [];
+  /** Vector / matrix uniforms: no row, but their channel bindings are listed. */
+  private channelUniforms: FxUniform[] = [];
   private learnUniform: string | null = null;
   private readonly unsubs: (() => void)[] = [];
   // Live value per control key (for meters) + meter fills keyed by the SAME
@@ -63,7 +69,8 @@ export class MidiMapPanel {
 
   /** Update the drivable-uniform list (called on each successful compile). */
   setManifest(uniforms: FxUniform[]): void {
-    this.manifest = uniforms.filter(isDrivable);
+    this.manifest = uniforms.filter(isAutoBindable);
+    this.channelUniforms = uniforms.filter((u) => !isAutoBindable(u));
     this.render();
   }
 
@@ -107,7 +114,29 @@ export class MidiMapPanel {
     const existing = midiStore.semantics().find((s) => s.id === controlKey(e.control));
     const name = existing?.name ?? uniform;
     if (!existing) midiStore.assignSemantic(e.control, name);
-    midiStore.setBinding(this.effectId, { uniform, semantic: name });
+    const u = this.manifest.find((m) => m.name === uniform);
+    this.bindRow(uniform, u !== undefined && isColorUniform(u), name);
+  }
+
+  /** The binding a row shows: the scalar binding, or a colour's hue binding
+   * (explicit `h`, or none = hue). */
+  private rowBinding(u: FxUniform): UniformBinding | undefined {
+    const list = midiStore.bindingsFor(this.effectId, u.name);
+    if (!isColorUniform(u)) return list[0];
+    return list.find((b) => b.channel === undefined || b.channel === "h");
+  }
+
+  /** Bind (or, with `semantic` null, unbind) a row's knob. A colour row's knob
+   * drives hue; other colour channels are left alone. */
+  private bindRow(uniform: string, color: boolean, semantic: string | null): void {
+    if (!color) {
+      if (semantic === null) midiStore.clearBinding(this.effectId, uniform);
+      else midiStore.setBinding(this.effectId, { uniform, semantic });
+      return;
+    }
+    midiStore.clearBinding(this.effectId, uniform, "");
+    if (semantic === null) midiStore.clearBinding(this.effectId, uniform, "h");
+    else midiStore.setBinding(this.effectId, { uniform, semantic, channel: "h", space: "hsv" });
   }
 
   // -- remap button (FUG-51) ---------------------------------------------
@@ -197,7 +226,7 @@ export class MidiMapPanel {
     }
 
     if (this.manifest.length === 0) {
-      this.node.appendChild(hint("Compile an effect with slider/toggle uniforms to map them."));
+      this.node.appendChild(hint("Compile an effect with slider, toggle or colour uniforms to map them."));
       return;
     }
 
@@ -214,6 +243,18 @@ export class MidiMapPanel {
     for (const u of this.manifest) grid.appendChild(this.row(u));
     this.node.appendChild(grid);
 
+    // Per-channel colour/vector mappings that the rows don't show (e.g. three
+    // knobs as H/S/V from ✨ Remap), one line per uniform.
+    for (const u of [...this.manifest, ...this.channelUniforms]) {
+      const shown = this.manifest.includes(u) ? this.rowBinding(u) : undefined;
+      const extra = midiStore.bindingsFor(this.effectId, u.name).filter((b) => shown === undefined || !sameTarget(b, shown));
+      if (extra.length === 0) continue;
+      const parts = extra.map((b) => `${channelName(b.channel)} ← ${b.semantic}${fixedNote(b)}`);
+      const line = hint(`${u.name}: ${parts.join(" · ")}`);
+      line.classList.add("midimap-channels");
+      this.node.appendChild(line);
+    }
+
     const foot = hint("Name controls globally in Settings ▸ MIDI; bindings here are per-effect.");
     this.node.appendChild(foot);
   }
@@ -224,10 +265,24 @@ export class MidiMapPanel {
 
     const name = document.createElement("span");
     name.className = "midimap-uname";
-    name.textContent = u.name;
-    name.title = u.name;
+    const color = isColorUniform(u);
+    if (color) {
+      // The uniform name may truncate; the "hue" tag never does.
+      const nm = document.createElement("span");
+      nm.className = "midimap-uname-text";
+      nm.textContent = u.name;
+      const tag = document.createElement("span");
+      tag.className = "midimap-tag";
+      tag.textContent = "hue";
+      name.classList.add("midimap-uname--tagged");
+      name.append(nm, tag);
+      name.title = `${u.name}: a knob here drives the hue`;
+    } else {
+      name.textContent = u.name;
+      name.title = u.name;
+    }
 
-    const binding = midiStore.bindingFor(this.effectId, u.name);
+    const binding = this.rowBinding(u);
 
     // Semantic picker: None + every named control.
     const sel = document.createElement("select");
@@ -253,8 +308,7 @@ export class MidiMapPanel {
       sel.value = binding.semantic;
     }
     sel.addEventListener("change", () => {
-      if (sel.value === "") midiStore.clearBinding(this.effectId, u.name);
-      else midiStore.setBinding(this.effectId, { uniform: u.name, semantic: sel.value });
+      this.bindRow(u.name, color, sel.value === "" ? null : sel.value);
       this.render();
     });
 
@@ -291,6 +345,31 @@ export class MidiMapPanel {
     row.append(name, sel, learn, meter);
     return row;
   }
+}
+
+const CHANNEL_NAMES: Record<string, string> = {
+  h: "hue",
+  s: "saturation",
+  v: "value",
+  r: "red",
+  g: "green",
+  b: "blue",
+  a: "alpha",
+};
+
+function channelName(ch: string | undefined): string {
+  if (ch === undefined) return "hue";
+  return CHANNEL_NAMES[ch] ?? (/^\d+$/.test(ch) ? `[${ch}]` : ch);
+}
+
+function fixedNote(b: UniformBinding): string {
+  const f = b.fixed;
+  if (!f) return "";
+  const parts = [
+    ...(f.s !== undefined ? [`S ${f.s.toFixed(2)}`] : []),
+    ...(f.v !== undefined ? [`V ${f.v.toFixed(2)}`] : []),
+  ];
+  return parts.length ? ` (${parts.join(", ")} fixed)` : "";
 }
 
 function hint(text: string): HTMLElement {
@@ -344,6 +423,9 @@ const CSS = `
 }
 .midimap-row + .midimap-row { border-top: 1px solid var(--border); }
 .midimap-uname { font-family: var(--font-mono, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.midimap-uname--tagged { display: flex; align-items: baseline; gap: var(--sp-1); }
+.midimap-uname-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.midimap-tag { flex: none; color: var(--text-dim); font-size: 0.85em; }
 .midimap-sel {
   background: var(--surface-2, #1a1a22); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--radius-1, 6px); padding: 2px var(--sp-1);

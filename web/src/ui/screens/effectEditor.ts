@@ -105,10 +105,15 @@ import {
   withDeviceLock,
 } from "../../effects/devicePerf";
 import { BudgetBar } from "./budgetBar";
-import { MidiRouter, isDrivable } from "../../midi/router";
+import { MidiRouter, isAutoBindable } from "../../midi/router";
+import {
+  MIDI_REMAP_PROMPT,
+  midiListSummary as sharedMidiListSummary,
+  validateMidiMappings,
+} from "../../midi/agentSummary";
 import { MidiMapPanel } from "../../effects/editor/midi-panel";
-import { midiStore, type UniformBinding } from "../../store/midiStore";
-import { midiManager, controlLabel } from "../../midi/manager";
+import { midiStore } from "../../store/midiStore";
+import { midiManager } from "../../midi/manager";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { deviceEffects } from "../../store/deviceEffects";
 import { KeypointStrip } from "./keypointStrip";
@@ -844,7 +849,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   let lastUniforms: FxUniform[] = [];
   let initialScene: EffectScene | undefined;
   let sceneUniformsApplied = false;
-  const midiRouter = new MidiRouter((u) => panel.applyExternal(u.slot, u.value));
+  const midiRouter = new MidiRouter(
+    (u) => panel.applyExternal(u.slot, u.value),
+    (u) => panelValue(u.slot),
+  );
   midiRouter.setEffect(effectId);
   const midiPanel = new MidiMapPanel(effectId, { onRemap: () => runRemap() });
 
@@ -1630,7 +1638,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     // Auto-bind uniforms to like-named controls ("speed" uniform ↔ a knob named
     // "speed") — fills gaps only, never overrides an explicit binding. Emits, so
     // the panel re-renders; then refresh its manifest for the drivable list.
-    midiStore.autoBind(effectId, r.uniforms.filter(isDrivable).map((u) => u.name));
+    midiStore.autoBind(effectId, r.uniforms.filter(isAutoBindable).map((u) => u.name));
     midiPanel.setManifest(r.uniforms);
     // A preview failure (e.g. the fx-vm module can't load) must not block the
     // rest of the compile pipeline — the status, uniforms and disassembly below
@@ -1706,12 +1714,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // The canned "magic remap" prompt (FUG-9): the model reads the effect's
   // uniforms + the named MIDI controls and wires them via the mapping layer —
   // never by editing the effect source.
-  const REMAP_PROMPT =
-    "Map my MIDI controls to this effect's uniforms. First call list_midi_controls " +
-    "to see the drivable uniforms and the named controls, then call set_midi_mapping " +
-    "to wire them. Match by meaning (a 'speed'/'rate' knob → a speed uniform, " +
-    "'brightness' → an intensity/gain uniform, etc.) and only map scalar uniforms. " +
-    "Do NOT modify the effect source — the mapping is a separate layer.";
+  const REMAP_PROMPT = MIDI_REMAP_PROMPT;
 
   async function runRemap(): Promise<void> {
     if (chatBusy) return;
@@ -1721,49 +1724,26 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   }
 
   /** Build the always-included MIDI context for the AI: the effect's drivable
-   * uniforms, the globally-named controls, and the current bindings. */
+   * uniforms (colours with their current value), the globally-named controls,
+   * and the current bindings. */
   function midiListSummary(): string {
-    const uniforms = lastUniforms.filter(isDrivable).map((u) => ({
-      name: u.name,
-      type: u.ui.kind,
-      ...(u.ui.kind === "slider" ? { min: u.ui.min, max: u.ui.max } : {}),
-    }));
-    const controls = midiStore.semantics().map((s) => ({
-      name: s.name,
-      source: `${s.control.device} · ${controlLabel(s.control)}`,
-    }));
-    const current = midiStore.bindings(effectId).map((b) => ({
-      uniform: b.uniform,
-      control: b.semantic,
-      ...(b.min !== undefined ? { min: b.min } : {}),
-      ...(b.max !== undefined ? { max: b.max } : {}),
-      ...(b.invert ? { invert: true } : {}),
-    }));
-    return JSON.stringify(
-      { uniforms, namedControls: controls, currentMappings: current, midiEnabled: midiManager.enabled },
-      null,
-      2,
-    );
+    return sharedMidiListSummary({
+      uniforms: lastUniforms,
+      values: (u) => panelValue(u.slot),
+      semantics: midiStore.semantics(),
+      bindings: midiStore.bindings(effectId),
+      midiEnabled: midiManager.enabled,
+    });
+  }
+
+  /** The editor panel's current value for a slot (undefined if unknown). */
+  function panelValue(slot: number): number[] | undefined {
+    return panel.values().find((v) => v.slot === slot)?.value;
   }
 
   /** Apply AI-proposed mappings to the mapping layer (never the source). */
   function applyMidiMappings(mappings: MidiMappingCall[]): string {
-    const drivable = new Set(lastUniforms.filter(isDrivable).map((u) => u.name));
-    const applied: UniformBinding[] = [];
-    const skipped: string[] = [];
-    for (const m of mappings) {
-      if (!drivable.has(m.uniform)) {
-        skipped.push(`${m.uniform} (not a drivable uniform)`);
-        continue;
-      }
-      applied.push({
-        uniform: m.uniform,
-        semantic: m.control,
-        ...(typeof m.min === "number" ? { min: m.min } : {}),
-        ...(typeof m.max === "number" ? { max: m.max } : {}),
-        ...(m.invert ? { invert: true } : {}),
-      });
-    }
+    const { applied, skipped } = validateMidiMappings(mappings, lastUniforms);
     midiStore.replaceBindings(effectId, applied);
     return `Applied ${applied.length} mapping(s)${
       skipped.length ? `; skipped: ${skipped.join(", ")}` : ""
