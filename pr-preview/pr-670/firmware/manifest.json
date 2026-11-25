@@ -1,0 +1,15 @@
+{
+  "revision": "3b360f0",
+  "builtAt": null,
+  "entries": [
+    {
+      "id": "esp32c6_netstack",
+      "label": "LED Mapper player \u2014 ESP32-C6 (netstack)",
+      "chip": "esp32c6",
+      "family": "esp",
+      "manifest": "flash.json"
+    }
+  ],
+  "version": "0.0.0-dev",
+  "commit": "3b360f0e59728686cc25ae6a26e6d0c665474a04"
+}
