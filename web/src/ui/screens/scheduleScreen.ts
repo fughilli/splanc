@@ -62,6 +62,7 @@ import {
   toggleDay,
   type FlowStep,
 } from "./scheduleModel";
+import { MapPicker, type MapPickerHandle } from "./mapPicker";
 import { installPowerStyles } from "./power.css";
 import { installScheduleStyles } from "./schedule.css";
 
@@ -110,6 +111,14 @@ export function ScheduleScreen(_router: Router): Screen {
   let fromReview = false;
   /** The location picked in this flow (1e-4 degrees), sent with Save. */
   let pickedLoc: { latE4: number; lonE4: number } | null = null;
+  /** The location step shows the map picker ("Choose on map", or after a denial). */
+  let locMap = false;
+  /** Why the phone's location wasn't used (shown above the map). */
+  let locNote = "";
+  /** The map picker, kept across re-renders while the step is open. */
+  let picker: MapPickerHandle | null = null;
+  /** The location step was opened from the list (Change location), not a rule. */
+  let relocating = false;
   let busy = false;
   let unsubApp: (() => void) | null = null;
   let bound: ReturnType<typeof client> = null;
@@ -289,10 +298,10 @@ export function ScheduleScreen(_router: Router): Screen {
         t,
         v,
         Button({
-          label: sched.hasLocation ? "Update from this phone" : "Set from this phone",
+          label: sched.hasLocation ? "Change location" : "Set location",
           variant: "quiet",
           disabled: busy,
-          onClick: () => void updateLocation(),
+          onClick: () => updateLocation(),
         }),
       );
       parts.push(loc);
@@ -606,25 +615,31 @@ export function ScheduleScreen(_router: Router): Screen {
   }
 
   function locationStep(): HTMLElement[] {
+    if (locMap) return locationMapStep();
     const ev = draft.when === "sunrise" ? "sunrise" : "sunset";
-    const parts = [
-      stepLine(),
-      ...headline(`The lamp needs to know when ${ev} is`, "Sunrise and sunset depend on where the lamp is."),
-    ];
+    const parts: HTMLElement[] = relocating
+      ? headline("Where is the lamp?", "Sunrise and sunset rules use the lamp's rough location.")
+      : [stepLine(), ...headline(`The lamp needs to know when ${ev} is`, "Sunrise and sunset depend on where the lamp is.")];
     const box = document.createElement("div");
     box.className = "sc-loc";
     const ul = document.createElement("ul");
     for (const t of [
-      "Splanc asks this phone for its location once, now.",
-      "It is rounded to 0.1° (about 10 km) before it leaves the phone.",
-      "Only the lamp stores it. No map or location service is used.",
-      "You can update it later from the Schedule screen.",
+      "Use this phone's location (asked once, now), or choose the spot on a map.",
+      "Either way it is rounded to 0.1° (about 10 km), and only the lamp stores it.",
+      "The map shows OpenStreetMap pictures; the spot you pick isn't sent to them.",
+      "You can change it later from the Schedule screen.",
     ]) {
       const li = document.createElement("li");
       li.textContent = t;
       ul.append(li);
     }
     box.append(ul);
+    if (locNote) {
+      const p = document.createElement("div");
+      p.className = "pw-summary-val";
+      p.textContent = locNote;
+      box.append(p);
+    }
     if (pickedLoc) {
       const p = document.createElement("div");
       p.className = "pw-summary-val";
@@ -632,16 +647,69 @@ export function ScheduleScreen(_router: Router): Screen {
       box.append(p);
     }
     parts.push(box);
-    const use = Button({
-      label: busy ? "Asking for the location…" : pickedLoc ? "Next" : "Use this phone's location",
-      variant: "primary",
-      disabled: busy,
-      onClick: () => {
-        if (pickedLoc) go("review");
-        else void pickLocation();
-      },
-    });
-    parts.push(footer(use, back));
+    const f = document.createElement("div");
+    f.className = "pw-footer";
+    f.append(
+      Button({ label: "Back", variant: "quiet", onClick: () => (relocating ? go("list") : back()) }),
+      Button({ label: "Choose on map", variant: "quiet", disabled: busy, onClick: () => openMap() }),
+    );
+    f.append(
+      pickedLoc
+        ? Button({
+            label: relocating ? (busy ? "Saving…" : "Save location") : "Next",
+            variant: "primary",
+            disabled: busy,
+            onClick: () => void locationChosen(),
+          })
+        : Button({
+            label: busy ? "Asking for the location…" : "Use this phone's location",
+            variant: "primary",
+            disabled: busy,
+            onClick: () => void usePhoneLocation(),
+          }),
+    );
+    parts.push(f);
+    return parts;
+  }
+
+  function locationMapStep(): HTMLElement[] {
+    const parts: HTMLElement[] = [
+      ...(relocating ? [] : [stepLine()]),
+      ...headline("Choose the lamp's area", "Move the map so the pin is roughly where the lamp is."),
+    ];
+    if (locNote) {
+      const p = document.createElement("div");
+      p.className = "sc-status";
+      p.textContent = locNote;
+      parts.push(p);
+    }
+    if (!picker) {
+      const from = pickedLoc ?? (clock?.hasLocation ? { latE4: clock.latE4, lonE4: clock.lonE4 } : null);
+      picker = MapPicker({ initial: from ? { lat: from.latE4 / 1e4, lon: from.lonE4 / 1e4 } : null });
+    }
+    parts.push(picker.el);
+    const f = document.createElement("div");
+    f.className = "pw-footer";
+    f.append(
+      Button({
+        label: "Back",
+        variant: "quiet",
+        onClick: () => {
+          locMap = false;
+          render();
+        },
+      }),
+      Button({
+        label: relocating ? (busy ? "Saving…" : "Save this spot") : "Use this spot",
+        variant: "primary",
+        disabled: busy,
+        onClick: () => {
+          pickedLoc = picker!.value();
+          void locationChosen();
+        },
+      }),
+    );
+    parts.push(f);
     return parts;
   }
 
@@ -711,7 +779,8 @@ export function ScheduleScreen(_router: Router): Screen {
   }
 
   function begin(r: ScheduleRule | null): void {
-    pickedLoc = null;
+    relocating = false;
+    resetLocation();
     fromReview = false;
     if (r) {
       editing = true;
@@ -755,17 +824,51 @@ export function ScheduleScreen(_router: Router): Screen {
     if (step === "detail") render();
   }
 
-  async function pickLocation(): Promise<boolean> {
+  function openMap(): void {
+    locMap = true;
+    render();
+  }
+
+  /** "Use this phone's location": the geolocation prompt; on a denial or failure,
+   * the map picker opens instead (it never needs the permission). */
+  async function usePhoneLocation(): Promise<void> {
     busy = true;
     render();
+    let ok = false;
     try {
       const p = await phonePosition();
       const req = locationRequest(p.lat, p.lon);
       pickedLoc = { latE4: req.latE4 ?? 0, lonE4: req.lonE4 ?? 0 };
-      return true;
+      locNote = "";
+      ok = true;
     } catch (e) {
-      toast(`No location: ${e instanceof Error ? e.message : String(e)}`, { error: true });
-      return false;
+      locNote = `No location from this phone (${e instanceof Error ? e.message : String(e)}). Choose the spot on the map instead.`;
+      locMap = true;
+    } finally {
+      busy = false;
+      render();
+    }
+    if (ok && relocating) await locationChosen();
+  }
+
+  /** A location was picked (phone or map): back to the rule's review, or saved
+   * straight away when changing the lamp's location from the list. */
+  async function locationChosen(): Promise<void> {
+    locMap = false;
+    if (!relocating) {
+      go("review");
+      return;
+    }
+    busy = true;
+    render();
+    try {
+      await sendLocation();
+      toast("Location saved on the lamp");
+      relocating = false;
+      step = "list";
+      await refresh();
+    } catch (e) {
+      toast(`Couldn't save the location: ${e instanceof Error ? e.message : String(e)}`, { error: true });
     } finally {
       busy = false;
       render();
@@ -779,26 +882,18 @@ export function ScheduleScreen(_router: Router): Screen {
     pickedLoc = null;
   }
 
-  async function updateLocation(): Promise<void> {
-    const ok = await confirmDialog({
-      title: "Use this phone's location?",
-      message:
-        "The lamp uses it for sunrise and sunset rules. It is rounded to 0.1° (about 10 km) and stored only on the lamp.",
-      confirmLabel: "Use my location",
-    });
-    if (!ok || !(await pickLocation())) return;
-    busy = true;
-    render();
-    try {
-      await sendLocation();
-      toast("Location saved on the lamp");
-      await refresh();
-    } catch (e) {
-      toast(`Couldn't save the location: ${e instanceof Error ? e.message : String(e)}`, { error: true });
-    } finally {
-      busy = false;
-      render();
-    }
+  /** "Change location" on the list: the same location step, saved on its own. */
+  function updateLocation(): void {
+    relocating = true;
+    resetLocation();
+    go("location");
+  }
+
+  function resetLocation(): void {
+    pickedLoc = null;
+    locMap = false;
+    locNote = "";
+    picker = null;
   }
 
   async function saveDraft(): Promise<void> {

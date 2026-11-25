@@ -25,6 +25,7 @@ import {
   type ScheduleState,
 } from "../src/net/schedule";
 import { actionFor, daysPreset, flowSteps, newRule, stepAfter, toggleDay } from "../src/ui/screens/scheduleModel";
+import { fromWorld, parseLatLon, tilesFor, toWorld } from "../src/ui/screens/mapPickerMath";
 import type { ClientMessage, ServerMessage } from "@ledmapper/protocol";
 
 const rule = (patch: Partial<ScheduleRule> = {}): ScheduleRule => ({ ...newRule(1), ...patch });
@@ -185,4 +186,34 @@ test("the editor's steps: the location step only for a sun rule on a lamp withou
     durationMs: 4000,
   });
   assert.deepEqual(actionFor("effect", null), { kind: "effect", effectId: "", crossfadeMs: 5000 });
+});
+
+test("the map picker's math: Web Mercator round trip, tiles, typed coordinates", () => {
+  for (const p of [
+    { lat: 47.3769, lon: 8.5417 },
+    { lat: -33.8688, lon: 151.2093 },
+    { lat: 0, lon: -179.9 },
+  ]) {
+    for (const z of [1, 6, 12]) {
+      const w = toWorld(p, z);
+      const back = fromWorld(w.x, w.y, z);
+      assert.ok(Math.abs(back.lat - p.lat) < 1e-9 && Math.abs(back.lon - p.lon) < 1e-9, `${p.lat},${p.lon}@${z}`);
+    }
+  }
+  // Zoom 1 is 2×2 tiles of 256 px; the equator / prime meridian is the middle.
+  assert.deepEqual(toWorld({ lat: 0, lon: 0 }, 1), { x: 256, y: 256 });
+  // Dragging past the date line wraps; past the poles clamps.
+  assert.ok(Math.abs(fromWorld(-10, 256, 1).lon - 172.97) < 0.01);
+  assert.ok(fromWorld(0, -500, 3).lat > 85);
+  // A 640×320 view at zoom 1 is wider than the world: tile columns repeat, wrapped, with distinct keys.
+  const t = tilesFor({ lat: 0, lon: 0 }, 1, 640, 320);
+  assert.ok(t.every((x) => x.x >= 0 && x.x < 2 && x.y >= 0 && x.y < 2));
+  assert.equal(new Set(t.map((x) => `${x.ux}/${x.y}`)).size, t.length);
+  const c = tilesFor({ lat: 47.37, lon: 8.54 }, 8, 358, 320);
+  assert.ok(c.some((x) => x.left <= 179 && x.left + 256 > 179 && x.top <= 160 && x.top + 256 > 160), "a tile under the pin");
+  assert.deepEqual(parseLatLon("47.37, 8.54"), { lat: 47.37, lon: 8.54 });
+  assert.deepEqual(parseLatLon("33.9 S 151.2 E"), { lat: -33.9, lon: 151.2 });
+  assert.deepEqual(parseLatLon("40.7°N, 74.0°W"), { lat: 40.7, lon: -74 });
+  assert.equal(parseLatLon("95, 10"), null);
+  assert.equal(parseLatLon("Zurich"), null);
 });
