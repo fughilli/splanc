@@ -3860,3 +3860,294 @@ input.device-name-input {
   font: 11px/1 var(--font-mono, ui-monospace, monospace);
   color: var(--text-dim);
 }
+
+/* ---- FX editor: Docs pane + selection actions (D-541 PR 6) ---------------- */
+.fxpane[data-pane="docs"] .fxpane-body {
+  overflow: hidden;
+  padding: 0;
+}
+.fxdocs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+/* Phone: the panel lives in a bottom sheet with its own scroll under a fixed
+   search box. */
+.k-sheet .fxdocs-sheetbody {
+  display: flex;
+  flex-direction: column;
+  height: min(72vh, 640px);
+}
+.fxdocs-head {
+  flex: 0 0 auto;
+  padding: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+.k-sheet .fxdocs-head {
+  padding: 0 0 var(--sp-2);
+}
+.fxdocs-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  background: var(--bg);
+  color: var(--text-dim);
+}
+.fxdocs-search:focus-within {
+  border-color: var(--accent);
+}
+.fxdocs-search svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.fxdocs-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* no iOS zoom-on-focus */
+  padding: 6px 0;
+}
+.fxdocs-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3) var(--sp-4);
+}
+.k-sheet .fxdocs-body {
+  padding: var(--sp-2) 0 var(--sp-4);
+}
+.fxdocs-intro,
+.fxdocs-count,
+.fxdocs-note {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.fxdocs-note {
+  margin: var(--sp-2) 0 0;
+}
+.fxdocs-cat h3,
+.fxdocs-page h3 {
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.fxdocs-cat:first-of-type h3 {
+  margin-top: 0;
+}
+.fxdocs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.fxdocs-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px var(--sp-2);
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctrl);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.fxdocs-row:hover,
+.fxdocs-row:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.fxdocs-row-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: #c9a3ff;
+}
+.fxdocs-row-sum {
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.fxdocs-nav {
+  margin-bottom: var(--sp-2);
+}
+.fxdocs-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--f-title);
+}
+.fxdocs-title code {
+  font-family: var(--font-mono);
+}
+.fxdocs-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.fxdocs-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.fxdocs-badge--type {
+  color: #7fd0ff;
+  font-family: var(--font-mono);
+}
+.fxdocs-badge--scope {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.fxdocs-sigs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+.fxdocs-sig,
+.fxdocs-code {
+  margin: 0;
+  padding: var(--sp-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  font: 12px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fxdocs-summary {
+  margin: 0 0 var(--sp-2);
+  font-weight: 500;
+}
+.fxdocs-doc {
+  font-size: var(--f-body);
+  line-height: 1.5;
+}
+.fxdocs-doc p {
+  margin: 0 0 var(--sp-2);
+}
+.fxdocs-doc code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.fxdocs-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: var(--sp-3) 0 0;
+  font-size: var(--f-caption);
+}
+.fxdocs-facts dt {
+  color: var(--text-dim);
+}
+.fxdocs-facts dd {
+  margin: 0;
+}
+.fxdocs-actions,
+.fxdocs-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* Touch: the floating action chip under a selection (owner answer D-551). */
+.fxsel-chip {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.fxsel-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fxsel-chip-btn svg {
+  width: 16px;
+  height: 16px;
+}
+/* Desktop: the right-click menu on the code. */
+.fxsel-menu {
+  position: fixed;
+  z-index: 400;
+  min-width: 13rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+.fxsel-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 30px;
+  padding: 0 var(--sp-2);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.fxsel-menu-item:hover,
+.fxsel-menu-item:focus-visible {
+  background: var(--accent-quiet);
+  outline: none;
+}
+.fxsel-menu-item svg {
+  width: 16px;
+  height: 16px;
+}
+.fxsel-menu-sep {
+  border-top: 1px solid var(--border);
+}
+.fxsel-menu-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 0 var(--sp-2);
+}
