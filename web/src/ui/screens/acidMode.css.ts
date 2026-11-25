@@ -190,6 +190,35 @@ const CSS = `
   min-height: 1.2em;
 }
 
+/* Live colour pickers: a round swatch per colour uniform (D-541). */
+.acid-colors {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-3);
+  width: 100%;
+  max-width: 560px;
+  margin-bottom: var(--sp-4);
+}
+.acid-colors[hidden] { display: none; }
+.acid-color {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: 6rem;
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  text-align: center;
+  cursor: pointer;
+}
+.acid-color .k-cswatch {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.35);
+}
+
 /* Text fallback when speech recognition is unavailable. */
 .acid-fallback {
   width: 100%;

@@ -1,6 +1,6 @@
 /**
  * Auto uniform panel (docs/design/effects-compiler.md §"live uniform panel"):
- * renders one control per manifest uniform (slider/color/toggle/dropdown; a
+ * renders one control per manifest uniform (slider/HSV colour picker/toggle/dropdown; a
  * ranged vector gets one slider per component, a mat3/mat4 an N×N number grid)
  * and holds the live values. Preview and device consume the SAME values — dragging a
  * control fires `onChange(slot, value[])` with the exact numbers both sinks use.
@@ -15,8 +15,6 @@ import type { FxUiKind, FxUniform } from "../../fx/preview";
 import { reassembleUniformValues } from "../../net/uniformWire";
 import {
   clampUniformValue,
-  colorFromHex,
-  colorToHex,
   componentRanges,
   isRangedVector,
   matIndex,
@@ -24,6 +22,8 @@ import {
   snapToStep,
   stepAttr,
 } from "../uniformValues";
+import { toHex } from "../../color/hsv";
+import { ColorSwatch } from "../../ui/kit/hsvPicker";
 
 interface Slot {
   uniform: FxUniform;
@@ -332,30 +332,28 @@ export class UniformPanel {
     }
 
     if (ui.kind === "color") {
-      // A native <input type="color"> renders inconsistently across platforms —
-      // a full-width swatch on Android/Chrome but a small fixed circle on iOS
-      // WKWebView (it ignores width/height). Wrap it: a styled swatch we control
-      // for the visuals, with the native input overlaid invisibly so a tap still
-      // opens each platform's colour picker.
-      const wrap = document.createElement("label");
-      wrap.className = "upanel-color";
-      const swatch = document.createElement("span");
-      swatch.className = "upanel-color-swatch";
-      const el = document.createElement("input");
-      el.type = "color";
-      // The 8-bit hex is display only: the live value stays the uniform's
-      // float colour, and a pick changes only the channels the user moved
-      // (an untouched channel and alpha keep full precision, D-541).
-      el.value = colorToHex(s.value);
-      swatch.style.background = el.value;
-      value.textContent = el.value;
-      el.addEventListener("input", () => {
-        this.set(i, colorFromHex(el.value, this.slots[i]?.value ?? s.value, s.uniform.width));
-        swatch.style.background = el.value;
-        value.textContent = el.value;
+      // The live HSV picker (D-541): a swatch that opens a hue ring + SV
+      // square (a Sheet on phones, a popover on desktop). Float output, every
+      // move streams through onChange; a vec4 gets an alpha slider. The hex in
+      // the value column is a label only (no 8-bit round-trip).
+      const label = (v: readonly number[]): string => toHex(v, s.uniform.width >= 4 ? (v[3] ?? 1) : undefined);
+      const swatch = ColorSwatch({
+        value: s.value,
+        alpha: s.uniform.width >= 4,
+        title: this.label(s.uniform.name),
+        onInput: (v) => {
+          const next = clampUniformValue(s.uniform, v);
+          this.set(i, next);
+          value.textContent = label(next);
+        },
       });
-      wrap.append(swatch, el);
-      ctrl.appendChild(wrap);
+      ctrl.appendChild(swatch.el);
+      value.textContent = label(s.value);
+      value.classList.add("upanel-hex");
+      this.setters.set(s.uniform.slot, (v) => {
+        swatch.set(v);
+        value.textContent = label(v);
+      });
       return;
     }
 

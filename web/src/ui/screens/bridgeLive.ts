@@ -26,7 +26,7 @@ import {
 import type { LivePlayer, PerPlayer } from "../../net/liveProtocol";
 import type { Router, Screen } from "../app/router";
 import { installBridgeLiveStyles } from "./bridgeLive.css";
-import { colorFromHex, colorToHex } from "../../effects/uniformValues";
+import { ColorSwatch } from "../kit/hsvPicker";
 
 const STORE_KEY = "splanc.bridge.v1";
 export const DEFAULT_RELAY = "https://splanc.pages.dev";
@@ -493,19 +493,25 @@ export function BridgeLiveScreen(_router: Router): Screen {
     for (const u of us) {
       if (u.width !== 1 && u.ui.kind !== "color") continue; // vectors: the editor has them
       if (u.ui.kind === "color") {
-        const inp = document.createElement("input");
-        inp.type = "color";
-        // The hex is display only (D-541): the value sent is the float colour
-        // with just the channels the user moved replaced, full width (a vec4
-        // keeps its alpha), so an untouched channel never round-trips 8-bit.
-        let cur = (u.current ?? u.default).slice();
-        inp.value = colorToHex(cur);
-        const rgb = (): number[] => (cur = colorFromHex(inp.value, cur, u.width));
-        inp.addEventListener("input", () => client?.control(sel(), { deck, u: { [u.name]: rgb() } }));
-        inp.addEventListener("change", () => (client?.control(sel(), { deck, u: { [u.name]: rgb() }, commit: true }), client?.flush()));
-        const row = document.createElement("label");
-        row.className = "bridge-row";
-        row.append(inp, document.createTextNode(` ${u.name}`));
+        // The live HSV picker (D-541): float colour, every move streams over
+        // the bridge (coalesced per tick), the gesture end commits. A vec4
+        // keeps / edits its alpha.
+        const send = (v: number[], commit: boolean): void => {
+          client?.control(sel(), { deck, u: { [u.name]: v }, ...(commit ? { commit: true } : {}) });
+          if (commit) client?.flush();
+        };
+        const swatch = ColorSwatch({
+          value: (u.current ?? u.default).slice(),
+          alpha: u.width >= 4,
+          title: u.name,
+          onInput: (v) => send(v, false),
+          onCommit: (v) => send(v, true),
+        });
+        const row = document.createElement("div");
+        row.className = "bridge-color";
+        const name = document.createElement("span");
+        name.textContent = u.name;
+        row.append(name, swatch.el);
         items.push(row);
         continue;
       }
