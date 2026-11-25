@@ -152,6 +152,8 @@ jobs:
           nix build "./pi/bridge/image#image-$BOARD" -L --out-link result-img
           nix build "./pi/bridge/image#toplevel-$BOARD" --out-link result-top
           ls -l result-img/sd-image/
+          # U-Boot cards (Pi 3 / Pi 4 / Zero 2 W) migrate to the kernel loader as a trial.
+          if [ "$BOARD" = pi3 ]; then nix build ./pi/bridge/image#checks.aarch64-linux.migrate-pi3 -L --no-link; fi
 
       - name: Size breakdown
         run: |
@@ -245,6 +247,8 @@ jobs:
         run: nix build ./pi/bridge/image#checks.aarch64-linux.vm -L --out-link result-vm
       - name: QEMU OTA test (signed delta update, bad keys rejected, health-check rollback)
         run: nix build ./pi/bridge/image#checks.aarch64-linux.vm-ota -L --no-link
+      - name: QEMU stage-1 watchdog test (hand-over to systemd, a stalled stage 1 resets)
+        run: nix build ./pi/bridge/image#checks.aarch64-linux.vm-wdt -L --no-link
       - name: HDMI page rendered in the VM
         run: |
           ls -l result-vm/

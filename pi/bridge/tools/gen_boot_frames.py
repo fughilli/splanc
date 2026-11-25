@@ -455,12 +455,327 @@ def pack(frames, fps: int = FPS, loop=None) -> bytes:
     return b"SPLB" + head + zlib.compress(body, 9)
 
 
+# --- HDMI: the same choreography in colour, at HDMI resolution -------------------------
+#
+# The early splash (pi/bridge/splash) plays this on HDMI instead of the OLED's
+# 1-bit frames scaled up: the same timeline and layout (in panel units, times
+# HDMI_K), the approved samples in their own colour with smooth edges, the
+# wordmark in white, the LED row in colour. 60 fps, the splash's rate: the
+# impact/splash uses the source's exact 60000/1001 fps titleFrames.
+#
+# File format (little endian):
+#     b"SPLH" | u8 version=1 | u8 fps | u16 width | u16 height | u16 frames
+#     | u16 loop_start | u8 colours | u16 focus_x | u16 focus_y
+#     | colours * (r, g, b)
+#     | frames + 1 delta records: u32 length | ops
+# Record i turns frame i-1 into frame i (record 0: from all index 0, black); the
+# last one turns the last frame back into loop_start. Ops, until the end of the
+# record: LEB128 skip, LEB128 n, n palette indices (pixels in row order). Palette
+# indices 0..colours-1; HDMI_TEXT_BASE.. are kept free for the stage text. The
+# focus is the finished mark's centre (where the splash's outro into the app
+# opens from).
+
+HDMI_K = 4  # canvas = the panel layout x4: 512x256
+HDMI_FPS = 60
+HDMI_COLOURS = 224
+HDMI_TEXT_BASE = 240  # 16 coverage levels of the stage text colour (the splash adds them)
+HDMI_VERSION = 1
+HDMI_WORD = (232, 236, 241)  # render_hdmi's TEXT
+HDMI_GLINT = 0.65
+
+
+def coverage(paths, scale: float, ox: float, oy: float, size, ss: int = SS) -> Image.Image:
+    """Like raster(), without the threshold: coverage 0..255 (mode "L")."""
+    big = (size[0] * ss, size[1] * ss)
+    union = Image.new("L", big, 0)
+    for subs in paths:
+        acc = Image.new("1", big, 0)
+        for sub in subs:
+            if len(sub) < 3:
+                continue
+            m = Image.new("1", big, 0)
+            ImageDraw.Draw(m).polygon(
+                [((px * scale + ox) * ss, (py * scale + oy) * ss) for px, py in sub], fill=1
+            )
+            acc = ImageChops.logical_xor(acc, m)
+        union = ImageChops.lighter(union, acc.convert("L"))
+    return union.resize(size, Image.BOX)
+
+
+def _sample_fill(markup: str):
+    m = re.search(r'fill="#([0-9a-fA-F]{6})"', markup)
+    return tuple(int(m.group(1)[i : i + 2], 16) for i in (0, 2, 4)) if m else (255, 255, 255)
+
+
+def _led_colour(i: int):
+    import colorsys
+
+    r, g, b = colorsys.hsv_to_rgb((i / DOTS) * 0.83, 0.7, 1.0)
+    return (round(r * 255), round(g * 255), round(b * 255))
+
+
+def _paint(img: Image.Image, colour, mask: Image.Image) -> None:
+    img.paste(Image.new("RGB", img.size, colour), (0, 0), mask)
+
+
+def _dot(dr, cx: float, cy: float, w: float, h: float, colour) -> None:
+    dr.rounded_rectangle(
+        [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], radius=min(w, h) / 2, fill=colour
+    )
+
+
+def build_hdmi_frames(svg_path: str, splash_path: str, k: int = HDMI_K):
+    """The intro (SECONDS) + one "loading" loop cycle (LOOP_SECONDS), RGB, at HDMI_FPS."""
+    with open(splash_path, encoding="utf-8") as source:
+        doc = json.load(source)
+    samples = doc["titleFrames"]
+    shapes = logo_shapes(svg_path)
+    x0, y0, x1, y1 = bbox(shapes["mark"] + shapes["word"])
+    scale = LOGO_W / (x1 - x0)  # panel px per SVG unit
+    lx = (W - LOGO_W) // 2
+    ox, oy = lx - x0 * scale, LOGO_Y - y0 * scale
+    logo_h = (y1 - y0) * scale
+    size = (W * k, H * k)
+    # Panel-pixel geometry from the OLED rasters, so both screens share one layout.
+    mark1 = raster(shapes["mark"], scale, ox, oy, (W, H))
+    word1 = raster(shapes["word"], scale, ox, oy, (W, H))
+    mx0, my0, mx1, my1 = mark1.getbbox()
+    wx0, wy0, wx1, wy1 = word1.getbbox()
+    mcx = (mx0 + mx1) / 2
+    start_dx = W / 2 - mcx
+    from_right = mcx > (wx0 + wx1) / 2
+    dots = _dot_positions(svg_path)
+    word = coverage(shapes["word"], scale * k, ox * k, oy * k, size)
+
+    def mark_at(sample, dx):
+        return coverage(splash_shapes(sample["markup"]), scale * k, (ox + dx) * k, oy * k, size)
+
+    cache = {}
+    frames = []
+    for f in range(int(round(SECONDS * HDMI_FPS))):
+        t = f / HDMI_FPS
+        img = Image.new("RGB", size, (0, 0, 0))
+        dx = start_dx * (1 - _ease_in_out(_phase(t, 0.45, 0.9)))
+        logo = Image.new("L", size, 0)
+        if t >= BLACK - 1e-9:
+            sample = splash_sample(samples, t - BLACK)
+            key = (sample["time"], round(dx * k * SS))
+            if key not in cache:
+                cache[key] = mark_at(sample, dx)
+            m = cache[key]
+            _paint(img, _sample_fill(sample["markup"]), m)
+            logo = ImageChops.lighter(logo, m)
+        wipe = _ease_out(_phase(t, 0.7, 1.25))
+        if wipe > 0:
+            span = (wx1 - wx0 + 3) * wipe
+            edge = (wx1 + 1 - span) if from_right else (wx0 - 1 + span)
+            wmask = Image.new("L", size, 0)
+            ImageDraw.Draw(wmask).rectangle(
+                [edge * k, 0, size[0], size[1]] if from_right else [0, 0, edge * k, size[1]],
+                fill=255,
+            )
+            wm = ImageChops.multiply(word, wmask)
+            _paint(img, HDMI_WORD, wm)
+            logo = ImageChops.lighter(logo, wm)
+            if wipe < 1:
+                bar = (edge - 2) if from_right else (edge + 1)
+                ImageDraw.Draw(img).rectangle(
+                    [bar * k, (wy0 - 3) * k, (bar + 2) * k - 1, (wy1 + 3) * k - 1], fill=HDMI_WORD
+                )
+        dr = ImageDraw.Draw(img)
+        for i, (px, py) in enumerate(dots):
+            on_at = 0.95 + i * 0.045
+            if t >= on_at:
+                head = t - on_at < 0.09
+                cx, cy = (px + 0.0) * k, (py + 1.0) * k
+                _dot(
+                    dr,
+                    cx,
+                    cy,
+                    (4 if head else 2) * k,
+                    2 * k,
+                    (255, 255, 255) if head else _led_colour(i),
+                )
+        g = _phase(t, 1.4, 1.85)
+        if 0 < g < 1:
+            gx = (-20 + (W + 40) * _ease_in_out(g)) * k
+            band = Image.new("L", (size[0] * SS, size[1] * SS), 0)
+            top, bot = (LOGO_Y - 2) * k * SS, (LOGO_Y + logo_h + 2) * k * SS
+            ImageDraw.Draw(band).polygon(
+                [
+                    (gx * SS, top),
+                    ((gx + 9 * k) * SS, top),
+                    ((gx - 3 * k) * SS, bot),
+                    ((gx - 12 * k) * SS, bot),
+                ],
+                fill=255,
+            )
+            band = band.resize(size, Image.BOX)
+            shine = ImageChops.multiply(band, logo).point(lambda v: int(v * HDMI_GLINT))
+            img = Image.composite(Image.new("RGB", size, (255, 255, 255)), img, shine)
+        frames.append(img)
+    last = frames[-1]
+    # The loop: the logo stays; a white head runs along the LED row with a dark gap
+    # behind it, then the row rests with every LED on (= the intro's last frame).
+    base = last.copy()
+    ImageDraw.Draw(base).rectangle([0, (DOTS_Y - 1) * k, size[0], (DOTS_Y + 3) * k], fill=(0, 0, 0))
+    loop = []
+    for f in range(int(round(LOOP_SECONDS * HDMI_FPS))):
+        t = f / HDMI_FPS
+        img = base.copy()
+        dr = ImageDraw.Draw(img)
+        head = int(t / LOOP_DOT_SECONDS) if t < DOTS * LOOP_DOT_SECONDS else None
+        for i, (px, py) in enumerate(dots):
+            cx, cy = px * k, (py + 1.0) * k
+            if head is not None and i == head:
+                _dot(dr, cx, cy, 4 * k, 2 * k, (255, 255, 255))
+            elif head is not None and 0 < head - i <= LOOP_GAP:
+                continue
+            else:
+                _dot(dr, cx, cy, 2 * k, 2 * k, _led_colour(i))
+        loop.append(img)
+    focus = (round((mx0 + mx1) / 2 * k), round((my0 + my1) / 2 * k))
+    return frames, loop, focus
+
+
+def _leb(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def delta_ops(prev: bytes, cur: bytes, merge: int = 4) -> bytes:
+    """Ops turning ``prev`` into ``cur`` (palette indices): changed spans, with gaps
+    of up to ``merge`` unchanged pixels folded into the span."""
+    out = bytearray()
+    n = len(cur)
+    i = pos = 0
+    while i < n:
+        if prev[i] == cur[i]:
+            i += 1
+            continue
+        j = i + 1
+        while j < n:
+            if prev[j] != cur[j]:
+                j += 1
+                continue
+            g = j
+            while g < n and g - j <= merge and prev[g] == cur[g]:
+                g += 1
+            if g < n and g - j <= merge:
+                j = g
+            else:
+                break
+        out += _leb(i - pos) + _leb(j - i) + cur[i:j]
+        pos = i = j
+    return bytes(out)
+
+
+def apply_ops(buf: bytearray, ops: bytes) -> None:
+    """The decoder (the splash's C mirrors it): for tests."""
+    i = pos = 0
+
+    def leb():
+        nonlocal i
+        v = shift = 0
+        while True:
+            b = ops[i]
+            i += 1
+            v |= (b & 0x7F) << shift
+            shift += 7
+            if not b & 0x80:
+                return v
+
+    while i < len(ops):
+        pos += leb()
+        n = leb()
+        buf[pos : pos + n] = ops[i : i + n]
+        i += n
+        pos += n
+
+
+def hdmi_palette(frames, colours: int = HDMI_COLOURS) -> Image.Image:
+    """One palette for every frame (black first), from a mosaic of them all."""
+    w, h = frames[0].size
+    step = max(1, len(frames) // 48)
+    pick = frames[::step]
+    mosaic = Image.new("RGB", (w, h * len(pick)))
+    for i, fr in enumerate(pick):
+        mosaic.paste(fr, (0, i * h))
+    q = mosaic.quantize(
+        colors=colours - 1, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE
+    )
+    pal = q.getpalette()[: (colours - 1) * 3]
+    pal = [0, 0, 0] + pal + [0, 0, 0] * (colours - 1 - len(pal) // 3)
+    pimg = Image.new("P", (1, 1))
+    pimg.putpalette(pal + [0, 0, 0] * (256 - colours))
+    return pimg
+
+
+def pack_hdmi(frames, loop, focus=(0, 0), colours: int = HDMI_COLOURS) -> bytes:
+    allf = list(frames) + list(loop)
+    pimg = hdmi_palette(allf, colours)
+    w, h = allf[0].size
+    idx = []
+    for fr in allf:
+        q = fr.quantize(palette=pimg, dither=Image.Dither.NONE).tobytes()
+        # (quantize may pick a padding entry for exact black: map >= colours to 0)
+        if max(q) >= colours:
+            q = bytes(v if v < colours else 0 for v in q)
+        idx.append(q)
+    pal = pimg.getpalette()[: colours * 3]
+    pal += [0] * (colours * 3 - len(pal))
+    head = (
+        b"SPLH"
+        + struct.pack(
+            _SPLH_HEAD, HDMI_VERSION, HDMI_FPS, w, h, len(allf), len(frames), colours, *focus
+        )
+        + bytes(pal)
+    )
+    body = bytearray()
+    prev = bytes(w * h)
+    for cur in idx + [idx[len(frames)]]:
+        ops = delta_ops(prev, cur)
+        body += struct.pack("<I", len(ops)) + ops
+        prev = cur
+    return head + bytes(body)
+
+
+_SPLH_HEAD = "<BBHHHHBHH"
+
+
+def load_hdmi(data: bytes):
+    """-> (fps, w, h, loop_start, palette, [index frames + the wrap]) (tests, previews)."""
+    if data[:4] != b"SPLH":
+        raise ValueError("not an SPLH file")
+    ver, fps, w, h, n, loop_start, colours, _fx, _fy = struct.unpack_from(_SPLH_HEAD, data, 4)
+    if ver != HDMI_VERSION:
+        raise ValueError(f"SPLH version {ver}")
+    off = 4 + struct.calcsize(_SPLH_HEAD)
+    pal = list(data[off : off + colours * 3])
+    off += colours * 3
+    buf = bytearray(w * h)
+    out = []
+    for _ in range(n + 1):
+        (ln,) = struct.unpack_from("<I", data, off)
+        off += 4
+        apply_ops(buf, data[off : off + ln])
+        off += ln
+        out.append(bytes(buf))
+    return fps, w, h, loop_start, pal, out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--svg", required=True)
     ap.add_argument("--splash", required=True, help="canonical shared/brand/splash/frames.json")
     ap.add_argument("--out", required=True)
     ap.add_argument("--png-dir", help="also write every frame as a PNG (review)")
+    ap.add_argument("--hdmi-out", help="also write the HDMI (colour) animation, SPLH")
     a = ap.parse_args(argv)
     frames = build_frames(a.svg, a.splash)
     loop = build_loop(a.svg, frames[-1])
@@ -474,6 +789,18 @@ def main(argv=None) -> int:
         for i, fr in enumerate(frames + loop):
             fr.save(os.path.join(a.png_dir, f"boot-{i:02d}.png"))
     print(f"{a.out}: {len(frames)} + {len(loop)} loop frames, {len(data)} bytes", file=sys.stderr)
+    if a.hdmi_out:
+        hf, hl, focus = build_hdmi_frames(a.svg, a.splash)
+        hdata = pack_hdmi(hf, hl, focus)
+        with open(a.hdmi_out + ".tmp", "wb") as f:
+            f.write(hdata)
+        os.replace(a.hdmi_out + ".tmp", a.hdmi_out)
+        if a.png_dir:
+            for i, fr in enumerate(hf + hl):
+                fr.save(os.path.join(a.png_dir, f"hdmi-{i:03d}.png"))
+        print(
+            f"{a.hdmi_out}: {len(hf)} + {len(hl)} loop frames, {len(hdata)} bytes", file=sys.stderr
+        )
     return 0
 
 

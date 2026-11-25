@@ -55,6 +55,7 @@
       rev = self.shortRev or self.dirtyShortRev or "unknown";
 
       bridgeModules = [
+        ./nix/boot-watchdog.nix
         ./nix/bridge.nix
         ./nix/flash-config.nix
         ./nix/improv.nix
@@ -100,8 +101,13 @@
         # Full-system OTA: signed delta update A -> B, a rejected unsigned /
         # wrong-key release, and a B that fails its health check rolling back.
         vm-ota = import ./nix/vm-test-ota.nix { inherit pkgs bridgeModules; };
+        # The stage-1 watchdog: handed over to systemd, and a stalled stage 1 resets.
+        vm-wdt = import ./nix/vm-test-wdt.nix { inherit pkgs; };
         # The boot splash binary, checked against luma.oled's SH1106 bytes.
         splash = bridgePkgs.splash;
+        # A U-Boot card's first kernel-loader release installs as a one-shot
+        # trial (nix/system-update-rpi.nix), then its commit makes it the default.
+        migrate-pi3 = import ./nix/migrate-test.nix { inherit pkgs; system = systems.pi3; };
       };
     };
 }

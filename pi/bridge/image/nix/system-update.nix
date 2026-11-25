@@ -115,8 +115,8 @@ in
       default = "reboot";
       description = ''
         reboot: the new generation becomes the boot default, then reboot (health
-        check -> rollback needs the new system to boot). tryboot: Raspberry Pi 5
-        one-shot trial boot via tryboot.txt (nix/system-update-rpi.nix).
+        check -> rollback needs the new system to boot). tryboot: Raspberry Pi
+        one-shot trial boot via tryboot.txt (every board: nix/system-update-rpi.nix).
       '';
     };
     healthUnits = lib.mkOption {
@@ -169,7 +169,7 @@ in
     # Pi 5's tryboot, a failed trial boot then comes back as the old system),
     # and the hardware watchdog resets a hung userspace. 15 s: the bcm2835
     # watchdog's maximum.
-    boot.kernelParams = [ "panic=10" "boot.panic_on_fail" ];
+    splancBridge.kernelParams = [ "panic=10" "boot.panic_on_fail" ];
     systemd.watchdog.runtimeTime = "15s";
 
     systemd.tmpfiles.rules = [ "d /run/splanc-system-update 0755 root root -" ];

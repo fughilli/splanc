@@ -3,27 +3,32 @@
  * "Boot splash").
  *
  * Started from the NixOS initrd (image/nix/splash.nix) as soon as the SPI
- * controller and spidev are loaded, it plays the boot animation (the same
- * frames splanc-display plays: boot_frames.bin, baked in as splash_assets.h)
- * on the Waveshare OLED HAT (SH1106 over /dev/spidev0.0, DC/RST through the GPIO
- * character device) and on HDMI (/dev/fb0, scaled up), with a stage hint under
- * the logo ("Starting…", "Connecting…", ...).
+ * controller and spidev are loaded, it plays the boot animation on the
+ * Waveshare OLED HAT (SH1106 over /dev/spidev0.0, DC/RST through the GPIO
+ * character device; the same frames splanc-display plays: boot_frames.bin,
+ * baked in as splash_assets.h) and on HDMI (/dev/fb0: the same animation in
+ * colour, SPLH from tools/gen_boot_frames.py --hdmi-out, embedded, scaled up),
+ * with a stage hint under the logo ("Starting…", "Connecting…", ...; after a
+ * failed system update "Recovering…" / "Rolled back to <version>").
  *
  * It survives the switch to the real root (argv[0] starts with '@', which
  * stage 1 and systemd leave alone) and listens on the abstract unix socket
  * @splanc-splash. splanc-display, once it's loaded and the system has calmed
- * down, sends "stop hdmi=<0|1>": the splash stops drawing, closes spidev and
- * the framebuffer, replies "ok t0=<CLOCK_MONOTONIC ns> stage=<i> oled=<0|1>
- * frame=<n>" with its GPIO line request (DC + RST, still held so the panel is
- * not reset) attached, and exits. splanc-display continues the animation from
- * t0 (splanc_display/splash.py).
+ * down, sends "stop hdmi=<0|1> [page=<file>]": with a page (splanc-display's
+ * first HDMI frame, in the framebuffer's format) the splash first opens HDMI
+ * into it (the outro: a circle growing from the logo's mark) while the OLED
+ * keeps animating; then it stops drawing, closes spidev and the framebuffer,
+ * replies "ok t0=<CLOCK_MONOTONIC ns> stage=<i> oled=<0|1> frame=<n> fps=<f>
+ * [ver=<version>]" with its GPIO line request (DC + RST, still held so the
+ * panel is not reset) attached, and exits. splanc-display continues the OLED
+ * animation from t0 (splanc_display/splash.py).
  *
  * Smoothness: nice -10, mlockall, everything in RAM (the binary is static,
  * the frames are compiled in, at SPL_FPS: 60), deadline pacing on
  * CLOCK_MONOTONIC with TIMER_ABSTIME (late frames are skipped, never
- * drifted), and only the SH1106 pages / framebuffer cells that changed are
- * written. A frame costs well under a millisecond. SCHED_FIFO (priority 10,
- * pinned to the last core on 4-core boards) is opt-in: splanc.splash_rt=1.
+ * drifted), and only the SH1106 pages / HDMI canvas pixels that changed are
+ * written. SCHED_FIFO (priority 10, pinned to the last core on 4-core boards)
+ * is opt-in: splanc.splash_rt=1.
  *
  * Never blocks boot: `start` forks and returns at once; every device is
  * optional (no HAT, no HDMI, no spidev: it just draws less); it exits on its own
@@ -42,11 +47,15 @@
  * Usage:
  *   splanc-splash start             daemonize (the initrd)
  *   splanc-splash run [opts]        in the foreground
- *   splanc-splash stop [hdmi=0|1]   ask a running splash to hand over (prints its reply)
+ *   splanc-splash stop [hdmi=0|1 [page=PATH]]
+ *                                   ask a running splash to hand over (prints its reply)
  *   splanc-splash bench <seconds> [opts]
  *                                   pace + compose frames with no device, print timing
- * opts: --oled=<spidev path|none|file:PATH> --fb=<path|none> --rt --no-rt --cpu=<n>
- *       --max=<s> --stats  (file:PATH writes the SH1106 page stream, for tests)
+ *   splanc-splash hdmi-dump <frame> <text> <out>
+ *                                   the HDMI canvas at a frame, with a stage text (tests)
+ * opts: --oled=<spidev path|none|file:PATH> --fb=<path|none|file:WxH:PATH> --rt --no-rt
+ *       --cpu=<n> --max=<s> --stats  (the file: forms are for tests: the SH1106 page
+ *       stream, and a 32 bpp "framebuffer" in a file)
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -56,6 +65,7 @@
 #include <linux/kd.h>
 #include <linux/spi/spidev.h>
 #include <linux/vt.h>
+#include <math.h>
 #include <poll.h>
 #include <sched.h>
 #include <signal.h>
@@ -418,20 +428,136 @@ static int oled_show(const uint8_t *img)
 
 /* ---- HDMI: /dev/fb0 ------------------------------------------------------------ */
 
+/* The colour animation (SPLH, tools/gen_boot_frames.py --hdmi-out), embedded
+ * as is: palette-coded delta records, decoded frame by frame into ``canvas``. */
+#ifndef SPL_HDMI_FILE
+#error "SPL_HDMI_FILE: the SPLH file to embed (-DSPL_HDMI_FILE=\"...\")"
+#endif
+__asm__(".section .rodata\n"
+	".balign 16\n"
+	".global spl_hdmi_data\n"
+	"spl_hdmi_data:\n"
+	".incbin \"" SPL_HDMI_FILE "\"\n"
+	".global spl_hdmi_end\n"
+	"spl_hdmi_end:\n"
+	".previous\n");
+extern const uint8_t spl_hdmi_data[], spl_hdmi_end[];
+
+#define HD_TEXT_BASE 240 /* palette 240..255: the stage text's 16 coverage levels */
+#define OUTRO_NS 650000000LL
+
+static struct {
+	int ok, fps, w, h, n, loop, ncol, fx, fy;
+	const uint8_t *pal;
+	const uint8_t **rec; /* n + 1 delta records (the last: back to loop) */
+	uint32_t *rec_len;
+	uint8_t *canvas, *text, *shown;
+	int cur; /* the decoded frame in canvas, -1: none yet */
+} hd = {.cur = -1};
+
+static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
+
+static void hdmi_load(void)
+{
+	const uint8_t *p = spl_hdmi_data, *end = spl_hdmi_end;
+	if (end - p < 19 || memcmp(p, "SPLH", 4) || p[4] != 1) {
+		WARN("HDMI animation: not an SPLH v1 file");
+		return;
+	}
+	hd.fps = p[5];
+	hd.w = rd16(p + 6);
+	hd.h = rd16(p + 8);
+	hd.n = rd16(p + 10);
+	hd.loop = rd16(p + 12);
+	hd.ncol = p[14];
+	hd.fx = rd16(p + 15);
+	hd.fy = rd16(p + 17);
+	p += 19;
+	hd.pal = p;
+	p += hd.ncol * 3;
+	hd.rec = calloc(hd.n + 1, sizeof *hd.rec);
+	hd.rec_len = calloc(hd.n + 1, sizeof *hd.rec_len);
+	size_t px = (size_t)hd.w * hd.h;
+	hd.canvas = calloc(px, 1);
+	hd.text = calloc(px, 1);
+	hd.shown = calloc(px, 1);
+	if (!hd.fps || !hd.n || hd.loop >= hd.n || !hd.rec || !hd.rec_len || !hd.canvas || !hd.text || !hd.shown)
+		return;
+	for (int i = 0; i <= hd.n; i++) {
+		if (end - p < 4)
+			return;
+		uint32_t len = (uint32_t)(p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24);
+		p += 4;
+		if ((size_t)(end - p) < len)
+			return;
+		hd.rec[i] = p;
+		hd.rec_len[i] = len;
+		p += len;
+	}
+	hd.ok = 1;
+}
+
+static int leb(const uint8_t **p, const uint8_t *end, uint32_t *v)
+{
+	uint32_t r = 0;
+	for (int shift = 0; *p < end && shift < 32; shift += 7) {
+		uint8_t b = *(*p)++;
+		r |= (uint32_t)(b & 0x7F) << shift;
+		if (!(b & 0x80)) {
+			*v = r;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+static void hdmi_apply(int r)
+{
+	const uint8_t *p = hd.rec[r], *end = p + hd.rec_len[r];
+	size_t pos = 0, px = (size_t)hd.w * hd.h;
+	while (p < end) {
+		uint32_t skip, n;
+		if (leb(&p, end, &skip) || leb(&p, end, &n) || pos + skip + n > px || (size_t)(end - p) < n)
+			return;
+		pos += skip;
+		memcpy(hd.canvas + pos, p, n);
+		p += n;
+		pos += n;
+	}
+}
+
+/* Decode up to the frame shown at ``fi`` frames into the animation (intro, then
+ * the loop over and over). Every record in between is applied: deltas. */
+static void hdmi_seek(int64_t fi)
+{
+	int want = fi < hd.loop ? (int)fi : hd.loop + (int)((fi - hd.loop) % (hd.n - hd.loop));
+	for (int guard = 0; hd.cur != want && guard <= hd.n; guard++) {
+		if (hd.cur == hd.n - 1) {
+			hdmi_apply(hd.n);
+			hd.cur = hd.loop;
+		} else {
+			hdmi_apply(hd.cur + 1);
+			hd.cur++;
+		}
+	}
+}
+
 static struct {
 	int fd, tty_fd;
 	uint8_t *mem;
 	size_t len;
 	struct fb_var_screeninfo var;
 	struct fb_fix_screeninfo fix;
-	int scale, ox, oy;
-	uint8_t shown[FRAME_BYTES];
+	int *xs, *ys; /* canvas column/row -> first screen column/row (w + 1, h + 1 entries) */
+	uint32_t pix[256];
 	int valid;
+	int64_t t0; /* the HDMI animation's clock: from the first framebuffer */
 	int64_t next_check;
 	int misses;
 	ino_t ino;
 	dev_t rdev;
 	int skipped_simple;
+	int text_shown;
 } fb = {.fd = -1, .tty_fd = -1};
 
 static void fb_close(void)
@@ -491,16 +617,97 @@ static void fb_fill(int x0, int y0, int w, int h, uint32_t c)
 	}
 }
 
+static uint32_t fb_rgb(int r, int g, int b)
+{
+	const struct fb_var_screeninfo *v = &fb.var;
+	return (uint32_t)(r >> (8 - v->red.length)) << v->red.offset |
+	       (uint32_t)(g >> (8 - v->green.length)) << v->green.offset |
+	       (uint32_t)(b >> (8 - v->blue.length)) << v->blue.offset;
+}
+
+/* Where the canvas goes: centred, 3/4 of the screen (whichever side binds),
+ * nearest-neighbour; the palette in the framebuffer's pixel format. */
+static int fb_layout(void)
+{
+	free(fb.xs);
+	free(fb.ys);
+	fb.xs = calloc(hd.w + 1, sizeof *fb.xs);
+	fb.ys = calloc(hd.h + 1, sizeof *fb.ys);
+	if (!fb.xs || !fb.ys)
+		return -1;
+	double fx = fb.var.xres * 0.75 / hd.w, fy = fb.var.yres * 0.75 / hd.h, f = fx < fy ? fx : fy;
+	int ox = (int)(fb.var.xres - hd.w * f) / 2, oy = (int)(fb.var.yres - hd.h * f) / 2;
+	for (int i = 0; i <= hd.w; i++)
+		fb.xs[i] = ox + (int)(i * f);
+	for (int i = 0; i <= hd.h; i++)
+		fb.ys[i] = oy + (int)(i * f);
+	for (int i = 0; i < 256; i++)
+		fb.pix[i] = 0;
+	for (int i = 0; i < hd.ncol; i++)
+		fb.pix[i] = fb_rgb(hd.pal[3 * i], hd.pal[3 * i + 1], hd.pal[3 * i + 2]);
+	static const int text_rgb[3] = {SPL_HDMI_TEXT_RGB};
+	for (int l = 1; l < 16; l++)
+		fb.pix[HD_TEXT_BASE + l] = fb_rgb(text_rgb[0] * l / 15, text_rgb[1] * l / 15, text_rgb[2] * l / 15);
+	return 0;
+}
+
+/* Tests: --fb=file:<W>x<H>:<path>, a 32 bpp XRGB "framebuffer" in a file. */
+static void fb_file(const char *spec, int64_t now)
+{
+	unsigned w, h;
+	char path[256];
+	if (sscanf(spec, "%ux%u:%255s", &w, &h, path) != 3 || !w || !h)
+		return;
+	int fd = open(path, O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	size_t len = (size_t)w * h * 4;
+	if (fd < 0 || ftruncate(fd, (off_t)len) < 0) {
+		if (fd >= 0)
+			close(fd);
+		return;
+	}
+	void *mem = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (mem == MAP_FAILED) {
+		close(fd);
+		return;
+	}
+	memset(&fb.var, 0, sizeof fb.var);
+	memset(&fb.fix, 0, sizeof fb.fix);
+	fb.var.xres = fb.var.xres_virtual = w;
+	fb.var.yres = fb.var.yres_virtual = h;
+	fb.var.bits_per_pixel = 32;
+	fb.var.red = (struct fb_bitfield){16, 8, 0};
+	fb.var.green = (struct fb_bitfield){8, 8, 0};
+	fb.var.blue = (struct fb_bitfield){0, 8, 0};
+	fb.fix.line_length = w * 4;
+	fb.fix.smem_len = (uint32_t)len;
+	snprintf(fb.fix.id, sizeof fb.fix.id, "file");
+	fb.fd = fd;
+	fb.mem = mem;
+	fb.len = len;
+	if (fb_layout() < 0) {
+		fb_close();
+		return;
+	}
+	if (!fb.t0)
+		fb.t0 = now;
+	LOG("HDMI file %ux%u (%s)", w, h, path);
+}
+
 /* (Re)open /dev/fb0 when it appears or changes: simpledrm's early framebuffer is
  * replaced by vc4's when the KMS driver loads. */
 static void fb_check(int64_t now)
 {
-	if (now < fb.next_check)
+	if (now < fb.next_check || !hd.ok)
 		return;
 	fb.next_check = now + 500000000LL;
 	const char *path = opt.fb ? opt.fb : "/dev/fb0";
 	if (!strcmp(path, "none"))
 		return;
+	if (!strncmp(path, "file:", 5)) {
+		if (!fb.mem)
+			fb_file(path + 5, now);
+		return;
+	}
 	if (!opt.fb_early && !strcmp(path, "/dev/fb0")) {
 		/* Don't even open simpledrm's framebuffer (see below): its name is in sysfs. */
 		char name[64];
@@ -571,43 +778,128 @@ static void fb_check(int64_t now)
 	fb.len = len;
 	fb.fix = fix;
 	fb.var = var;
-	int s = (int)(var.xres * 6 / 10 / SPL_W);
-	int s2 = (int)(var.yres * 6 / 10 / SPL_H);
-	fb.scale = s < s2 ? s : s2;
-	if (fb.scale < 1)
-		fb.scale = 1;
-	fb.ox = ((int)var.xres - SPL_W * fb.scale) / 2;
-	fb.oy = ((int)var.yres - SPL_H * fb.scale) / 2;
-	if (fb.ox < 0)
-		fb.ox = 0;
-	if (fb.oy < 0)
-		fb.oy = 0;
+	if (fb_layout() < 0) {
+		fb_close();
+		return;
+	}
+	if (!fb.t0)
+		fb.t0 = now; /* HDMI plays its intro from the start when it first appears */
 	vt_take();
 	fb_fill(0, 0, (int)var.xres, (int)var.yres, 0);
-	LOG("HDMI framebuffer %s %ux%u %u bpp, scale %d", fix.id, var.xres, var.yres, var.bits_per_pixel,
-	    fb.scale);
+	LOG("HDMI framebuffer %s %ux%u %u bpp: %dx%d animation at %dx%d", fix.id, var.xres, var.yres,
+	    var.bits_per_pixel, hd.w, hd.h, fb.xs[hd.w] - fb.xs[0], fb.ys[hd.h] - fb.ys[0]);
 }
 
-static void fb_show(const uint8_t *img)
+/* Draw the HDMI frame for ``now``: the animation's frame, the stage text over it
+ * (once the logo is complete), only the canvas pixels that changed. */
+static void fb_show(int64_t now)
 {
-	if (!fb.mem)
+	if (!fb.mem || !hd.ok)
 		return;
-	uint32_t white = fb.var.bits_per_pixel == 16 ? 0xFFFF : 0x00FFFFFF;
-	int s = fb.scale;
-	for (int y = 0; y < SPL_H; y++)
-		for (int xb = 0; xb < SPL_W / 8; xb++) {
-			int i = y * (SPL_W / 8) + xb;
-			uint8_t diff = fb.valid ? (uint8_t)(img[i] ^ fb.shown[i]) : 0xFF;
-			if (!diff)
+	int64_t fi = (now - fb.t0) * hd.fps / 1000000000LL;
+	hdmi_seek(fi);
+	int text = fi >= hd.loop;
+	for (int y = 0; y < hd.h; y++) {
+		const uint8_t *c = hd.canvas + (size_t)y * hd.w, *t = hd.text + (size_t)y * hd.w;
+		uint8_t *sh = hd.shown + (size_t)y * hd.w;
+		int y0 = fb.ys[y], ny = fb.ys[y + 1] - y0;
+		if (ny <= 0)
+			continue;
+		for (int x = 0; x < hd.w; x++) {
+			uint8_t v = text && t[x] ? (uint8_t)(HD_TEXT_BASE + t[x]) : c[x];
+			if (fb.valid && v == sh[x])
 				continue;
-			for (int b = 0; b < 8; b++)
-				if (diff & (0x80 >> b)) {
-					int x = xb * 8 + b;
-					fb_fill(fb.ox + x * s, fb.oy + y * s, s, s, (img[i] & (0x80 >> b)) ? white : 0);
-				}
+			sh[x] = v;
+			int x0 = fb.xs[x], nx = fb.xs[x + 1] - x0;
+			if (nx > 0)
+				fb_fill(x0, y0, nx, ny, fb.pix[v]);
 		}
-	memcpy(fb.shown, img, FRAME_BYTES);
+	}
 	fb.valid = 1;
+}
+
+/* ---- stage texts: the display's own glyphs (gen_splash_assets.py) ----------- */
+
+static uint8_t oled_text[FRAME_BYTES];
+
+static int glyph_of(const char **s)
+{
+	unsigned char c = (unsigned char)**s;
+	if (c >= 0x20 && c < 0x7F) {
+		(*s)++;
+		return c - 0x20;
+	}
+	if (!strncmp(*s, "\xe2\x80\xa6", 3)) { /* "…" */
+		*s += 3;
+		return 95;
+	}
+	/* Anything else: skip one UTF-8 sequence, draw nothing. */
+	do
+		(*s)++;
+	while ((**s & 0xC0) == 0x80);
+	return -1;
+}
+
+/* ``text`` centred on the panel's bottom rows, exactly as splash.draw_stage. */
+static void text_oled(const char *text)
+{
+	memset(oled_text, 0, sizeof oled_text);
+	int width = 0;
+	for (const char *s = text; *s;) {
+		int g = glyph_of(&s);
+		if (g >= 0)
+			width += spl_oled_glyph[g].adv;
+	}
+	int x = width < SPL_W ? (SPL_W - width) / 2 : 0;
+	for (const char *s = text; *s;) {
+		int g = glyph_of(&s);
+		if (g < 0)
+			continue;
+		const struct spl_glyph *gl = &spl_oled_glyph[g];
+		const uint8_t *bits = spl_oled_glyph_bits + gl->off;
+		for (int yy = 0; yy < gl->h; yy++)
+			for (int xx = 0; xx < gl->w; xx++) {
+				int px = x + gl->dx + xx, py = SPL_OLED_TEXT_Y + gl->dy + yy;
+				if (bits[yy * gl->w + xx] && px >= 0 && px < SPL_W && py >= 0 && py < SPL_H)
+					oled_text[py * (SPL_W / 8) + (px >> 3)] |= (uint8_t)(0x80 >> (px & 7));
+			}
+		x += gl->adv;
+	}
+}
+
+/* The same text on the HDMI canvas, anti-aliased (coverage levels 1..15). */
+static void text_hdmi(const char *text)
+{
+	if (!hd.ok)
+		return;
+	memset(hd.text, 0, (size_t)hd.w * hd.h);
+	int width = 0; /* 1/64 px */
+	for (const char *s = text; *s;) {
+		int g = glyph_of(&s);
+		if (g >= 0)
+			width += spl_hdmi_glyph[g].adv;
+	}
+	int x = (hd.w * 64 - width) / 2, base = hd.h - hd.h / 32 - 2;
+	if (x < 0)
+		x = 0;
+	for (const char *s = text; *s;) {
+		int g = glyph_of(&s);
+		if (g < 0)
+			continue;
+		const struct spl_glyph *gl = &spl_hdmi_glyph[g];
+		const uint8_t *cov = spl_hdmi_glyph_bits + gl->off;
+		int gx = (x + 32) / 64 + gl->dx;
+		for (int yy = 0; yy < gl->h; yy++)
+			for (int xx = 0; xx < gl->w; xx++) {
+				int px = gx + xx, py = base + gl->dy + yy;
+				if (px >= 0 && px < hd.w && py >= 0 && py < hd.h) {
+					uint8_t *d = &hd.text[(size_t)py * hd.w + px];
+					if (cov[yy * gl->w + xx] > *d)
+						*d = cov[yy * gl->w + xx];
+				}
+			}
+		x += gl->adv;
+	}
 }
 
 /* ---- stages + bridge.env ---------------------------------------------------- */
@@ -664,7 +956,58 @@ static void read_env(void)
 	}
 }
 
-static void stage_detect(void)
+/* A system update that didn't come up (image/splanc_image/sysupdate.py writes
+ * these for us, root-only, in its state directory):
+ *   trial         the toplevel of an update being tried; booted something else:
+ *                 the trial failed and this boot rolls it back ("Recovering…");
+ *   splash-notice "rolled_back <version>\n<boot id|next>\n": the update was
+ *                 rolled back ("Rolled back to <version>"), shown on the boot it
+ *                 names (sysupdate's confirm ages it out). */
+#define SYSUPDATE_DIR "/var/lib/splanc-system-update"
+#define STAGE_RECOVERING 5
+#define STAGE_ROLLED_BACK 6
+static char version[40];
+static int64_t recovery_check;
+
+static void recovery_detect(int64_t now)
+{
+	if (now < recovery_check || stage == STAGE_ROLLED_BACK)
+		return;
+	recovery_check = now + 1000000000LL;
+	char buf[512];
+	if (read_file(open_root(SYSUPDATE_DIR "/splash-notice", O_RDONLY), buf, sizeof buf) > 0 &&
+	    !strncmp(buf, "rolled_back", 11)) {
+		char ver[sizeof version] = "", boot[64] = "", cur[64] = "";
+		sscanf(buf, "rolled_back %39s %63s", ver, boot);
+		if (!strcmp(ver, "-"))
+			ver[0] = 0;
+		int fd = proc_fd >= 0 ? openat(proc_fd, "sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC) : -1;
+		if (read_file(fd, cur, sizeof cur) > 0)
+			cur[strcspn(cur, "\n")] = 0;
+		if (!boot[0] || !strcmp(boot, "next") || !strcmp(boot, cur)) {
+			snprintf(version, sizeof version, "%s", ver);
+			stage = STAGE_ROLLED_BACK;
+			LOG("stage %d: %s %s", stage, spl_stage_names[stage], version);
+			return;
+		}
+	}
+	if (stage == STAGE_RECOVERING)
+		return;
+	char trial[512], booted[512];
+	if (read_file(open_root(SYSUPDATE_DIR "/trial", O_RDONLY), trial, sizeof trial) <= 0)
+		return;
+	trial[strcspn(trial, "\n")] = 0;
+	ssize_t n = proc_fd >= 0 ? readlinkat(proc_fd, "1/root/run/booted-system", booted, sizeof booted - 1) : -1;
+	if (n <= 0)
+		return; /* not activated yet */
+	booted[n] = 0;
+	if (trial[0] && strcmp(trial, booted)) {
+		stage = STAGE_RECOVERING;
+		LOG("stage %d: %s (booted %s, the update was %s)", stage, spl_stage_names[stage], booted, trial);
+	}
+}
+
+static void stage_detect(int64_t now)
 {
 	struct stat st;
 	if (!switched && proc_fd >= 0 && fstatat(proc_fd, "1/root/", &st, 0) == 0 &&
@@ -672,6 +1015,13 @@ static void stage_detect(void)
 		switched = 1;
 		LOG("root switched");
 	}
+	if (switched) {
+		if (!env_read)
+			read_env();
+		recovery_detect(now);
+	}
+	if (stage >= STAGE_RECOVERING)
+		return; /* the recovery stages stay for the rest of the boot */
 	int s = 0;
 	if (switched) {
 		s = 1;
@@ -681,13 +1031,29 @@ static void stage_detect(void)
 			s = 3;
 		else if (exists_root("/run/NetworkManager"))
 			s = 2;
-		if (!env_read)
-			read_env();
 	}
 	if (s > stage) {
 		stage = s;
 		LOG("stage %d: %s", stage, spl_stage_names[stage]);
 	}
+}
+
+/* The text for the current stage (both screens), redrawn when it changes. */
+static void stage_text_update(void)
+{
+	static int drawn_stage = -1;
+	static char drawn_version[sizeof version];
+	if (stage == drawn_stage && !strcmp(version, drawn_version))
+		return;
+	char text[96];
+	if (stage == STAGE_ROLLED_BACK && version[0])
+		snprintf(text, sizeof text, "%s to %s", spl_stage_names[stage], version);
+	else
+		snprintf(text, sizeof text, "%s", spl_stage_names[stage]);
+	text_oled(text);
+	text_hdmi(text); /* (fb_show compares every pixel: no full redraw needed) */
+	drawn_stage = stage;
+	snprintf(drawn_version, sizeof drawn_version, "%s", version);
 }
 
 /* ---- the hand-off socket ------------------------------------------------------ */
@@ -728,8 +1094,9 @@ static int peer_allowed(int fd)
 	return 0;
 }
 
-/* Returns a connected client that asked us to stop (and its hdmi flag), or -1. */
-static int sock_poll(int *hdmi)
+/* Returns a connected client that asked us to stop (its hdmi flag, and the path
+ * of the first app page to open HDMI into: page=<path>), or -1. */
+static int sock_poll(int *hdmi, char *page, size_t page_len)
 {
 	if (listen_fd < 0)
 		return -1;
@@ -737,13 +1104,17 @@ static int sock_poll(int *hdmi)
 		int c = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
 		if (c < 0)
 			return -1;
-		char buf[64] = {0};
+		char buf[512] = {0};
 		struct pollfd p = {c, POLLIN, 0};
 		ssize_t n = 0;
 		if (poll(&p, 1, 50) > 0)
 			n = read(c, buf, sizeof buf - 1);
 		if (n > 0 && !strncmp(buf, "stop", 4) && peer_allowed(c)) {
 			*hdmi = strstr(buf, "hdmi=1") != NULL;
+			const char *pg = strstr(buf, " page=");
+			page[0] = 0;
+			if (pg && page_len)
+				snprintf(page, page_len, "%.*s", (int)strcspn(pg + 6, " \n"), pg + 6);
 			return c;
 		}
 		close(c); /* a probe (splash.alive) or junk */
@@ -752,9 +1123,10 @@ static int sock_poll(int *hdmi)
 
 static void sock_reply(int c, int64_t t0, int64_t frame, int with_oled)
 {
-	char msg[128];
-	int n = snprintf(msg, sizeof msg, "ok t0=%lld stage=%d oled=%d frame=%lld fps=%d\n", (long long)t0, stage,
-			 with_oled, (long long)frame, SPL_FPS);
+	char msg[192];
+	int n = snprintf(msg, sizeof msg, "ok t0=%lld stage=%d oled=%d frame=%lld fps=%d%s%s\n", (long long)t0,
+			 stage, with_oled, (long long)frame, SPL_FPS, stage == STAGE_ROLLED_BACK && version[0] ? " ver=" : "",
+			 stage == STAGE_ROLLED_BACK ? version : "");
 	struct iovec io = {msg, (size_t)n};
 	union {
 		char buf[CMSG_SPACE(sizeof(int))];
@@ -852,7 +1224,121 @@ static void compose(uint8_t *out, int64_t fi)
 	memcpy(out, spl_frames[idx], FRAME_BYTES);
 	if (fi >= SPL_LOOP_START) /* the stage text shows once the logo is complete */
 		for (int i = 0; i < FRAME_BYTES; i++)
-			out[i] |= spl_stage_text[stage][i];
+			out[i] |= oled_text[i];
+}
+
+/* ---- the outro: HDMI opens into the app's first page --------------------------
+ * splanc-display renders its first HDMI page into a file in the framebuffer's
+ * own format and size ("stop hdmi=1 page=<path>"); the splash reveals it in a
+ * circle growing from the mark, over OUTRO_NS, while the OLED keeps animating,
+ * then hands over. splanc-display's first frame is that same page. */
+
+static struct {
+	int on;
+	int64_t start;
+	const uint8_t *page;
+	size_t len;
+	int cx, cy;
+	double rmax;
+	int *l, *r; /* per screen row: the revealed span [l, r) */
+} outro;
+
+static int outro_begin(const char *path, int64_t now)
+{
+	if (!fb.mem || !path[0] || !hd.ok)
+		return -1;
+	int fd = open_root(path, O_RDONLY);
+	struct stat st;
+	size_t need = (size_t)fb.fix.line_length * fb.var.yres;
+	if (fd < 0 || fstat(fd, &st) < 0 || (size_t)st.st_size < need) {
+		WARN("outro: %s: %s", path, fd < 0 ? strerror(errno) : "not this framebuffer's size");
+		if (fd >= 0)
+			close(fd);
+		return -1;
+	}
+	void *m = mmap(NULL, need, PROT_READ, MAP_PRIVATE, fd, 0);
+	close(fd);
+	if (m == MAP_FAILED)
+		return -1;
+	outro.l = calloc(fb.var.yres, sizeof *outro.l);
+	outro.r = calloc(fb.var.yres, sizeof *outro.r);
+	if (!outro.l || !outro.r) {
+		munmap(m, need);
+		return -1;
+	}
+	outro.page = m;
+	outro.len = need;
+	int sw = fb.xs[hd.w] - fb.xs[0], shh = fb.ys[hd.h] - fb.ys[0];
+	outro.cx = fb.xs[0] + hd.fx * sw / hd.w;
+	outro.cy = fb.ys[0] + hd.fy * shh / hd.h;
+	double dx = outro.cx > (int)fb.var.xres / 2 ? outro.cx : (int)fb.var.xres - outro.cx;
+	double dy = outro.cy > (int)fb.var.yres / 2 ? outro.cy : (int)fb.var.yres - outro.cy;
+	outro.rmax = sqrt(dx * dx + dy * dy) + 2;
+	for (unsigned y = 0; y < fb.var.yres; y++)
+		outro.l[y] = outro.r[y] = outro.cx;
+	outro.start = now;
+	outro.on = 1;
+	return 0;
+}
+
+static void outro_copy(int y, int x0, int x1)
+{
+	if (x1 <= x0)
+		return;
+	int bpp = fb.var.bits_per_pixel / 8;
+	size_t src = (size_t)y * fb.fix.line_length + (size_t)x0 * bpp;
+	size_t dst = (size_t)(y + fb.var.yoffset) * fb.fix.line_length + (size_t)(x0 + fb.var.xoffset) * bpp;
+	memcpy(fb.mem + dst, outro.page + src, (size_t)(x1 - x0) * bpp);
+}
+
+/* One step; 1 once the whole page is on screen. */
+static int outro_step(int64_t now)
+{
+	double t = (double)(now - outro.start) / OUTRO_NS;
+	if (t > 1)
+		t = 1;
+	double e = t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2;
+	double rad = t >= 1 ? outro.rmax : e * outro.rmax;
+	int ylo = (int)(outro.cy - rad), yhi = (int)(outro.cy + rad);
+	if (ylo < 0)
+		ylo = 0;
+	if (yhi >= (int)fb.var.yres)
+		yhi = (int)fb.var.yres - 1;
+	for (int y = ylo; y <= yhi; y++) {
+		double d = y - outro.cy, hw2 = rad * rad - d * d;
+		if (hw2 < 0)
+			continue;
+		int hw = (int)sqrt(hw2);
+		int nl = outro.cx - hw, nr = outro.cx + hw + 1;
+		if (nl < 0)
+			nl = 0;
+		if (nr > (int)fb.var.xres)
+			nr = (int)fb.var.xres;
+		if (outro.l[y] >= outro.r[y]) {
+			outro_copy(y, nl, nr);
+		} else {
+			outro_copy(y, nl, outro.l[y]);
+			outro_copy(y, outro.r[y], nr);
+		}
+		if (nl < outro.l[y] || outro.l[y] >= outro.r[y])
+			outro.l[y] = nl;
+		if (nr > outro.r[y])
+			outro.r[y] = nr;
+	}
+	if (t < 1)
+		return 0;
+	for (unsigned y = 0; y < fb.var.yres; y++) /* (rounding at the edges) */
+		outro_copy((int)y, 0, (int)fb.var.xres);
+	return 1;
+}
+
+static void outro_end(void)
+{
+	if (outro.page)
+		munmap((void *)outro.page, outro.len);
+	free(outro.l);
+	free(outro.r);
+	memset(&outro, 0, sizeof outro);
 }
 
 static int run(void)
@@ -870,24 +1356,35 @@ static int run(void)
 		if (listen_fd < 0)
 			WARN("hand-off socket: %s (another splash running?)", strerror(errno));
 	}
+	hdmi_load();
 	realtime();
 
 	int64_t t0 = now_ns(), next = t0, housekeep = 0, stats_at = t0 + 10000000000LL;
 	int64_t end = t0 + (int64_t)((opt.bench ? opt.bench_s : opt.max_s) * 1e9);
 	int64_t last_fi = -1, fi = 0;
 	int client = -1, hdmi_keep = 0;
+	char page[256] = "";
+	if (opt.bench && hd.ok)
+		fb.t0 = t0;
+	stage_text_update();
 	LOG("started (%s)", opt.bench ? "bench" : "boot");
 	while (!quit) {
 		int64_t now = now_ns();
-		if (now >= end)
+		if (now >= end && !outro.on)
 			break;
-		if (!opt.bench && now >= housekeep) {
+		if (!opt.bench && now >= housekeep && !outro.on) {
 			housekeep = now + HOUSEKEEP_NS;
-			stage_detect();
+			stage_detect(now);
+			stage_text_update();
 			fb_check(now);
-			if ((client = sock_poll(&hdmi_keep)) >= 0)
-				break;
+			if ((client = sock_poll(&hdmi_keep, page, sizeof page)) >= 0) {
+				if (!hdmi_keep || outro_begin(page, now) < 0)
+					break;
+				LOG("outro into the app's first page (%s)", page);
+			}
 		}
+		if (outro.on && (outro_step(now) || now - outro.start > 4 * OUTRO_NS))
+			break;
 		fi = (now - t0) / period;
 		if (fi != last_fi) {
 			if (last_fi >= 0 && fi > last_fi + 1)
@@ -897,12 +1394,15 @@ static int run(void)
 				WARN("OLED write failed (%s): OLED off", strerror(errno));
 				oled_close(0);
 			}
-			fb_show(frame);
+			if (!outro.on)
+				fb_show(now);
 			int64_t late = now - (t0 + fi * period);
 			stats_add(&st, now, late);
 			stats_add(&win, now, late);
 			last_fi = fi;
 		}
+		if (opt.bench && !fb.mem && hd.ok)
+			hdmi_seek((now - fb.t0) * hd.fps / 1000000000LL); /* the decode cost, no screen */
 		if (opt.stats && now >= stats_at) {
 			char line[256];
 			stats_line(&win, "last 10 s", line, sizeof line);
@@ -911,6 +1411,8 @@ static int run(void)
 			stats_at = now + 10000000000LL;
 		}
 		next = t0 + (fi + 1) * period;
+		if (outro.on && next > now + period / 2)
+			next = now + period / 2; /* the outro at ~2x the frame rate */
 		sleep_until(next);
 	}
 
@@ -923,6 +1425,7 @@ static int run(void)
 	LOG("%s", line);
 	int oled_ok = oled.on;
 	oled_close(client >= 0 && oled_ok); /* hand over: keep the line request for the reply */
+	outro_end();
 	fb_close();
 	vt_release(client >= 0 && hdmi_keep);
 	if (client >= 0) {
@@ -938,7 +1441,7 @@ static int run(void)
 
 /* ---- client: `splanc-splash stop` ----------------------------------------------- */
 
-static int client_stop(int hdmi)
+static int client_stop(int hdmi, const char *page)
 {
 	struct sockaddr_un a;
 	memset(&a, 0, sizeof a);
@@ -950,8 +1453,8 @@ static int client_stop(int hdmi)
 		fprintf(stderr, "splanc-splash: not running\n");
 		return 1;
 	}
-	char req[32];
-	int n = snprintf(req, sizeof req, "stop hdmi=%d\n", hdmi);
+	char req[320];
+	int n = snprintf(req, sizeof req, "stop hdmi=%d%s%.256s\n", hdmi, page ? " page=" : "", page ? page : "");
 	if (write(fd, req, n) != n)
 		return 1;
 	char buf[256];
@@ -986,11 +1489,38 @@ static void parse_opts(int argc, char **argv, int from)
 	}
 }
 
+/* Tests: the HDMI canvas (palette indices, stage text included as
+ * 240 + level) at animation frame <fi> with stage text <text>, to <path>. */
+static int hdmi_dump(int64_t fi, const char *text, const char *path)
+{
+	foreground = 1;
+	hdmi_load();
+	if (!hd.ok)
+		return 1;
+	hdmi_seek(fi);
+	text_hdmi(text);
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	if (fd < 0)
+		return 1;
+	for (size_t i = 0; i < (size_t)hd.w * hd.h; i++) {
+		uint8_t v = fi >= hd.loop && hd.text[i] ? (uint8_t)(HD_TEXT_BASE + hd.text[i]) : hd.canvas[i];
+		if (write(fd, &v, 1) != 1)
+			return 1;
+	}
+	close(fd);
+	text_oled(text);
+	printf("%dx%d frame %d of %d (loop %d)\n", hd.w, hd.h, hd.cur, hd.n, hd.loop);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	const char *cmd = argc > 1 ? argv[1] : "";
+	if (!strcmp(cmd, "hdmi-dump") && argc > 4)
+		return hdmi_dump(atoll(argv[2]), argv[3], argv[4]);
 	if (!strcmp(cmd, "stop"))
-		return client_stop(argc > 2 && !strcmp(argv[2], "hdmi=1"));
+		return client_stop(argc > 2 && !strcmp(argv[2], "hdmi=1"),
+				   argc > 3 && !strncmp(argv[3], "page=", 5) ? argv[3] + 5 : NULL);
 	if (!strcmp(cmd, "bench") && argc > 2) {
 		foreground = 1;
 		opt.bench = 1;
@@ -1000,7 +1530,7 @@ int main(int argc, char **argv)
 		return run();
 	}
 	if (strcmp(cmd, "start") && strcmp(cmd, "run")) {
-		fprintf(stderr, "usage: splanc-splash start | run [opts] | stop [hdmi=0|1] | bench <s> [opts]\n");
+		fprintf(stderr, "usage: splanc-splash start | run [opts] | stop [hdmi=0|1 [page=PATH]] | bench <s> [opts] | hdmi-dump <frame> <text> <out>\n");
 		return 2;
 	}
 	cmdline_opts();
