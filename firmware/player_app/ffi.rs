@@ -79,6 +79,8 @@ pub mod effect_store;
 // The wall clock (docs/design/wall-clock.md): the software RTC on esp_timer, the
 // POSIX TZ zone, set_wall_clock / get_clock, the soft-reset carry-over.
 pub mod clock_ffi;
+// Wall-clock schedules (sched_ffi.rs, docs/design/schedule.md).
+pub mod sched_ffi;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -2039,6 +2041,14 @@ pub unsafe extern "C" fn lm_player_handle(
             return clock_ffi::handle_set_wall_clock(frame, recv_ms, out, out_cap)
         }
         Some(clock_ffi::ARM_GET_CLOCK) => return clock_ffi::handle_get_clock(recv_ms, out, out_cap),
+        Some(clock_ffi::ARM_SET_CLOCK_CONFIG) => {
+            return clock_ffi::handle_set_clock_config(frame, recv_ms, out, out_cap)
+        }
+        // Schedules: main.cpp answers them with the rules file (lm_sched_handle); here
+        // only without a filesystem (host builds).
+        Some(sched_ffi::ARM_SET_SCHEDULE | sched_ffi::ARM_DELETE_SCHEDULE | sched_ffi::ARM_GET_SCHEDULE) => {
+            return sched_ffi::handle_unstaged(frame, out, out_cap)
+        }
         // FX debugger: pause / step, and snapshots streamed zero-copy into `out`.
         Some(fxdbg::ARM_FX_DEBUG_CONTROL) => return fxdbg::handle_control(frame, recv_ms, out, out_cap),
         Some(fxdbg::ARM_GET_FX_SNAPSHOT) => return fxdbg::handle_snapshot(frame, recv_ms, out, out_cap),
@@ -2193,6 +2203,7 @@ pub unsafe extern "C" fn lm_live_post(data: *const u8, len: usize) -> u32 {
     }
     LIVE_CONTROL = true;
     CONTROL_ACK_SEQ = m.seq();
+    sched_ffi::note_live();
     m.seq()
 }
 
@@ -2282,6 +2293,9 @@ unsafe fn sched_intercept(frame: &[u8], now_ms: i64, out: *mut u8, out_cap: usiz
 
 /// Apply one scheduled frame's change (no reply). Returns SCHED_* bits.
 unsafe fn sched_apply_frame(frame: &[u8]) -> u32 {
+    if frame.first() == Some(&sched_ffi::INTERNAL) {
+        return sched_ffi::apply_internal(frame);
+    }
     match client_arm(frame) {
         Some(CArm::SetUniforms(_)) => apply_set_uniforms(frame),
         Some(CArm::SetEffect(m)) => apply_set_effect(m.effect_id(), deck_index(m.deck())),
@@ -2305,7 +2319,9 @@ unsafe fn sched_apply_frame(frame: &[u8]) -> u32 {
 /// Under the player lock.
 #[no_mangle]
 pub unsafe extern "C" fn lm_sched_apply(now_ms: i64) -> u32 {
-    let mut bits = staged_due(now_ms);
+    sched_ffi::set_frame_ms(now_ms);
+    // The schedule's brightness ramp / timed crossfade (a few float ops while one runs).
+    let mut bits = staged_due(now_ms) | sched_ffi::ramps_frame(now_ms);
     let q = &mut *addr_of_mut!(SCHED);
     if q.next_due().map_or(true, |d| d > now_ms) {
         return bits;
@@ -2621,6 +2637,10 @@ unsafe fn note_live_control(frame: &[u8], now_ms: i64) {
         }
         Some(CArm::BlendKeypoints(_)) => LIVE_CONTROL = true,
         _ => {}
+    }
+    // A seq'd control is the live channel: a live show holds the schedule (D-567).
+    if CONTROL_ACK_SEQ != 0 {
+        sched_ffi::note_live();
     }
 }
 
@@ -3180,6 +3200,9 @@ macro_rules! features {
         // The wall clock (docs/design/wall-clock.md): set_wall_clock / get_clock ->
         // clock_state, a POSIX TZ zone, kept across soft resets.
         "wall_clock",
+        // Wall-clock schedules (docs/design/schedule.md): set / delete / get_schedule ->
+        // schedule_state, sunrise / sunset from set_clock_config's location.
+        "schedule",
         $($extra),*
     ] };
 }
@@ -5789,6 +5812,8 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
     let mask = osc_targets();
     let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
     let table = &*addr_of!(OSC_TABLE);
+    // OSC is a live show: the schedule holds off (D-567).
+    sched_ffi::note_live();
     osc::ingest(bytes, &cfg, table, &mut |slot, vals| osc_write(mask, slot, vals)) as u32
 }
 

@@ -240,7 +240,7 @@ unsafe fn header(n: usize) -> Option<Header<'static>> {
 }
 
 /// The record holding `id`.
-unsafe fn find(id: &[u8]) -> Option<usize> {
+pub(crate) unsafe fn find(id: &[u8]) -> Option<usize> {
     (0..MAX_STORED).find(|&n| header(n).is_some_and(|h| h.id == id))
 }
 

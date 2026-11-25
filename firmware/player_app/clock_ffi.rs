@@ -31,6 +31,8 @@ use super::{client_arm, write_arm, CArm, PbOut};
 /// ClientMessage arms (ledmapper.proto "Wall clock").
 pub const ARM_SET_WALL_CLOCK: u32 = 111;
 pub const ARM_GET_CLOCK: u32 = 112;
+/// set_clock_config (shared with the SNTP / RTC PRs: this one handles the location).
+pub const ARM_SET_CLOCK_CONFIG: u32 = 113;
 /// ServerMessage.clock_state.
 const SRV_CLOCK_STATE: u32 = 61;
 
@@ -95,11 +97,11 @@ extern "C" {
 static mut FAKE_MONO_US: i64 = 0;
 
 #[cfg(target_os = "none")]
-unsafe fn raw_mono_us() -> i64 {
+pub(crate) unsafe fn raw_mono_us() -> i64 {
     esp_timer_get_time()
 }
 #[cfg(not(target_os = "none"))]
-unsafe fn raw_mono_us() -> i64 {
+pub(crate) unsafe fn raw_mono_us() -> i64 {
     FAKE_MONO_US
 }
 
@@ -181,8 +183,24 @@ unsafe fn set_zone(rule: &str, name: &[u8]) -> bool {
     (*addr_of_mut!(TZ_NAME))[..name.len()].copy_from_slice(name);
     TZ_NAME_LEN = name.len() as u8;
     TZ_GEN = TZ_GEN.wrapping_add(1);
+    TZ_GEN_ALL = TZ_GEN_ALL.wrapping_add(1);
     true
 }
+
+/// The wall clock now for the schedule engine (loop task): (UTC µs, raw
+/// esp_timer µs of the reading), None while invalid.
+pub(crate) unsafe fn wall_now() -> Option<(i64, i64)> {
+    let now = mono_now();
+    clock().now_us(now).map(|u| (u, now))
+}
+
+/// The lamp's zone and a counter bumped on every change (schedules recompute).
+pub(crate) unsafe fn zone() -> (&'static PosixTz, u32) {
+    (&*addr_of!(TZ), TZ_GEN_ALL)
+}
+
+/// Every zone change since boot (TZ_GEN is reset by the persist poll's view).
+static mut TZ_GEN_ALL: u32 = 0;
 
 // -- clock_state ------------------------------------------------------------------
 
@@ -241,12 +259,37 @@ unsafe fn write_state(w: &mut PbOut, now_us: i64, device_ms: i64, last_set: u8) 
     nz(w, 14, st.steps as u64);
     nz(w, 15, JUMPS as u64);
     nz(w, 16, last_set as u64);
+    if let Some(l) = super::sched_ffi::location() {
+        w.uint(32, 1);
+        nz(w, 33, zigzag(l.lat_e4 as i64));
+        nz(w, 34, zigzag(l.lon_e4 as i64));
+    }
 }
 
 unsafe fn reply_state(out: *mut u8, cap: usize, now_us: i64, device_ms: i64, last_set: u8) -> i32 {
     write_arm(out, cap, SRV_CLOCK_STATE, |w| {
         write_state(w, now_us, device_ms, last_set)
     })
+}
+
+/// set_clock_config: the location (sched_ffi.rs owns it). Reply: clock_state.
+pub(crate) unsafe fn handle_set_clock_config(
+    frame: &[u8],
+    recv_ms: i64,
+    out: *mut u8,
+    cap: usize,
+) -> i32 {
+    let now = mono_now();
+    if let Some(CArm::SetClockConfig(m)) = client_arm(frame) {
+        if m.clear_location() {
+            super::sched_ffi::set_location(None);
+        } else if let (Some(lat), Some(lon)) = (m.lat_e4(), m.lon_e4()) {
+            if let Some(l) = ledmapper_schedule::Location::new(lat, lon) {
+                super::sched_ffi::set_location(Some(l));
+            }
+        }
+    }
+    reply_state(out, cap, now, recv_ms, SET_NONE)
 }
 
 pub(crate) unsafe fn handle_get_clock(recv_ms: i64, out: *mut u8, cap: usize) -> i32 {

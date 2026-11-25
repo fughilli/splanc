@@ -93,6 +93,8 @@ pub fn classify(arm: u32, frame: &[u8]) -> Class {
         1 | 2 | 9 | 10 | 11 | 12 | 18 | 19 | 20 | 24 | 25 | 26 | 34 | 35 | 36 | 38 | 42 | 43 | 45 | 48 | 53
         | 56 | 74 | 91 | ARM_GET_KIOSK_STATUS | ARM_KIOSK_UNLOCK => Class::Read,
         super::clock_ffi::ARM_SET_WALL_CLOCK | super::clock_ffi::ARM_GET_CLOCK => Class::Read,
+        // Schedules: visitors may read them; set / delete (and set_clock_config) are the owner's.
+        super::sched_ffi::ARM_GET_SCHEDULE => Class::Read,
         // list_stored_effects (the effect store).
         super::effect_store::ARM_LIST_STORED_EFFECTS => Class::Read,
         // submit_effect{store} writes the effect store: the owner's.

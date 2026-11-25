@@ -31,6 +31,8 @@ pub const SOURCE_BOOT: u8 = 0;
 pub const SOURCE_CLIENT: u8 = 1;
 /// The bound toggle trigger fired (a lid tap through the touch driver).
 pub const SOURCE_TRIGGER: u8 = 2;
+/// A wall-clock schedule rule (docs/design/schedule.md).
+pub const SOURCE_SCHEDULE: u8 = 3;
 
 /// PowerConfig boot values.
 pub const BOOT_LAST: u8 = 0;

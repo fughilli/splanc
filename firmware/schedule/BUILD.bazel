@@ -1,0 +1,65 @@
+"""Wall-clock schedules (docs/design/schedule.md): the rule model + its
+ScheduleRule wire form, next-fire across DST, NOAA sunrise/sunset, and the
+firing engine (ahead-of-time fires, boot / late-clock reconciliation, clock
+steps). no_std, never allocates; shared by the C6 firmware and player_rs."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "schedule",
+    srcs = [
+        "src/engine.rs",
+        "src/lib.rs",
+        "src/next.rs",
+        "src/rule.rs",
+        "src/sun.rs",
+    ],
+    crate_name = "ledmapper_schedule",
+    edition = "2021",
+    # Loop task only, a few calls a second: built for size on the ESP32 images.
+    rustc_flags = COLD_CRATE_RUSTC_FLAGS,
+    deps = ["//firmware/clock"],
+)
+
+rust_test(
+    name = "rule_test",
+    srcs = ["tests/rule.rs"],
+    edition = "2021",
+    deps = [":schedule"],
+)
+
+rust_test(
+    name = "next_test",
+    srcs = ["tests/next.rs"],
+    edition = "2021",
+    deps = [
+        ":schedule",
+        "//firmware/clock",
+    ],
+)
+
+# Sunrise / sunset vectors from an independent float64 reference (Python math,
+# NOAA's equations): regenerate with tools/gen_sun_vectors.py.
+rust_test(
+    name = "sun_test",
+    srcs = ["tests/sun.rs"],
+    compile_data = ["tests/testdata/sun_vectors.txt"],
+    edition = "2021",
+    deps = [
+        ":schedule",
+        "//firmware/clock",
+    ],
+)
+
+rust_test(
+    name = "engine_test",
+    srcs = ["tests/engine.rs"],
+    edition = "2021",
+    deps = [
+        ":schedule",
+        "//firmware/clock",
+    ],
+)

@@ -1300,6 +1300,13 @@ message ClientMessage {
     // time zone (a POSIX TZ rule), read it back. Reply: clock_state.
     SetWallClock set_wall_clock = 111;
     GetClock get_clock = 112;
+    // The lamp's clock settings. Reply: clock_state. (113 is shared with the SNTP and
+    // hardware-RTC PRs, which add their own fields: 1-5 SNTP, 16-17 RTC, 32-34 here.)
+    SetClockConfig set_clock_config = 113;
+    // Wall-clock schedules (docs/design/schedule.md). Reply: schedule_state.
+    SetSchedule set_schedule = 114;
+    DeleteSchedule delete_schedule = 115;
+    GetSchedule get_schedule = 116;
   }
 }
 
@@ -2806,7 +2813,7 @@ message PowerState {
   // The show's effect (deck A), empty when none.
   string effect_id = 4;
   // What made the last change: 0 = BOOT, 1 = CLIENT (set_power), 2 = TRIGGER
-  // (the toggle trigger fired: a lid tap).
+  // (the toggle trigger fired: a lid tap), 3 = SCHEDULE (a schedule rule).
   uint32 source = 5;
   // PowerConfig.boot (0 = last, 1 = on, 2 = off).
   uint32 boot = 6;
@@ -2928,6 +2935,157 @@ message ClockState {
   uint32 mono_jumps = 15;
   // The outcome of the set_wall_clock this replies to (RESULT_NONE for get_clock).
   ClockSetResult last_set = 16;
+  // The lamp's location for sunrise / sunset rules (set_clock_config), 1e-4 degrees.
+  bool has_location = 32;
+  sint32 lat_e4 = 33;
+  sint32 lon_e4 = 34;
+}
+
+// The lamp's clock settings. Unset fields are unchanged. Reply: clock_state.
+message SetClockConfig {
+  // The location for sunrise / sunset rules (D-565), 1e-4 degrees, north / east
+  // positive: the app sends the phone's geolocation rounded to 0.1 degrees (multiples
+  // of 1000). Both or neither. Persisted.
+  optional sint32 lat_e4 = 32;
+  optional sint32 lon_e4 = 33;
+  // Forget the location (sun rules then never fire).
+  bool clear_location = 34;
+}
+
+// -- Wall-clock schedules (docs/design/schedule.md) -------------------------------------
+// Each lamp stores and fires its own rules (D-564) on its wall clock, in its zone.
+
+// What a rule's time is relative to.
+enum ScheduleWhen {
+  // `minute_of_day` local time.
+  SCHEDULE_WHEN_LOCAL_TIME = 0;
+  // Sunrise / sunset at the lamp's location (set_clock_config) plus `offset_min`.
+  SCHEDULE_WHEN_SUNRISE = 1;
+  SCHEDULE_WHEN_SUNSET = 2;
+}
+
+message SchedulePower {
+  bool on = 1;
+  // The transition's length (0 = the lamp's configured one), <= 600000.
+  uint32 duration_ms = 2;
+}
+
+message ScheduleBrightness {
+  // The output brightness to reach, 0..1.
+  float level = 1;
+  // Ramp to it over this long (0 = at once), <= 600000.
+  uint32 ramp_ms = 2;
+}
+
+message ScheduleEffect {
+  // A stored effect (submit_effect{store: true}; list_stored_effects).
+  string effect_id = 1;
+  // Crossfade to it over this long (0 = a cut), <= 600000.
+  uint32 crossfade_ms = 2;
+}
+
+message ScheduleTrigger {
+  // Bumps the pool trigger of this name: an effect that declares `uniform trigger
+  // <name>;` (or a counter) sees it fire. Momentary: never replayed after an outage.
+  string name = 1;
+}
+
+message ScheduleRule {
+  // 1..255, unique per lamp: set_schedule upserts by id.
+  uint32 id = 1;
+  bool disabled = 2;
+  // A name for the app's list (<= 24 bytes).
+  string label = 3;
+  ScheduleWhen when = 4;
+  // LOCAL_TIME: minutes after local midnight, 0..1439. In a DST gap the rule fires at
+  // the first instant after it; in an overlap, once, at the first occurrence.
+  uint32 minute_of_day = 5;
+  // SUNRISE / SUNSET: minutes after the event (negative = before), within +-720.
+  sint32 offset_min = 6;
+  // Bit 0 = Sunday .. bit 6 = Saturday (of the local date); 0 = every day.
+  uint32 days_mask = 7;
+  oneof action {
+    SchedulePower power = 10;
+    ScheduleBrightness brightness = 11;
+    ScheduleEffect effect = 12;
+    ScheduleTrigger trigger = 13;
+  }
+}
+
+// Add or replace rules (by id), or replace the whole set. At most 4 rules per frame:
+// a bigger set is sent as `replace_all` + `more` frames, then plain upserts. Owner only
+// (kiosk: refused). Reply: schedule_state (page 0).
+message SetSchedule {
+  repeated ScheduleRule rules = 1;
+  // Drop every rule first (with `rules`, the new set; alone, clears the schedule).
+  bool replace_all = 2;
+  // A live show holds the lamp (the bridge's Show Mode lock, an app's live session):
+  // rules are skipped for this many seconds from now (renew it; 0 = no change; at most
+  // 3600). Sent alone, it changes no rule.
+  uint32 hold_s = 3;
+  // Ends the hold now.
+  bool release_hold = 4;
+}
+
+// Delete one rule or all of them. Reply: schedule_state.
+message DeleteSchedule {
+  uint32 id = 1;
+  bool all = 2;
+}
+
+// Read the rules, 4 per page. Reply: schedule_state.
+message GetSchedule {
+  uint32 page = 1;
+}
+
+// Why the last change was refused.
+enum ScheduleResult {
+  SCHEDULE_RESULT_OK = 0;
+  // More than `capacity` rules.
+  SCHEDULE_RESULT_FULL = 1;
+  // A rule was malformed or out of range (id 0, minute 1440, level 1.5, ...).
+  SCHEDULE_RESULT_BAD_RULE = 2;
+  // The rules could not be stored (no filesystem, or a write failed).
+  SCHEDULE_RESULT_STORAGE = 3;
+  // No such rule (delete_schedule).
+  SCHEDULE_RESULT_NOT_FOUND = 4;
+}
+
+// Why the last rule did not run.
+enum ScheduleSkip {
+  SCHEDULE_SKIP_NONE = 0;
+  // A live show held the lamp (D-567): Show Mode lock / an app's live session.
+  SCHEDULE_SKIP_LIVE = 1;
+  // Its stored effect is not in the store (or could not be loaded).
+  SCHEDULE_SKIP_NO_EFFECT = 2;
+  // The other deck was busy (a power transition is playing its effect).
+  SCHEDULE_SKIP_BUSY = 3;
+}
+
+message ScheduleState {
+  // This page of the rules (4 per page).
+  repeated ScheduleRule rules = 1;
+  uint32 page = 2;
+  uint32 pages = 3;
+  uint32 count = 4;
+  uint32 capacity = 5;
+  // The clock is set (rules fire only then) and the lamp has a location (sun rules).
+  bool clock_valid = 6;
+  bool has_location = 7;
+  // The next fire (UTC ms) and its rule (0 = none within a week, or no clock).
+  int64 next_fire_unix_ms = 8;
+  uint32 next_rule_id = 9;
+  // Since boot: rules run, rules skipped, and the last of each.
+  uint32 fired = 10;
+  uint32 skipped = 11;
+  uint32 last_fired_id = 12;
+  int64 last_fired_unix_ms = 13;
+  uint32 last_skipped_id = 14;
+  ScheduleSkip last_skip = 15;
+  // Seconds left of a live-show hold (0 = none).
+  uint32 hold_s = 16;
+  // The outcome of the set / delete this replies to.
+  ScheduleResult result = 17;
 }
 
 message ServerMessage {
@@ -2993,7 +3151,9 @@ message ServerMessage {
     // Reply to set_power / get_power / set_power_config, and pushed unsolicited to every open session on each change
     // (a lid tap, another client, a transition settling, a brightness change).
     PowerState power_state = 70;
-    // Reply to set_wall_clock / get_clock.
+    // Reply to set_wall_clock / get_clock / set_clock_config.
     ClockState clock_state = 61;
+    // Reply to set_schedule / delete_schedule / get_schedule.
+    ScheduleState schedule_state = 62;
   }
 }
