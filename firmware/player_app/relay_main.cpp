@@ -68,6 +68,8 @@ extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uin
 extern "C" void lm_mesh_sessions(uint32_t ws, uint32_t ble);
 extern "C" uint32_t lm_mesh_report_line(uint32_t what, uint32_t idx, char *out, uint32_t cap);
 extern "C" uint32_t lm_mesh_on_now();
+extern "C" void lm_mesh_app_done(uint32_t status);
+extern "C" void lm_mesh_note_time_base(uint32_t conn);
 
 // The netstack's loop with mbedtls nested inside a TLS write, plus the relay's own frames
 // (none large: no player core). The player's 12 KB bound holds with room to spare.
@@ -92,8 +94,12 @@ constexpr int32_t kArmOtaBegin = 70;
 constexpr int32_t kArmGetOtaStatus = 74;
 constexpr int32_t kArmOtaReboot = 75;
 // The mesh's own arms (mesh_gw.rs): this chip runs the mesh layer.
+constexpr int32_t kArmMeshSend = 99;
 constexpr int32_t kArmGetMesh = 100;
 constexpr int32_t kArmMeshAdmin = 101;
+constexpr int32_t kArmSetTimeBase = 38;
+// ServerMessage.error (the P4's refusal of a mesh_send's inner).
+constexpr int32_t kArmErrorReply = 9;
 
 Preferences g_prefs;
 bool g_fs_ok = false;
@@ -116,6 +122,8 @@ bool g_tls_persisted = false;
 struct {
   uint32_t forwarded, unavailable, local, mesh_app, mesh_ctl, mesh_ctl_failed;
   uint32_t staged, stage_late, stage_refused, stage_unsent, loaded, load_refused, fx_fetches, kiosk_refused;
+  // The lamp as gateway: mesh_send inners run on the P4; reassembled mesh_sends from it.
+  uint32_t gw_local, gw_uploads, gw_stale;
 } g_stats;
 // The lowest free internal heap seen since the last status line (sampled every loop).
 uint32_t g_heap_window_min = UINT32_MAX;
@@ -163,23 +171,67 @@ void poll_mesh_sessions() {
   lm_mesh_sessions(g_mesh_ws_owner != 0, ble);
 }
 
-// get_mesh / mesh_admin: the reply's length in tx, or -1 when the mesh layer passes on it.
-int mesh_app(uint16_t session, const uint8_t *msg, size_t len) {
-  uint32_t conn = LM_KIOSK_SRC_BLE;
-  if (session != kBleSession) {
-    conn = LM_KIOSK_SRC_WSS;
-    if (session != g_mesh_ws_owner) {
-      if (g_mesh_ws_owner != 0) lm_mesh_sessions(0, improv_ble_central_connected());
-      g_mesh_ws_owner = session;
-      g_mesh_ws_closed = false;
-      lm_mesh_sessions(1, improv_ble_central_connected());
-    }
+// The mesh connection a session's mesh arms use: the BLE central, or wss (the session that
+// last used a mesh arm owns it; a takeover first ends the owner's gateway session).
+uint32_t mesh_conn(uint16_t session) {
+  if (session == kBleSession) return LM_KIOSK_SRC_BLE;
+  if (session != g_mesh_ws_owner) {
+    if (g_mesh_ws_owner != 0) lm_mesh_sessions(0, improv_ble_central_connected());
+    g_mesh_ws_owner = session;
+    g_mesh_ws_closed = false;
+    lm_mesh_sessions(1, improv_ble_central_connected());
   }
+  return LM_KIOSK_SRC_WSS;
+}
+
+// get_mesh / mesh_admin / mesh_send (the mesh layer runs here, so this lamp is a gateway
+// like a C6 player): the reply's length in tx, -1 when the mesh layer passes on it, -2 to
+// drop the session. A mesh_send's inner for this fixture too (-3) is the P4's: it goes
+// over the link as this session's message, and the P4's reply is the app's, as a C6
+// player dispatches it locally (main.cpp lm_ws_dispatch).
+int mesh_app(uint16_t session, const uint8_t *msg, size_t len) {
+  const uint32_t conn = mesh_conn(session);
   const uint8_t *inner = nullptr;
   uint32_t inner_len = 0;
   const int32_t r = lm_mesh_app(conn, msg, len, tx, sizeof tx, &inner, &inner_len);
-  // -3 (dispatch an inner here too) is mesh_send's, which this front end doesn't route yet.
-  return r >= 0 ? (int)r : -1;
+  if (r >= 0) return (int)r;
+  if (r != -3) return -1;
+  const int n = frontend_forward(session, inner, inner_len, tx, sizeof tx, 1000);
+  lm_mesh_app_done(n < 0 || (n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmErrorReply) ? 1 : 0);
+  g_stats.gw_local++;
+  if (n >= 0) return n;
+  if (n == -2) return -2;
+  return reply_error("player_unavailable", "the player (P4) is not up yet; retry in a moment");
+}
+
+// A mesh_send the P4 reassembled from UploadChunk windows (an effect shared through this
+// lamp, LK_GATEWAY): the mesh answers it on its session, as a C6 player's
+// dispatch_mesh_upload does (the P4 ran the kiosk gate before handing it here).
+void poll_gateway() {
+  uint16_t session = 0;
+  uint8_t *frame = nullptr;
+  size_t len = 0;
+  if (!frontend_take_gateway(&session, &frame, &len)) return;
+  // Only the connection that holds the mesh: a share needs an unlocked gateway session,
+  // which only a mesh arm on this connection opens (mesh_conn). A frame from a session
+  // that has closed since (or never used a mesh arm) is dropped: through mesh_conn it
+  // would look like a takeover and end the live owner's unlock.
+  const bool live = session == kBleSession ? improv_ble_central_connected()
+                                           : session == g_mesh_ws_owner && g_mesh_ws_owner != 0 && !g_mesh_ws_closed;
+  if (!live) {
+    g_stats.gw_stale++;
+    free(frame);
+    return;
+  }
+  g_stats.gw_uploads++;
+  const int n = mesh_app(session, frame, len);
+  free(frame);
+  if (n <= 0) return;
+  if (session == kBleSession) {
+    if (improv_ble_central_connected()) player_ble_push(tx, (size_t)n);
+  } else {
+    netstack_ws_send_to(session, tx, (size_t)n);
+  }
 }
 
 }  // namespace
@@ -382,14 +434,32 @@ extern "C" uint32_t lm_mesh_effect_file(uint8_t *buf, uint32_t cap) {
   return n;
 }
 
-// A gateway's catch-up (its scene and deck B) and its share's check are the gateway role:
-// the next step. Never reached on a member.
-extern "C" int32_t lm_mesh_scene_frames(uint8_t *, uint32_t) { return 0; }
+// The lamp as the mesh's gateway: a catch-up's state blob and deck B are the P4 player's
+// look, and a share is checked by the P4's loader (LK_MQ_SCENE / LK_MQ_DECKB /
+// LK_MQ_CHECK). Loop task (the mesh's after-tick work and mesh_send), like the link.
+extern "C" int32_t lm_mesh_scene_frames(uint8_t *out, uint32_t cap) {
+  const int n = frontend_mesh_scene(out, cap);
+  return n > 0 ? n : 0;  // the P4 down or silent: the catch-up goes without a state blob
+}
+namespace {
+uint8_t *g_deckb = nullptr;  // deck B's frame for the catch-up running now (mesh_blob.rs)
+}
 extern "C" const uint8_t *lm_mesh_deckb_frame(uint32_t *len) {
   *len = 0;
-  return nullptr;
+  free(g_deckb);
+  g_deckb = static_cast<uint8_t *>(malloc(kFxCap));
+  if (!g_deckb) return nullptr;
+  const int n = frontend_mesh_deckb(g_deckb, kFxCap);
+  if (n <= 0) {
+    free(g_deckb);
+    g_deckb = nullptr;
+    return nullptr;
+  }
+  if (uint8_t *f = static_cast<uint8_t *>(realloc(g_deckb, (size_t)n))) g_deckb = f;
+  *len = (uint32_t)n;
+  return g_deckb;
 }
-extern "C" uint32_t lm_fx_check_effect(const uint8_t *, size_t) { return 1; }
+extern "C" uint32_t lm_fx_check_effect(const uint8_t *frame, size_t len) { return frontend_mesh_check(frame, len); }
 
 namespace {
 
@@ -414,7 +484,7 @@ int handle(uint16_t session, const uint8_t *msg, size_t len) {
   // (the P4's player state) refuses them on a session its owner has not unlocked, as a C6
   // player's kiosk gate does (D-505): the P4 gates every session on its own and says which
   // are unlocked (frontend_p4_unlocked). While the P4 is down a kiosk stays locked.
-  if (arm == kArmGetMesh || arm == kArmMeshAdmin) {
+  if (arm == kArmGetMesh || arm == kArmMeshAdmin || arm == kArmMeshSend) {
     if (frontend_p4_kiosk() && !frontend_p4_unlocked(session)) {
       g_stats.local++;
       g_stats.kiosk_refused++;
@@ -425,6 +495,7 @@ int handle(uint16_t session, const uint8_t *msg, size_t len) {
       g_stats.mesh_app++;
       return n;
     }
+    if (n == -2) return -1;
   }
   // Firmware updates are the P4's (ota_p4.cpp, docs/design/p4-c6-split.md §5.1): its
   // package carries this front end's image too, and it reflashes this C6 at its next
@@ -446,6 +517,9 @@ int handle(uint16_t session, const uint8_t *msg, size_t len) {
   if (p4_up) {
     const int n = frontend_forward(session, msg, len, tx, sizeof tx, 1000);
     g_stats.forwarded++;
+    // desk #79: the app's set_time_base starts a show epoch only through the gateway's
+    // session (main.cpp lm_ws_dispatch on a C6 player).
+    if (arm == kArmSetTimeBase && n >= 0) lm_mesh_note_time_base(mesh_conn(session));
     if (n >= 0) return n;
     if (n == -2) return -1;  // the P4's, undelivered: drop the session, the client retries
     if (frontend_p4_up()) return reply_error("reply_too_large", "the player's reply did not fit");
@@ -702,12 +776,13 @@ void log_status() {
     if (g_stats.mesh_app || g_stats.mesh_ctl || lm_mesh_on_now()) {
       snprintf(line, sizeof line,
                "[relay] mesh app=%u ctl=%u ctl_failed=%u kiosk_refused=%u staged=%u late=%u refused=%u unsent=%u "
-               "loaded=%u load_refused=%u fx=%s%u/%u fetches=%u\n",
+               "loaded=%u load_refused=%u fx=%s%u/%u fetches=%u gw_local=%u gw_uploads=%u gw_stale=%u\n",
                (unsigned)g_stats.mesh_app, (unsigned)g_stats.mesh_ctl, (unsigned)g_stats.mesh_ctl_failed,
                (unsigned)g_stats.kiosk_refused, (unsigned)g_stats.staged, (unsigned)g_stats.stage_late,
                (unsigned)g_stats.stage_refused, (unsigned)g_stats.stage_unsent, (unsigned)g_stats.loaded,
                (unsigned)g_stats.load_refused, fx_current() ? "" : "stale:", (unsigned)g_fx_len, (unsigned)g_fx_gen,
-               (unsigned)g_stats.fx_fetches);
+               (unsigned)g_stats.fx_fetches, (unsigned)g_stats.gw_local, (unsigned)g_stats.gw_uploads,
+               (unsigned)g_stats.gw_stale);
       Log().print(line);
       frontend_link_log(line);
       if (frontend_mesh_time_stats(line, sizeof line - 1) > 0) {
@@ -883,6 +958,7 @@ void loop() {
   }
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatches here)
   frontend_link_poll();
+  poll_gateway();
   poll_mesh_sessions();
   poll_staged_reports();
   poll_fx_copy();

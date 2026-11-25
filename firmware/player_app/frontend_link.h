@@ -54,6 +54,16 @@ int frontend_mesh_stage(uint32_t id, uint32_t apply_at_ms, const uint8_t *frame,
                         uint32_t *replaced_id);
 void frontend_mesh_cancel();
 int frontend_mesh_effect_file(uint8_t *out, size_t cap);
+// The lamp as the mesh's gateway. The P4's look as a catch-up state blob (main.cpp
+// lm_mesh_scene_frames) / deck B's effect frame, into `out`: the length, 0 none, -1 no
+// answer. A share's check (lm_fx_check_effect on the P4): 0 it would load, 1 bad_fxb (also
+// when the P4 doesn't answer), 2 effect_too_large.
+int frontend_mesh_scene(uint8_t *out, size_t cap);
+int frontend_mesh_deckb(uint8_t *out, size_t cap);
+uint32_t frontend_mesh_check(const uint8_t *frame, size_t len);
+// A mesh_send the P4 reassembled from UploadChunk windows (LK_GATEWAY), for the mesh to
+// answer on `*session`: the caller owns *frame (free it). False: none waiting.
+bool frontend_take_gateway(uint16_t *session, uint8_t **frame, size_t *len);
 bool frontend_take_staged(uint32_t *id, uint8_t *r);
 // How many times the P4 has come up (a new value: it restarted, and lost what it staged).
 uint32_t frontend_p4_ups();
