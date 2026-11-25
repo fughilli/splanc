@@ -36,7 +36,8 @@ export function sliderSpecs(
     const { min, max } = u.ui;
     const override = preset.uniforms[name];
     const base = current[name] ?? (override !== undefined ? asArray(override)[0] : undefined) ?? u.default[0] ?? min;
-    const step = u.ui.step > 0 ? u.ui.step : (max - min) / 100;
+    // The uniform's own grid; 0 = continuous (the control uses step="any").
+    const step = u.ui.step > 0 ? u.ui.step : 0;
     out.push({ name, slot: u.slot, min, max, step, value: Math.min(max, Math.max(min, base)) });
   }
   return out;

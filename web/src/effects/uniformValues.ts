@@ -74,3 +74,52 @@ export function matIndex(r: number, c: number, n: number): number {
 export function isRangedVector(u: FxUniform): boolean {
   return u.width > 1 && u.ui.kind === "slider";
 }
+
+// -- native precision (D-541) -------------------------------------------------
+// Uniform values travel and persist as f32. A slider's `step` is the grid the
+// compiler chose: 0 = continuous (a float), 1 = an int, or an explicit
+// `step N` annotation. Controls must not invent a coarser grid of their own.
+
+/** The `step` attribute for an `<input type=range|number>`: `"any"` when the
+ * uniform is continuous (step 0; the HTML default would be 1). */
+export function stepAttr(step: number): string {
+  return step > 0 && Number.isFinite(step) ? String(step) : "any";
+}
+
+/** Clamp to [min,max] and snap to the step grid; step 0 only clamps. */
+export function snapToStep(v: number, min: number, max: number, step: number): number {
+  const lo = Math.min(min, max);
+  const hi = Math.max(min, max);
+  v = Math.min(hi, Math.max(lo, v));
+  if (step > 0 && Number.isFinite(step)) v = min + Math.round((v - min) / step) * step;
+  return Math.min(hi, Math.max(lo, v));
+}
+
+function byte(x: number): number {
+  return Math.max(0, Math.min(255, Math.round(x * 255)));
+}
+
+/** `#rrggbb` for showing a float colour in an `<input type=color>` (display
+ * only: the 8-bit form must never be sent back unless the user moved it). */
+export function colorToHex(v: readonly number[]): string {
+  return `#${[v[0] ?? 0, v[1] ?? 0, v[2] ?? 0].map((c) => byte(c).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * The float colour after the user picked `hex` in an 8-bit colour input that
+ * was showing `prev`. A channel whose byte did not change keeps its exact
+ * float value (no 8-bit round-trip), alpha (`width` 4) and any extra
+ * components are kept as they were. A changed channel takes the new byte/255.
+ */
+export function colorFromHex(hex: string, prev: readonly number[], width: number): number[] {
+  const w = Math.max(3, width);
+  const out: number[] = [];
+  for (let c = 0; c < 3; c++) {
+    const b = parseInt(hex.slice(1 + 2 * c, 3 + 2 * c), 16);
+    const old = prev[c];
+    out.push(old !== undefined && Number.isFinite(b) && byte(old) === b ? old : (Number.isFinite(b) ? b : 0) / 255);
+  }
+  // vec4 colours carry an alpha: keep it (default opaque).
+  for (let c = 3; c < w; c++) out.push(prev[c] ?? 1);
+  return out;
+}

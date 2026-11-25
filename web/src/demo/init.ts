@@ -91,13 +91,14 @@ function stubPresetCompiler(): void {
   const Orig = globalThis.Worker;
   if (!Orig) return;
   const compile = (src: string): unknown => {
-    const sliders = [...src.matchAll(/uniform\s+(?:float|int)\s+(\w+)\s*:\s*([-\d.]+)\s*\.\.\s*([-\d.]+)\s*=\s*([-\d.]+)/g)].map(
+    const sliders = [...src.matchAll(/uniform\s+(float|int)\s+(\w+)\s*:\s*([-\d.]+)\s*\.\.\s*([-\d.]+)\s*=\s*([-\d.]+)/g)].map(
       (m) => ({
         at: m.index ?? 0,
-        name: m[1],
+        name: m[2],
         width: 1,
-        ui: { kind: "slider", min: Number(m[2]), max: Number(m[3]), step: 0.01 },
-        default: [Number(m[4])],
+        // The compiler's native step (D-541): a float is continuous, an int whole.
+        ui: { kind: "slider", min: Number(m[3]), max: Number(m[4]), step: m[1] === "int" ? 1 : 0 },
+        default: [Number(m[5])],
       }),
     );
     // `uniform vec3 tint : color = r, g, b;` (the tune sheet's colour rows).
@@ -441,9 +442,11 @@ function setupEffectEditor(): void {
     // A short, valid-looking .fxb-ish blob; only its length is shown in the UI.
     bytecode: new Uint8Array([0x46, 0x58, 0x42, 0x31, 0x10, 0x00, 0x2a, 0x07, 0x00, 0x00]),
     uniforms: [
-      { name: "speed", slot: 0, width: 1, ui: { kind: "slider", min: 0, max: 5, step: 0.01 }, default: [1.5] },
-      { name: "glow", slot: 1, width: 1, ui: { kind: "slider", min: 0, max: 1, step: 0.01 }, default: [0.35] },
-      { name: "tint", slot: 2, width: 3, ui: { kind: "color" }, default: [0.95, 0.45, 0.12] },
+      // Steps as the compiler emits them (D-541): float continuous, int whole.
+      { name: "speed", slot: 0, width: 1, ui: { kind: "slider", min: 0, max: 5, step: 0 }, default: [1.5] },
+      { name: "glow", slot: 1, width: 1, ui: { kind: "slider", min: 0, max: 1, step: 0 }, default: [0.35] },
+      { name: "bands", slot: 2, width: 1, ui: { kind: "slider", min: 1, max: 12, step: 1 }, default: [4] },
+      { name: "tint", slot: 3, width: 3, ui: { kind: "color" }, default: [0.95, 0.45, 0.12] },
     ],
     diagnostics: [] as { line: number; col: number; msg: string }[],
   };

@@ -11,6 +11,8 @@ uniform vec3  tint  : color = 0.2, 0.6, 1.0;     // colour picker (linear RGB 0.
 uniform vec3  dir   : -1 .. 1 = 0.0, -1.0, 0.0;  // numeric vector: one range for every component
 uniform vec4  plane : vec4(-1,-1,-1,-5) .. vec4(1,1,1,5) = 0, 1, 0, 1;  // per-component range
 uniform mat4  pose;                              // matrix (identity default): set by API / OSC
+uniform int   count : 1 .. 12 = 3;              // int slider: whole-number steps
+uniform float beat  : 0.0 .. 8.0 step 0.5 = 2.0; // optional `step N`: a slider grid
 uniform int   mode  : {"fire", "ice"} = 0;       // dropdown (index)
 uniform bool  invert = false;                    // toggle
 ```
@@ -20,6 +22,11 @@ range and it is a plain numeric vector instead (per-component sliders, any sign)
 — use that for directions, offsets, planes. A `mat3`/`mat4` (column-major) takes
 an optional range (`: -10 .. 10`, default ±1000) and is usually streamed from a
 controller or tracker rather than set by hand.
+
+A slider has its uniform's native precision: a `float` is continuous (no grid),
+an `int` moves in whole numbers, a `fixed` type by its smallest step. Add
+`step N` after the range only when the knob really has a grid (beats, counts
+by 5); `step 0` means continuous.
 
 The Splanc app builds its controls from these declarations, so the same knobs
 appear for the user on their phone.
