@@ -39,7 +39,8 @@ test("sliderSpecs: up to two scalar sliders, in preset order, skipping non-slide
       ["speed", 0, 0, 2, 0.4],
     ],
   );
-  assert.equal(s[0]!.step, 0.08); // step 0 -> 1% of range
+  assert.equal(s[0]!.step, 0); // step 0 stays continuous (D-541), no invented 1% grid
+  assert.equal(s[1]!.step, 0.01); // a declared grid is kept
 });
 
 test("sliderSpecs: visitor value > preset override > default, clamped", () => {

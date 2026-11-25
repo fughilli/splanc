@@ -1060,6 +1060,7 @@ impl Compiler {
     // uniform float speed : 0..5 = 1.0;   uniform vec3 tint : color = vec3(..);
     // uniform bool x = false;   uniform int mode : {"a","b"} = 0;
     // uniform float x : -2.0 .. 2.0 = 0.0;   uniform vec3 dir : -1..1 = 0, 1, 0;
+    // uniform int n : 0..8 step 2 = 4;   (a slider grid; default = the type's native step)
     // uniform vec3 p : vec3(-1,-1,0) .. vec3(1,1,2) = vec3(0);   uniform mat4 pose;
     fn uniform_decl(&mut self) -> Result<(), Diagnostic> {
         let first_line = self.lx_toks[self.p].1;
@@ -1305,7 +1306,8 @@ impl Compiler {
                 }
                 let mn = lo.iter().cloned().fold(f32::INFINITY, f32::min);
                 let mx = hi.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                Ok((UiKind::Slider { min: mn, max: mx, step: (mx - mn) / 100.0 }, Some((lo, hi))))
+                let step = self.parse_step_annotation(ty)?;
+                Ok((UiKind::Slider { min: mn, max: mx, step }, Some((lo, hi))))
             }
             Tok::Num(..) | Tok::Sym('-') => {
                 let Some(lo) = self.eat_signed_num() else {
@@ -1324,11 +1326,33 @@ impl Compiler {
                 if ty.is_mat() {
                     return Ok((UiKind::Matrix { min: lo, max: hi }, None));
                 }
-                let step = (hi - lo) / 100.0;
+                let step = self.parse_step_annotation(ty)?;
                 Ok((UiKind::Slider { min: lo, max: hi, step }, None))
             }
             _ => Ok((default_ui(ty), None)),
         }
+    }
+
+    /// The optional `step N` after a slider range (`uniform float n : 0..8 step
+    /// 1 = 2;`): the UI grid the editor, MIDI and the keypoint blend snap to.
+    /// Without it the slider has the uniform's native precision
+    /// ([`native_step`]): continuous (0) for a float, 1 for an int, the LSB for
+    /// a fixed type. `step 0` asks for continuous explicitly.
+    fn parse_step_annotation(&mut self, ty: Ty) -> Result<f32, Diagnostic> {
+        if !matches!(self.cur(), Tok::Ident(k) if k == "step") {
+            return Ok(native_step(ty));
+        }
+        self.advance();
+        let Some(step) = self.eat_signed_num() else {
+            return self.err("expected a number after `step`");
+        };
+        if !step.is_finite() || step < 0.0 {
+            return self.err("`step` must be 0 (continuous) or positive");
+        }
+        if ty == Ty::Int && step.fract() != 0.0 {
+            return self.err("an int uniform's `step` must be a whole number");
+        }
+        Ok(step)
     }
 
     fn parse_uniform_default(&mut self, ty: Ty) -> Result<Vec<f32>, Diagnostic> {
@@ -4624,7 +4648,19 @@ fn default_ui(ty: Ty) -> UiKind {
         Ty::Bool => UiKind::Toggle,
         Ty::Vec3 | Ty::Vec4 => UiKind::Color,
         Ty::Mat3 | Ty::Mat4 => UiKind::Matrix { min: -MAT_DEFAULT_RANGE, max: MAT_DEFAULT_RANGE },
-        _ => UiKind::Slider { min: 0.0, max: 1.0, step: 0.01 },
+        _ => UiKind::Slider { min: 0.0, max: 1.0, step: native_step(ty) },
+    }
+}
+
+/// A slider's default step: the uniform type's own resolution. Uniform values
+/// travel and persist as f32, so a float slider is continuous (`step` 0, which
+/// the app, MIDI router and firmware keypoint blend all treat as "no snap"); an
+/// int steps by 1 and a fixed type by its LSB (`2^-frac`).
+fn native_step(ty: Ty) -> f32 {
+    match ty.fixed_frac() {
+        Some(0) => 1.0,
+        Some(frac) => 1.0 / (1u32 << frac) as f32,
+        None => 0.0,
     }
 }
 

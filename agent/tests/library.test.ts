@@ -137,6 +137,7 @@ describe("validation + helpers", () => {
         assert.equal(u.ui.kind, want.ui.kind, `${s.file} ${u.name} ui`);
         if (u.ui.kind === "slider" && want.ui.kind === "slider") {
           assert.ok(Math.abs(u.ui.min - want.ui.min) < 1e-6 && Math.abs(u.ui.max - want.ui.max) < 1e-6, `${s.file} ${u.name} range`);
+          assert.ok(Math.abs(u.ui.step - want.ui.step) < 1e-9, `${s.file} ${u.name} step ${u.ui.step} vs ${want.ui.step}`);
         }
         assert.equal(u.default.length, want.default.length, `${s.file} ${u.name} default`);
         u.default.forEach((d, k) => assert.ok(Math.abs(d - want.default[k]!) < 1e-5, `${s.file} ${u.name} default ${k}`));
@@ -157,6 +158,18 @@ describe("validation + helpers", () => {
     );
     assert.equal(more[0]!.doc, "which look");
     assert.equal(more[2]!.unit, "m/s");
+    // D-541: a slider's step is the type's native precision unless annotated.
+    const steps = uniformsFromSource(
+      'uniform float f : 0..5 = 1.0;\nuniform int n : 0..10 = 2;\nuniform float g : 0..8 step 0.5 "beats" = 2.0;\n',
+    );
+    assert.deepEqual(
+      steps.map((u) => [u.name, u.ui.kind === "slider" ? u.ui.step : null, u.unit]),
+      [
+        ["f", 0, undefined],
+        ["n", 1, undefined],
+        ["g", 0.5, "beats"],
+      ],
+    );
   });
 
   test("the seed effects are the skill's examples, verbatim", () => {
