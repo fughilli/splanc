@@ -8,18 +8,22 @@
  * simple sheet listing devices by name, resolving with the picked `ImprovDevice`
  * so the shared `provisionViaBle` flow drives it unchanged.
  *
+ * Each row has a Blink button beside the name (D-259): it sends Improv Identify,
+ * and the fixture flashes its lights for about a second, so with several boards
+ * nearby the user can tell which row is which before picking.
+ *
  * Web (non-wrapper) callers never reach here — they use the browser's own chooser
  * via `requestImprovDevice()`; addDevice.ts branches on `isNativePlatform()`.
  */
 
-import { Button, Sheet } from "../kit";
+import { Button, Sheet, toast } from "../kit";
 import {
   improvDeviceById,
   readGapDeviceName,
   scanImprovNative,
   type ImprovScanHit,
 } from "../../net/capacitorImprov";
-import type { ImprovDevice } from "../../net/improv";
+import { identifyViaBle, type ImprovDevice } from "../../net/improv";
 
 /** Scan + let the user pick an Improv device. Rejects with an AbortError
  * DOMException when dismissed (so addDevice's isCancel() stays silent). */
@@ -56,6 +60,22 @@ export function pickNativeBleDevice<T>(
     sheet.body.append(hint, list);
 
     const rows = new Map<string, HTMLButtonElement>();
+    const blinking = new Set<string>();
+
+    /** Improv Identify to one board (its own short GATT session). */
+    async function blink(deviceId: string, btn: HTMLButtonElement): Promise<void> {
+      if (blinking.has(deviceId)) return;
+      blinking.add(deviceId);
+      btn.disabled = true;
+      try {
+        await identifyViaBle(await improvDeviceById(deviceId, names.get(deviceId)));
+      } catch (e) {
+        toast(`Couldn't reach it: ${e instanceof Error ? e.message : String(e)}`, { error: true });
+      } finally {
+        blinking.delete(deviceId);
+        btn.disabled = false;
+      }
+    }
     let settled = false;
 
     // Kick off the scan; surface a permission/adapter error into the sheet
@@ -121,7 +141,7 @@ export function pickNativeBleDevice<T>(
         if (!names.has(hit.deviceId)) resolveNameOverGatt(hit.deviceId);
         return;
       }
-      hint.textContent = text.prompt ?? "Tap your device to set it up:";
+      hint.textContent = text.prompt ?? "Tap your fixture to set it up. Not sure which is which? Blink it.";
       const btn = Button({
         label,
         block: true,
@@ -138,7 +158,20 @@ export function pickNativeBleDevice<T>(
         },
       });
       rows.set(hit.deviceId, btn);
-      list.append(btn);
+      const blinkBtn = Button({ label: "Blink", icon: "sparkles", variant: "quiet" });
+      blinkBtn.title = "Blink its lights";
+      blinkBtn.setAttribute("aria-label", "Blink its lights");
+      blinkBtn.addEventListener("click", () => void blink(hit.deviceId, blinkBtn));
+      const row = document.createElement("div");
+      row.className = "ble-pick-row";
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "var(--sp-3)";
+      btn.style.flex = "1";
+      btn.style.minWidth = "0";
+      blinkBtn.style.flex = "0 0 auto";
+      row.append(btn, blinkBtn);
+      list.append(row);
     }
   });
 }

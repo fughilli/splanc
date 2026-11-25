@@ -3,7 +3,8 @@
  * list shows which known devices answer on this network right now — probed over
  * the same wss the app uses, by reading each device's `welcome` — and offers the
  * matching next step per row: Connect (open the LAN connection) for a device that
- * answers, Find over Bluetooth (Improv re-discovery) for one that does not. A
+ * answers; for one that does not, what to do about it (D-219: a network move
+ * needs its Wi-Fi set up again over Bluetooth, never a reflash). A
  * device that comes online later is picked up by the background prober, and a
  * device the app just disconnected from is re-probed at once.
  *
@@ -22,10 +23,12 @@ mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 after(() => mock.timers.reset());
 
 import { deviceProber } from "../src/net/deviceProber";
+import { discovery, type FoundFixture } from "../src/net/discovery";
 import { IMPROV_SERVICE } from "../src/net/improv";
 import { deviceStore } from "../src/store/deviceStore";
 import { appState } from "../src/ui/app/state";
-import { openDeviceSheet } from "../src/ui/screens/deviceSheet";
+import { meshGroups, openDeviceSheet } from "../src/ui/screens/deviceSheet";
+import type { MeshRecord } from "../src/store/meshStore";
 import {
   FakeLan,
   advance,
@@ -56,7 +59,13 @@ afterEach(async () => {
   dom.document.hidden = true;
   restoreWs();
   localStorage.clear();
+  discovery.reset();
 });
+
+/** A fixture as the native mDNS browse reports it. */
+function heard(name: string, host: string, mac: string): FoundFixture {
+  return { key: mac, id: mac, name, host, url: `wss://${host}/ws`, source: "mdns", seenAt: Date.now() };
+}
 
 /** Remember a device the way a past connection left it. */
 function known(host: string, mac: string, name: string): string {
@@ -86,14 +95,24 @@ test("the device list marks which known devices answer on this network [rr:PR-13
   lan.add("10.0.0.41", { mac: "58:E6:C5:00:00:41", deviceName: "Kitchen" }); // Porch is off the LAN
 
   openDeviceSheet();
-  const polled = deviceProber.probeAllNow(); // the sheet's pull-to-refresh poll
+  const polled = deviceProber.probeAllNow(); // a one-shot poll of every device
   await advance(10_500);
   await polled;
 
-  assert.deepEqual(rowState("Kitchen"), { dot: "reachable", meta: "on this network · 10.0.0.41" });
-  assert.deepEqual(rowState("Porch"), { dot: "offline", meta: "10.0.0.42" });
+  assert.deepEqual(rowState("Kitchen"), { dot: "reachable", meta: "on this network" });
+  assert.equal(row("Kitchen").querySelector(".device-url")!.getAttribute("title"), "10.0.0.41", "the address is a tooltip");
+  assert.deepEqual(rowState("Porch"), { dot: "offline", meta: "Can't reach it" });
   buttonTitled("Connect", row("Kitchen")); // a reachable device offers a LAN connect…
-  buttonTitled("Find over Bluetooth", row("Porch")); // …an unreachable one Bluetooth re-discovery
+  // …an unreachable one moves to the collapsed Inactive section, which says once what to
+  // do and offers Wi-Fi set-up over Bluetooth (no note per row).
+  const inactive = all(".device-inactive")[0]!;
+  assert.ok(row("Porch").closest(".device-inactive") === inactive, "Porch is under Inactive");
+  assert.equal(row("Kitchen").closest(".device-inactive"), null, "Kitchen is not");
+  assert.ok(inactive.querySelector(".device-collapse-body")!.classList.contains("folder-hidden"), "Inactive starts collapsed");
+  assert.equal(all(".device-stale-text").length, 1, "one note for the section");
+  assert.match(inactive.querySelector(".device-stale-text")!.textContent, /No need to flash it again/);
+  buttonTitled("Set up a fixture's Wi-Fi again over Bluetooth", inactive);
+  assert.equal(row("Porch").querySelector(".device-stale"), null, "no note on the row itself");
   assert.equal(lan.liveTo("10.0.0.41") + lan.liveTo("10.0.0.42"), 0, "probe sockets are closed again");
 });
 
@@ -112,6 +131,48 @@ test("Connect on a discovered device opens the LAN connection to its address [rr
   buttonTitled("Disconnect", row("Studio")); // the row now offers to disconnect
 });
 
+test("the connected fixture's row leads on to the effects: one primary Choose an effect (D-219)", async () => {
+  lan.add("10.0.0.47", { mac: "58:E6:C5:00:00:47", deviceName: "Den" });
+  appState.connect("wss://10.0.0.47/ws");
+  await settle();
+  location.hash = "";
+  openDeviceSheet();
+
+  const next = all(".device-next");
+  assert.equal(next.length, 1, "under the connected row only");
+  assert.equal(next[0]!.textContent.trim(), "Choose an effect");
+  assert.ok(next[0]!.closest(".device-row") === row("Den"));
+  assert.ok(
+    all(".connect-actions .k-btn").every((b) => b.classList.contains("k-btn--quiet")),
+    "Connect / Flash step down: one primary action in the sheet",
+  );
+  next[0]!.click();
+  assert.equal(location.hash, "#/effects");
+  await advance(400); // the sheet's close transition
+  assert.equal(all(".k-sheet").length, 0, "the sheet closed");
+});
+
+test("before a known device was looked for, its row says so instead of Can't reach it (D-219)", () => {
+  known("10.0.0.48", "58:E6:C5:00:00:48", "Loft");
+  openDeviceSheet(); // the look starts now; nothing has answered or timed out yet
+  assert.deepEqual(rowState("Loft"), { dot: "offline", meta: "Looking for it…" });
+  assert.equal(row("Loft").querySelector(".device-stale"), null);
+});
+
+test("Set up Wi-Fi again on an unreachable device opens the Bluetooth set-up sheet (D-219) [rr:PR-13]", async () => {
+  known("10.0.0.49", "58:E6:C5:00:00:49", "Cellar"); // moved to another Wi-Fi
+  openDeviceSheet();
+  await advance(10_500);
+  await settle();
+
+  buttonTitled("Set up a fixture's Wi-Fi again over Bluetooth", all(".device-inactive")[0]!).click();
+  await settle();
+  assert.ok(
+    all(".k-sheet-head h2").some((h) => h.textContent === "Set up a new fixture"),
+    "straight into Bluetooth → Wi-Fi set-up, where the new network is chosen",
+  );
+});
+
 test("a known device that comes online later is discovered in the background [rr:PR-13]", async () => {
   dom.document.hidden = false;
   known("10.0.0.43", "58:E6:C5:00:00:43", "Shed");
@@ -123,7 +184,7 @@ test("a known device that comes online later is discovered in the background [rr
   lan.add("10.0.0.43", { mac: "58:E6:C5:00:00:43", deviceName: "Shed" }); // powered on
   await advance(130_000, 500);
 
-  assert.deepEqual(rowState("Shed"), { dot: "reachable", meta: "on this network · 10.0.0.43" });
+  assert.deepEqual(rowState("Shed"), { dot: "reachable", meta: "on this network" });
 });
 
 test("a device the app disconnects from is re-probed at once and shown still on the network [rr:PR-13]", async () => {
@@ -137,13 +198,13 @@ test("a device the app disconnects from is re-probed at once and shown still on 
   await settle();
 
   assert.equal(deviceProber.isReachable(id), true);
-  assert.deepEqual(rowState("Hall"), { dot: "reachable", meta: "on this network · 10.0.0.44" });
+  assert.deepEqual(rowState("Hall"), { dot: "reachable", meta: "on this network" });
   buttonTitled("Connect", row("Hall"));
   assert.equal(lan.liveTo("10.0.0.44"), 0, "the probe closed its socket");
 });
 
-test("Find over Bluetooth on an unreachable device opens the Improv chooser [rr:PR-13]", async () => {
-  known("10.0.0.46", "58:E6:C5:00:00:46", "Attic"); // not answering on the LAN
+test("Find over Bluetooth on a Bluetooth-only device opens the Improv chooser [rr:PR-13]", async () => {
+  deviceStore.upsert("ble:attic-1", "Attic"); // only ever reached over Bluetooth
   const bt = installBluetooth(() => {
     throw new DOMException("User cancelled the requestDevice() chooser.", "NotFoundError");
   });
@@ -157,4 +218,73 @@ test("Find over Bluetooth on an unreachable device opens the Improv chooser [rr:
   } finally {
     bt.restore();
   }
+});
+
+test("fixtures heard on the network appear by themselves, and Connect opens them (D-72) [rr:PR-13]", async () => {
+  lan.add("10.0.0.60", { mac: "58:E6:C5:00:00:60", deviceName: "Porch Arch" });
+  openDeviceSheet();
+  assert.equal(all(".device-row").length, 0, "nothing known, nothing heard yet");
+
+  discovery.report(heard("Porch Arch", "10.0.0.60", "58:E6:C5:00:00:60")); // an mDNS advert arrives
+  assert.deepEqual(rowState("Porch Arch"), { dot: "reachable", meta: "on this network · 10.0.0.60" });
+  assert.ok(all(".device-add-label").some((l) => l.textContent === "On this network"), "under its own heading");
+
+  buttonTitled("Connect to Porch Arch").click();
+  await settle();
+  assert.equal(appState.status.state, "connected");
+  assert.equal(appState.client?.url, "wss://10.0.0.60/ws");
+  assert.equal(deviceStore.list().length, 1, "now a known device");
+  assert.equal(all(".device-row").length, 1, "listed once: the heard fixture folded into the known one");
+  buttonTitled("Disconnect", row("Porch Arch"));
+});
+
+test("a known device heard at a new address is shown there and connects there (D-72) [rr:PR-13]", async () => {
+  known("10.0.0.41", "58:E6:C5:00:00:41", "Kitchen");
+  lan.add("10.0.0.99", { mac: "58:E6:C5:00:00:41", deviceName: "Kitchen" }); // DHCP moved it
+  openDeviceSheet();
+  discovery.report(heard("Kitchen", "10.0.0.99", "58:E6:C5:00:00:41"));
+
+  assert.deepEqual(rowState("Kitchen"), { dot: "reachable", meta: "on this network" });
+  assert.equal(all(".device-row").length, 1, "matched by MAC, not listed as new");
+  buttonTitled("Connect", row("Kitchen")).click();
+  await settle();
+  assert.equal(appState.client?.url, "wss://10.0.0.99/ws");
+});
+
+test("the device sheet has one labelled Connect and a separate Flash button, no icon row (D-72)", () => {
+  openDeviceSheet();
+  const actions = all(".connect-actions .k-btn").map((b) => b.textContent.trim());
+  assert.deepEqual(actions, ["Connect a fixture", "Flash a new device"]);
+  assert.equal(all(".device-add .k-iconbtn").length, 0, "no unlabeled icon buttons");
+});
+
+test("mesh members are grouped under their gateway: the connected one, else one on the network", () => {
+  const a = known("10.0.0.71", "58:E6:C5:00:00:71", "Silvia");
+  const b = known("10.0.0.72", "58:E6:C5:00:00:72", "Pixie");
+  const c = known("10.0.0.73", "58:E6:C5:00:00:73", "Calvin");
+  const lone = known("10.0.0.74", "58:E6:C5:00:00:74", "Shed");
+  const mesh = (meshId: number, createdAt: string, ids: string[]): MeshRecord =>
+    ({
+      meshId,
+      name: `m${meshId}`,
+      createdAt,
+      adminPublic: new Uint8Array(65),
+      keyEpoch: 1,
+      revVersion: 0,
+      members: ids.map((deviceId, i) => ({ deviceId, label: "", node: i + 1, keyHash: "" })),
+      revoked: [],
+    }) as MeshRecord;
+  const devs = deviceStore.list();
+  const newer = mesh(2, "2026-11-23T13:56:00Z", [a, b]);
+  const older = mesh(1, "2026-11-23T11:00:00Z", [a, c]); // Silvia left it: the newest mesh wins
+  const solo = mesh(3, "2026-11-01T00:00:00Z", [lone]);
+
+  const g = meshGroups(devs, [older, newer, solo], b, () => false);
+  assert.equal(g.length, 1, "a device is in one group; a one-device mesh is no group");
+  assert.equal(g[0]!.mesh.meshId, 2);
+  assert.equal(g[0]!.gateway.id, b, "the connected member is the gateway");
+  assert.deepEqual(g[0]!.members.map((d) => d.id), [a]);
+
+  const h = meshGroups(devs, [newer], null, (id) => id === b);
+  assert.equal(h[0]!.gateway.id, b, "else a member heard on the network");
 });

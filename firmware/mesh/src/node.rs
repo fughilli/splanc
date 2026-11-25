@@ -90,6 +90,8 @@ pub enum Rx<'a> {
     Plain { meta: RxMeta, header: Header, body: &'a [u8] },
     /// A time beacon from neighbour `src` (opened; M4) for the caller.
     Time { meta: RxMeta, src: NodeId, body: &'a [u8] },
+    /// A ranging message from neighbour `src` to this node (opened) for the caller.
+    Range { meta: RxMeta, src: NodeId, body: &'a [u8] },
 }
 
 /// What [`Node::on_rx`] hands up instead of feeding the mesh.
@@ -97,6 +99,7 @@ pub enum Rx<'a> {
 pub enum Up<'f> {
     Plain(Header, &'f [u8]),
     Time(NodeId, &'f [u8]),
+    Range(NodeId, &'f [u8]),
 }
 
 pub struct Node<B: Backhaul, const P: usize, G: FrameGuard = Plain> {
@@ -143,16 +146,38 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
     /// `dst` is valid for writes; on `Ok` every field is initialised, on `Err` none is and
     /// `net` was not called. `net` must initialise its slot.
     pub unsafe fn init_in(dst: *mut Self, net: impl FnOnce(*mut NetOf<P>), backhaul: B, guard: G, cfg: NodeConfig) -> Result<(), MtuTooSmall> {
+        Self::init_in_with(dst, net, |p| p.write(backhaul), |p, _| p.write(guard), cfg)
+    }
+
+    /// [`Node::init_in`] with the backhaul and the guard built in place too: `backhaul`
+    /// initialises its slot, then `guard` its own, given the backhaul's MTU. Nothing big is
+    /// ever a by-value temporary on the caller's stack (firmware: the mesh is built on the
+    /// tick's 14 KB stack).
+    ///
+    /// # Safety
+    /// As [`Node::init_in`]; `backhaul` and `guard` must initialise their slots. On `Err`
+    /// both are dropped again and `net` was not called.
+    pub unsafe fn init_in_with(
+        dst: *mut Self,
+        net: impl FnOnce(*mut NetOf<P>),
+        backhaul: impl FnOnce(*mut B),
+        guard: impl FnOnce(*mut G, usize),
+        cfg: NodeConfig,
+    ) -> Result<(), MtuTooSmall> {
         use core::ptr::addr_of_mut;
-        let mtu = backhaul.mtu().saturating_sub(cfg.frame_overhead + guard.overhead());
+        let bp = addr_of_mut!((*dst).backhaul);
+        backhaul(bp);
+        let gp = addr_of_mut!((*dst).guard);
+        guard(gp, (*bp).mtu());
+        let mtu = (*bp).mtu().saturating_sub(cfg.frame_overhead + (*gp).overhead());
         if mtu < MIN_MTU {
+            core::ptr::drop_in_place(gp);
+            core::ptr::drop_in_place(bp);
             return Err(MtuTooSmall { mtu, min: MIN_MTU });
         }
         let np = addr_of_mut!((*dst).net);
         net(np);
         (*np).mesh.set_max_payload(link::mesh_payload_for_mtu(mtu));
-        addr_of_mut!((*dst).backhaul).write(backhaul);
-        addr_of_mut!((*dst).guard).write(guard);
         addr_of_mut!((*dst).cfg).write(cfg);
         addr_of_mut!((*dst).stats).write(NodeStats::default());
         addr_of_mut!((*dst).mtu).write(mtu);
@@ -191,7 +216,7 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
         match self.guard.open(now_us, frame) {
             Opened::Link(r) => {
                 let frame: &'f [u8] = frame;
-                self.on_link(&frame[r], meta, flash).map(|(src, b)| Up::Time(src, b))
+                self.on_link(&frame[r], meta, flash)
             }
             Opened::Plain { header, body } => {
                 self.stats.rx_plain += 1;
@@ -204,9 +229,9 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
         }
     }
 
-    /// One link frame (already opened). A time beacon is not the swarm's: it comes back
-    /// (its sender and body) for the caller.
-    pub fn on_link<'f>(&mut self, frame: &'f [u8], meta: &RxMeta, flash: &mut dyn Flash) -> Option<(NodeId, &'f [u8])> {
+    /// One link frame (already opened). A time beacon or a ranging message is not the
+    /// swarm's: it comes back (its sender and body) for the caller.
+    pub fn on_link<'f>(&mut self, frame: &'f [u8], meta: &RxMeta, flash: &mut dyn Flash) -> Option<Up<'f>> {
         let r = match link::decode(frame) {
             Ok(r) => r,
             Err(Reject::NotMesh) => {
@@ -237,7 +262,12 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
             Frame::Summary(s) => self.net.on_summary(t, r.src, s),
             Frame::Time(b) => {
                 self.stats.time_rx += 1;
-                return Some((r.src, b));
+                return Some(Up::Time(r.src, b));
+            }
+            Frame::Range { dest, payload } => {
+                if dest == me {
+                    return Some(Up::Range(r.src, payload));
+                }
             }
         }
         None
@@ -251,6 +281,7 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
         match self.on_rx(now_us, &mut scratch[..len], &meta, flash) {
             Some(Up::Plain(header, body)) => Rx::Plain { meta, header, body },
             Some(Up::Time(src, body)) => Rx::Time { meta, src, body },
+            Some(Up::Range(src, body)) => Rx::Range { meta, src, body },
             None => Rx::Handled,
         }
     }
@@ -274,6 +305,33 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
             Ok(()) => {
                 self.stats.tx += 1;
                 self.stats.time_tx += 1;
+                true
+            }
+            Err(_) => {
+                self.stats.tx_busy += 1;
+                false
+            }
+        }
+    }
+
+    /// Send a ranging message body to neighbour `dest` (one hop, unicast, sealed,
+    /// [`TxClass::Range`]). `frame` and `sealed` are scratch for the link frame and the
+    /// envelope.
+    pub fn send_range(&mut self, now_us: i64, dest: NodeId, body: &[u8], frame: &mut [u8], sealed: &mut [u8]) -> bool {
+        if !self.guard.can_seal() {
+            return false;
+        }
+        let Some(m) = link::encode(self.net.me(), Frame::Range { dest, payload: body }, frame) else {
+            self.stats.tx_encode_failed += 1;
+            return false;
+        };
+        let Some(k) = self.guard.seal(now_us, &frame[..m], sealed) else {
+            self.stats.tx_unsealed += 1;
+            return false;
+        };
+        match self.backhaul.send_class(&sealed[..k], Some(dest), TxClass::Range) {
+            Ok(()) => {
+                self.stats.tx += 1;
                 true
             }
             Err(_) => {

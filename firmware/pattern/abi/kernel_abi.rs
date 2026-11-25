@@ -448,6 +448,37 @@ pub extern "C" fn pk_stride_lit(led: u32, phase: u32, spacing: u32, anchor_densi
     k::stride_lit(led, phase, spacing, anchor_density) as u32
 }
 
+/// Rolling stride ([`k::stride_lit_rolling`]): is physical LED `led` lit at
+/// pattern-clock frame `seq` (absolute, since the epoch)? The code spec is a
+/// received CodeParams (`led_count` = the code-book size); `n_leds` the
+/// physical strip length (0 = unbounded) and `code_offset` the group offset.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn pk_stride_lit_rolling(
+    led: u32,
+    seq: u32,
+    led_count: u32,
+    bits: u32,
+    symbols: u32,
+    secded: u32,
+    sync: u32,
+    spacing: u32,
+    anchor_density: u32,
+    dwell_cycles: u32,
+    n_leds: u32,
+    code_offset: u32,
+) -> u32 {
+    let spec = spec_params(led_count, bits, symbols, secded, sync);
+    let rs = k::RollingStride::new(spacing, anchor_density, dwell_cycles, n_leds, code_offset);
+    k::stride_lit_rolling(led, seq, &spec, &rs) as u32
+}
+
+/// The dwell the kernel actually runs for a requested `dwell_cycles` (clamped).
+#[no_mangle]
+pub extern "C" fn pk_stride_rolling_dwell(dwell_cycles: u32) -> u32 {
+    k::RollingStride::new(2, 3, dwell_cycles, 0, 0).dwell()
+}
+
 // --- timing (f64 ms) ----------------------------------------------------------------
 
 #[no_mangle]

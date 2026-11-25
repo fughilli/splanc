@@ -83,6 +83,10 @@ shim (UWB radio, TDMA, DS-TWR, fusion).
    (`bulk_relay_bias`, 0 by default). `Updater::set_preferred` makes page requests prefer
    custodians among equally advanced neighbours. Peak occupancy is recorded (`peak_relays`,
    `peak_outbox`).
+10. **The firmware image updater and settings bundles are behind features.** `net.rs`
+    drives `update::Updater` only with feature `fw_update`, and swarm settings bundles only
+    with feature `swarm_settings`. Both are on in `:swarm_net` and, by desk D-463, in
+    `:swarm_net_fw` too (the C6 keeps them for OTA over the mesh, Phase 2).
 
 The Splanc layer on top (backhaul trait, link frame codec, node driver, loopback backhaul)
 is `//firmware/mesh`, outside this directory.

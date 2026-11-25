@@ -45,7 +45,7 @@ INTERACTIVE = (
     " input:not([type=hidden]), select, textarea"
 )
 # Containers whose interactive children are one joined control.
-JOINED = (".settings-seg", ".k-pw", "[data-layout-joined]")
+JOINED = (".settings-seg", ".k-pw", "[role=tablist]", ".fxlayout-tablist", "[data-layout-joined]")
 
 # Collects the rects (viewport coordinates; every rect shares the same scroll
 # state, so pairwise geometry holds even below the fold).
@@ -60,7 +60,19 @@ COLLECT_JS = r"""
       if (seen.has(el)) continue;
       seen.add(el);
       const cs = getComputedStyle(el);
-      const r = el.getBoundingClientRect();
+      // What is on screen of it: clipped by every scrolling / clipping ancestor (a tab
+      // scrolled out of a tab strip is neither crammed nor off screen).
+      const b = el.getBoundingClientRect();
+      const r = { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const ps = getComputedStyle(p);
+        if (ps.overflowX === 'visible' && ps.overflowY === 'visible') continue;
+        const c = p.getBoundingClientRect();
+        if (ps.overflowX !== 'visible') { r.left = Math.max(r.left, c.left); r.right = Math.min(r.right, c.right); }
+        if (ps.overflowY !== 'visible') { r.top = Math.max(r.top, c.top); r.bottom = Math.min(r.bottom, c.bottom); }
+      }
+      r.width = r.right - r.left;
+      r.height = r.bottom - r.top;
       if (r.width < 1 || r.height < 1) continue;
       if (cs.visibility === 'hidden' || Number(cs.opacity) === 0) continue;
       if (el.closest('[hidden]') || el.getClientRects().length === 0) continue;
@@ -168,6 +180,8 @@ class Scenario:
     seed:    localStorage key -> value set before the app boots
     steps:   interaction after load: ("click", selector) | ("fill", selector, text)
              | ("check", selector) | ("wait", ms) | ("wait_for", selector)
+             | ("press", selector, key) | ("hover", selector) (forced: the pointer
+             lands on the element's box even under an overlay, e.g. a textarea)
     network: makes a per-run request handler: handler(route, request) -> bool
              (True = handled); everything else off-origin is blocked
     root:    where to look for controls (the screen, not the app chrome)
@@ -237,6 +251,10 @@ def run_steps(page, steps: list[tuple]) -> None:
             page.locator(st[1]).first.fill(st[2], timeout=8000)
         elif op == "check":
             page.locator(st[1]).first.check(timeout=8000)
+        elif op == "press":
+            page.locator(st[1]).first.press(st[2], timeout=8000)
+        elif op == "hover":
+            page.locator(st[1]).first.hover(force=True, timeout=8000)
         elif op == "css":  # inject a stylesheet (the guard's self-test crams a row)
             page.add_style_tag(content=st[1])
         elif op == "wait":

@@ -26,6 +26,7 @@ import {
 import type { LivePlayer, PerPlayer } from "../../net/liveProtocol";
 import type { Router, Screen } from "../app/router";
 import { installBridgeLiveStyles } from "./bridgeLive.css";
+import { colorFromHex, colorToHex } from "../../effects/uniformValues";
 
 const STORE_KEY = "splanc.bridge.v1";
 export const DEFAULT_RELAY = "https://splanc.pages.dev";
@@ -381,13 +382,14 @@ export function BridgeLiveScreen(_router: Router): Screen {
 
     const fader = Slider({
       label: "Crossfade A ⇄ B",
+      // Continuous 0..1 (the wire position is a double): no 101-step grid.
       min: 0,
-      max: 100,
-      step: 1,
+      max: 1,
+      step: 0,
       value: 0,
-      format: (v) => (v === 0 ? "A" : v === 100 ? "B" : `${100 - v} / ${v}`),
+      format: crossfadeLabel,
       onInput: (v) => {
-        crossfade = v / 100;
+        crossfade = v;
         client?.control(sel(), { xf: { pos: crossfade, mode: xfMode } });
       },
       onChange: () => client?.flush(),
@@ -493,10 +495,12 @@ export function BridgeLiveScreen(_router: Router): Screen {
       if (u.ui.kind === "color") {
         const inp = document.createElement("input");
         inp.type = "color";
-        const cur = u.current ?? u.default;
-        inp.value = `#${cur.slice(0, 3).map((x) => Math.round(Math.min(1, Math.max(0, x)) * 255).toString(16).padStart(2, "0")).join("")}`;
-        // Colour uniforms take [r, g, b] in 0..1 (the bridge refuses hex strings).
-        const rgb = (): number[] => [1, 3, 5].map((i) => parseInt(inp.value.slice(i, i + 2), 16) / 255);
+        // The hex is display only (D-541): the value sent is the float colour
+        // with just the channels the user moved replaced, full width (a vec4
+        // keeps its alpha), so an untouched channel never round-trips 8-bit.
+        let cur = (u.current ?? u.default).slice();
+        inp.value = colorToHex(cur);
+        const rgb = (): number[] => (cur = colorFromHex(inp.value, cur, u.width));
         inp.addEventListener("input", () => client?.control(sel(), { deck, u: { [u.name]: rgb() } }));
         inp.addEventListener("change", () => (client?.control(sel(), { deck, u: { [u.name]: rgb() }, commit: true }), client?.flush()));
         const row = document.createElement("label");
@@ -515,14 +519,15 @@ export function BridgeLiveScreen(_router: Router): Screen {
       }
       const min = u.min ?? u.ui.min ?? 0;
       const max = u.max ?? u.ui.max ?? 1;
-      const step = u.ui.kind === "dropdown" ? 1 : u.ui.step && u.ui.step > 0 ? u.ui.step : (max - min) / 200;
+      // The uniform's own step (0 = continuous f32, 1 = int); no invented grid.
+      const step = u.ui.kind === "dropdown" ? 1 : u.ui.step && u.ui.step > 0 ? u.ui.step : 0;
       const s = Slider({
         label: u.name,
         min,
         max,
         step,
         value: (u.current ?? u.default)[0] ?? min,
-        format: (v) => (u.ui.kind === "dropdown" ? (u.ui.options?.[v] ?? String(v)) : v.toFixed(step < 0.1 ? 2 : 1)),
+        format: (v) => (u.ui.kind === "dropdown" ? (u.ui.options?.[v] ?? String(v)) : fmtLive(v, step)),
         onInput: (v) => client?.control(sel(), { deck, u: { [u.name]: v } }),
         onChange: (v) => {
           client?.control(sel(), { deck, u: { [u.name]: v }, commit: true });
@@ -589,4 +594,18 @@ export function BridgeLiveScreen(_router: Router): Screen {
       unsubLib = null;
     },
   };
+}
+
+/** A live slider's readout: whole numbers on an integer grid, else up to 3
+ * decimals (a continuous slider is finer than the label). */
+function fmtLive(v: number, step: number): string {
+  if (step >= 1 && Number.isInteger(step)) return String(Math.round(v));
+  return String(Math.round(v * 1000) / 1000);
+}
+
+/** The crossfader readout for a 0..1 position: "A", "B" or the A / B percent
+ * split (rounded for display only; the position itself is continuous). */
+function crossfadeLabel(pos: number): string {
+  const pct = Math.round(Math.min(1, Math.max(0, pos)) * 100);
+  return pct === 0 ? "A" : pct === 100 ? "B" : `${100 - pct} / ${pct}`;
 }

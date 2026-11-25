@@ -93,6 +93,19 @@ highlighter, the completion source, the AI prompt, and any docs never drift.
 
 ### Inline diagnostics from the compiler
 
+> **As built (D-501, 2026-11).** The editor is a transparent `<textarea>` over a
+> highlighted `<pre>` (no CodeMirror; see highlight.ts), so diagnostics are drawn
+> by a third layer between them: the same text, transparent, with a tinted band
+> on each line with an error / warning and a red / yellow wavy underline under
+> the span (`effects/editor/editing.ts` `diagnosticsHtml`). The compiler still
+> reports one `{line, col, msg}` per diagnostic (1-based); the span is the token
+> starting there, or the last token before it when the position is whitespace /
+> end of line. Hovering a squiggle — or the caret inside one — shows the message.
+> The same module carries the keyboard editing (Tab / Shift+Tab indent and
+> outdent at a 4-space stop, Enter auto-indent by parse depth, the electric `}`,
+> ⌘⇧F / Ctrl+Shift+F format) and the `row : col` readout in the status line.
+> The CodeMirror plan below is kept for its reasoning.
+
 The compiler is the single source of truth for correctness — the editor does
 **no** semantic checking of its own. Wire CM6's `linter` to the wasm compiler:
 
@@ -267,6 +280,14 @@ Notes:
   the fields (`name, type, ui_kind, min, max, step, default|options`). The
   compiler is the only thing that produces it; the editor and preview never
   synthesize one.
+- **Slider `step` is the uniform's native precision** (D-541). Values ride the
+  wire and flash as f32, so a `float` slider is continuous (`step: 0`, which the
+  editor renders as `step="any"` and the MIDI router and firmware keypoint blend
+  treat as "no snap"); an `int` steps by 1 and a `fixed`/`fixed16`/`fixed8` by
+  its LSB. An explicit grid is `uniform float n : 0..8 step 0.5 = 2.0;` (`step`
+  follows the range, before the optional unit string). Earlier compilers emitted
+  `(hi-lo)/100` for every range; old firmware and apps read `step: 0` as
+  continuous, so no format bump.
 - **Agent-facing manifest fields.** Each uniform's object also carries an explicit
   `min`/`max` (a slider's range; `0..1` for a toggle or colour; `0..n-1` for a
   dropdown) so an agent can clamp without knowing the UI vocabulary, an optional

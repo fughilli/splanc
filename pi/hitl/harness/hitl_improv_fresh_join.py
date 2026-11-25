@@ -45,6 +45,7 @@ import subprocess
 import sys
 import time
 
+import hitl_metrics
 import improv_fresh_join_core as core
 
 
@@ -105,8 +106,9 @@ def _improv(res, ssid: str, password: str, budget: float, address: str | None) -
     out: dict = {}
     for attempt in (1, 2):
         t0 = time.monotonic()
+        rj: dict = {}
         try:
-            url = _run_provisioner(res, ssid, password, budget, address=address)
+            url = _run_provisioner(res, ssid, password, budget, address=address, result_out=rj)
             out = {"ok": True, "url": url, "wall_s": round(time.monotonic() - t0, 1)}
         except HarnessError as e:
             out = {"ok": False, "error": str(e), "wall_s": round(time.monotonic() - t0, 1)}
@@ -118,6 +120,8 @@ def _improv(res, ssid: str, password: str, budget: float, address: str | None) -
                 "error": "BLE transport failed: provisioner hung (ssh timeout)",
                 "wall_s": round(time.monotonic() - t0, 1),
             }
+        # write ack -> answer, rig-side: what the Improv budgets are defined on (grade + metrics)
+        out["join_s"] = rj.get("join_s")
         _log(f"  attempt {attempt}: {json.dumps(out)}")
         if core.classify(out) != "infra":
             break
@@ -206,12 +210,25 @@ def run(args) -> int:
     log = "\n".join(res.serial_logs.values()) if res.serial_logs else ""
     serial = core.parse_serial(log) if log else None
     g = core.grade(setup, phases, serial, args.join_budget, args.absent_budget)
+    for m in core.metric_points(phases, serial):
+        hitl_metrics.emit("improv_fresh_join", m.pop("metric"), m.pop("value"), m.pop("unit"), **m)
     if g["verdict"] == "FAIL" and log:
         _log("----- DUT serial log (tail) -----")
         _log(log[-12000:])
+    # Dashboard metrics (pi/hitl/observability metrics schema v1): one HITL_METRIC line
+    # each, and the same records in the results JSON.
+    recs = core.metric_records(
+        phases, core.metrics(log) if log else None, args.join_budget, args.absent_budget
+    )
+    for r in recs:
+        r.update({"dut": res._unit, "fw": os.environ.get("GITHUB_SHA", ""), "ts": time.time()})
+        _log("HITL_METRIC " + json.dumps(r, separators=(",", ":")))
     _log(
         "IMPROV_FRESH_JOIN_JSON "
-        + json.dumps({"setup": setup, "phases": phases, "serial": serial, **g}, sort_keys=True)
+        + json.dumps(
+            {"setup": setup, "phases": phases, "serial": serial, "metrics": recs, **g},
+            sort_keys=True,
+        )
     )
     _log(
         f"RESULT unit={res._unit} budget={args.join_budget:g}s "

@@ -1,5 +1,8 @@
 """The host driver against the simulator (the shipped core behind a simulated HAL),
-plus scenario compilation onto the real board table."""
+plus scenario compilation onto the real board tables.
+
+`rf` is the default board (one Jeanoko UART attenuator per DUT, node model);
+`rf_pe` is the legacy PR #578 table (three PE4302 DSAs per pair, pair model)."""
 
 import pytest
 import rfctl
@@ -13,7 +16,15 @@ def rf():
     r.close()
 
 
-def test_hello_and_devices(rf):
+@pytest.fixture
+def rf_pe():
+    r = rfctl.Rfctl.sim(virtual=True, board="pe4302")
+    yield r
+    r.close()
+
+
+def test_hello_and_devices(rf_pe):
+    rf = rf_pe
     assert rf.info["board"] == "starter-n4"
     assert rf.info["chain"] == "144"
     assert len(rf.devices) == 27
@@ -22,7 +33,8 @@ def test_hello_and_devices(rf):
     assert "bank A" in rf.devices["dlyA"].note
 
 
-def test_power_up_is_safe(rf):
+def test_power_up_is_safe(rf_pe):
+    rf = rf_pe
     st = rf.state()
     assert all(
         st[f"att{p}{s}"] == "31.5" for p in ("01", "02", "03", "12", "13", "23") for s in "abc"
@@ -32,7 +44,8 @@ def test_power_up_is_safe(rf):
     assert "chain=" in out
 
 
-def test_set_get_and_errors(rf):
+def test_set_get_and_errors(rf_pe):
+    rf = rf_pe
     rf.set({"att01a": 12.5, "cut01": 1})
     assert rf.get("att01a") == "12.5"
     assert rf.get("cut01") == "1"
@@ -45,7 +58,8 @@ def test_set_get_and_errors(rf):
         rf.set({"att01a": 1.25})
 
 
-def test_timeline_commits_on_time_in_one_latch(rf):
+def test_timeline_commits_on_time_in_one_latch(rf_pe):
+    rf = rf_pe
     rf.safe()
     rf.load([(1000, {"cut01": 1, "cut02": 1}), (1000, {"att01a": 0.0}), (250_000, {"cut01": 0})])
     t0 = rf.play(delay_us=10_000)
@@ -99,12 +113,98 @@ def test_late_steps_are_reported(rf):
     assert rf.status()["faults"] & 0x02
 
 
-# ---- scenarios on the real board table
+# ---- the default board: UART attenuators
+
+
+def test_jeanoko_board(rf):
+    assert rf.info["board"] == "jeanoko-n4"
+    assert rf.info["chain"] == "48" and rf.info["uart"] == "5"
+    assert len(rf.devices) == 14
+    a = rf.devices["att2"]
+    assert a.is_atten and a.is_uart and a.step_db == 0.25 and a.max == "31.75"
+    assert not rf.devices["cut01"].is_atten
+    st = rf.state()
+    assert all(st[f"att{i}"] == "31.75" for i in range(4)) and st["attx"] == "31.75"
+    assert all(st[f"cut{p}"] == "0" for p in ("01", "02", "03", "12", "13", "23"))
+    assert st["_chain"] == "fffffffff000"  # cuts and spares high, delay bank at arm 0
+    # every unit was told its safe value at power-up, on its own TX pin
+    boot = rf.sim_uart(5)
+    assert sorted((u, g) for _, u, g, _ in boot) == [(0, 22), (1, 26), (2, 27), (3, 28), (6, 29)]
+    assert {txt for *_, txt in boot} == {"wv03175"}
+
+
+def test_uart_set_and_format(rf):
+    rf.sim_advance(1000)
+    rf.set({"att0": 12.25, "att3": 7, "cut01": 1})
+    assert rf.get("att0") == "12.25" and rf.get("att3") == "7.0"
+    sent = {u: txt for _, u, _, txt in rf.sim_uart(2)}
+    assert sent == {0: "wv01225", 3: "wv00700"}
+    with pytest.raises(ValueError):
+        rf.set({"att0": 12.3})
+    with pytest.raises(rfctl.RfctlError) as e:
+        rf.cmd("set att1 32")
+    assert e.value.code == "range"
+    assert rfctl.fmt_value(12.25, 0.25) == "12.25"
+    assert rfctl.fmt_value(12.5, 0.25) == "12.5"
+    assert rfctl.fmt_value(3.0, 0.25) == "3.0"
+
+
+def test_uart_busy_unit_is_deferred(rf):
+    rf.sim_advance(1000)
+    rf.set({"att1": 1.0})
+    rf.set({"att1": 2.0})  # 0 us later: unit 1 is still sending
+    st = rf.status()
+    assert st["uart_deferred"] >= 1 and st["faults"] & 0x10
+    rf.sim_advance(2000)
+    assert rf.sim_uart(1)[-1][3] == "wv00200"  # the latest value went out
+
+
+def test_uart_timeline_starts_on_the_latch(rf):
+    rf.sim_advance(10_000)
+    rf.load([(2000, {"cut12": 1, "att1": 5.5, "att2": 5.5}), (40_000, {"cut12": 0})])
+    t0 = rf.play(delay_us=5000)
+    rf.sim_advance(5000 + 41_000)
+    latch = [t for t, _, _ in rf.sim_history(3)]
+    assert t0 + 2000 in latch
+    uart = [(t, u, txt) for t, u, _, txt in rf.sim_uart(2)]
+    assert uart == [(t0 + 2000, 1, "wv00550"), (t0 + 2000, 2, "wv00550")]
+
+
+def test_lease_puts_attenuators_to_max(rf):
+    rf.sim_advance(1000)
+    rf.set({"att0": 0.0, "cut01": 1})
+    rf.lease(50)
+    rf.sim_advance(100_000)
+    assert rf.get("att0") == "31.75" and rf.get("cut01") == "0"
+    assert rf.sim_uart(5)[-1][3] == "wv03175"
+    rf.lease(0)
+
+
+def test_attcheck(rf):
+    rf.sim_advance(1000)
+    res = rf.attcheck()
+    assert set(res) == {"att0", "att1", "att2", "att3", "attx"}
+    assert all(r["result"] == "ok" and r["latency_us"] == 1500 for r in res.values())
+    rf.raw("sim.uartack none")
+    assert rf.attcheck("att2") == {"att2": {"result": "timeout", "value": "31.75", "latency_us": 0}}
+    rf.raw("sim.uartack stuck")
+    assert rf.attcheck("att0")["att0"]["result"] == "stuck_low"
+
+
+def test_n6_board():
+    with rfctl.Rfctl.sim(board="jeanoko-n6") as r:
+        assert r.info["board"] == "jeanoko-n6" and r.info["uart"] == "7"
+        b = sc.Bench(r.devices)
+        assert b.nodes == [0, 1, 2, 3, 4, 5] and len(b.pairs) == 15
+        assert b.node_atts[5] == "att5"
+
+
+# ---- scenarios on the legacy (pair model) board table
 
 
 @pytest.fixture
-def bench(rf):
-    return sc.Bench(rf.devices)
+def bench(rf_pe):
+    return sc.Bench(rf_pe.devices)
 
 
 def test_bench_model(bench):
@@ -126,8 +226,12 @@ def test_chain_topology_and_sneak(bench):
     assert not bench.sneak_paths(bench.chain([0, 1, 2, 3], loss_db=60.0))
 
 
+@pytest.mark.parametrize("board", ["jeanoko-n4", "pe4302"])
 @pytest.mark.parametrize("name", sorted(sc.LIBRARY))
-def test_library_compiles_and_plays(rf, bench, name):
+def test_library_compiles_and_plays(board, name):
+    rf = rfctl.Rfctl.sim(virtual=True, board=board)
+    bench = sc.Bench(rf.devices)
+    assert bench.model == ("node" if board.startswith("jeanoko") else "pair")
     s = sc.LIBRARY[name](bench)
     c = sc.compile(s, bench)
     assert c.timeline and c.timeline[0][0] == 0
@@ -141,7 +245,10 @@ def test_library_compiles_and_plays(rf, bench, name):
     log = rf.log(256)
     assert log and all(e["late_us"] == 0 for e in log)
     assert log[0]["t_sched"] == t0
+    # no UART command ever had to wait for its unit
+    assert rf.status()["uart_deferred"] == 0
     rf.stop()
+    rf.close()
 
 
 def test_sync_code_and_marks(bench):

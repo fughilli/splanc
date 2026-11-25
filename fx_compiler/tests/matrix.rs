@@ -69,11 +69,13 @@ fn ranged_vectors_are_numeric_not_colour() {
 
 #[test]
 fn old_manifests_are_byte_identical() {
-    // No range on a vector: exactly the manifest earlier compilers emitted.
+    // No range on a vector: exactly the manifest earlier compilers emitted,
+    // except a float slider's step, which is 0 (continuous) since D-541 (it was
+    // the (hi-lo)/100 grid). Old firmware and apps read 0 as "no snap".
     let c = compile(&format!("uniform vec3 tint = 1.0, 0.5, 0.0;\nuniform float k : 0..5 = 1.0;\n{SHADE}")).unwrap();
     assert_eq!(
         manifest_json(&c.uniforms),
-        r#"[{"name":"tint","slot":0,"width":3,"ui":{"kind":"color"},"default":[1,0.5,0],"min":0,"max":1},{"name":"k","slot":3,"width":1,"ui":{"kind":"slider","min":0,"max":5,"step":0.05},"default":[1],"min":0,"max":5}]"#
+        r#"[{"name":"tint","slot":0,"width":3,"ui":{"kind":"color"},"default":[1,0.5,0],"min":0,"max":1},{"name":"k","slot":3,"width":1,"ui":{"kind":"slider","min":0,"max":5,"step":0},"default":[1],"min":0,"max":5}]"#
     );
 }
 

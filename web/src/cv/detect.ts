@@ -234,8 +234,10 @@ export class DetectorGL {
   private readonly bgRadiusPx: number;
   /** The adaptive diffuse detector, when diffuseMode is "adaptive" and the
    * context supports it; used whenever the diffuse prefilter is on. */
-  private readonly adaptive: AdaptiveDiffuseGL | null = null;
+  private adaptive: AdaptiveDiffuseGL | null = null;
   private readonly diffuseMode: "adaptive" | "legacy";
+  /** The adaptive params as tuned (at downscale 2), before scaling to `downscale`. */
+  private readonly adaptiveBase: AdaptiveDiffuseParams;
   private targetW = 0;
   private targetH = 0;
   private readback: Uint8Array = new Uint8Array(0);
@@ -252,7 +254,8 @@ export class DetectorGL {
   private grabH = 0;
   private grabBuf: Uint8Array = new Uint8Array(0);
 
-  readonly downscale: number;
+  /** Camera px per detection px. Changes only through {@link setDownscale}. */
+  downscale: number;
   threshold: number;
   flipV: boolean;
   private readonly minArea: number;
@@ -274,10 +277,11 @@ export class DetectorGL {
     this.bgGain = opts.localContrast?.gain ?? 0;
     this.bgRadiusPx = opts.localContrast?.radiusPx ?? 8;
     this.diffuseMode = opts.diffuseMode ?? "adaptive";
+    this.adaptiveBase = opts.adaptiveParams ?? DEFAULT_ADAPTIVE_DIFFUSE;
     if (this.diffuseMode === "adaptive") {
       if (AdaptiveDiffuseGL.supported(gl)) {
-        const p = adaptiveParamsForDownscale(opts.adaptiveParams ?? DEFAULT_ADAPTIVE_DIFFUSE, this.downscale);
-        this.adaptive = new AdaptiveDiffuseGL(gl, p);
+        const p = adaptiveParamsForDownscale(this.adaptiveBase, this.downscale);
+        this.adaptive = new AdaptiveDiffuseGL(gl, p, this.downscale);
       }
       else console.warn("[detect] EXT_color_buffer_float unavailable: diffuse mode uses the legacy top-hat prefilter");
     }
@@ -300,6 +304,22 @@ export class DetectorGL {
 
     this.targetTex = gl.createTexture()!;
     this.fbo = gl.createFramebuffer()!;
+  }
+
+  /**
+   * Change the detection resolution (camera px per detection px) — the GPU-cost
+   * lever of the low-end tier ({@link planDetectDownscale}). The adaptive
+   * detector's radii rescale to span the same image distance
+   * (adaptiveParamsForDownscale). Call between captures or in the probe, never
+   * mid-decode: blob areas and centroid precision change with it.
+   */
+  setDownscale(ds: number): void {
+    const d = Math.max(1, Math.round(ds));
+    if (d === this.downscale) return;
+    this.downscale = d;
+    if (this.adaptive !== null) {
+      this.adaptive = new AdaptiveDiffuseGL(this.gl, adaptiveParamsForDownscale(this.adaptiveBase, d), d);
+    }
   }
 
   /** Turn the diffuse-mode local-contrast prefilter on (gain > 0) or off (0)
@@ -332,17 +352,61 @@ export class DetectorGL {
    */
   detect(texture: WebGLTexture, imgW: number, imgH: number, opts: { stats?: boolean } = {}): Blob[] {
     const gl = this.gl;
+    const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
+    const t0 = performance.now();
+    let buf: Uint8Array;
+    let w: number;
+    let h: number;
+    let tRead: number;
+    if (this.adaptive !== null && this.bgGain > 0) {
+      w = Math.max(1, Math.round(imgW / this.downscale));
+      h = Math.max(1, Math.round(imgH / this.downscale));
+      tRead = performance.now();
+      buf = this.adaptive.run(texture, w, h);
+    } else {
+      const r = this.renderDetect(texture, imgW, imgH);
+      w = r.w;
+      h = r.h;
+      if (this.readback.length !== w * h * 4) this.readback = new Uint8Array(w * h * 4);
+      tRead = performance.now();
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.readback);
+      buf = this.readback;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
+    const tCcl = performance.now();
+    // readPixels row 0 is the render target's bottom row, and the fragment
+    // shader samples the camera texture identity-mapped — so buffer row 0
+    // holds the camera texture's v=0 row. Whether that row is the image top
+    // or bottom is what `flipV` encodes (see DetectorOptions.flipV).
+    const blobs = this.blobsFromBuffer(buf, w, h, this.downscale, imgH, this.flipV, opts);
+    const t1 = performance.now();
+    this.lastProfile = { submitMs: tRead - t0, readMs: tCcl - tRead, cclMs: t1 - tCcl, inFlight: 0 };
+    return blobs;
+  }
+
+  /**
+   * Queue the detect pass(es) for one camera texture without reading anything
+   * back (the pipelined path, {@link DetectPipeline}). The detect buffer is then
+   * in `fbo` at w x h; `stats`, when non-null, is the adaptive detector's packed
+   * noise-statistics target, to be read back (RGBA/FLOAT) and handed to
+   * {@link acceptStats}. Leaves `fbo` bound; the caller restores its state.
+   */
+  renderDetect(
+    texture: WebGLTexture,
+    imgW: number,
+    imgH: number,
+  ): { fbo: WebGLFramebuffer; w: number; h: number; stats: { fbo: WebGLFramebuffer; w: number; h: number } | null } {
+    const gl = this.gl;
     const w = Math.max(1, Math.round(imgW / this.downscale));
     const h = Math.max(1, Math.round(imgH / this.downscale));
     if (this.adaptive !== null && this.bgGain > 0) {
-      const buf = this.adaptive.run(texture, w, h);
-      return this.blobsFrom(buf, w, h, this.downscale, imgH, this.flipV, opts);
+      const refresh = this.adaptive.render(texture, w, h);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.adaptive.outFbo);
+      return { fbo: this.adaptive.outFbo, w, h, stats: refresh ? this.adaptive.statsTarget : null };
     }
     this.ensureTarget(w, h);
-
-    const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
-    const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
-
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
     gl.viewport(0, 0, w, h);
     gl.disable(gl.DEPTH_TEST);
@@ -356,6 +420,22 @@ export class DetectorGL {
       const stepFull = (this.bgRadiusPx * this.downscale) / 2;
       gl.uniform2f(this.uBgStep, stepFull / imgW, stepFull / imgH);
     }
+    this.drawCamera(texture);
+    return { fbo: this.fbo, w, h, stats: null };
+  }
+
+  /** The adaptive detector's packed stats texels, read back from
+   * {@link renderDetect}'s `stats` target: the next frames' noise floor. */
+  acceptStats(texels: Float32Array): void {
+    this.adaptive?.acceptStats(texels);
+  }
+
+  /** Main-thread cost split of the last {@link detect} (or pipelined frame). */
+  lastProfile: DetectProfile | null = null;
+
+  /** Bind the camera texture (LINEAR, clamped) and draw the fullscreen pass. */
+  private drawCamera(texture: WebGLTexture): void {
+    const gl = this.gl;
     gl.uniform1i(this.uCam, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -366,18 +446,6 @@ export class DetectorGL {
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
-
-    if (this.readback.length !== w * h * 4) this.readback = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.readback);
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
-    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
-
-    // readPixels row 0 is the render target's bottom row, and the fragment
-    // shader samples the camera texture identity-mapped — so buffer row 0
-    // holds the camera texture's v=0 row. Whether that row is the image top
-    // or bottom is what `flipV` encodes (see DetectorOptions.flipV).
-    return this.blobsFrom(this.readback, w, h, this.downscale, imgH, this.flipV, opts);
   }
 
   /**
@@ -392,7 +460,7 @@ export class DetectorGL {
     // width fixes the downsample factor, rather than this.downscale, so the two
     // can't silently disagree.
     const ds = r.w > 0 ? f.imgW / r.w : this.downscale;
-    return this.blobsFrom(r.detect, r.w, r.h, ds, f.imgH, false, opts);
+    return this.blobsFromBuffer(r.detect, r.w, r.h, ds, f.imgH, false, opts);
   }
 
   /** Scene stats from whichever form this frame arrived in (see detectFrame). */
@@ -406,8 +474,8 @@ export class DetectorGL {
     return sceneStatsFromLuma(r.measure, r.measureW * r.measureH);
   }
 
-  /** CCL + blob mapping, shared by the GPU and pre-reduced paths. */
-  private blobsFrom(
+  /** CCL + blob mapping, shared by the GPU, pipelined and pre-reduced paths. */
+  blobsFromBuffer(
     buf: Uint8Array,
     w: number,
     h: number,
@@ -433,13 +501,23 @@ export class DetectorGL {
    */
   measure(texture: WebGLTexture, imgW: number, imgH: number): SceneStats {
     const gl = this.gl;
+    const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
+    const { w, h } = this.renderMeasure(texture, imgW, imgH);
+    if (this.measureBuf.length !== w * h * 4) this.measureBuf = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.measureBuf);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
+    return sceneStatsFromLuma(this.measureBuf, w * h);
+  }
+
+  /** Queue the {@link measure} pass without reading it back (pipelined path);
+   * leaves its target bound. Hand the readback to {@link acceptMeasure}. */
+  renderMeasure(texture: WebGLTexture, imgW: number, imgH: number): { fbo: WebGLFramebuffer; w: number; h: number } {
+    const gl = this.gl;
     const w = MEASURE_W;
     const h = Math.max(1, Math.round((MEASURE_W * imgH) / imgW));
     this.ensureMeasureTarget(w, h);
-
-    const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
-    const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
-
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.measureFbo!);
     gl.viewport(0, 0, w, h);
     gl.disable(gl.DEPTH_TEST);
@@ -447,23 +525,16 @@ export class DetectorGL {
     gl.useProgram(this.program);
     gl.uniform1f(this.uThreshold, 0.0); // unthresholded: alpha = raw luminance
     gl.uniform1f(this.uBgGain, 0.0); // measure raw scene luma, never prefiltered
-    gl.uniform1i(this.uCam, 0);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.bindVertexArray(this.vao);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.bindVertexArray(null);
+    this.drawCamera(texture);
+    return { fbo: this.measureFbo!, w, h };
+  }
 
-    if (this.measureBuf.length !== w * h * 4) this.measureBuf = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.measureBuf);
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
-    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
-
+  /** A pipelined measure readback: becomes {@link lastMeasureFrame}. */
+  acceptMeasure(rgba: Uint8Array, w: number, h: number): SceneStats {
+    if (this.measureBuf.length !== rgba.length) this.measureBuf = new Uint8Array(rgba.length);
+    this.measureBuf.set(rgba);
+    this.measureW = w;
+    this.measureH = h;
     return sceneStatsFromLuma(this.measureBuf, w * h);
   }
 
@@ -570,6 +641,299 @@ export class DetectorGL {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.targetTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+}
+
+/** Main-thread cost of one detected frame, ms. */
+export interface DetectProfile {
+  /** Queueing the GPU passes (and, synchronous path, nothing else). */
+  submitMs: number;
+  /** Waiting for / copying the readback. Pipelined: the copy of an already
+   * finished frame, ~0 wait. Synchronous: the whole GPU frame + the copy. */
+  readMs: number;
+  /** Connected components + blob mapping. */
+  cclMs: number;
+  /** Frames still on the GPU when this one was delivered (pipelined). */
+  inFlight: number;
+}
+
+/** One frame delivered by {@link DetectPipeline.collect}, in submission order. */
+export interface DetectedFrame<T> {
+  tag: T;
+  blobs: Blob[];
+  /** Present when the frame was submitted with `measure: true`. */
+  scene?: SceneStats | undefined;
+  /** ms from submit to delivery (GPU latency + waiting for the next collect). */
+  latencyMs: number;
+}
+
+interface Slot<T> {
+  tag: T;
+  tSubmit: number;
+  /** null for a pre-reduced frame (no GPU work: ready at once). */
+  sync: WebGLSync | null;
+  pbo: WebGLBuffer | null;
+  w: number;
+  h: number;
+  imgH: number;
+  ds: number;
+  flipV: boolean;
+  stats: { pbo: WebGLBuffer; bytes: number } | null;
+  measure: { pbo: WebGLBuffer; w: number; h: number } | null;
+  reduced: ReducedFrame | null;
+  measureNow?: SceneStats;
+}
+
+/** Detection downscales the low-end tier walks (2 = full quality; 3 and 4 cut
+ * the GPU work to ~44% / ~25%). Measured on the diffuse_rope suite (CPU
+ * reference): recall 0.673 / 0.668 / 0.662, median centre error 1.72 / 1.72 /
+ * 1.78 px, 4-symbol hue classification unchanged — far less than the decode
+ * yield a phone loses shedding a third of its frames. */
+export const DETECT_DOWNSCALE_LADDER = [2, 3, 4] as const;
+/** Step down when more than this fraction of camera frames was shed because the
+ * GPU was behind. */
+export const DETECT_SHED_MAX = 0.15;
+
+/**
+ * Detector tier for the measured GPU throughput: given the probe's submitted and
+ * shed frame counts at downscale `current`, the downscale to probe next — or
+ * null to keep `current` (fast enough, or already the cheapest rung). A ladder
+ * walk at probe time only: the tier is fixed before the pattern runs.
+ */
+export function planDetectDownscale(current: number, m: { submitted: number; shed: number }): number | null {
+  const total = m.submitted + m.shed;
+  if (total < 20) return null; // too few frames to judge
+  if (m.shed / total <= DETECT_SHED_MAX) return null;
+  const next = DETECT_DOWNSCALE_LADDER.find((d) => d > current);
+  return next ?? null;
+}
+
+/** Frames the GPU may hold before submit() sheds new ones (1 = classic double
+ * buffering: frame N renders while N-1 is read). */
+export const PIPELINE_DEPTH = 2;
+/** A frame still unsignaled this long after submit is read anyway (blocking):
+ * progress even on a driver that never reports its fences. */
+export const PIPELINE_STALL_MS = 250;
+
+/**
+ * Pipelined detection (D-177): the GPU work for frame N is queued and its
+ * results are read back one camera frame LATER, from a pixel-pack buffer behind
+ * a fence, so the main thread never waits for the GPU. The synchronous
+ * {@link DetectorGL.detect} stalls on readPixels for the whole GPU frame (~10 ms
+ * on a Pixel 10 Pro Fold, several times that on a mid-range GPU) — the bulk of
+ * the 21-28 ms p95 that dropped a quarter of the frames at 60 fps.
+ *
+ * Per camera frame: `submit(frame, tag)` renders and starts the async readback;
+ * `collect()` returns every frame whose fence has signaled, oldest first, as
+ * detected blobs with the tag it was submitted with (the caller keeps the
+ * frame's timestamp/pose/K in the tag — a result belongs to ITS frame, never
+ * the one that was current when it came back). Nothing is reordered and
+ * nothing is dropped once submitted. When the GPU is PIPELINE_DEPTH frames
+ * behind, submit() returns false and does nothing: the frame is shed exactly
+ * like one the camera dropped (the decoder and bit-rate negotiation already
+ * handle those), and the main thread stays free instead of blocking.
+ *
+ * Results are identical to detect()'s: the same passes, the same buffer, the
+ * same CCL. The adaptive detector's noise floor refreshes from the stats target
+ * read back in the same slot (a frame or two staler than the synchronous path's,
+ * at scene speed either way), and the scene-measure pass rides along on request.
+ */
+export class DetectPipeline<T> {
+  private readonly slots: Slot<T>[] = [];
+  private readonly freePbos: WebGLBuffer[] = [];
+  private cpu = new Uint8Array(0);
+  private statsCpu = new Float32Array(0);
+  private measureCpu = new Uint8Array(0);
+  /** Frames submit() refused because the GPU was behind. */
+  shed = 0;
+  /** Frames submit() queued. */
+  submitted = 0;
+
+  constructor(
+    private readonly gl: WebGL2RenderingContext,
+    private readonly det: DetectorGL,
+    private readonly depth = PIPELINE_DEPTH,
+    private readonly now: () => number = () => performance.now(),
+  ) {}
+
+  /** Frames submitted and not yet collected. */
+  get inFlight(): number {
+    return this.slots.length;
+  }
+
+  /**
+   * Queue one frame. Returns false (and queues nothing) when the GPU is already
+   * `depth` frames behind and the oldest has not finished — shed this frame.
+   */
+  submit(f: DetectInput, tag: T, opts: { measure?: boolean } = {}): boolean {
+    const gl = this.gl;
+    const r = f.reduced;
+    if (r) {
+      // Pre-reduced (native) frame: no GPU work, ready on the next collect.
+      this.slots.push({
+        tag,
+        tSubmit: this.now(),
+        sync: null,
+        pbo: null,
+        w: r.w,
+        h: r.h,
+        imgH: f.imgH,
+        ds: r.w > 0 ? f.imgW / r.w : this.det.downscale,
+        flipV: false,
+        stats: null,
+        measure: null,
+        reduced: r,
+        ...(opts.measure ? { measureNow: this.det.measureFrame(f) } : {}),
+      });
+      this.submitted++;
+      return true;
+    }
+    const pending = this.slots.filter((s) => s.sync !== null).length;
+    if (pending >= this.depth && !this.ready(this.slots[0]!)) {
+      this.shed++;
+      return false;
+    }
+    const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
+    const tex = f.texture!;
+    const d = this.det.renderDetect(tex, f.imgW, f.imgH);
+    const bytes = d.w * d.h * 4;
+    const pbo = this.pbo(bytes);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+    gl.readPixels(0, 0, d.w, d.h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    let stats: Slot<T>["stats"] = null;
+    if (d.stats !== null) {
+      const sb = d.stats.w * d.stats.h * 16;
+      const spbo = this.pbo(sb);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, d.stats.fbo);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, spbo);
+      gl.readPixels(0, 0, d.stats.w, d.stats.h, gl.RGBA, gl.FLOAT, 0);
+      stats = { pbo: spbo, bytes: sb };
+    }
+    let measure: Slot<T>["measure"] = null;
+    if (opts.measure) {
+      const m = this.det.renderMeasure(tex, f.imgW, f.imgH);
+      const mpbo = this.pbo(m.w * m.h * 4);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, mpbo);
+      gl.readPixels(0, 0, m.w, m.h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+      measure = { pbo: mpbo, w: m.w, h: m.h };
+    }
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)!;
+    gl.flush();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
+    this.slots.push({
+      tag,
+      tSubmit: this.now(),
+      sync,
+      pbo,
+      w: d.w,
+      h: d.h,
+      imgH: f.imgH,
+      ds: this.det.downscale,
+      flipV: this.det.flipV,
+      stats,
+      measure,
+      reduced: null,
+    });
+    this.submitted++;
+    return true;
+  }
+
+  /** Every frame that is ready (fence signaled, or stalled past
+   * PIPELINE_STALL_MS), oldest first. `all` = wait for everything in flight. */
+  collect(all = false): DetectedFrame<T>[] {
+    const out: DetectedFrame<T>[] = [];
+    while (this.slots.length > 0) {
+      const s = this.slots[0]!;
+      if (!all && !this.ready(s) && this.now() - s.tSubmit < PIPELINE_STALL_MS) break;
+      this.slots.shift();
+      out.push(this.finish(s));
+    }
+    return out;
+  }
+
+  /** Free the GPU resources (pending frames are discarded). */
+  dispose(): void {
+    const gl = this.gl;
+    for (const s of this.slots) {
+      if (s.sync) gl.deleteSync(s.sync);
+      for (const b of [s.pbo, s.stats?.pbo, s.measure?.pbo]) if (b) gl.deleteBuffer(b);
+    }
+    this.slots.length = 0;
+    for (const b of this.freePbos) gl.deleteBuffer(b);
+    this.freePbos.length = 0;
+  }
+
+  private ready(s: Slot<T>): boolean {
+    if (s.sync === null) return true;
+    const st = this.gl.clientWaitSync(s.sync, 0, 0);
+    return st === this.gl.ALREADY_SIGNALED || st === this.gl.CONDITION_SATISFIED;
+  }
+
+  private finish(s: Slot<T>): DetectedFrame<T> {
+    const gl = this.gl;
+    const t0 = this.now();
+    let buf: Uint8Array;
+    let scene: SceneStats | undefined = s.measureNow;
+    if (s.reduced !== null) {
+      buf = s.reduced.detect;
+    } else {
+      const bytes = s.w * s.h * 4;
+      if (this.cpu.length !== bytes) this.cpu = new Uint8Array(bytes);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, s.pbo);
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, this.cpu);
+      buf = this.cpu;
+      if (s.stats) {
+        const n = s.stats.bytes / 4;
+        if (this.statsCpu.length !== n) this.statsCpu = new Float32Array(n);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, s.stats.pbo);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, this.statsCpu);
+        this.det.acceptStats(this.statsCpu);
+      }
+      if (s.measure) {
+        const mb = s.measure.w * s.measure.h * 4;
+        if (this.measureCpu.length !== mb) this.measureCpu = new Uint8Array(mb);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, s.measure.pbo);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, this.measureCpu);
+        scene = this.det.acceptMeasure(this.measureCpu, s.measure.w, s.measure.h);
+      }
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      gl.deleteSync(s.sync!);
+      for (const b of [s.pbo, s.stats?.pbo, s.measure?.pbo]) if (b) this.release(b);
+    }
+    const t1 = this.now();
+    const blobs = this.det.blobsFromBuffer(buf, s.w, s.h, s.ds, s.imgH, s.flipV, {});
+    const t2 = this.now();
+    this.det.lastProfile = { submitMs: 0, readMs: t1 - t0, cclMs: t2 - t1, inFlight: this.slots.length };
+    return { tag: s.tag, blobs, scene, latencyMs: t2 - s.tSubmit };
+  }
+
+  /** A pixel-pack buffer of at least `bytes` (recycled; sized to fit). */
+  private pbo(bytes: number): WebGLBuffer {
+    const gl = this.gl;
+    const i = this.freePbos.findIndex((b) => (this.sizes.get(b) ?? 0) === bytes);
+    const b = i >= 0 ? this.freePbos.splice(i, 1)[0]! : gl.createBuffer()!;
+    if (this.sizes.get(b) !== bytes) {
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, b);
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, bytes, gl.STREAM_READ);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      this.sizes.set(b, bytes);
+    }
+    return b;
+  }
+
+  private readonly sizes = new Map<WebGLBuffer, number>();
+
+  private release(b: WebGLBuffer): void {
+    this.freePbos.push(b);
+    // Bound the pool: a resolution change leaves old sizes behind.
+    while (this.freePbos.length > 4 * (this.depth + 1)) {
+      const old = this.freePbos.shift()!;
+      this.sizes.delete(old);
+      this.gl.deleteBuffer(old);
+    }
   }
 }
 

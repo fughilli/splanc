@@ -73,6 +73,13 @@ fn main() -> std::io::Result<()> {
         Config::new().max_bytes(if firmware { 1 } else { 8192 }),
     );
 
+    // Mesh catch-up `shared state` (≤ 128 words): the firmware reads it in place
+    // (pbview, ffi.rs) and encodes it zero-copy, so its profile keeps a stub.
+    g.configure(
+        ".ledmapper.v1.SetFxState.words",
+        Config::new().max_bytes(if firmware { 1 } else { 512 }),
+    );
+
     // Batched telemetry (Pi-profile arms; players silently drop them).
     g.configure(
         ".ledmapper.v1.Detections.batch",
@@ -231,6 +238,23 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    // The effect store (docs/design/effect-store.md). The firmware encodes
+    // stored_effect_list zero-copy (effect_store.rs), so its profile drops the repeated
+    // fields from the by-value envelope; the host profile holds a full store (8).
+    g.configure(".ledmapper.v1.StoredEffectInfo.name", Config::new().max_bytes(32));
+    g.configure(".ledmapper.v1.SubmitEffect.name", Config::new().max_bytes(32));
+    for (field, host_len, host_bytes) in [
+        (".ledmapper.v1.StoredEffectList.effects", 8, 64),
+        (".ledmapper.v1.StoredEffectInfo.uniforms", 32, 24),
+        (".ledmapper.v1.StoredEffectInfo.decks", 2, 64),
+    ] {
+        if firmware {
+            g.configure(field, Config::new().skip(true));
+        } else {
+            g.configure(field, Config::new().max_len(host_len).max_bytes(host_bytes));
+        }
+    }
+
     // Firmware update (docs/design/ota.md). Neither firmware image decodes or encodes
     // these through the generated bindings: the app and the loader intercept the OTA
     // arms and use the hand-coded codec in //firmware/ota (wire.rs, cross-checked
@@ -272,6 +296,14 @@ fn main() -> std::io::Result<()> {
     // ("ws281x", "ddp") and a color order ("GRB"), sized to fit them, which keeps
     // the 8-channel state smaller than the old 4-channel one with 64-byte strings.
     g.configure(".ledmapper.v1.HardwareConfigState.channels", Config::new().max_len(8));
+    // Lamp power (docs/design/lamp-power.md): the firmware reads the power arms in
+    // place (pbview) and writes power_state zero-copy, so its by-value envelopes
+    // never carry a transition's uniform preset.
+    g.configure(".ledmapper.v1.PowerTransition.label", Config::new().max_bytes(32));
+    g.configure(
+        ".ledmapper.v1.PowerTransition.uniforms",
+        if firmware { Config::new().skip(true) } else { Config::new().max_len(8) },
+    );
     g.configure(".ledmapper.v1.HardwareChannel.led_type", Config::new().max_bytes(16));
     g.configure(".ledmapper.v1.HardwareChannel.color_order", Config::new().max_bytes(8));
     // Ethernet + network outputs (docs/design/p4-ethernet-ddp.md): the P4 answers
@@ -374,6 +406,25 @@ fn main() -> std::io::Result<()> {
         (".ledmapper.v1.MeshSend.inner", 200, true),
         (".ledmapper.v1.MeshResult.members", 16, false),
         (".ledmapper.v1.MeshState.members", 16, false),
+        // Mesh M7: membership and administration (mesh_gw.rs parses and encodes them).
+        (".ledmapper.v1.MeshProvision.site_secret", 32, true),
+        (".ledmapper.v1.MeshProvision.admin_key", 65, true),
+        (".ledmapper.v1.MeshProvision.groups", 8, false),
+        (".ledmapper.v1.MeshUnlock.grant", 144, true),
+        (".ledmapper.v1.MeshAdmit.key_hash", 8, true),
+        (".ledmapper.v1.MeshRevoke.order", 128, true),
+        (".ledmapper.v1.MeshRevoke.mesh_key", 16, true),
+        (".ledmapper.v1.MeshRevoke.site_secret", 32, true),
+        (".ledmapper.v1.MeshRevoke.exclude", 8, false),
+        (".ledmapper.v1.MeshAssignGroups.groups", 8, false),
+        (".ledmapper.v1.MeshEject.key_hash", 8, true),
+        (".ledmapper.v1.MeshPending.key_hash", 8, true),
+        (".ledmapper.v1.MeshState.device_key", 65, true),
+        (".ledmapper.v1.MeshState.pending", 8, false),
+        (".ledmapper.v1.MeshState.groups", 8, false),
+        // The mesh topology (the app's mesh map): mesh_gw.rs encodes it.
+        (".ledmapper.v1.MeshMember.neighbours", 8, false),
+        (".ledmapper.v1.MeshState.neighbours", 8, false),
     ] {
         if firmware {
             g.configure(field, Config::new().skip(true));
@@ -386,6 +437,9 @@ fn main() -> std::io::Result<()> {
     if firmware {
         g.configure(".ledmapper.v1.MeshInfo.result", Config::new().skip(true));
         g.configure(".ledmapper.v1.MeshInfo.state", Config::new().skip(true));
+        g.configure(".ledmapper.v1.MeshInfo.admin", Config::new().skip(true));
+        g.configure(".ledmapper.v1.MeshMember.pose", Config::new().skip(true));
+        g.configure(".ledmapper.v1.MeshState.pose", Config::new().skip(true));
     }
 
     g.compile_fdset_file(&args[1], &args[2])

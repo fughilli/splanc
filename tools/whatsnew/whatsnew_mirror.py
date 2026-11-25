@@ -28,6 +28,12 @@ createElement (it never assigns innerHTML). Every media URL is downloaded and
 rewritten to a local ``media/...`` path; image/video release assets that the
 body doesn't reference are appended to the notes as a gallery.
 
+Feature-preview clips (docs/release-clips.md): a release with a
+``preview-clips.json`` asset gets a ``clips`` list (title, summary, PRs, and per
+framing the MP4/WebM/poster as local media), which the card plays inline. The
+notes' "Feature previews" section (GIFs for GitHub's page) and the clip assets
+are then left out of the body and the gallery, so nothing shows twice.
+
 Node format (``body`` of each release): a text node is a JSON string; an element
 is ``{"t": tag, "a": {attr: value}, "c": [children]}`` ("a"/"c" omitted when
 empty). Boolean attributes carry ``true``.
@@ -96,6 +102,12 @@ FIRMWARE_TAG = PRODUCTS[1].pattern
 # Per-file and per-run download caps: a runaway asset must not bloat the site.
 MAX_MEDIA_BYTES = 25 * 1024 * 1024
 MAX_TOTAL_MEDIA_BYTES = 150 * 1024 * 1024
+
+# Feature-preview clips (tools/release_clips/github_release.py writes both).
+CLIPS_MANIFEST = "preview-clips.json"
+CLIPS_HEADING = "Feature previews"
+MAX_CLIPS = 12
+ASSET_API = re.compile(r"^https://api\.github\.com/repos/[^/]+/[^/]+/releases/assets/\d+$")
 
 # -- sanitizer allowlist ------------------------------------------------------
 
@@ -410,6 +422,18 @@ def _tidy(nodes: list) -> list:
     return merged
 
 
+def _urls_in(nodes: list) -> set:
+    """Media URLs still referenced by a node tree (img/video src + poster)."""
+    out: set = set()
+    for n in nodes:
+        if isinstance(n, dict):
+            a = n.get("a", {})
+            if n["t"] in ("img", "video"):
+                out.update(a[k] for k in ("src", "poster") if isinstance(a.get(k), str))
+            out |= _urls_in(n.get("c", []))
+    return out
+
+
 def html_to_nodes(html: str) -> tuple[list, list[str]]:
     """Sanitize rendered release HTML into (nodes, remote media URLs)."""
     b = _TreeBuilder()
@@ -473,12 +497,29 @@ def select_releases(
     cap = _version(up_to, pattern) if up_to else None
     picked = []
     for r in releases:
+        if r.get("draft"):
+            # Only the release being built, matched by name too: a draft's tag
+            # reads "untagged-<id>" once another release claims the same tag.
+            if not up_to or up_to not in (r.get("tag_name"), r.get("name")):
+                continue
+            r = {**r, "tag_name": up_to}
         v = _version(r.get("tag_name", ""), pattern)
-        if v is None or (r.get("draft") and r.get("tag_name") != up_to):
+        if v is None:
             continue
         if cap is not None and v > cap:
             continue
         picked.append((v, r))
+
+    # One row per tag: the published release, else the newest draft.
+    def rank(r: dict) -> tuple:
+        return (not r.get("draft"), r.get("created_at") or "")
+
+    best: dict = {}
+    for v, r in picked:
+        cur = best.get(r["tag_name"])
+        if cur is None or rank(r) > rank(cur[1]):
+            best[r["tag_name"]] = (v, r)
+    picked = list(best.values())
     picked.sort(key=lambda p: p[0], reverse=True)
     rows = [r for _v, r in picked]
     return rows[:limit] if limit > 0 else rows
@@ -526,7 +567,7 @@ def _digest_part(r: dict) -> list:
     assets = sorted(
         (a.get("id"), a.get("name"), a.get("updated_at"))
         for a in r.get("assets", [])
-        if _is_media_asset(a)
+        if _is_media_asset(a) or a.get("name") == CLIPS_MANIFEST
     )
     return [r.get("tag_name"), r.get("name"), r.get("body") or "", assets]
 
@@ -544,6 +585,13 @@ def http_fetcher(token: Optional[str]) -> Fetcher:
             headers["Accept"] = "application/vnd.github.full+json"
             if token:
                 headers["Authorization"] = f"Bearer {token}"
+        if ASSET_API.match(url):
+            # A draft release's asset: only the API serves it. It redirects to a
+            # signed storage URL that must NOT get the token (urllib would forward it).
+            headers["Accept"] = "application/octet-stream"
+            loc = _asset_redirect(url, headers)
+            if loc:
+                url, headers = loc, {"User-Agent": headers["User-Agent"]}
         req = urllib.request.Request(url, headers=headers)
         for attempt in range(4):
             try:
@@ -564,6 +612,23 @@ def http_fetcher(token: Optional[str]) -> Fetcher:
         raise AssertionError("unreachable")
 
     return fetch
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+def _asset_redirect(url: str, headers: dict) -> Optional[str]:
+    """The storage URL an asset API URL redirects to (None: served directly)."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(urllib.request.Request(url, headers=headers), timeout=60):
+            return None
+    except urllib.error.HTTPError as e:
+        if e.code in (301, 302, 303, 307, 308) and e.headers.get("Location"):
+            return e.headers["Location"]
+        raise
 
 
 def list_releases(repo: str, fetch: Fetcher, pages: int = 40, per_page: int = 50) -> list[dict]:
@@ -624,17 +689,119 @@ class MediaStore:
         return local
 
 
-def mirror_release(release: dict, version_re: re.Pattern, media: MediaStore, repo: str) -> dict:
+def _asset_url(release: dict, asset: dict) -> Optional[str]:
+    """Where to download an asset: a draft's has no public URL yet (the Release
+    workflow mirrors before publishing), so it goes through the API."""
+    if release.get("draft") and asset.get("url"):
+        return asset["url"]
+    return asset.get("browser_download_url")
+
+
+def _text(n) -> str:
+    if isinstance(n, str):
+        return n
+    return "".join(_text(k) for k in n.get("c", []))
+
+
+def drop_section(nodes: list, heading: str) -> list:
+    """Remove a top-level h1/h2 section titled `heading` (up to the next h1/h2)."""
+    out, skipping = [], False
+    for n in nodes:
+        is_head = isinstance(n, dict) and n["t"] in ("h1", "h2")
+        if is_head:
+            skipping = _text(n).strip() == heading
+        if not skipping:
+            out.append(n)
+    while out and isinstance(out[0], str) and not out[0].strip():
+        out.pop(0)
+    return out
+
+
+def mirror_clips(
+    release: dict, media: MediaStore, fetch: Fetcher, log: Callable[[str], None]
+) -> tuple[list, set]:
+    """(clips for the card, asset names they use) from the release's
+    preview-clips.json. Media are downloaded like any other; a clip whose MP4
+    fails to download is dropped. Best effort: a bad manifest means no clips."""
+    assets = {a.get("name"): a for a in release.get("assets", [])}
+    man = assets.get(CLIPS_MANIFEST)
+    if not man:
+        return [], set()
+    try:
+        data, _ = fetch(_asset_url(release, man) or "")
+        manifest = json.loads(data)
+        rows = manifest["clips"]
+        assert isinstance(rows, list)
+    except Exception as e:
+        log(f"whatsnew: {release.get('tag_name')}: unreadable {CLIPS_MANIFEST}: {e}")
+        return [], {CLIPS_MANIFEST}
+    used = {CLIPS_MANIFEST}
+    clips = []
+    for c in rows[:MAX_CLIPS]:
+        if not isinstance(c, dict):
+            continue
+        variants = []
+        for v in c.get("variants") or []:
+            if not isinstance(v, dict) or v.get("framing") not in ("phone", "desktop"):
+                continue
+            names = [v.get(k) for k in ("mp4", "webm", "poster", "gif")]
+            used.update(n for n in names if isinstance(n, str))
+            local = {}
+            for k in ("mp4", "webm", "poster"):
+                a = assets.get(v.get(k))
+                url = _asset_url(release, a) if a else None
+                if url:
+                    got = media.get(url)
+                    if got:
+                        local[k] = got
+            if "mp4" not in local:
+                continue
+            out_v = {"framing": v["framing"], **local}
+            for k in ("width", "height"):
+                if isinstance(v.get(k), int) and 0 < v[k] < 10000:
+                    out_v[k] = v[k]
+            variants.append(out_v)
+        title, summary = c.get("title"), c.get("summary")
+        if not variants or not isinstance(title, str) or not isinstance(summary, str):
+            continue
+        prs = [n for n in c.get("prs") or [] if isinstance(n, int)]
+        clips.append({"id": str(c.get("id", ""))[:48], "title": title[:80], "summary": summary[:300],
+                      "prs": prs, "variants": variants})  # fmt: skip
+    return clips, used
+
+
+def mirror_release(
+    release: dict,
+    version_re: re.Pattern,
+    media: MediaStore,
+    repo: str,
+    fetch: Optional[Fetcher] = None,
+    log: Callable[[str], None] = lambda m: None,
+) -> dict:
     html = release.get("body_html")
     if html is None:
         nodes, urls = text_to_nodes(release.get("body") or ""), []
     else:
         nodes, urls = html_to_nodes(html)
+    clips, clip_assets = mirror_clips(release, media, fetch or media.fetch, log)
+    if clips:
+        # The GIF section is GitHub's rendering of the clips; the card plays the MP4s.
+        nodes = drop_section(nodes, CLIPS_HEADING)
+        clip_urls = {
+            a.get("browser_download_url")
+            for a in release.get("assets", [])
+            if a.get("name") in clip_assets
+        }
+        urls = [u for u in urls if u in _urls_in(nodes) and u not in clip_urls]
     referenced = set(urls)
     # Image/video assets not shown in the body: append them as a gallery.
     for asset in release.get("assets", []):
-        url = asset.get("browser_download_url")
-        if not url or url in referenced or not _is_media_asset(asset):
+        if asset.get("name") in clip_assets:
+            continue
+        if asset.get("browser_download_url") in referenced or not _is_media_asset(asset):
+            continue
+        url = _asset_url(release, asset)
+        if not url:
             continue
         ctype = (asset.get("content_type") or "").lower()
         ext = os.path.splitext(asset.get("name", ""))[1].lower()
@@ -647,11 +814,31 @@ def mirror_release(release: dict, version_re: re.Pattern, media: MediaStore, rep
         )
         nodes.append({"t": "p", "c": [node]})
         urls.append(url)
-    mapping = {u: media.get(u) for u in urls}
+    # A draft's notes link its assets by their future public URL; fetch those
+    # through the API too.
+    alias = {}
+    if release.get("draft"):
+        for a in release.get("assets", []):
+            if a.get("url"):
+                alias[
+                    f"https://github.com/{repo}/releases/download/{release['tag_name']}/{a.get('name')}"
+                ] = a["url"]
+                if a.get("browser_download_url"):
+                    alias[a["browser_download_url"]] = a["url"]
+    mapping = {u: media.get(alias.get(u, u)) for u in urls}
     nodes = rewrite_media(nodes, mapping)
     v = _version(release["tag_name"], version_re)
     assert v is not None
-    used = sorted({p for p in mapping.values() if p})
+    used = sorted(
+        {p for p in mapping.values() if p}
+        | {
+            x
+            for c in clips
+            for vv in c["variants"]
+            for k, x in vv.items()
+            if k in ("mp4", "webm", "poster")
+        }
+    )
     return {
         "version": "%d.%d.%d" % v,
         "tag": release["tag_name"],
@@ -662,6 +849,7 @@ def mirror_release(release: dict, version_re: re.Pattern, media: MediaStore, rep
         "prerelease": bool(release.get("prerelease")),
         "body": nodes,
         "media": used,
+        **({"clips": clips} if clips else {}),
     }
 
 
@@ -689,7 +877,7 @@ def build_index(
         products = []
         notes: dict[str, dict] = {}
         for product, rows in selected:
-            mirrored = [mirror_release(r, product.pattern, media, repo) for r in rows]
+            mirrored = [mirror_release(r, product.pattern, media, repo, fetch, log) for r in rows]
             body = {"schema": SCHEMA, "product": product.id, "releases": mirrored}
             _write_json(os.path.join(work, product.id + ".json"), body)
             notes[product.id] = body

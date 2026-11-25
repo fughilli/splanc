@@ -120,6 +120,14 @@ export interface Env {
   /** Sign in with Google: the OAuth client ids (web, iOS). Not secrets. */
   GOOGLE_SIGNIN_WEB_CLIENT_ID?: string;
   GOOGLE_SIGNIN_IOS_CLIENT_ID?: string;
+  /** Worker SECRET: the key of the keyed email hash (billing/email.ts). Email
+   * attach / recovery answer 503 without it. Rotating it orphans every
+   * stored email, so it is set once. */
+  BILLING_EMAIL_HASH_KEY?: string;
+  /** Worker SECRET + var: the email provider (Resend) and the From address,
+   * e.g. "Splanc <codes@mail.splanc.io>". */
+  RESEND_API_KEY?: string;
+  BILLING_EMAIL_FROM?: string;
   /** Worker SECRET: the owner's token for /billing/admin/* (suspensions). */
   BILLING_ADMIN_TOKEN?: string;
   /** Grafana Cloud Logs push (ops.ts: billing, feedback); all three or none. */

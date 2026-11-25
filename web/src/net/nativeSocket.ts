@@ -17,7 +17,7 @@
 import { isNativePlatform, registerNativePlugin } from "./native";
 import type { SocketFactory, SocketLike } from "./client";
 
-interface WssEvent {
+export interface WssEvent {
   id: string;
   type: "open" | "message" | "close" | "error";
   data?: string; // base64 (binary) or the raw string (text)
@@ -26,11 +26,27 @@ interface WssEvent {
   message?: string;
 }
 
-interface WssBridgePlugin {
+export interface WssBridgePlugin {
   connect(opts: { url: string }): Promise<{ id: string }>;
   send(opts: { id: string; data: string; binary: boolean }): Promise<void>;
   close(opts: { id: string }): Promise<void>;
   addListener(event: "wssEvent", cb: (e: WssEvent) => void): Promise<{ remove(): Promise<void> }>;
+  /** Bonjour browse for `_splanc._tcp` (net/discovery.ts); results arrive as
+   * `mdnsService` events. */
+  startDiscovery(): Promise<void>;
+  stopDiscovery(): Promise<void>;
+  addListener(event: "mdnsService", cb: (e: NativeMdnsEvent) => void): Promise<{ remove(): Promise<void> }>;
+}
+
+/** One `mdnsService` event from the native browse. */
+export interface NativeMdnsEvent {
+  name?: string;
+  host?: string;
+  port?: number;
+  addresses?: string[];
+  txt?: Record<string, string>;
+  lost?: boolean;
+  error?: string;
 }
 
 // Bind to the native plugin via the injected Capacitor global (see
@@ -39,7 +55,7 @@ interface WssBridgePlugin {
 // is cheap. (Reached only on-native: nativeSocketFactory gates on
 // isNativePlatform.)
 let bridge: WssBridgePlugin | null = null;
-function wssBridge(): WssBridgePlugin {
+export function wssBridge(): WssBridgePlugin {
   if (!bridge) bridge = registerNativePlugin<WssBridgePlugin>("WssBridge");
   return bridge;
 }

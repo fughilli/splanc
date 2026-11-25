@@ -83,6 +83,8 @@ too (see Performance below).
 the fast type for per-LED work), `fixed16` (Q1.14) and `fixed8` (Q1.6) (range
 ±2; mostly for compact buffer storage), float matrices `mat3 mat4`, `struct`s
 and fixed-size arrays (`Type name[N]`). Casts: `fixed(x)`, `float(x)`, `int(x)`.
+Fixed-point literals: `0.6fx` (= `fixed(0.6)`), `0.6fx16` (= `fixed16(0.6)`),
+`0.6fx8` (= `fixed8(0.6)`); `fx16`/`fx8` literals must be below 2.
 A vector can be indexed like an array: `v[1]` is `v.y`.
 
 ### Matrices (`mat3`, `mat4`)
@@ -117,6 +119,13 @@ a `dot` per LED (`examples/plane_slice_pose.fx`).
 ## Storage
 
 - `state float x;` — per-frame state; written by `update()`, read-only in `shade()`.
+  Starts at zero, or at an initial value: `state float level = 0.5;` (scalar /
+  vector / matrix). The initial value must be a compile-time constant (literals,
+  maths over them, `vec3(...)`); a uniform, `time` or another state there is an
+  error: set those in `init()`.
+- `void init() { ... }` — optional; runs once before the first `update()` after
+  the effect loads (after the initial values). Seed arrays / structs here
+  instead of a hand-rolled `state bool inited;` flag.
 - `buffer vec3 trail;` — one element per LED, persists; `trail[led.idx]` may be
   written from `shade()` (trails, feedback).
 - `texture vec3 img(64, 64);` — a W×H texture; `sample(img, uv)` (bilinear),
@@ -158,7 +167,7 @@ effect cheap (the fixed-point examples show each technique —
 - **Per-LED maths in `fixed`** (Q16.16; `int` for indices). Read LED inputs as
   fixed — `fixed(led.uv.x)`, `fixed(led.s)`, `fixed(led.pos.y)` load directly
   (the first one costs ~1,200 cycles per LED once, covering all of them) — and
-  wrap every literal: `x * fixed(0.6)`. One float operand turns the expression
+  make every literal fixed: `x * 0.6fx` (or `x * fixed(0.6)`). One float operand turns the expression
   back into soft-float plus two 320-cycle conversions; `compile_effect` warns
   about it (a `warning: perf: …`).
 - **Phases in turns.** Keep `state fixed` phases advanced in `update()`

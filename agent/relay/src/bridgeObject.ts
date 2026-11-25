@@ -654,6 +654,11 @@ export class BridgeObject {
         if (prepared instanceof Response) return prepared;
         return this.forward(ws, req, prepared);
       }
+      if (ws && name === "set_transitions" && msg.id !== undefined) {
+        const prepared = await this.prepareTransitions(msg);
+        if (prepared instanceof Response) return prepared;
+        return this.forward(ws, req, prepared);
+      }
       if (ws && name === "measure_effect" && msg.id !== undefined) {
         return rewriteReply(await this.forward(ws, req, body), msg.id, async (m) => {
           if (m.result && m.result["isError"] !== true) await (await this.library()).noteMeasure(toolResultJson(m.result));
@@ -815,6 +820,29 @@ export class BridgeObject {
         return rpcResult(msg.id!, { isError: true, content: [{ type: "text", text: (e as Error).message }] });
       }
       delete args["library_id"];
+    }
+    return JSON.stringify({ ...msg, params: { ...params, arguments: args } });
+  }
+
+  /** set_transitions {on|off: {library_id}}: resolve each entry's source (and an
+   * effect id) here, like crossfade_to; the bridge sees plain source. */
+  private async prepareTransitions(msg: RpcRequest): Promise<Response | string> {
+    const params = msg.params ?? {};
+    const args = { ...((params["arguments"] as Record<string, unknown>) ?? {}) };
+    for (const dir of ["on", "off"]) {
+      const d = args[dir];
+      if (!d || typeof d !== "object" || typeof (d as Record<string, unknown>)["library_id"] !== "string") continue;
+      const t = { ...(d as Record<string, unknown>) };
+      try {
+        const eid = typeof t["effect_id"] === "string" ? (t["effect_id"] as string) : undefined;
+        const { entry, effectId } = await (await this.library()).forDeploy(t["library_id"], eid);
+        if (typeof t["source"] !== "string") t["source"] = entry.source;
+        t["effect_id"] = effectId;
+      } catch (e) {
+        return rpcResult(msg.id!, { isError: true, content: [{ type: "text", text: (e as Error).message }] });
+      }
+      delete t["library_id"];
+      args[dir] = t;
     }
     return JSON.stringify({ ...msg, params: { ...params, arguments: args } });
   }

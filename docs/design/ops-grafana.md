@@ -107,6 +107,7 @@ The Worker POSTs JSON lines to Loki's push API in the background
 | Proxy errors | `ai_upstream_error`, `ai_upstream_unreachable`, `ai_stream_error`, `ai_org_spend_stop`, `ai_org_spend_limit_hit` | status, type, model |
 | Accounts | `ai_account_opened` / `_closed` / `_suspended` / `_reinstated` | trial / forfeited credits, admin reason label |
 | Web checkout | `ai_checkout_created` / `_failed`, `ai_purchase_rejected`, `ai_webhook_rejected` | sku, code, reason |
+| Email + recovery | `ai_email_verified` / `_removed` / `_failed`, `ai_recover_requested`, `ai_account_recovered` | replaced, known, revoked_others (never the address or its hash) |
 | Apple consumption | `ai_consumption_sent` / `_skipped` / `_failed` | consumption, preference, reason |
 | Reconciliation | `ai_reconcile_usage`, `ai_reconcile_store` | day, ledger vs Anthropic USD, mismatch fraction, missing / unknown counts |
 | Feedback | `fb_received`, `fb_reason` (one per reason chip), `fb_status`, `fb_duplicate`, `fb_rate_limited`, `fb_rejected`, `fb_deleted` | surface, reasons, signature, failing tool, app / firmware version, AI kind/vendor/model, status, prev, age_h |
@@ -187,6 +188,8 @@ go-live ([docs/ops/billing-go-live.md](../ops/billing-go-live.md#grafana-alert_e
 | Written-off usage | sum `written_off` (1 d) > 500 credits | warn |
 | Web checkout / Stripe purchase problems | `ai_checkout_failed` + `ai_purchase_rejected` (1 h) > 0 | page |
 | Webhook signatures failing | `ai_webhook_rejected` (1 h) > 5 | warn |
+| Verification / recovery emails failing | `ai_email_failed` (1 h) > 2 | warn |
+| Account recoveries spiking | `ai_account_recovered` (1 h) > 20 | warn |
 | Apple consumption answer failed | `ai_consumption_failed` (1 h) > 0 | warn |
 | Feedback spike (after a release) | reports in 6 h > 5 **and** > 3 × the 7-day average rate | warn |
 | Demo relay 429 spike | 429s (15 m) > 30 | warn |

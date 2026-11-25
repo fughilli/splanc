@@ -100,6 +100,8 @@ export interface FrameSample {
   scene?: SceneStats | undefined;
   /** Blob-population summary for the LED brightness servo. */
   blobs?: BlobPopulation | undefined;
+  /** Spot SNR / core-clipping signals for the diffuse servo (spotSignals). */
+  spots?: SpotSignals | undefined;
 }
 
 /**
@@ -410,6 +412,258 @@ export function planLedBrightness(current: number, m: LedBrightnessSignals): num
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Diffuse-capture servo (D-178)
+//
+// The LED-brightness rules above (DIM_INTENSITY, STARVE_FRAC, LED_FLOOD_FRAC)
+// read absolute blob intensity and the blob count against ledCount. Both assume
+// an UNSTRIDED, bright scene: in diffuse capture only every stride-th LED is lit
+// (blobCount ~ ledCount/stride, permanently "starved"), and the biased-dark auto
+// exposure keeps spot intensity far below 0.7 at ANY good operating point (the
+// 2026-11-18 rope sweep detects best at median blob intensity 0.06-0.26). So in
+// diffuse mode those rules always read "too dim" and walk the brightness up,
+// restarting the decoder at every step. The diffuse servo instead steers on what
+// the adaptive detector actually needs:
+//
+//  - spot SNR: each blob's peak over the detector's noise floor (the per-frame
+//    median + kSigma x MAD threshold, so the ratio is the spot's margin above the
+//    cut). Low = spots sinking into the diffuser texture / sensor noise.
+//  - per-channel core clipping: of the blobs that use a channel, the fraction
+//    whose core saturates in it. One clipping channel shifts every two-channel
+//    hue (magenta, yellow) toward the other, and it is a single channel that
+//    clips first (on the rope sweep, blue-dominant spots at long exposure) —
+//    a median over all blobs would hide it.
+//
+// Two levers, two rates:
+//  - exposure (AE bias in EV, or the manual exposure target where the camera
+//    has no bias): FINE, cheap — no reconfigure, so it moves each tick;
+//  - LED brightness: COARSE, and every change restarts the decoder. It settles
+//    at the start of the capture (before anything is decoded) and is then HELD,
+//    changing only at a stride-phase boundary (a restart that happens anyway),
+//    and only when exposure alone has run out of range.
+// ---------------------------------------------------------------------------
+
+/** Spot SNR (median blob peak / noise floor) below which spots are marginal. On
+ * the rope sweep the cells that lose LEDs (10% brightness at every exposure, 30%
+ * at short exposure) sit at a median of 2.5-6; the good band reads 8-28. */
+export const SPOT_SNR_LOW = 8;
+/** Per-channel core-clip fraction above which exposure/brightness steps down;
+ * below CORE_CLIP_OK the servo may step up. */
+export const CORE_CLIP_HIGH = 0.15;
+export const CORE_CLIP_OK = 0.05;
+/** A blob's core counts as clipped at this peak (the CCL saturation cut, ~0.98). */
+const CORE_SAT = 250 / 255;
+/** A channel is "used" by a blob at this fraction of its dominant channel, and
+ * clipped with it at CLIP_SHARE (the colour is scaled so its max is the core). */
+const CH_USED = 0.5;
+const CH_CLIP_SHARE = 0.9;
+/** Channels with fewer blobs than this don't vote on clipping (noise). */
+const CH_MIN_BLOBS = 3;
+
+/** One frame's spot signals. */
+export interface SpotSignals {
+  /** Median of blob peak / noise floor. */
+  snr: number;
+  /** Max over R, G, B of the fraction of that channel's blobs whose core clips. */
+  coreClip: number;
+  /** Which channel that was (0 r, 1 g, 2 b), or -1 when nothing clips. */
+  clipChannel: number;
+  blobs: number;
+}
+
+/**
+ * Spot signals of one frame's blobs. `floor` is the adaptive detector's noise
+ * floor (NoiseFloor.floor); where it isn't known (the native iOS reducer keeps
+ * its floor), the 10th-percentile blob peak stands in — every blob cleared the
+ * floor, so its weakest survivors sit just above it.
+ */
+export function spotSignals(blobs: readonly Blob[], floor: number | null): SpotSignals | null {
+  const n = blobs.length;
+  if (n === 0) return null;
+  if (spotPeaks.length < n) spotPeaks = new Float64Array(Math.max(n, 2 * spotPeaks.length));
+  for (let i = 0; i < n; i++) spotPeaks[i] = blobs[i]!.peak ?? blobs[i]!.intensity;
+  const f = floor !== null && floor > 0 ? floor : Math.max(1 / 255, select(spotPeaks, n, Math.floor(0.1 * n)));
+  const used = [0, 0, 0];
+  const clipped = [0, 0, 0];
+  for (let i = 0; i < n; i++) {
+    const b = blobs[i]!;
+    const c = [b.r ?? 0, b.g ?? 0, b.b ?? 0];
+    const mx = Math.max(c[0]!, c[1]!, c[2]!);
+    if (mx <= 0) continue;
+    const core = (b.peak ?? 0) >= CORE_SAT;
+    for (let k = 0; k < 3; k++) {
+      if (c[k]! < CH_USED * mx) continue;
+      used[k]!++;
+      if (core && c[k]! >= CH_CLIP_SHARE * mx) clipped[k]!++;
+    }
+  }
+  let coreClip = 0;
+  let clipChannel = -1;
+  for (let k = 0; k < 3; k++) {
+    if (used[k]! < CH_MIN_BLOBS) continue;
+    const fr = clipped[k]! / used[k]!;
+    if (fr > coreClip) {
+      coreClip = fr;
+      clipChannel = k;
+    }
+  }
+  return { snr: select(spotPeaks, n, n >> 1) / f, coreClip, clipChannel, blobs: n };
+}
+let spotPeaks = new Float64Array(256);
+
+/** Exposure-bias bounds and step for the diffuse servo (EV). The capture starts
+ * at DIFFUSE_AE_BIAS_START (capture.ts); a third of a stop is the finest step
+ * most cameras quantise exposureCompensation to. */
+export const AE_BIAS_MIN = -6;
+export const AE_BIAS_MAX = -1;
+export const AE_BIAS_STEP = 1 / 3;
+/** The same step on the manual [0,1] exposure target (planExposure's geometric
+ * map spans ~10 stops: 0.1 ≈ 1 EV). */
+export const EXPOSURE_FINE_STEP = 1 / 30;
+
+export type ServoMove = "down" | "up" | null;
+
+/** Which way the spot signals want the light to move (null = in band). */
+export function spotMove(s: SpotSignals): ServoMove {
+  if (s.coreClip > CORE_CLIP_HIGH) return "down";
+  if (s.snr < SPOT_SNR_LOW && s.coreClip <= CORE_CLIP_OK) return "up";
+  return null;
+}
+
+/** Exposure steps per tick while settling (two thirds of a stop: the start of
+ * the capture should get into band in a few ticks) and after (a third). */
+export const SETTLE_EXPOSURE_STEPS = 2;
+
+/** LED brightness steps of the diffuse servo (coarse: the fine part is exposure). */
+export const DIFFUSE_BRIGHT_UP = 1.6;
+export const DIFFUSE_BRIGHT_DOWN = 0.6;
+/** The settle stage at the start of a diffuse capture lasts at most this long
+ * (and ends early once the signals sit in band for SETTLE_IN_BAND_TICKS). */
+export const DIFFUSE_SETTLE_MS = 8_000;
+export const SETTLE_IN_BAND_TICKS = 2;
+/** Without phase boundaries, a held brightness change applies alone once it
+ * has been wanted this many consecutive ticks (~10 s). */
+export const HELD_ALONE_TICKS = 5;
+
+/** The exposure lever as the servo sees it: a value with bounds and a step —
+ * the AE bias in EV (AE_BIAS_*), or the manual [0,1] target
+ * (EXPOSURE_FINE_STEP) where the camera has no bias. null = no exposure control
+ * (iOS web capture): brightness does everything. */
+export interface ExposureLever {
+  value: number;
+  lo: number;
+  hi: number;
+  step: number;
+}
+
+export interface DiffuseServoStep {
+  /** New exposure value (apply now: no reconfigure). */
+  exposure?: number;
+  /** New LED brightness (settling: apply now; else at the next phase boundary). */
+  brightness?: number;
+}
+
+/**
+ * One diffuse-servo decision. Each direction has a lever it prefers:
+ *
+ *  - DOWN (a channel's cores clip): exposure first — it fixes clipping at any
+ *    brightness, costs nothing, and steps finely. Brightness steps down only once
+ *    exposure is at its floor.
+ *  - UP (spots marginal): brightness first. On the rope sweep the noise floor
+ *    rises with exposure (it is mostly the diffuser's own lit texture), so
+ *    lengthening exposure barely moves SNR — 10% brightness loses most LEDs at
+ *    EVERY exposure — while brightness raises the spots over that floor.
+ *    Exposure steps up only once brightness is at its maximum (where SNR is
+ *    read-noise limited, at short exposure, exposure is the lever that works).
+ *
+ * At most one lever moves per tick, so the effect of each step is measured
+ * before the next.
+ */
+export function planDiffuseServo(
+  brightness: number,
+  exposure: ExposureLever | null,
+  s: SpotSignals,
+  settling: boolean,
+): DiffuseServoStep {
+  const m = spotMove(s);
+  if (m === null) return {};
+  const step = (exposure?.step ?? 0) * (settling ? SETTLE_EXPOSURE_STEPS : 1);
+  const expTo = (dir: 1 | -1): number | null => {
+    if (exposure === null) return null;
+    const v = Math.min(exposure.hi, Math.max(exposure.lo, exposure.value + dir * step));
+    return Math.abs(v - exposure.value) < 1e-6 ? null : v;
+  };
+  if (m === "down") {
+    const e = expTo(-1);
+    if (e !== null) return { exposure: e };
+    const b = Math.max(LED_BRIGHTNESS_MIN, brightness * DIFFUSE_BRIGHT_DOWN);
+    return Math.abs(b - brightness) < 1e-3 ? {} : { brightness: b };
+  }
+  const b = Math.min(LED_BRIGHTNESS_MAX, brightness * DIFFUSE_BRIGHT_UP);
+  if (Math.abs(b - brightness) >= 1e-3) return { brightness: b };
+  const e = expTo(1);
+  return e !== null ? { exposure: e } : {};
+}
+
+/**
+ * Settle-then-hold timing for the diffuse servo: brightness moves freely while
+ * the capture settles (its start, before anything is decoded), then is HELD —
+ * a post-settle brightness proposal waits for the next stride-phase boundary,
+ * which restarts the decoder anyway, and must have been wanted on consecutive
+ * ticks. Exposure (the fine lever) applies every tick throughout. Pure; the
+ * capture loop feeds it one tick at a time.
+ */
+export class DiffuseServo {
+  private startMs: number | null = null;
+  private inBand = 0;
+  private settled = false;
+  private pending: { value: number; up: boolean; ticks: number } | null = null;
+
+  get settling(): boolean {
+    return !this.settled;
+  }
+
+  /**
+   * One tick. `exposure` is applied by the caller now; `brightness` only when
+   * present in the result (settle stage). Post-settle proposals are kept for
+   * {@link atPhaseBoundary}.
+   */
+  tick(tMs: number, brightness: number, exposure: ExposureLever | null, s: SpotSignals): DiffuseServoStep {
+    this.startMs ??= tMs;
+    if (!this.settled) {
+      this.inBand = spotMove(s) === null ? this.inBand + 1 : 0;
+      if (this.inBand >= SETTLE_IN_BAND_TICKS || tMs - this.startMs >= DIFFUSE_SETTLE_MS) this.settled = true;
+      else return planDiffuseServo(brightness, exposure, s, true);
+    }
+    const st = planDiffuseServo(brightness, exposure, s, false);
+    if (st.brightness === undefined) {
+      this.pending = null;
+      return st;
+    }
+    const up = st.brightness > brightness;
+    this.pending = this.pending !== null && this.pending.up === up ? { value: st.brightness, up, ticks: this.pending.ticks + 1 } : { value: st.brightness, up, ticks: 1 };
+    return {};
+  }
+
+  /** At a stride-phase boundary: the brightness to bundle into that reconfigure
+   * (a proposal wanted over >= 2 consecutive ticks), or null. */
+  atPhaseBoundary(): number | null {
+    const p = this.pending;
+    this.pending = null;
+    return p !== null && p.ticks >= 2 ? p.value : null;
+  }
+
+  /** Where no phase boundary is coming (a single phase, or a stride that never
+   * rotates): the held proposal once it has been wanted for `minTicks`
+   * consecutive ticks, else null (and it keeps waiting). */
+  takeHeld(minTicks: number): number | null {
+    const p = this.pending;
+    if (p === null || p.ticks < minTicks) return null;
+    this.pending = null;
+    return p.value;
+  }
+}
+
 /** Camera-exposure servo target step, in the [0,1] exposureTime range
  * (planExposure lerps this over the camera's exposureTime capability). DOWN
  * (shorten) escapes bloom a hair faster than UP creeps. */
@@ -513,6 +767,11 @@ export class ExposureMonitor {
     return this.samples.length;
   }
 
+  /** Forget every sample (a re-probe after the detector changed). */
+  reset(): void {
+    this.samples = [];
+  }
+
   /** Median camera frame interval (ms) — the shutter-speed proxy. */
   frameIntervalMs(): number | null {
     if (this.samples.length < 4) return null;
@@ -550,6 +809,22 @@ export class ExposureMonitor {
       grayFrac: median(pops.map((p) => p.grayFrac)),
       medianIntensity: median(pops.map((p) => p.medianIntensity)),
       satFrac: median(pops.map((p) => p.satFrac)),
+    };
+  }
+
+  /** Median diffuse spot signals over the window (null until frames carry them).
+   * The clip channel is the one that clipped most often. */
+  spotSignals(): SpotSignals | null {
+    const sp = this.samples.filter((s) => s.spots !== undefined).map((s) => s.spots!);
+    if (sp.length === 0) return null;
+    const votes = [0, 0, 0];
+    for (const s of sp) if (s.clipChannel >= 0) votes[s.clipChannel]!++;
+    const top = Math.max(...votes);
+    return {
+      snr: median(sp.map((s) => s.snr)),
+      coreClip: median(sp.map((s) => s.coreClip)),
+      clipChannel: top > 0 ? votes.indexOf(top) : -1,
+      blobs: median(sp.map((s) => s.blobs)),
     };
   }
 

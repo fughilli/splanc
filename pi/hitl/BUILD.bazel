@@ -24,6 +24,10 @@ load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 # satisfy it). It no longer backs a daemon (the daemon reads reserve/catalog.json).
 exports_files(["skus.bzl"])
 
+# The fx_bench ingest's GitHub API / job-log / release helpers, reused by the
+# per-gate metrics ingest (//pi/hitl/observability/metrics:ingest_lib).
+exports_files(["observability/fxbench/ingest_fx_bench.py"])
+
 # EXACTLY the files the nix flake build reads, staged by sbc_application into a
 # hermetic TreeArtifact so `nix build path:` sees deterministic content instead of
 # the live workspace (whose .bazelisk cache Bazel rewrites mid-deploy — the churn

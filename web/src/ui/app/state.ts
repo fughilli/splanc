@@ -13,7 +13,7 @@ import {
   type ClientOptions,
   type SocketFactory,
 } from "../../net/client";
-import { connectionRegistry } from "../../net/connectionRegistry";
+import { connectionRegistry, deviceHostKey } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
 import { isBleUrl } from "../../net/bleTransport";
 import { deviceStore } from "../../store/deviceStore";
@@ -45,6 +45,9 @@ import { toast, type PillState } from "../kit";
 import type { FpsStateMessage } from "../../net/proto";
 import { inLoader } from "../../net/otaUpdate";
 import { pushPendingOnConnect } from "../../capture/imuCalReconnect";
+import { deviceHasMesh } from "../../net/mesh";
+import { meshMemberName, onMeshResults, unlockMeshOnConnect } from "../../store/meshSession";
+import { meshResultSummary, nodeLabel } from "../screens/meshModel";
 
 export interface ConnStatus {
   state: PillState;
@@ -125,9 +128,16 @@ class AppState {
       /** The cert is known trusted (the cert page just confirmed it): see
        * ClientOptions.trustedBefore. Otherwise derived from the device store. */
       trustedBefore?: boolean;
+      /** Who the caller knows is at `wssUrl` (Improv: the device it just provisioned),
+       * so a saved record that is another fixture moves aside (deviceStore.upsert). */
+      expect?: { name?: string; bleId?: string };
     },
   ): void {
-    this.disconnect();
+    // Release the current connection without probing the device it frees yet: when it
+    // is the device we are about to connect to (every reload: restoreActive), that probe
+    // opened a second wss next to this one, the player's one TLS slot took one of them
+    // and reset the other, and the app sat at "retrying…" for ~3 s.
+    const freed = this.detach();
     // A Bluetooth device is only reachable through its BLE socket factory (made by
     // the connect flow from a live GATT device). Without one, the fallback below
     // would hand `ble:<id>` to the native WssBridge, which crashes iOS. Keep it
@@ -136,8 +146,15 @@ class AppState {
       this.setStatus({ state: "offline", text: "offline", certUrl: null, error: "Reconnect over Bluetooth" });
       return;
     }
-    const dev = deviceStore.upsert(wssUrl, label);
+    const dev = deviceStore.upsert(wssUrl, label, opts?.expect);
     deviceStore.setActive(dev.id);
+    // A different device was freed: probe it now (it is no longer the active one). Not
+    // when it is this same player under another record (an older spelling of its
+    // address): that probe would race this connection for the player's TLS slot.
+    const freedUrl = freed ? deviceStore.get(freed)?.wssUrl : undefined;
+    if (freed && freed !== dev.id && (!freedUrl || deviceHostKey(freedUrl) !== deviceHostKey(wssUrl))) {
+      void deviceProber.probeNow(freed);
+    }
     // coldRetryLimit defaults to 1 (give up fast on an untrusted cert so we don't
     // starve the cert-approval page's TLS slot). The trust flow passes a higher
     // value: once the user has accepted the cert the only thing left that can
@@ -295,6 +312,9 @@ class AppState {
           );
         }
         void sync;
+        // A fixture in a mesh this app administers: unlock this connection with the stored
+        // admin key, so mesh control and administration work at once (mesh M7).
+        if (!updater && deviceHasMesh(client.welcome)) unlockMeshOnConnect(client, () => this.client === client);
       } catch (e) {
         // Drop a PROVISIONAL BLE entry that never learned an identity (no welcome
         // MAC). It's keyed on an ephemeral Web Bluetooth device.id, so a failed or
@@ -403,6 +423,9 @@ class AppState {
           if (devId !== undefined) await this.checkCert(c, devId).catch(() => undefined);
           // The updater answers only the update protocol (no clock sync).
           if (!inLoader(c.welcome)) await c.syncClock().catch(() => undefined);
+          // A fixture in a mesh this app administers: unlock this connection too (a first
+          // connect that only got through on a background retry, or any reconnect).
+          if (!inLoader(c.welcome) && deviceHasMesh(c.welcome)) unlockMeshOnConnect(c, () => this.client === c);
         })();
       }
     }, 600);
@@ -415,6 +438,15 @@ class AppState {
   }
 
   disconnect(): void {
+    const wasActive = this.detach();
+    // While connected the prober skips the active device; now that it's freed,
+    // probe it immediately so its row flips to reachable/offline right away
+    // instead of after up to a full poll interval.
+    if (wasActive) void deviceProber.probeNow(wasActive);
+  }
+
+  /** Close the connection and clear the active device; returns the device it freed. */
+  private detach(): string | null {
     this.clearReconnectWatch();
     const old = this.client;
     // Detach first: closing fires onDisconnected, which must not treat this
@@ -425,10 +457,7 @@ class AppState {
     const wasActive = deviceStore.activeId();
     deviceStore.setActive(null);
     this.setStatus({ state: "offline", text: "offline", certUrl: null, error: null });
-    // While connected the prober skips the active device; now that it's freed,
-    // probe it immediately so its row flips to reachable/offline right away
-    // instead of after up to a full poll interval.
-    if (wasActive) void deviceProber.probeNow(wasActive);
+    return wasActive;
   }
 
   /** Capture/demo-mode seam (FUG-103 docs screenshots): force a connected client
@@ -544,3 +573,13 @@ export function fpsAbortMessage(s: FpsStateMessage): string {
 }
 
 export const appState = new AppState();
+
+// A whole-mesh change (an effect shared with every member, mesh M6) that some fixtures
+// missed: say which, wherever the user is. The Mesh section lists every fixture's answer.
+onMeshResults((c, r) => {
+  if (c !== appState.client) return;
+  const sum = meshResultSummary(r, (n) => meshMemberName(appState.client!, n) ?? nodeLabel(n));
+  if (sum.allOk || sum.partial) return;
+  const missed = sum.rows.filter((x) => !x.ok).map((x) => `${x.name} (${x.text.toLowerCase()})`);
+  toast(`${sum.line}. Missed: ${missed.join(", ")}`, { error: true });
+});

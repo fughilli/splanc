@@ -87,3 +87,58 @@ fn the_compiler_emits_the_format_the_vm_runs() {
     other[4] = FXB_FORMAT_VERSION + 1;
     assert!(Program::parse(&other).is_err());
 }
+
+fn compile_err(src: &str) -> String {
+    match compile(src) {
+        Ok(_) => panic!("expected a compile error"),
+        Err(d) => format!("{d:?}"),
+    }
+}
+
+#[test]
+fn sliders_default_to_the_uniforms_native_precision() {
+    // D-541: uniform values ride the wire and flash as f32, so a float slider
+    // is continuous (step 0 = no snap in the app, MIDI or keypoint blend), an
+    // int steps by whole numbers and a fixed type by its LSB. No 101-step grid.
+    let m = manifest(
+        r#"
+uniform float f : 0..5 = 1.0;
+uniform float plain = 0.5;
+uniform int n : 0..10 = 3;
+uniform int bare = 0;
+uniform fixed8 q : -1..1 = 0.0;
+uniform vec3 dir : -1..1 = 0, 1, 0;
+vec3 shade(Led led) { return dir * f * plain * float(n + bare) * float(q); }
+"#,
+    );
+    let step = |name: &str| by_name(&m, name)["ui"]["step"].as_f64().unwrap();
+    assert_eq!(step("f"), 0.0);
+    assert_eq!(step("plain"), 0.0);
+    assert_eq!(step("n"), 1.0);
+    assert_eq!(step("bare"), 1.0);
+    assert_eq!(step("q"), 1.0 / 64.0, "fixed8 is Q1.6");
+    assert_eq!(step("dir"), 0.0);
+}
+
+#[test]
+fn an_explicit_step_annotation_sets_the_grid() {
+    let m = manifest(
+        r#"
+uniform float n : 0..8 step 0.5 "beats" = 2.0;
+uniform int k : 0..100 step 5 = 10;
+uniform float c : 0..1 step 0 = 0.5;
+uniform vec2 p : vec2(-1, 0) .. vec2(1, 2) step 0.25 = 0.0;
+vec3 shade(Led led) { return vec3(n * float(k) * c * p.x); }
+"#,
+    );
+    let step = |name: &str| by_name(&m, name)["ui"]["step"].as_f64().unwrap();
+    assert_eq!(step("n"), 0.5);
+    assert_eq!(by_name(&m, "n")["unit"], "beats", "the unit string still follows the annotation");
+    assert_eq!(step("k"), 5.0);
+    assert_eq!(step("c"), 0.0);
+    assert_eq!(step("p"), 0.25);
+    let shade = "vec3 shade(Led led) { return vec3(0.0); }";
+    assert!(compile_err(&format!("uniform float x : 0..1 step -1 = 0.0;\n{shade}")).contains("positive"));
+    assert!(compile_err(&format!("uniform int x : 0..9 step 0.5 = 0;\n{shade}")).contains("whole number"));
+    assert!(compile_err(&format!("uniform float x : 0..1 step = 0.0;\n{shade}")).contains("after `step`"));
+}

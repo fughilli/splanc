@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "ai-model-setup",
+  "title": "Set up AI in one place",
+  "summary": "Model setup compares the AI options side by side: free OpenRouter models, Splanc AI credits, or your own key. Each lists its cost, quality, limits and privacy.",
+  "prs": [548],
+  "route": "#/settings/ai",
+  "framing": ["phone"],
+  "theme": "dark",
+  "steps": [
+    {
+      "click": "button:has-text('Model setup')",
+      "wait": 1200
+    },
+    {
+      "scroll": ".k-sheet",
+      "by": 640,
+      "duration": 2200,
+      "wait": 600
+    },
+    {
+      "scroll": ".k-sheet",
+      "by": 560,
+      "duration": 2000,
+      "wait": 1400
+    }
+  ]
+}

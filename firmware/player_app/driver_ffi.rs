@@ -42,9 +42,20 @@ pub struct LmDrvHost {
     pub bus_ensure: Option<unsafe extern "C" fn() -> bool>,
     pub scan: Option<unsafe extern "C" fn(out: *mut u8, cap: usize) -> usize>,
     pub cycles: Option<unsafe extern "C" fn() -> u32>,
+    /// GPIO intrinsics (docs/design/lamp-power.md): `gpio_read(pin)` -> 0/1, or
+    /// -1 when the pin is refused/unavailable; `gpio_mode(pin, mode)` (0 input,
+    /// 1 input + pull-up, 2 input + pull-down) -> applied. The host refuses pins
+    /// with another duty (LED outputs, the I2C bus, USB, flash).
+    pub gpio_read: Option<unsafe extern "C" fn(pin: u8) -> i32>,
+    pub gpio_mode: Option<unsafe extern "C" fn(pin: u8, mode: u8) -> bool>,
 }
 
-static mut HOST: LmDrvHost = LmDrvHost { alloc: None, free: None, bus_ensure: None, scan: None, cycles: None };
+static mut HOST: LmDrvHost =
+    LmDrvHost { alloc: None, free: None, bus_ensure: None, scan: None, cycles: None, gpio_read: None, gpio_mode: None };
+
+/// The pseudo I2C address the compiler aims the GPIO intrinsics at
+/// (fx_compiler GPIO_DEV): no 7-bit address reaches it.
+pub const GPIO_DEV: u8 = 0x80;
 
 #[derive(Clone, Copy)]
 struct ExportRef {
@@ -63,6 +74,8 @@ struct Driver {
     interval_ms: u32,
     feed_imu: bool,
     next_us: u64,
+    /// The previous poll's time (dt), 0 before the first.
+    last_us: u64,
     // stats
     polls: u32,
     bus_errors: u32,
@@ -104,12 +117,35 @@ struct DrvBus {
 impl ledmapper_fx_vm::I2cBus for DrvBus {
     fn write(&mut self, addr: u8, bytes: &[u8]) -> bool {
         self.ops += 1;
+        if addr == GPIO_DEV {
+            // gpio_mode(pin, mode): [reg = pin, val = mode]. A refusal is the
+            // driver's answer (0), never a bus error.
+            return match unsafe { (*addr_of!(HOST)).gpio_mode } {
+                Some(f) if bytes.len() == 2 => unsafe { f(bytes[0], bytes[1]) },
+                _ => false,
+            };
+        }
         let ok = unsafe { sensor_ffi::bus_write(addr, bytes) };
         self.errors += !ok as u32;
         ok
     }
     fn read_reg(&mut self, addr: u8, reg: u8, out: &mut [u8]) -> bool {
         self.ops += 1;
+        if addr == GPIO_DEV {
+            // gpio_read(pin): one byte, 0 / 1; unavailable -> the VM's -1.
+            let v = match unsafe { (*addr_of!(HOST)).gpio_read } {
+                Some(f) => unsafe { f(reg) },
+                None => -1,
+            };
+            if v < 0 || out.is_empty() {
+                return false;
+            }
+            out[0] = (v != 0) as u8;
+            for o in &mut out[1..] {
+                *o = 0;
+            }
+            return true;
+        }
         let ok = unsafe { sensor_ffi::bus_write_read(addr, &[reg], out) };
         self.errors += !ok as u32;
         ok
@@ -151,7 +187,18 @@ pub unsafe extern "C" fn lm_drv_poll(now_us: u64) {
     let budget = Budget { instructions: DRV_BUDGET, deadline: None };
     let cycles = (*addr_of!(HOST)).cycles;
     let c0 = cycles.map(|f| f()).unwrap_or(0);
-    let (outcome, counters) = d.vm.run_poll(&prog, &FxFrame::default(), &mut bus, &budget);
+    // `time` (s) wraps every 1024 s so f32 keeps ~0.1 ms resolution for a
+    // driver's debounce timers on any uptime; `dt` is the real gap since the
+    // last poll (timers that accumulate dt never see the wrap).
+    let dt_us = if d.last_us == 0 { d.interval_ms as u64 * 1000 } else { now_us - d.last_us };
+    d.last_us = now_us;
+    let frame = FxFrame {
+        time: (now_us % 1_024_000_000) as f32 / 1e6,
+        dt: (dt_us.min(10_000_000)) as f32 / 1e6,
+        frame: d.polls,
+        ..Default::default()
+    };
+    let (outcome, counters) = d.vm.run_poll(&prog, &frame, &mut bus, &budget);
     let c1 = cycles.map(|f| f()).unwrap_or(0);
     d.polls = d.polls.wrapping_add(1);
     d.bus_ops_last = bus.ops;
@@ -212,9 +259,10 @@ unsafe fn load(fxb: &[u8], interval_ms: u32, feed_imu: bool) -> Result<(), pb::S
     let (Some(alloc), Some(bus_ensure)) = (host.alloc, host.bus_ensure) else {
         return Err(fx_error("unsupported", "this firmware has no driver host"));
     };
-    if !bus_ensure() {
-        return Err(fx_error("no_bus", "the I2C bus could not be started (pins disabled or conflicting)"));
-    }
+    // No I2C bus (pins disabled or conflicting) is not fatal: a GPIO-only driver
+    // (a touch module) needs none, and an I2C driver's ops then fail, which
+    // driver_state reports as bus errors (last_outcome 3).
+    let _ = bus_ensure();
     free_driver();
     let p = alloc(core::mem::size_of::<Driver>()) as *mut Driver;
     if p.is_null() {
@@ -244,6 +292,7 @@ unsafe fn load(fxb: &[u8], interval_ms: u32, feed_imu: bool) -> Result<(), pb::S
     addr_of_mut!((*p).interval_ms).write(iv);
     addr_of_mut!((*p).feed_imu).write(feed_imu);
     addr_of_mut!((*p).next_us).write(0);
+    addr_of_mut!((*p).last_us).write(0);
     addr_of_mut!((*p).cyc_sum).write(0);
     addr_of_mut!((*p).instr_sum).write(0);
     for f in [

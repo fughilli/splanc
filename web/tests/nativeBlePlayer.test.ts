@@ -344,7 +344,7 @@ test("pickPlayer ignores nameless and foreign sightings", () => {
   );
 });
 
-test("in the native app, the device sheet's 'Connect over Bluetooth (offline)' scans, lists and connects natively", async () => {
+test("in the native app, the connect picker's 'Connect directly over Bluetooth' scans, lists and connects natively", async () => {
   const ble = new FakeNativePlayerBle();
   const dev = ble.add(spooky(1, "58:E6:C5:00:00:01"));
   const g = globalThis as { Capacitor?: unknown };
@@ -359,7 +359,8 @@ test("in the native app, the device sheet's 'Connect over Bluetooth (offline)' s
   };
   try {
     openDeviceSheet();
-    buttonTitled("Connect over Bluetooth (offline)").click();
+    buttonTitled("Connect a fixture").click();
+    buttonTitled("Connect directly over Bluetooth").click();
     await advance(200);
     assert.ok(ble.scanning, "native scan running (no Web Bluetooth on iOS)");
     ble.advertise(dev.id, "SpookySplanc1", -50);

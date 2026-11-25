@@ -206,6 +206,8 @@ export default {
                   env.APPLE_IAP_KEY,
                   env.APPLE_SIGNIN_PRIVATE_KEY,
                   env.APPLE_SIGNIN_TOKEN_KEY,
+                  env.RESEND_API_KEY,
+                  env.BILLING_EMAIL_HASH_KEY,
                 ].filter((x): x is string => !!x),
                 waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
               }),

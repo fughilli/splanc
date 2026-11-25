@@ -302,8 +302,13 @@ async def find(address: str | None, name_filter: str, scan_seconds: float, name_
     return nameless if nameless else (None, None)
 
 
-async def _connect(dev, tries: int, connect_timeout: float, rescan_timeout: float = 8.0):
+async def _connect(
+    dev, tries: int, connect_timeout: float, rescan_timeout: float = 8.0, **client_kwargs
+):
     """Open a BLE link to the DUT, retrying transient connect failures.
+
+    `client_kwargs` go to every BleakClient built (e.g. `disconnected_callback=`, so a
+    caller holding the link open can tell a dropped link from a slow reply).
 
     The FIRST connect to a freshly-(re)booted C6 fails ~half the time with a
     message-less connect timeout (bleak gives up after `connect_timeout` and the
@@ -341,7 +346,7 @@ async def _connect(dev, tries: int, connect_timeout: float, rescan_timeout: floa
                 if i < tries:
                     await asyncio.sleep(1.0)
                 continue
-        client = BleakClient(dev, timeout=connect_timeout, **_adapter_kwargs())
+        client = BleakClient(dev, timeout=connect_timeout, **_adapter_kwargs(), **client_kwargs)
         try:
             await client.connect()
             if client.is_connected:
@@ -372,14 +377,25 @@ async def provision(
     connect_timeout: float = 12.0,
 ):
     done = asyncio.Event()
-    # write_t/answer_t: SendWifi write -> the device's answer (result or error), the
-    # "time to error" a wrong-password gate measures (join_s in the JSON).
-    state = {"urls": None, "error": None, "state": None, "write_t": None, "answer_t": None}
+    got_result = asyncio.Event()
+    # ack_t/answer_t: the RPC write's ack -> the device's answer (result, PROVISIONED or
+    # error), the latency the Improv budgets are defined on (join_s in the JSON).
+    state = {"urls": None, "error": None, "state": None, "ack_t": None, "answer_t": None}
+
+    def answered():
+        state["answer_t"] = state["answer_t"] or time.monotonic()
+
+    def join_s():
+        if state["ack_t"] is None:
+            return None
+        end = state["answer_t"] if state["answer_t"] is not None else time.monotonic()
+        return round(end - state["ack_t"], 2)
 
     def on_result(_sender, data):
         log(f"[improv] <- RPC_RESULT {bytes(data).hex()}")
         state["urls"] = parse_result(bytes(data))
-        state["answer_t"] = state["answer_t"] or time.monotonic()
+        answered()
+        got_result.set()
         done.set()
 
     def on_error(_sender, data):
@@ -387,7 +403,7 @@ async def provision(
         log(f"[improv] <- ERROR {bytes(data).hex()} (code={code})")
         if code != 0:
             state["error"] = error_name(code, data[1] if len(data) > 1 else 0)
-            state["answer_t"] = time.monotonic()
+            answered()
             done.set()
 
     def on_state(_sender, data):
@@ -398,7 +414,7 @@ async def provision(
         # completing here — not only on RPC_RESULT — is what makes the join
         # deterministic instead of racing the disconnect.
         if state["state"] == STATE_PROVISIONED:
-            state["answer_t"] = state["answer_t"] or time.monotonic()
+            answered()
             done.set()
 
     client = None
@@ -455,8 +471,8 @@ async def provision(
             # INSIDE the adapter lock (order adapter→AP; see _ap_lock). Best-effort:
             # no lock dir (rig not yet redeployed) ⇒ unserialized, exactly as today.
             async with _ap_lock("DHCP-join window"):
-                state["write_t"] = time.monotonic()
                 await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
+                state["ack_t"] = time.monotonic()
                 log("[improv] write ack; awaiting join…")
                 try:
                     await asyncio.wait_for(done.wait(), timeout)
@@ -466,7 +482,18 @@ async def provision(
                             "ok": False,
                             "error": "timed out waiting for the player to join",
                             "device": device,
+                            "join_s": join_s(),  # the elapsed budget at give-up
                         }
+                if state["state"] == STATE_PROVISIONED and state["urls"] is None:
+                    # PROVISIONED and the RPC result (the redirect URL) are separate
+                    # notifications, state first, and the result can land a connection
+                    # event or more later (the firmware re-sends both every 400 ms).
+                    # Returning on the state alone raced it: "no redirect URL" with the
+                    # board joined. The app completes on the result (web/src/net/improv.ts).
+                    try:
+                        await asyncio.wait_for(got_result.wait(), 3.0)
+                    except asyncio.TimeoutError:
+                        pass
     except _TRANSPORT_ERRORS as e:
         # The board tears BLE down the instant it joins (soft-AP off, STA-only),
         # so a disconnect *after* we've seen PROVISIONED (or the redirect URL) is
@@ -487,19 +514,14 @@ async def provision(
                 await client.disconnect()
             except Exception:
                 pass
-    join_s = (
-        round(state["answer_t"] - state["write_t"], 2)
-        if state["write_t"] is not None and state["answer_t"] is not None
-        else None
-    )
     if state["error"]:
-        return {"ok": False, "error": state["error"], "device": device, "join_s": join_s}
+        return {"ok": False, "error": state["error"], "device": device, "join_s": join_s()}
     return {
         "ok": True,
         "urls": state["urls"],
         "state": state["state"],
         "device": device,
-        "join_s": join_s,
+        "join_s": join_s(),
     }
 
 

@@ -7,6 +7,7 @@ crate is the generic mechanism, this is the firmware's policy."""
 
 load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -18,6 +19,8 @@ rust_library(
     ],
     crate_name = "ledmapper_sysmode",
     edition = "2021",
+    # Not on the render path: built for size on the ESP32 images (//firmware:rust_size.bzl).
+    rustc_flags = COLD_CRATE_RUSTC_FLAGS,
 )
 
 # bazel test //firmware/sysmode:reachability_test --test_arg=--nocapture

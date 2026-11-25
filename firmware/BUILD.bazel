@@ -1,0 +1,2 @@
+# Shared Starlark for the firmware packages (rust_size.bzl).
+exports_files(["rust_size.bzl"])

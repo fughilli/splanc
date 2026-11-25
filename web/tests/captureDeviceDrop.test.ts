@@ -127,9 +127,6 @@ interface Run {
   decodedWhileUp: number;
 }
 
-/** Mount the capture screen, walk a capture whose device drops halfway
- * (`frames` camera frames before the drop and as many after), press Stop &
- * finish, and wait for the screen to navigate away. */
 /** Yield until the capture's decode queue is idle (the decoded count stops
  * changing). */
 async function settleDecode(): Promise<void> {
@@ -142,6 +139,24 @@ async function settleDecode(): Promise<void> {
   }
 }
 
+/** Walk `n` camera frames from frame index `from`, a couple at a time, letting
+ * the decode queue catch up after each pair. A real camera delivers one frame
+ * every ~33 ms and the queue keeps up; a synchronous burst of thousands would
+ * instead trip the screen's frame shedding (a backlog of MAX_CV_BACKLOG frames
+ * whose oldest has waited MAX_CV_LAG_MS of real time, performance.now(), which
+ * the mocked timers do not cover), so how many frames survived would depend on
+ * how fast the machine runs the loop. Never three pending: nothing is shed. */
+async function walk(cam: ScriptedCamera, from: number, n: number): Promise<void> {
+  for (let i = 0; i < n; i += 2) {
+    const want = ScriptedDecoder.decoded.length + Math.min(2, n - i);
+    for (let j = i; j < Math.min(i + 2, n); j++) cam.emit(2000 + (from + j) * 33);
+    await until("the decode queue", () => ScriptedDecoder.decoded.length >= want);
+  }
+}
+
+/** Mount the capture screen, walk a capture whose device drops halfway
+ * (`frames` camera frames before the drop and as many after), press Stop &
+ * finish, and wait for the screen to navigate away. */
 async function captureWithDeviceDrop(opts: {
   phoneBenchMs: number;
   hostBenchMs: number | null;
@@ -187,14 +202,14 @@ async function captureWithDeviceDrop(opts: {
     cam.emit(1300);
     await until("the capture loop", () => cam.registrations === 2);
 
-    for (let i = 0; i < frames; i++) cam.emit(2000 + i * 33); // device still up
     // Decode runs in queued tasks after each frame (ui/taskPriority): on a phone
-    // it keeps up within a frame or two; this burst needs the queue drained.
+    // it keeps up within a frame or two, and so does the walk.
+    await walk(cam, 0, frames); // device still up
     await settleDecode();
     const decodedWhileUp = ScriptedDecoder.decoded.length;
     if (!device.silentStop) device.up = false; // TLS heap exhausted: the player's socket dies mid-walk
     if (opts.takenOver) appState.client = null; // another client took the idle session (#444)
-    for (let i = 0; i < frames; i++) cam.emit(2000 + (frames + i) * 33);
+    await walk(cam, frames, frames);
 
     fire(asFake(screen.el.querySelector(".capture-stop")), "click");
     await until("the screen to leave", () => navigations.length > 0);

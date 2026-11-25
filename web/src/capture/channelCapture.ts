@@ -32,7 +32,8 @@
  */
 
 import type { LedEntry, OutputMap, Vec3 } from "@ledmapper/protocol";
-import { strideLit } from "../code/stride";
+import type { CodeParams } from "@ledmapper/protocol";
+import { strideLit, strideLitRolling } from "../code/stride";
 import type { ChannelCaptureProfile } from "../store/deviceStore";
 
 /** One output channel's slice of the global LED index space. */
@@ -131,6 +132,32 @@ export function stageLit(led: number, stage: CaptureStage, phase: number, anchor
     return false;
   }
   return led >= 0 && led < stage.ledCount;
+}
+
+/**
+ * The rolling-stride twin of {@link stageLit}: is `led` lit (coded) in `stage`
+ * at pattern-clock frame `seq` (absolute, since the epoch) when the device runs
+ * a rolling stride (docs/design/rolling-stride.md)? The kernel's
+ * stride_lit_rolling over the stage's LEDs, then `led < ledCount` — as the
+ * player masks. Under a rolling stride there is no phase to advance, so a
+ * stage's progress is its decoded-id coverage ({@link stageCoverage}).
+ */
+export function stageLitRolling(
+  led: number,
+  stage: CaptureStage,
+  seq: number,
+  code: CodeParams,
+  anchorDensity: number,
+  dwellCycles: number,
+): boolean {
+  if (led < 0 || led >= stage.ledCount) return false;
+  if (stage.strideSpacing <= 1) return true;
+  return strideLitRolling(led, seq, code, {
+    spacing: stage.strideSpacing,
+    anchorDensity,
+    dwellCycles,
+    ledCount: stage.ledCount,
+  });
 }
 
 /** Decoded-id coverage of a stage's target channels, [0, 1]. */

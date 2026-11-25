@@ -8,7 +8,7 @@
 //! deliberate (hue-code v2) or a bug. JSON is written in the 2-space layout the
 //! fixtures have always had, so a no-op change is byte-identical.
 //!
-//! Usage: gen_golden secded16 | secded16_sym4 | stagger16 | stagger16_sym4 | stride
+//! Usage: gen_golden secded16 | secded16_sym4 | stagger16 | stagger16_sym4 | stride | stride_rolling
 
 use ledmapper_pattern as pat;
 use std::fmt::Write as _;
@@ -199,6 +199,68 @@ fn stride_golden() -> J {
     )])
 }
 
+/// The rolling stride schedule (docs/design/rolling-stride.md): per case, the
+/// geometry, the derived code spec, each block's clock shift, each LED's own
+/// cycle phase, and the lit mask ('#' lit, '.' dark, one string per frame)
+/// over the first two periods. The web wrapper, the explainer and the figures
+/// (docs/design/rolling_stride_figures.py) are checked against it.
+fn stride_rolling_golden() -> J {
+    // (physical LEDs, S, A, D, symbols, sync, code offset)
+    let cases = [
+        (36u32, 3u32, 3u32, 4u32, 4u8, pat::SyncPattern::StaggerPilot, 0u32),
+        (40, 3, 3, 3, 4, pat::SyncPattern::OnOff, 0),
+        (48, 4, 3, 4, 4, pat::SyncPattern::StaggerPilot, 0),
+        (30, 2, 4, 4, 2, pat::SyncPattern::StaggerPilot, 20),
+    ];
+    J::Obj(vec![(
+        "cases",
+        J::Arr(
+            cases
+                .iter()
+                .map(|&(n, s, a, d, symbols, sync, off)| {
+                    let spec = pat::CodeSpec::derive_sync(n + off, symbols, true, sync);
+                    let rs = pat::RollingStride::new(s, a, d, n, off);
+                    let p = rs.period_frames(&spec);
+                    let blocks = n.div_ceil(rs.block_len());
+                    J::Obj(vec![
+                        ("ledCount", J::Num(n as u64)),
+                        ("spacing", J::Num(s as u64)),
+                        ("anchorDensity", J::Num(a as u64)),
+                        ("dwellCycles", J::Num(d as u64)),
+                        ("codeOffset", J::Num(off as u64)),
+                        ("codeSpace", J::Num(spec.led_count as u64)),
+                        ("symbols", J::Num(symbols as u64)),
+                        (
+                            "syncPattern",
+                            J::Str(if sync.is_staggered() { "stagger_pilot" } else { "on_off" }.to_string()),
+                        ),
+                        ("bits", J::Num(spec.bits as u64)),
+                        ("cycleFrames", J::Num(spec.cycle_frames as u64)),
+                        ("blockLen", J::Num(rs.block_len() as u64)),
+                        ("periodFrames", J::Num(p as u64)),
+                        ("blockShift", nums((0..blocks).map(|b| pat::rolling_block_shift(b, &rs, &spec)))),
+                        ("ownPhase", nums((0..n).map(|x| pat::stagger_phase(x + off, &spec)))),
+                        (
+                            "frames",
+                            J::Arr(
+                                (0..2 * p)
+                                    .map(|t| {
+                                        J::Str(
+                                            (0..n)
+                                                .map(|x| if pat::stride_lit_rolling(x, t, &spec, &rs) { '#' } else { '.' })
+                                                .collect(),
+                                        )
+                                    })
+                                    .collect(),
+                            ),
+                        ),
+                    ])
+                })
+                .collect(),
+        ),
+    )])
+}
+
 fn main() {
     let which = std::env::args().nth(1).unwrap_or_else(|| "secded16".to_string());
     let v = match which.as_str() {
@@ -207,8 +269,11 @@ fn main() {
         "stagger16" => stagger_golden(2),
         "stagger16_sym4" => stagger_golden(4),
         "stride" => stride_golden(),
+        "stride_rolling" => stride_rolling_golden(),
         other => {
-            eprintln!("unknown golden {other:?} (secded16 | secded16_sym4 | stagger16 | stagger16_sym4 | stride)");
+            eprintln!(
+                "unknown golden {other:?} (secded16 | secded16_sym4 | stagger16 | stagger16_sym4 | stride | stride_rolling)"
+            );
             std::process::exit(1);
         }
     };

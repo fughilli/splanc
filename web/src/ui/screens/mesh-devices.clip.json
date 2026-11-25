@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "id": "mesh-devices",
+  "title": "Mesh fixtures grouped in Devices",
+  "summary": "The Devices list shows a mesh's fixtures together, under the one this phone is connected to. Open the group to see and connect to each member.",
+  "prs": [642],
+  "route": "#/maps",
+  "demo": "device,meshall",
+  "framing": ["phone"],
+  "theme": "dark",
+  "setup": [{ "wait": 1500 }],
+  "steps": [
+    { "click": ".tab[data-tab='device']", "wait": 1300 },
+    { "click": ".device-mesh-group .device-collapse-head", "wait": 1800 }
+  ],
+  "tail_ms": 1500
+}
