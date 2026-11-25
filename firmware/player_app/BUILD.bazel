@@ -1573,15 +1573,16 @@ P4_PLAYER_MODULES = select({
 
 # The same main.cpp as the netstack build (LM_NETSTACK paths: dispatch, pushes, render,
 # persistence), with LM_LINK swapping its transport for link_transport.cpp: the player
-# protocol as link frames (//firmware/p4/link) over UART0, the board's USB serial bridge.
-# tools/p4_link_bridge.py serves ws:// on the host and plays the C6's part. Wi-Fi, BLE,
-# TLS belong to the front end (link_stubs.cpp); the P4 takes its own updates in the app
-# (ota_p4.cpp, §5.1); the JIT stays off until the scalar digests match (§3.4).
+# protocol as link frames (//firmware/p4/link) over SDIO to the board's C6, which runs
+# :esp32c6_frontend (Wi-Fi, BLE Improv, wss). Wi-Fi, BLE, TLS belong to the front end
+# (link_stubs.cpp); the P4 takes its own updates in the app (ota_p4.cpp, §5.1); the JIT
+# stays off until the scalar digests match (§3.4). This image carries
+# that C6 image and flashes it onto the C6 whenever the C6 runs anything else
+# (//firmware/p4/c6flash; the C6's IO9 (BOOT), pad 4 of J2 next to the C6, needs a jumper to P4 GPIO4).
 #
-#   bazel run -c opt //firmware/player_app:flash_esp32p4_player -- --port /dev/cu.usbmodem…
-#   python3 tools/p4_link_bridge.py --port /dev/cu.usbmodem…   # then ws://127.0.0.1:8081/ws
+#   bazel run -c opt //firmware/player_app:flash_esp32p4_player_c6 -- --port /dev/cu.usbmodem…
 cc_binary(
-    name = "player_app_link",
+    name = "player_app_link_sdio",
     srcs = [
         "device_cert.h",
         "eth_p4.cpp",
@@ -1617,71 +1618,6 @@ cc_binary(
         "LM_LINK",
         # Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md).
         "LM_NETOUT",
-    ] + led_cap_defines(),
-    target_compatible_with = select({
-        "@embedded//platforms:is_esp32p4": [],
-        "//conditions:default": ["@platforms//:incompatible"],
-    }),
-    deps = [
-        ":board_caps_res",
-        ":color_correction",
-        ":device_cert_core",
-        ":identify_blink",
-        ":improv_codec",
-        ":player_ffi",
-        ":ws_codec",
-        "//firmware/landing:landing_page",
-        "//firmware/netout:netout_ffi_hdr",
-        "//firmware/ota:ota_ffi_hdr",
-        "//firmware/ota:ota_key",
-        "//firmware/p4/link:link_codec",
-        "@embedded//libs/board:arduino_core",
-        "@embedded//libs/vendor:preferences",
-    ] + P4_PLAYER_MODULES,
-)
-
-# Phase B on the Waveshare ESP32-P4-WIFI6: the same player with its link on SDIO to the
-# board's C6, which runs :esp32c6_frontend (Wi-Fi, BLE Improv, wss). This image carries
-# that C6 image and flashes it onto the C6 whenever the C6 runs anything else
-# (//firmware/p4/c6flash; the C6's IO9 (BOOT), pad 4 of J2 next to the C6, needs a jumper to P4 GPIO4).
-#
-#   bazel run -c opt //firmware/player_app:flash_esp32p4_player_c6 -- --port /dev/cu.usbmodem…
-cc_binary(
-    name = "player_app_link_sdio",
-    srcs = [
-        "device_cert.h",
-        "eth_p4.cpp",
-        "eth_p4.h",
-        "improv_ble.h",
-        "led_config.h",
-        "link_stubs.cpp",
-        "link_transport.cpp",
-        "main.cpp",
-        "net_output.cpp",
-        "net_output.h",
-        "netout_app.cpp",
-        "netout_app.h",
-        "netstack_transport.h",
-        "ota_app.h",
-        "ota_p4.cpp",
-        "player_ffi.h",
-        "player_module.h",
-        "serial_log.h",
-        "tls_region.h",
-        "wled_discovery.cpp",
-        "wled_discovery.h",
-        ":agent_bundle_h",
-        ":build_info_h",
-        "//firmware/loader:ota_kat.h",
-    ] + WS2812_SRCS,
-    copts = ["-fno-rtti"],
-    linkopts = ["-Wl,--allow-multiple-definition"],
-    local_defines = [
-        "LM_NETSTACK",
-        "LM_LINK",
-        # Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md).
-        "LM_NETOUT",
-        "LM_LINK_SDIO",
     ] + led_cap_defines(),
     target_compatible_with = select({
         "@embedded//platforms:is_esp32p4": [],
@@ -1763,27 +1699,6 @@ ota_package(
     manifest_key = "//firmware/ota:keys/test.key",
     tags = ["manual"],
     version = "900101",
-)
-
-firmware_binary(
-    name = "esp32p4_player",
-    binary = ":player_app_link",
-    board = "esp32p4",
-    flash_size = "16MB",
-    opt_mode = "opt",
-    tags = ["manual"],
-)
-
-esptool_flash(
-    name = "flash_esp32p4_player",
-    app = ":esp32p4_player",
-    bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
-    bootloader_offset = "0x2000",  # the P4 ROM loads the 2nd-stage bootloader from 0x2000
-    chip = "esp32p4",
-    # The 3 MB app slot, as :flash_esp32p4_player_c6 has: with Ethernet (esp_eth,
-    # lwIP, mDNS, the HTTP client) the image is past default.csv's 1.25 MB slot.
-    partitions = "@embedded//libs/vendor:partitions_huge_app",
-    tags = ["manual"],
 )
 
 # -- On-device OSC bench image (FUG-121) -------------------------------------

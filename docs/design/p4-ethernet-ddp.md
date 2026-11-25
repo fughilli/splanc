@@ -27,7 +27,7 @@ doc brings the same output stage to the P4 player.
 ```
 
 - **One P4 firmware.** Ethernet, DDP output and discovery are runtime features of the existing
-  `:esp32p4_player` / `:esp32p4_player_c6` images. Nothing is a build flag. With Ethernet
+  `:esp32p4_player_c6` image. Nothing is a build flag. With Ethernet
   disabled (the default) the player behaves exactly as today.
 - **The PHY is configuration, not a build.** The PHY model, its MDIO address, MDC/MDIO/reset pins
   and the RMII reference-clock mode are hardware settings. The same image runs a Waveshare P4
