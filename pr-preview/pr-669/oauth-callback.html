@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  OpenRouter sign-in bounce for the iOS app (docs/design/ai-tiers.md, "iOS one-tap
+  connect"). OpenRouter's OAuth needs an https callback_url; the app's sign-in
+  sheet (ASWebAuthenticationSession, native-plugins/web-auth) waits for a
+  splanc:// URL. This page forwards ONLY code / state / error to
+  splanc://oauth/openrouter, which the sheet captures and hands to the app. The
+  code is useless without the PKCE verifier, which never leaves the app.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Back to Splanc</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px 20px;
+        font: 16px/1.5 system-ui, sans-serif;
+        background: #0e0e12;
+        color: #e8e8ea;
+        text-align: center;
+      }
+      a {
+        color: #8fa6ff;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Finishing sign-in…</p>
+    <p><a id="back" href="splanc://oauth/openrouter">Return to the Splanc app</a></p>
+    <script>
+      (function () {
+        var src = new URLSearchParams(location.search);
+        var out = new URLSearchParams();
+        ["code", "state", "error", "error_description"].forEach(function (k) {
+          var v = src.get(k);
+          if (v !== null) out.set(k, v.slice(0, 2048));
+        });
+        var target = "splanc://oauth/openrouter?" + out.toString();
+        document.getElementById("back").setAttribute("href", target);
+        location.replace(target);
+      })();
+    </script>
+  </body>
+</html>
