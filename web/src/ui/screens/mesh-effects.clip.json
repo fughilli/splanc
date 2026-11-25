@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "mesh-effects",
+  "title": "One effect, every fixture in the mesh",
+  "summary": "With Control the whole mesh on, an effect you start goes to every fixture in the mesh and they switch on the same frame. The Mesh section shows who got it.",
+  "prs": [614],
+  "route": "#/effects",
+  "demo": "device,meshall,fxstub",
+  "framing": ["phone"],
+  "theme": "dark",
+  "steps": [
+    { "click": ".map-row >> nth=0", "wait": 1300 },
+    { "click": ".k-sheet button[title='Close']", "wait": 400 },
+    { "click": ".tab[data-tab='device']", "wait": 600 },
+    { "click": ".device-row:has-text('Living Room') button[title='Options']", "wait": 700 },
+    { "scroll": ".k-sheet:has(.mesh-section)", "by": 4000, "duration": 1000, "wait": 1200 }
+  ],
+  "tail_ms": 1000
+}

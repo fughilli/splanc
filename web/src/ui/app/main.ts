@@ -46,6 +46,8 @@ import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { PowerTransitionsScreen } from "../screens/powerTransitions";
 import { SensorsScreen } from "../screens/sensors";
 import { KitOnboardingScreen } from "../screens/kitOnboarding";
+import { ShareScreen } from "../screens/shareScreen";
+import { installAppLinks } from "../../net/appLinks";
 import { HardwareSetupScreen } from "../screens/hardwareSetup";
 import { NewFixtureScreen } from "../screens/newFixture";
 import { installNewFixtureWatch } from "./newFixtureWatch";
@@ -240,6 +242,11 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Set up your lamp", back: false, tabs: false });
       return KitOnboardingScreen(router, m.params["id"]);
     })
+    .add("/share", (m) => {
+      // A share link opened (docs/design/share-links.md): admin access to a mesh or a fixture.
+      shell.setChrome({ title: "Splanc link", back: false, tabs: false });
+      return ShareScreen(m.query);
+    })
     .add("/settings/ai", () => {
       // Settings ▸ AI: the AI provider settings + Splanc AI credits account.
       shell.setChrome({ title: "Settings", back: true, tabs: true });
@@ -335,6 +342,8 @@ async function main(): Promise<void> {
     history.replaceState(history.state, "", `${location.pathname}${location.search}#/credits/return`);
   }
   router.start();
+  // Universal links (share links) handed to the native app: open their in-app route.
+  installAppLinks();
   // A brand-new fixture (no stored map) opens its setup flow once; a name typed
   // while flashing / setting it up is applied when it connects (D-259).
   if (!demoParam && !driverParam && !startedInPlay) installNewFixtureWatch(router);

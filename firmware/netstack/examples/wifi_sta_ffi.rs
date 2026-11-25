@@ -828,6 +828,23 @@ pub extern "C" fn ns_mac_tx_done(queue: u32, pmd: *mut u32) -> u32 {
     }
 }
 
+/// Queue `queue`'s FTM timestamp words into `out[0..3]` (t1/t4 of its last ACKed frame,
+/// `ftm::TxFtm::decode`). Call right after [`ns_mac_tx_done`] reported an ACKed completion.
+#[no_mangle]
+pub extern "C" fn ns_mac_tx_ftm(queue: u32, out: *mut u32) {
+    unsafe {
+        let w = tx::txq_ftm_words(queue as usize);
+        core::ptr::copy_nonoverlapping(w.as_ptr(), out, 3);
+    }
+}
+
+/// Force the FTM tick-phase state (41) with a baseband reset pulse (`ftm::force_phase`):
+/// 1 if done, 0 if `queue` has a frame armed (try again later).
+#[no_mangle]
+pub extern "C" fn ns_phy_force_tick_phase(queue: u32) -> u32 {
+    unsafe { ledmapper_netstack::ftm::force_phase(queue as usize) as u32 }
+}
+
 /// TX completion status from a PMD word: 0 = OK, 5 = ACK timeout, else the raw code.
 #[no_mangle]
 pub extern "C" fn ns_p2p_tx_status(pmd: u32) -> u32 {

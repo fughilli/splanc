@@ -24,7 +24,7 @@
 //! core's by-value structs never carry them (shared/protocol/rust gen_main.rs skips them in
 //! the firmware profile).
 
-use splanc_mesh::admin::{SessionMsg, UnlockError};
+use splanc_mesh::admin::{Delegation, SessionMsg, UnlockError};
 use splanc_mesh::crypto::{ct_eq, DeviceKey};
 use splanc_mesh::gateway::{self, client_arm, relay_arm, with_apply_at, OpResult, ReplyMsg, Status, StatusMsg};
 use splanc_mesh::membership::{Credentials, Groups, Mode, Phase, ProvisionSource};
@@ -33,7 +33,7 @@ use splanc_mesh::msg::PendingJoin;
 use splanc_mesh::ports::Targets;
 use splanc_mesh::rekey::RekeyOrder;
 use splanc_mesh::stack::{EpochSource, Event, SendError, REPLY_TIMEOUT_US};
-use splanc_mesh::topo::{self, Link, PoseC, PoseKnown, Topo, TX_UNKNOWN};
+use splanc_mesh::topo::{self, Link, PoseC, PoseKnown, RangeC, Topo, TX_UNKNOWN};
 use splanc_mesh::NodeId;
 
 use crate::{Mesh, P};
@@ -194,6 +194,13 @@ impl<'a> Pb<'a> {
     /// A sint32 (zigzag).
     pub fn s(&mut self, f: u32, v: i32) {
         self.u(f, ((v << 1) ^ (v >> 31)) as u32 as u64);
+    }
+    /// An `optional float` (written even when 0).
+    pub fn f32o(&mut self, f: u32, v: f32) {
+        self.key(f, 5);
+        for b in v.to_le_bytes() {
+            self.byte(b);
+        }
     }
     /// A packed `repeated float` (skipped when empty).
     pub fn f32s(&mut self, f: u32, v: &[f32]) {
@@ -441,6 +448,14 @@ fn write_links(w: &mut Pb<'_>, f: u32, links: &[Link]) {
             e.s(2, l.rssi.into());
             if l.tx_pct != TX_UNKNOWN {
                 e.opt(3, Some(l.tx_pct.min(100).into()));
+            }
+            // Link ranging (docs/design/mesh-ftm.md): uncalibrated unless range_calibrated.
+            if let Some(r) = l.range {
+                e.f32o(4, r.range_m());
+                e.f32o(5, r.sigma_m());
+                e.u(6, r.phase_self().ticks().into());
+                e.u(7, r.phase_peer().ticks().into());
+                e.u(8, r.calibrated().into());
             }
         });
     }
@@ -975,14 +990,29 @@ fn admin(m: &mut Mesh, conn: usize, a: &Admin<'_>, now_us: i64) -> (u32, u32) {
             if m.stack.membership.state.is_none() {
                 return (aerr::NO_MESH, 0);
             }
-            let r = m.stack.unlock(now_us, conn, &g);
+            // A delegate's grant comes with its certificate (MeshUnlock.delegation).
+            let deleg = match (g.by, a.by[2]) {
+                (None, _) => None,
+                (Some(_), Some(b)) => match Delegation::decode(b) {
+                    Some(d) => Some(d),
+                    None => return (aerr::BAD_REQUEST, 0),
+                },
+                (Some(_), None) => return (aerr::BAD_GRANT, 0),
+            };
+            let r = m.stack.unlock(now_us, conn, &g, deleg.as_ref());
             let e = match r {
                 Ok(()) => aerr::OK,
                 Err(UnlockError::LockedOut) => aerr::LOCKED_OUT,
                 Err(UnlockError::BadGrant) | Err(UnlockError::NoAdminKey) => aerr::BAD_GRANT,
                 Err(UnlockError::BadConnection) => aerr::BAD_REQUEST,
             };
-            m.log(format_args!("[mesh] unlock conn={conn} session={} not_after={} -> {}", g.session, g.not_after, if e == aerr::OK { "ok" } else { "refused" }));
+            m.log(format_args!(
+                "[mesh] unlock conn={conn} session={} not_after={} by={} -> {}",
+                g.session,
+                g.not_after,
+                if g.by.is_some() { "delegate" } else { "admin" },
+                if e == aerr::OK { "ok" } else { "refused" }
+            ));
             (e, if e == aerr::OK { g.session } else { 0 })
         }
         op::LEAVE => {
@@ -1180,8 +1210,12 @@ pub unsafe extern "C" fn ns_mesh_conns(m: *mut Mesh, ws: u32, ble: u32) {
 pub unsafe extern "C" fn ns_mesh_conn_closed(m: *mut Mesh, conn: u32) {
     let m = &mut *m;
     let c = conn as usize;
+    let signing = m.stack.signing_session(c);
     if m.stack.gate.is_unlocked(c) {
-        m.log(format_args!("[mesh] gateway session closed conn={c}"));
+        m.log(format_args!(
+            "[mesh] gateway session closed conn={c}{}",
+            if signing { " (its grant kept for catch-ups)" } else { "" }
+        ));
     }
     m.stack.connection_changed(c);
 }
@@ -1610,8 +1644,8 @@ mod tests {
         let mut t = Topo::EMPTY;
         let pose = PoseKnown::Posed(PoseC::from_pose([1.5, 0.0, -2.0], Some([0.0, 0.70710677, 0.0, 0.70710677]), b"Hall"));
         let mut links = [Link::EMPTY; topo::NEIGHBOURS];
-        links[0] = Link { node: 0x2001, rssi: -41, tx_pct: 97 };
-        links[1] = Link { node: 0x2002, rssi: -70, tx_pct: TX_UNKNOWN };
+        links[0] = Link { node: 0x2001, rssi: -41, tx_pct: 97, range: None };
+        links[1] = Link { node: 0x2002, rssi: -70, tx_pct: TX_UNKNOWN, range: None };
         t.apply(1_000_000, &splanc_mesh::topo::TopoMsg { pose, pose_gen: 1, n: 2, links });
         t.hops = 2;
         t
@@ -1671,7 +1705,9 @@ mod tests {
             let mut tp = base;
             tp.n = topo::NEIGHBOURS as u8;
             for (k, l) in tp.links.iter_mut().enumerate() {
-                *l = Link { node: 0x4000 + k as u16, rssi: -40 - k as i8, tx_pct: 90 + k as u8 };
+                // Neighbour 3 is ranged (uncalibrated: the reporter in phase state 41, it in 39).
+                let range = (k == 3).then_some(RangeC { range_cm: 245, sigma_cm: 12, flags: 2 | (1 << 2) });
+                *l = Link { node: 0x4000 + k as u16, rssi: -40 - k as i8, tx_pct: 90 + k as u8, range };
             }
             tp.pose = PoseKnown::Posed(PoseC::from_pose([i as f32, 0.5, -1.0], Some([0.1, 0.2, 0.3, 0.9]), b"A long room name!"));
             mb.topo = tp;
@@ -1711,6 +1747,10 @@ mod tests {
                 assert_eq!((pp.room.as_str(), pp.rotation.len()), ("A long room name", 4), "cut to 16 bytes");
                 assert_eq!(mm.neighbours[3].rssi, -43);
                 assert_eq!(mm.neighbours[3].tx_ok_pct(), Some(&93));
+                let r = &mm.neighbours[3];
+                assert_eq!((r.range_m(), r.range_sigma_m()), (Some(&2.45), Some(&0.12)));
+                assert_eq!((r.range_phase_self, r.range_phase_peer, r.range_calibrated), (41, 39, false));
+                assert_eq!((mm.neighbours[2].range_m(), mm.neighbours[2].range_phase_self), (None, 0));
                 got.push(mm.node);
             }
             if st.topology_next == 0 {

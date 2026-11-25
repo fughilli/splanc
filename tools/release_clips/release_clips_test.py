@@ -209,6 +209,36 @@ class ReleaseBodyTest(unittest.TestCase):
         self.assertIn("(#558)", sec)
         self.assertEqual(github_release.section_markdown({"tag": "x", "clips": []}, "r"), "")
 
+    def test_a_draft_links_its_own_urls_and_relink_moves_them_to_the_tag(self):
+        m = github_release.build_manifest(ENTRIES, "app-v1.16.0")
+        draft = {
+            "draft": True,
+            "html_url": "https://github.com/fughilli/splanc/releases/tag/untagged-de0f20b6e5",
+        }
+        base = github_release.release_download_base(draft, "fughilli/splanc", "app-v1.16.0")
+        self.assertEqual(
+            base, "https://github.com/fughilli/splanc/releases/download/untagged-de0f20b6e5/"
+        )
+        sec = github_release.section_markdown(m, "fughilli/splanc", base)
+        self.assertIn(f'<img src="{base}ai-tab-phone.gif"', sec)
+        self.assertNotIn("/download/app-v1.16.0/", sec)
+        body = github_release.splice_body("## What's Changed\n", sec)
+        final = github_release.relink_body(body, "fughilli/splanc", "app-v1.16.0")
+        self.assertNotIn("untagged-", final)
+        self.assertEqual(
+            final,
+            github_release.splice_body(
+                "## What's Changed\n", github_release.section_markdown(m, "fughilli/splanc")
+            ),
+        )
+        # Published (or a draft without a placeholder): the tag's URLs.
+        self.assertEqual(
+            github_release.release_download_base(
+                {"draft": False}, "fughilli/splanc", "app-v1.16.0"
+            ),
+            "https://github.com/fughilli/splanc/releases/download/app-v1.16.0/",
+        )
+
     def test_splice_is_idempotent_and_keeps_notes(self):
         m = github_release.build_manifest(ENTRIES, "app-v1.16.0")
         sec = github_release.section_markdown(m, "fughilli/splanc")
@@ -240,6 +270,83 @@ class FakeGitHub(github_release.GitHub):
         self.calls.append(("upload", name))
 
 
+class ApiGitHub(github_release.GitHub):
+    """A GitHub whose API is a list of releases in memory."""
+
+    def __init__(self, rows):
+        super().__init__("fughilli/splanc", "t")
+        self.rows, self.calls, self.next_id = rows, [], 100
+
+    def releases(self):
+        return self.rows
+
+    def create_release(self, fields):
+        self.next_id += 1
+        r = {**fields, "id": self.next_id, "assets": [], "upload_url": "https://u{?name}",
+             "html_url": f"https://github.com/fughilli/splanc/releases/tag/untagged-{self.next_id:x}"}  # fmt: skip
+        self.rows.append(r)
+        self.calls.append(("create", fields["tag_name"]))
+        return r
+
+    def update_release(self, release, fields):
+        release.update(fields)
+        self.calls.append(("update", fields))
+        return release
+
+    def update_body(self, release, body):
+        release["body"] = body
+        self.calls.append(("body", body))
+
+    def delete_asset(self, asset_id):
+        self.calls.append(("delete", asset_id))
+
+    def upload_asset(self, release, path, name=None):
+        self.calls.append(("upload", name))
+
+
+class DraftLifecycleTest(unittest.TestCase):
+    def test_the_draft_is_found_by_name_reused_and_published_under_the_tag(self):
+        # The app-v1.17.0 failure: the draft's tag read untagged-<id>, the re-run
+        # made a second draft, and publishing made a third, empty release.
+        old = {"id": 1, "draft": True, "tag_name": "untagged-aa", "name": "app-v1.17.0",
+               "created_at": "2026-11-23", "assets": []}  # fmt: skip
+        new = {"id": 2, "draft": True, "tag_name": "untagged-bb", "name": "app-v1.17.0", "created_at": "2026-11-25",
+               "upload_url": "https://u{?name}", "assets": [{"name": "splanc-webapp-1.17.0.tar.gz", "id": 9}],
+               "body": "[v](https://github.com/fughilli/splanc/releases/download/untagged-bb/a.mp4)"}  # fmt: skip
+        other = {"id": 3, "draft": False, "tag_name": "app-v1.16.0", "name": "app-v1.16.0"}
+        gh = ApiGitHub([old, other, new])
+        log = lambda m: None  # noqa: E731
+        self.assertIs(github_release.ensure_draft(gh, "app-v1.17.0", "abc", log=log), new)
+        self.assertEqual(gh.calls, [])
+        d = tempfile.mkdtemp()
+        tar = os.path.join(d, "splanc-webapp-1.17.0.tar.gz")
+        open(tar, "wb").close()
+        github_release.finalize(gh, "app-v1.17.0", [tar], log=log)
+        self.assertIn(("delete", 9), gh.calls)
+        self.assertIn(("upload", "splanc-webapp-1.17.0.tar.gz"), gh.calls)
+        self.assertIn(
+            ("update", {"draft": False, "tag_name": "app-v1.17.0", "make_latest": "false"}),
+            gh.calls,
+        )
+        self.assertEqual(
+            new["body"],
+            "[v](https://github.com/fughilli/splanc/releases/download/app-v1.17.0/a.mp4)",
+        )
+        self.assertFalse(any(k == "create" for k, _ in gh.calls))
+        # Published now: it wins over the leftover draft.
+        self.assertIs(gh.release_for_tag("app-v1.17.0"), new)
+
+    def test_a_missing_draft_is_created_and_finalize_never_makes_a_release(self):
+        gh = ApiGitHub([])
+        r = github_release.ensure_draft(gh, "app-v1.18.0", "abc", log=lambda m: None)
+        self.assertEqual(
+            (r["draft"], r["name"], r["target_commitish"], r["generate_release_notes"]),
+            (True, "app-v1.18.0", "abc", True),
+        )
+        with self.assertRaises(SystemExit):
+            github_release.finalize(ApiGitHub([]), "app-v1.18.0", [], log=lambda m: None)
+
+
 class PublishTest(unittest.TestCase):
     def test_publish_replaces_assets_and_writes_the_section(self):
         d = tempfile.mkdtemp()
@@ -247,6 +354,7 @@ class PublishTest(unittest.TestCase):
             for k in ("mp4", "webm", "gif", "poster"):
                 open(os.path.join(d, v[k]), "wb").close()
         rel = {"tag_name": "app-v1.16.0", "draft": True, "body": "## What's Changed\n",
+               "html_url": "https://github.com/fughilli/splanc/releases/tag/untagged-abc123",
                "assets": [{"name": "ai-tab-phone.mp4", "id": 7}], "upload_url": "https://u{?name}"}  # fmt: skip
         gh = FakeGitHub(rel)
         man = github_release.publish(gh, "app-v1.16.0", d, ENTRIES, log=lambda m: None)
@@ -258,6 +366,16 @@ class PublishTest(unittest.TestCase):
         body = [b for k, b in gh.calls if k == "body"][0]
         self.assertIn("## Feature previews", body)
         self.assertTrue(body.endswith("## What's Changed\n"))
+        self.assertIn("/releases/download/untagged-abc123/ai-tab-phone.gif", body)
+
+        # Published: relink rewrites the notes to the tag's URLs, once.
+        rel.update(draft=False, body=body)
+        self.assertTrue(github_release.relink(gh, "app-v1.16.0", log=lambda m: None))
+        final = [b for k, b in gh.calls if k == "body"][-1]
+        self.assertIn("/releases/download/app-v1.16.0/ai-tab-phone.gif", final)
+        self.assertNotIn("untagged-", final)
+        rel["body"] = final
+        self.assertFalse(github_release.relink(gh, "app-v1.16.0", log=lambda m: None))
         with open(os.path.join(d, "preview-clips.json")) as f:
             self.assertEqual(json.load(f)["tag"], "app-v1.16.0")
 
@@ -300,6 +418,27 @@ class RecordHelpersTest(unittest.TestCase):
         self.assertIn("duration 0.5000", text)
         self.assertIn("duration 1.5000", text)
         self.assertIn("duration 1.0000", text)
+
+    def test_hd_30fps_outputs(self):
+        import record
+
+        # Owner D-503: at least HD (short side >= 720) at a constant 30 fps; GIF >= 15 fps.
+        for framing, (vp, scale, width, _gif) in record.VIEWPORTS.items():
+            native_w = round(vp["width"] * scale)
+            height = round(vp["height"] * scale * width / native_w)
+            self.assertGreaterEqual(min(width, height), 720, framing)
+            self.assertLessEqual(width, native_w, f"{framing}: upscaled")
+        self.assertGreaterEqual(round(1280 * record.VIEWPORTS["desktop"][1]), 1920)
+        self.assertEqual(record.VIDEO_FPS, 30)
+        self.assertGreaterEqual(record.GIF_FPS, 15)
+
+    def test_capture_fps_ignores_still_gaps(self):
+        import record
+
+        ts = [0.0, 0.033, 0.066, 0.1, 2.0, 2.034, 2.067, 5.0]
+        frames = [record.Frame(t, "") for t in ts]
+        self.assertAlmostEqual(record.capture_fps(frames), 30.3, delta=0.5)
+        self.assertEqual(record.capture_fps(frames[:1]), 0.0)
 
 
 if __name__ == "__main__":

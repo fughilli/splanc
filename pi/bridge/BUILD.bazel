@@ -45,6 +45,13 @@ py_library(
     deps = [requirement("pillow")],
 )
 
+py_library(
+    name = "gen_splash_assets_lib",
+    srcs = ["tools/gen_splash_assets.py"],
+    imports = ["tools"],
+    deps = [requirement("pillow")],
+)
+
 genrule(
     name = "boot_frames",
     srcs = [
@@ -84,6 +91,7 @@ py_test(
     main = "tests/pytest_main.py",
     deps = [
         ":gen_boot_frames_lib",
+        ":gen_splash_assets_lib",
         ":splanc_display",
         "@rules_requirements//python",
         requirement("pytest"),

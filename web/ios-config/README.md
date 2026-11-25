@@ -50,3 +50,12 @@ npx -y -p @resvg/resvg-js node -e '
 App Store review **requires** each requested permission to carry a specific,
 truthful usage string — a missing or generic one is a common rejection. Edit the
 strings here, not in the generated `Info.plist`.
+
+## Universal links (`SPLANC_IOS_ASSOCIATED_DOMAINS=1`)
+
+Adds `com.apple.developer.associated-domains = [applinks:splanc.io]` so share links
+(`https://splanc.io/app/#/share?…`, docs/design/share-links.md) open the app. splanc.io
+serves the matching `/.well-known/apple-app-site-association` (Studio-Fug/splanc.io).
+Opt-in like Sign in with Apple: first enable **Associated Domains** on the
+`dev.splanc.app` App ID, regenerate the distribution profile and update the release
+secret, then set the variable for release builds.

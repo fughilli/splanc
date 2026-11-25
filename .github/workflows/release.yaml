@@ -442,13 +442,13 @@ jobs:
       # release keeps its notes (and its draft/published state), so notes written
       # beforehand on a draft release for this tag ship as written.
       # make_latest=false keeps releases/latest pointing at firmware.
+      # Not softprops/action-gh-release: it looks the release up by tag, which
+      # never finds a draft, so a re-run made a second draft and the publish step
+      # a new, empty release (app-v1.17.0). release_clips matches drafts by name.
       - name: Create app Release (draft)
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          generate_release_notes: true
-          make_latest: false
-          target_commitish: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release_clips/release_clips.py ensure-draft --tag "$GITHUB_REF_NAME" --target "$GITHUB_SHA"
 
       - name: Build the app
         run: bazel build //web:dist --disk_cache="$HOME/.cache/bazel-disk"
@@ -610,7 +610,9 @@ jobs:
       # images/videos) into whatsnew/ for the in-app card
       # (tools/whatsnew/whatsnew_mirror.py). Best effort: without it the app
       # just says the notes aren't available.
-      # splanc.io re-mirrors on each deploy, which is how edited notes land.
+      # splanc.io serves the copy inside this release's webapp tarball and does
+      # not re-mirror, so notes edited after publishing reach the card with the
+      # next app release.
       - name: Mirror release notes (What's new)
         continue-on-error: true
         env:
@@ -643,17 +645,14 @@ jobs:
           tar -C _site -czf "_assets/splanc-webapp-${VER}.tar.gz" .
           (cd _assets && sha256sum "splanc-webapp-${VER}.tar.gz" > "splanc-webapp-${VER}.tar.gz.sha256")
 
-      # Attach the tarball to the Release created above, then publish it (the
-      # notes are left as they are).
+      # Attach the tarball to the draft created by app_previews and publish it
+      # (notes as they are; never marked latest). The draft's "Feature previews"
+      # link the draft's own asset URLs (/releases/download/untagged-<id>/), which
+      # stop working on publish, so it then points them at /releases/download/<tag>/.
       - name: Publish app Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            _assets/splanc-webapp-*.tar.gz
-            _assets/splanc-webapp-*.tar.gz.sha256
-          draft: false
-          make_latest: false
-          target_commitish: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release_clips/release_clips.py finalize --tag "$GITHUB_REF_NAME" _assets/splanc-webapp-*.tar.gz _assets/splanc-webapp-*.tar.gz.sha256
 
       - name: Deploy to GitHub Pages (main site)
         uses: JamesIves/github-pages-deploy-action@v4

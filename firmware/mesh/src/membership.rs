@@ -524,6 +524,11 @@ impl Membership {
         self.state.map(|s| s.groups).unwrap_or_default()
     }
 
+    /// The revocation list (device keys and delegates the admin removed); empty with no mesh.
+    pub fn revoked(&self) -> crate::rekey::Revocations {
+        self.state.map(|s| s.revoked).unwrap_or_default()
+    }
+
     pub fn admin_key(&self) -> Option<&PublicKey> {
         self.state.as_ref().and_then(|s| s.admin_key.as_ref())
     }

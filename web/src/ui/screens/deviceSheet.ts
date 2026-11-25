@@ -61,6 +61,8 @@ import { deviceHasPower } from "../../power/power";
 import { deviceHasKiosk } from "../../net/kiosk";
 import { isBleUrl } from "../../net/bleTransport";
 import { meshStore, type MeshRecord } from "../../store/meshStore";
+import { fixtureShareBody } from "../../store/shareAccess";
+import { openShareSheet } from "./shareSheet";
 
 let openHandle: { close: () => void } | null = null;
 
@@ -673,6 +675,18 @@ function openDeviceDetail(dev: KnownDevice): void {
             },
           ]
         : []),
+      ...(isBleUrl(cur.wssUrl)
+        ? []
+        : [
+            {
+              label: "Share",
+              icon: "share" as const,
+              onClick: () => {
+                sheet.close();
+                shareFixture(cur, isActive ? appState.client : null);
+              },
+            },
+          ]),
       {
         label: "Gamma",
         icon: "gamma",
@@ -950,4 +964,31 @@ function trustCert(certUrl: string): void {
       window.open(certUrl, "_blank", "noopener");
     }
   }, 900);
+}
+
+/** One fixture's admin access as a share link (docs/design/share-links.md): its address,
+ * certificate pin and, when this phone put it in a mesh, its provisioner token. */
+function shareFixture(dev: KnownDevice, client: { getMesh(timeoutMs?: number): Promise<{ on?: boolean; meshId?: number; node?: number }> } | null): void {
+  openShareSheet({
+    kind: "fixture",
+    title: dev.label,
+    grants:
+      "Whoever opens this link in Splanc can find, connect to and control this fixture and, if you put it in a mesh, take it out of that mesh.",
+    body: async () => {
+      let mesh: { meshId: number; node: number; name?: string } | undefined;
+      const s = client ? await client.getMesh(3000).catch(() => null) : null;
+      if (s?.on && s.meshId && s.node) mesh = { meshId: s.meshId >>> 0, node: s.node };
+      else {
+        for (const r of await meshStore.list().catch(() => [] as MeshRecord[])) {
+          const m = r.members.find((x) => x.deviceId === dev.id);
+          if (m) mesh = { meshId: r.meshId, node: m.node };
+        }
+      }
+      if (mesh) {
+        const rec = meshStore.peek(mesh.meshId);
+        if (rec) mesh.name = rec.name;
+      }
+      return fixtureShareBody({ label: dev.label, wssUrl: dev.wssUrl, mac: dev.bleMac, mesh });
+    },
+  });
 }

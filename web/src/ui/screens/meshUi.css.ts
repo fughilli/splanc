@@ -63,6 +63,13 @@ const CSS = `
 .mesh-kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.9375rem; }
 .mesh-kv > span:first-child { color: var(--text-dim); }
 .mesh-sheet { display: flex; flex-direction: column; gap: 16px; padding-bottom: 8px; }
+.share-code { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-ctrl); background: var(--surface); }
+.share-code[hidden] { display: none; }
+.share-code-value { font: 600 1.5rem/1.2 ui-monospace, monospace; letter-spacing: 0.08em; user-select: all; }
+.share-code-input { font: 600 1.25rem/1.2 ui-monospace, monospace; letter-spacing: 0.08em; text-transform: uppercase; }
+.share-screen { padding: 16px; max-width: 560px; margin: 0 auto; box-sizing: border-box; width: 100%; }
+.mesh-row-hint--warn { color: var(--warn); }
+.share-title { font-size: 1.25rem; font-weight: 600; }
 .mesh-backup-text { width: 100%; box-sizing: border-box; font: 0.75rem/1.4 ui-monospace, monospace; padding: 10px;
   border-radius: 8px; border: 1px solid var(--border, #444); background: var(--surface-2, transparent); color: inherit;
   resize: vertical; word-break: break-all; }

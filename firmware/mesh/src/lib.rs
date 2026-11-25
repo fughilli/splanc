@@ -53,6 +53,7 @@ pub mod meshtime;
 pub mod msg;
 pub mod node;
 pub mod ports;
+pub mod ranging;
 pub mod rekey;
 pub mod replay;
 pub mod security;

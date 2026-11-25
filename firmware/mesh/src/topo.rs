@@ -27,11 +27,16 @@
 //! [rot]  quaternion x, y, z: i16 x 32767 each (w >= 0, rebuilt from the unit norm)
 //! [pose] room length (<= ROOM_MAX), room bytes (UTF-8, cut on a character boundary)
 //! n x    node u16, RSSI i8 (dBm), unicast delivery u8 (0..=100 %, 255 = no unicasts yet)
+//! [ranges, only if a neighbour is ranged (crate::ranging, docs/design/mesh-ftm.md)]
+//!        m (<= n), then m x: node u16, range i16 (cm), sigma u8 (cm, saturating),
+//!        flags u8 (bits 0-1 the reporter's phase state, 2-3 the neighbour's: Phase::code;
+//!        bit 4 calibrated)
 //! ```
 //!
 //! Decoders accept trailing bytes (later additions append).
 
 use crate::backhaul::NodeId;
+use crate::ranging::{LinkRange, Phase};
 
 pub const T_TOPO: u8 = 0x24;
 /// Neighbours a member reports (and every member keeps per peer).
@@ -39,7 +44,8 @@ pub const NEIGHBOURS: usize = 8;
 /// Room name bytes carried (a longer name is cut).
 pub const ROOM_MAX: usize = 16;
 /// Largest encoded [`TopoMsg`].
-pub const TOPO_MAX: usize = 4 + 6 + 6 + 1 + ROOM_MAX + NEIGHBOURS * 4;
+pub const TOPO_MAX: usize = 4 + 6 + 6 + 1 + ROOM_MAX + NEIGHBOURS * 4 + 1 + NEIGHBOURS * RANGE_LEN;
+const RANGE_LEN: usize = 6;
 /// Neighbours are re-sent this often (the status period).
 pub const TOPO_EVERY_US: i64 = 10_000_000;
 /// The pose is re-sent at least this often (and as soon as it changes).
@@ -144,10 +150,51 @@ pub struct Link {
     pub rssi: i8,
     /// Unicasts to it delivered (ACKed), 0..=100 %; [`TX_UNKNOWN`] before the first.
     pub tx_pct: u8,
+    /// The reporter's measured range to it (link ranging), if any.
+    pub range: Option<RangeC>,
+}
+
+/// A link range, compact ([`crate::ranging::LinkRange`] on the wire).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RangeC {
+    pub range_cm: i16,
+    pub sigma_cm: u8,
+    /// Bits 0-1: the reporter's phase state, 2-3: the neighbour's ([`Phase::code`]); bit 4:
+    /// calibrated.
+    pub flags: u8,
+}
+
+impl RangeC {
+    pub fn from_link(l: &LinkRange) -> RangeC {
+        let cm = |mm: i64| {
+            let x = if mm >= 0 { (mm + 5) / 10 } else { (mm - 5) / 10 };
+            x.clamp(i16::MIN as i64, i16::MAX as i64) as i16
+        };
+        RangeC {
+            range_cm: cm(l.range_mm as i64),
+            sigma_cm: ((l.sigma_mm as u64 + 5) / 10).min(255) as u8,
+            flags: l.phase_self.code() | (l.phase_peer.code() << 2) | if l.calibrated { 0x10 } else { 0 },
+        }
+    }
+    pub fn range_m(&self) -> f32 {
+        self.range_cm as f32 / 100.0
+    }
+    pub fn sigma_m(&self) -> f32 {
+        self.sigma_cm as f32 / 100.0
+    }
+    pub fn phase_self(&self) -> Phase {
+        Phase::from_code(self.flags)
+    }
+    pub fn phase_peer(&self) -> Phase {
+        Phase::from_code(self.flags >> 2)
+    }
+    pub fn calibrated(&self) -> bool {
+        self.flags & 0x10 != 0
+    }
 }
 
 impl Link {
-    pub const EMPTY: Link = Link { node: 0, rssi: 0, tx_pct: TX_UNKNOWN };
+    pub const EMPTY: Link = Link { node: 0, rssi: 0, tx_pct: TX_UNKNOWN, range: None };
 
     /// From a backhaul's unicast counters.
     pub fn tx_pct_of(ok: u32, fail: u32) -> u8 {
@@ -213,6 +260,16 @@ impl TopoMsg {
             let id = l.node.to_be_bytes();
             put(out, &[id[0], id[1], l.rssi as u8, l.tx_pct])?;
         }
+        let ranged = self.links[..n].iter().filter(|l| l.range.is_some()).count();
+        if ranged > 0 {
+            put(out, &[ranged as u8])?;
+            for l in &self.links[..n] {
+                if let Some(r) = l.range {
+                    let (id, cm) = (l.node.to_be_bytes(), r.range_cm.to_be_bytes());
+                    put(out, &[id[0], id[1], cm[0], cm[1], r.sigma_cm, r.flags])?;
+                }
+            }
+        }
         Some(w)
     }
 
@@ -251,8 +308,21 @@ impl TopoMsg {
         let mut links = [Link::EMPTY; NEIGHBOURS];
         for l in links.iter_mut().take(n) {
             let e = b.get(o..o + 4)?;
-            *l = Link { node: u16::from_be_bytes([e[0], e[1]]), rssi: e[2] as i8, tx_pct: e[3] };
+            *l = Link { node: u16::from_be_bytes([e[0], e[1]]), rssi: e[2] as i8, tx_pct: e[3], range: None };
             o += 4;
+        }
+        // Ranges (an addition older members never send): a malformed section is ignored,
+        // never fatal (the neighbours above stand).
+        if let Some(&m) = b.get(o) {
+            let m = m as usize;
+            if let Some(sec) = b.get(o + 1..o + 1 + m * RANGE_LEN).filter(|_| m <= n) {
+                for e in sec.chunks_exact(RANGE_LEN) {
+                    let node = u16::from_be_bytes([e[0], e[1]]);
+                    if let Some(l) = links[..n].iter_mut().find(|l| l.node == node) {
+                        l.range = Some(RangeC { range_cm: i16::from_be_bytes([e[2], e[3]]), sigma_cm: e[4], flags: e[5] });
+                    }
+                }
+            }
         }
         Some(TopoMsg { pose, pose_gen: b[2], n: n as u8, links })
     }
@@ -387,7 +457,7 @@ mod tests {
     fn links(n: usize) -> [Link; NEIGHBOURS] {
         let mut l = [Link::EMPTY; NEIGHBOURS];
         for (i, x) in l.iter_mut().enumerate().take(n) {
-            *x = Link { node: 0x1100 + i as u16, rssi: -40 - i as i8, tx_pct: if i == 0 { TX_UNKNOWN } else { 90 + i as u8 } };
+            *x = Link { node: 0x1100 + i as u16, rssi: -40 - i as i8, tx_pct: if i == 0 { TX_UNKNOWN } else { 90 + i as u8 }, range: None };
         }
         l
     }
@@ -419,11 +489,43 @@ mod tests {
         let full = PoseC::from_pose([1.0, 2.0, 3.0], Some([0.1, 0.2, 0.3, 0.9]), b"A room with a very long name");
         let m = TopoMsg { pose: PoseKnown::Posed(full), pose_gen: 1, n: NEIGHBOURS as u8, links: links(NEIGHBOURS) };
         let mut b = [0u8; 128];
-        assert_eq!(m.encode(&mut b), Some(TOPO_MAX));
-        assert_eq!(TOPO_MAX, 65);
+        assert_eq!(m.encode(&mut b), Some(65));
         let lean = TopoMsg { pose: PoseKnown::Unknown, ..m };
         assert_eq!(lean.encode(&mut b), Some(36));
         assert_eq!(m.encode(&mut [0u8; 64]), None, "too small: nothing");
+        // Every neighbour ranged: the most a message takes.
+        let mut all = m;
+        for l in all.links.iter_mut() {
+            l.range = Some(RangeC { range_cm: 123, sigma_cm: 9, flags: 0x06 });
+        }
+        assert_eq!(all.encode(&mut b), Some(TOPO_MAX));
+        assert_eq!(TOPO_MAX, 114);
+    }
+
+    /// Ranged neighbours ride after the list (older decoders stop before them); a link
+    /// without a range has none; a malformed section loses only the ranges.
+    #[test]
+    fn ranges_round_trip_and_degrade() {
+        let mut l = links(3);
+        let r = RangeC::from_link(&LinkRange { range_mm: -1234, sigma_mm: 87, n: 16, age_ms: 5, phase_self: Phase::High, phase_peer: Phase::Low, calibrated: false });
+        assert_eq!(r, RangeC { range_cm: -123, sigma_cm: 9, flags: 2 | (1 << 2) });
+        assert_eq!((r.phase_self(), r.phase_peer(), r.calibrated()), (Phase::High, Phase::Low, false));
+        l[1].range = Some(r);
+        let m = TopoMsg { pose: PoseKnown::Unposed, pose_gen: 1, n: 3, links: l };
+        let mut b = [0u8; TOPO_MAX];
+        let len = m.encode(&mut b).unwrap();
+        assert_eq!(len, 4 + 3 * 4 + 1 + 6);
+        assert_eq!(TopoMsg::decode(&b[..len]), Some(m));
+        // The pre-ranging decoder's view: the neighbours, no ranges.
+        let mut old = m;
+        old.links[1].range = None;
+        assert_eq!(TopoMsg::decode(&b[..4 + 3 * 4]), Some(old));
+        // A section cut short, or claiming more ranges than neighbours: ignored.
+        assert_eq!(TopoMsg::decode(&b[..len - 1]), Some(old));
+        b[4 + 3 * 4] = 4;
+        assert_eq!(TopoMsg::decode(&b[..len]), Some(old));
+        // A huge sigma saturates.
+        assert_eq!(RangeC::from_link(&LinkRange { sigma_mm: 9_999_999, ..Default::default() }).sigma_cm, 255);
     }
 
     #[test]

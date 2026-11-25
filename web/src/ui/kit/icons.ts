@@ -10,6 +10,7 @@ export type IconName =
   | "effect-to-device"
   | "effect-from-device"
   | "link"
+  | "share"
   | "link-off"
   | "camera"
   | "map"
@@ -90,6 +91,7 @@ const PATHS: Record<IconName, string> = {
   "map-to-device": `${MAP_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
   "effect-to-device": `${SPARK_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
   "effect-from-device": `${SPARK_TOP}${DEVICE_MAP}${cut(MAP_ARROW_UP)}`,
+  share: `<path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M6 11H5v9h14v-9h-1"/>`,
   link: `<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>`,
   "link-off": `<path d="M9 15l6-6"/><path d="M11 6l1-1a5 5 0 0 1 7 7l-1 1"/><path d="M13 18l-1 1a5 5 0 0 1-7-7l1-1"/><path d="M3 3l18 18"/>`,
   camera: `<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>`,

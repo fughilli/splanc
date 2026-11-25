@@ -22,7 +22,7 @@ use swarm_net::mesh::BROADCAST;
 use swarm_net::net::NetOf;
 use swarm_net::update::Flash;
 
-use crate::admin::{self, AdminGate, GatewaySession, Grant, SessionMsg, Sessions, UnlockError};
+use crate::admin::{self, AdminGate, Delegation, GatewaySession, Grant, GrantReject, SessionMsg, Sessions, UnlockError};
 use crate::backhaul::{Backhaul, NodeId};
 use crate::blob::{BlobDone, BlobStore, Blobs, Fetch, Hash, NoBlobs, SceneMsg};
 use crate::crypto::{key_hash, DeviceKey, Entropy, KeyHash};
@@ -330,6 +330,9 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     /// Session crypto waiting for [`MeshStack::run_crypto`]: the newest grant needing a
     /// verify, and member Acks needing an ECDH (gateway).
     pending_grant: Option<Grant>,
+    /// A delegation certificate waiting for its verify (verified before the grant it
+    /// precedes).
+    pending_deleg: Option<Delegation>,
     pending_acks: [Option<SessionMsg>; CRYPTO_ACKS],
     renewal_asked: Option<(u32, u32)>,
     /// Session crypto jobs run so far (ECDSA verifies and ECDHs).
@@ -468,6 +471,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(next_time_us, None);
         w!(next_probe_us, None);
         w!(pending_grant, None);
+        w!(pending_deleg, None);
         w!(pending_acks, [None; CRYPTO_ACKS]);
         w!(renewal_asked, None);
         w!(crypto_jobs, 0);
@@ -549,6 +553,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         self.held = None;
         self.live = None;
         self.pending_grant = None;
+        self.pending_deleg = None;
         self.pending_acks = [None; CRYPTO_ACKS];
         self.epoch_announce = false;
         self.time.epoch_allowed = None;
@@ -567,7 +572,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// A connection holding a signing session, if any (the console's epochs go out under it).
     pub fn signing_conn(&self) -> Option<usize> {
-        (0..admin::MAX_CONNECTIONS).find(|&c| self.signing_session(c))
+        // Live connections first; then the grant an app left behind (D-534).
+        (0..admin::MAX_CONNECTIONS).chain(core::iter::once(admin::DETACHED)).find(|&c| self.signing_session(c))
     }
 
     /// The `mesh_follow` device setting (§7.2).
@@ -730,6 +736,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     }
                     None => self.time.stats.bad += 1,
                 },
+                Rx::Range { src, body, .. } => self.node.backhaul.range_in(now_us, src, body),
             }
         }
         // 2. Membership timers (bounded).
@@ -779,6 +786,14 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 self.time.cancel_pending();
             }
         }
+        // 3c. Link ranging (crate::ranging, off unless enabled on the backhaul): one probe or
+        // stamp report per pass at most, one hop, ACKed unicast.
+        if self.membership.is_member() {
+            let mut body = [0u8; crate::ranging::MSG_MAX];
+            if let Some((dst, n)) = self.node.backhaul.range_out(now_us, &mut body) {
+                self.node.send_range(now_us, dst, &body[..n], &mut self.plain_tx, &mut self.plain_sealed);
+            }
+        }
         // 4. The follower (guests).
         #[cfg(feature = "open_mode")]
         match self.follower.poll(now_us) {
@@ -806,7 +821,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 let next = *self.next_grant_us.get_or_insert(now_us);
                 if now_us >= next || next - now_us > GRANT_EVERY_US {
                     self.next_grant_us = Some(now_us + GRANT_EVERY_US);
-                    self.send_session(BROADCAST, &SessionMsg::Grant(g), false);
+                    self.send_grant(BROADCAST);
                     // The epoch this gateway originated goes again with the grant, for
                     // members that joined or rebooted since (M7).
                     self.epoch_announce |= self.time.epoch.is_some_and(|e| e.origin == self.me());
@@ -1084,6 +1099,23 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     }
 
     /// Send the epoch this gateway originated as its session's signed `TIME_BASE`.
+    /// A catch-up's show epoch, to `node` only, right before its scene: the member's clock
+    /// is then on the mesh's when the scene's state lands. The epoch this gateway holds,
+    /// whoever originated it (a member takes any epoch the admin session signs): the
+    /// gateway that started it may be the fixture that just rebooted. Unicast, so a
+    /// gateway holding an older epoch can't move the rest of the mesh back.
+    pub fn announce_epoch_to(&mut self, now_us: i64, node: NodeId) {
+        let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else { return };
+        if !self.node.net.mesh.can_send() {
+            return;
+        }
+        let mut b = [0u8; ShowEpoch::LEN];
+        let Some(n) = e.encode(&mut b) else { return };
+        if self.send_admin(now_us, conn, Port::TimeBase, &b[..n], Some(&[node])).is_ok() {
+            self.epochs_sent += 1;
+        }
+    }
+
     fn announce_epoch(&mut self, now_us: i64) {
         let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else {
             self.epoch_announce = false;
@@ -1260,14 +1292,31 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     if g.gateway == me {
                         return;
                     }
+                    if !self.sessions.knows_signer(&g) {
+                        // A delegate's grant: its certificate first. Being verified now, or
+                        // ask the gateway for it (it sends the certificate, then the grant).
+                        let pending = self.pending_deleg.is_some_and(|d| g.by == Some(d.hash()));
+                        if pending {
+                            self.pending_grant = Some(g);
+                        } else {
+                            self.send_session(g.gateway, &SessionMsg::Request { session: g.session, node: me }, false);
+                        }
+                        return;
+                    }
                     if self.sessions.needs_crypto(&g) {
                         // A new session or a renewal: verify off this path (run_crypto).
                         self.pending_grant = Some(g);
                         return;
                     }
                     let admin_key = self.membership.admin_key().copied();
-                    if let Ok(Some(ack)) = self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), mesh_id, me, &self.dev, &mut self.rng) {
+                    let revoked = self.membership.revoked();
+                    if let Ok(Some(ack)) = self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), &revoked, mesh_id, me, &self.dev, &mut self.rng) {
                         self.send_session(g.gateway, &ack, false);
+                    }
+                }
+                SessionMsg::Delegation(d) => {
+                    if self.sessions.delegation_needs_crypto(&d) {
+                        self.pending_deleg = Some(d);
                     }
                 }
                 SessionMsg::Ack { .. } => {
@@ -1292,8 +1341,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     }
                 }
                 SessionMsg::Request { session, .. } => {
-                    if let Some(g) = self.gateway.as_ref().map(|g| g.grant).filter(|g| g.session == session) {
-                        self.send_session(BROADCAST, &SessionMsg::Grant(g), false);
+                    if self.gateway.as_ref().is_some_and(|g| g.grant.session == session) {
+                        self.send_grant(BROADCAST);
                     }
                 }
             }
@@ -1328,12 +1377,22 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             self.node.guard.stage_next(s.mesh_id, k.epoch, &k.mesh_key);
             self.installed = Some((s.mesh_id, k.epoch, k.mesh_key));
         }
+        // Delegates now on the revocation list: their certificates and sessions go, here
+        // and, if this gateway signs for one, its gateway session and unlocked connections.
+        let revoked = self.membership.revoked();
+        self.sessions.drop_revoked(&revoked);
+        if let Some(gs) = self.gateway.as_ref().filter(|gs| gs.grant.by.is_some_and(|h| revoked.contains(&h))) {
+            let session = gs.grant.session;
+            self.gate.drop_session(session);
+            self.gateway = None;
+            self.next_grant_us = None;
+        }
         on(Event::Rekeyed { epoch: k.epoch });
     }
 
     /// Session crypto waiting (a grant to verify, Acks to check).
     pub fn crypto_pending(&self) -> bool {
-        self.pending_grant.is_some() || self.pending_acks.iter().any(|a| a.is_some())
+        self.pending_grant.is_some() || self.pending_deleg.is_some() || self.pending_acks.iter().any(|a| a.is_some())
     }
 
     /// Run one session crypto job (an ECDSA verify plus an ECDH, or one ECDH). Firmware
@@ -1344,11 +1403,22 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     pub fn run_crypto(&mut self, now_us: i64) -> bool {
         let me = self.me();
         let mesh_id = self.node.guard.mesh_id;
+        if let Some(d) = self.pending_deleg.take() {
+            self.crypto_jobs += 1;
+            let admin_key = self.membership.admin_key().copied();
+            let revoked = self.membership.revoked();
+            self.sessions.on_delegation(&d, admin_key.as_ref(), mesh_id, self.mesh_s(now_us), &revoked);
+            return true;
+        }
         if let Some(g) = self.pending_grant.take() {
             self.crypto_jobs += 1;
             let admin_key = self.membership.admin_key().copied();
-            if let Ok(Some(ack)) = self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), mesh_id, me, &self.dev, &mut self.rng) {
-                self.send_session(g.gateway, &ack, false);
+            let revoked = self.membership.revoked();
+            match self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), &revoked, mesh_id, me, &self.dev, &mut self.rng) {
+                Ok(Some(ack)) => self.send_session(g.gateway, &ack, false),
+                // Its certificate was refused or never came: ask again.
+                Err(GrantReject::UnknownDelegate) => self.send_session(g.gateway, &SessionMsg::Request { session: g.session, node: me }, false),
+                _ => {}
             }
             return true;
         }
@@ -1374,24 +1444,38 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// `mesh_unlock{grant}` on connection `conn` (§7.9): the app signed a grant for this
     /// gateway. The grant is broadcast; members ack, and are commanded once confirmed.
-    pub fn unlock(&mut self, now_us: i64, conn: usize, grant: &Grant) -> Result<(), UnlockError> {
+    ///
+    /// A grant a delegate signed comes with its certificate (`delegation`), which this
+    /// gateway then sends ahead of every broadcast of the grant.
+    pub fn unlock(&mut self, now_us: i64, conn: usize, grant: &Grant, delegation: Option<&Delegation>) -> Result<(), UnlockError> {
         let mesh_id = self.membership.mesh_id().unwrap_or(0);
         let admin_key = self.membership.admin_key().copied();
+        let revoked = self.membership.revoked();
         let my_key = self.dev.public_key();
-        self.gate.unlock(now_us, self.mesh_s(now_us), conn, grant, admin_key.as_ref(), mesh_id, self.me(), &my_key)?;
+        self.gate.unlock(now_us, self.mesh_s(now_us), conn, grant, delegation, admin_key.as_ref(), &revoked, mesh_id, self.me(), &my_key)?;
+        let delegation = grant.by.and(delegation.copied());
         match self.gateway.as_mut() {
             // A renewal keeps the roster and its pairwise keys; members verify the new expiry.
             Some(gs) if gs.grant.session == grant.session => {
-                if gs.renew(*grant) {
+                if gs.renew(*grant, delegation) {
                     self.next_grant_us = Some(now_us);
                 }
             }
             _ => {
-                self.gateway = Some(GatewaySession::new(*grant));
+                self.gateway = Some(GatewaySession::new(*grant, delegation));
                 self.next_grant_us = Some(now_us);
             }
         }
         Ok(())
+    }
+
+    /// Send the gateway session's grant, its delegate's certificate first.
+    fn send_grant(&mut self, to: NodeId) {
+        let Some((g, d)) = self.gateway.as_ref().map(|gs| (gs.grant, gs.delegation)) else { return };
+        if let Some(d) = d {
+            self.send_session(to, &SessionMsg::Delegation(d), false);
+        }
+        self.send_session(to, &SessionMsg::Grant(g), false);
     }
 
     /// Originate an admin-class packet for an unlocked connection: MAC'd for each recipient
@@ -1482,7 +1566,16 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// Connection `conn` opened or closed: whatever session it held is gone.
     pub fn connection_changed(&mut self, conn: usize) {
-        self.gate.connection_changed(conn);
+        // The app went away, but the grant it unlocked is still good (members keep its
+        // session until it expires). Keep it on the detached slot so this gateway still
+        // catches up a member that reboots or rejoins, and re-announces its show epoch,
+        // while no app is connected. Nothing else can use that slot; a new unlock
+        // replaces the gateway session, and the old one then signs nothing.
+        if conn != admin::DETACHED && self.signing_session(conn) {
+            self.gate.detach(conn);
+        } else {
+            self.gate.connection_changed(conn);
+        }
     }
 
     /// A member's answer to relayed control `op_id` from `gateway` (ACKed unicast, desk #70).

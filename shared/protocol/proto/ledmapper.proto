@@ -1372,8 +1372,19 @@ message MeshNeighbour {
   sint32 rssi = 2;
   // Unicasts to it that were delivered (MAC-ACKed), percent; absent before the first.
   optional uint32 tx_ok_pct = 3;
-  // Reserved for Wi-Fi ranging (FTM): the measured distance, metres. Not sent yet.
+  // Wi-Fi link ranging (FTM-style timestamps, docs/design/mesh-ftm.md), as the reporting member
+  // measured it: the one-way distance, metres. Absent: not ranged (ranging off, older
+  // firmware, or no estimate yet). UNCALIBRATED unless range_calibrated: a device whose
+  // per-boot phase state is 41 adds 1.6-2.6 m, so treat uncalibrated ranges as relative.
   optional float range_m = 4;
+  // The estimate's standard error, metres.
+  optional float range_sigma_m = 5;
+  // The per-boot TX/RX clock-phase states of the reporting member and of this neighbour:
+  // 39 (the low-offset state), 41, or 0 unknown.
+  uint32 range_phase_self = 6;
+  uint32 range_phase_peer = 7;
+  // range_m was calibrated against a known distance for these phase states.
+  bool range_calibrated = 8;
 }
 
 enum MeshMemberStatus {
@@ -1554,6 +1565,9 @@ message MeshProvision {
 // session S until T", 144 bytes, mesh.md §7.9). Lasts until the connection drops.
 message MeshUnlock {
   bytes grant = 1;
+  // A grant signed by a delegate (docs/design/share-links.md, "Revocable access") comes with
+  // the delegate's certificate from the admin key (138 bytes, admin.rs Delegation).
+  bytes delegation = 2;
 }
 
 // Admit a fixture waiting to join (MeshState.pending).

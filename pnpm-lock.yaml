@@ -71,6 +71,9 @@ importers:
       '@capacitor-community/bluetooth-le':
         specifier: ^8.2.0
         version: 8.2.0(@capacitor/core@8.5.0)
+      '@capacitor/app':
+        specifier: 8.1.2
+        version: 8.1.2(@capacitor/core@8.5.0)
       '@capacitor/core':
         specifier: ^8.5.0
         version: 8.5.0
@@ -223,6 +226,11 @@ packages:
 
   '@capacitor-community/bluetooth-le@8.2.0':
     resolution: {integrity: sha512-wsy2h9sVcXaynyb3Nf9fVZklnQHDtIfT4fc6iL9McZvi19rDJ5aCoEBqa4wch5RywbF3Ic1W/StKuHJuWUumiQ==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
+  '@capacitor/app@8.1.2':
+    resolution: {integrity: sha512-uKBlsrXH0IdvUn69e/KKYbZ32A06pcrUdG8LWuZ/6y33YMXZXLEEdNSwl+jKS/SrsTWqnePs8EqSWaiQM3mUGA==}
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
 
@@ -1440,6 +1448,10 @@ snapshots:
     dependencies:
       '@capacitor/core': 8.5.0
       '@types/web-bluetooth': 0.0.20
+
+  '@capacitor/app@8.1.2(@capacitor/core@8.5.0)':
+    dependencies:
+      '@capacitor/core': 8.5.0
 
   '@capacitor/cli@8.5.0':
     dependencies:

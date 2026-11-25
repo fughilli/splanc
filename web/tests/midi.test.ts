@@ -155,3 +155,12 @@ test("resolveControlUpdates: step snaps the scaled value", () => {
   // 0.44 * 10 = 4.4 → snaps to 4.
   assert.equal(updates[0]!.value[0], 4);
 });
+
+test("resolveControlUpdates: a continuous slider (step 0) is not snapped", () => {
+  // D-541: float uniforms compile to step 0; the CC value reaches the uniform
+  // at full precision instead of landing on a (hi-lo)/100 grid.
+  const manifest = [slider("speed", 1, 0, 5, 0)];
+  const bindings: UniformBinding[] = [{ uniform: "speed", semantic: "speed" }];
+  const updates = resolveControlUpdates({ ...CC74, value: 37 / 127 }, manifest, [SPEED_SEMANTIC], bindings);
+  assert.ok(Math.abs(updates[0]!.value[0]! - (5 * 37) / 127) < 1e-9, String(updates[0]!.value[0]));
+});
