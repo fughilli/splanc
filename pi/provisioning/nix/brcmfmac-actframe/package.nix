@@ -34,7 +34,8 @@ kernel.stdenv.mkDerivation {
   inherit (kernel) src;
 
   # The kernel's own patches first (an identical tree), then ours.
-  patches = map (p: p.patch) kernel.kernelPatches ++ [
+  # (Config-only kernelPatches, patch = null, change the .config, not the tree.)
+  patches = map (p: p.patch) (lib.filter (p: p.patch != null) kernel.kernelPatches) ++ [
     ./0001-wifi-brcmfmac-report-the-signal-of-received-action-f.patch
     ./0002-wifi-brcmfmac-complete-action-frames-sent-without-a-.patch
     ./0003-wifi-brcmfmac-do-not-wait-for-an-ACK-of-group-addres.patch
