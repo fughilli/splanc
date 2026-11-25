@@ -1,0 +1,5 @@
+# The per-gate metric dataset is served as assets on the fxbench-data GitHub release
+# (it grows every run); only data/ingest_state.json (the run-id ledger) is tracked.
+data/hitlm-*.json
+data/hitl-metrics.jsonl
+data/hitl-metrics-summary.json

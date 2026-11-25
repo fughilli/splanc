@@ -102,6 +102,26 @@ if [ "${SPLANC_IOS_SIGN_IN_WITH_APPLE:-0}" = "1" ] && [ -f "${pbxproj}" ]; then
   echo "Sign in with Apple: entitlement on ($(grep -c 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;' "$pbxproj") configs)"
 fi
 
+# --- Universal links (docs/design/share-links.md): share links
+# https://splanc.io/app/#/share?… open the app instead of Safari. The capability is the
+# `com.apple.developer.associated-domains = [applinks:splanc.io]` entitlement; splanc.io
+# serves the matching /.well-known/apple-app-site-association (Studio-Fug/splanc.io).
+# OPT-IN with SPLANC_IOS_ASSOCIATED_DOMAINS=1 for the same reason as Sign in with Apple:
+# the distribution provisioning profile must include the capability first (enable
+# Associated Domains on the App ID, regenerate the profile), or a signed build fails.
+if [ "${SPLANC_IOS_ASSOCIATED_DOMAINS:-0}" = "1" ] && [ -f "${pbxproj}" ]; then
+  ent="${here}/../ios/App/App/App.entitlements"
+  [ -f "$ent" ] || printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict/>\n</plist>\n' > "$ent"
+  "$pb" -c "Delete :com.apple.developer.associated-domains" "$ent" 2>/dev/null || true
+  "$pb" -c "Add :com.apple.developer.associated-domains array" "$ent"
+  "$pb" -c "Add :com.apple.developer.associated-domains:0 string applinks:splanc.io" "$ent"
+  if ! grep -q 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;' "$pbxproj"; then
+    perl -ni -e 'print unless /^\s*CODE_SIGN_ENTITLEMENTS = /' "$pbxproj"
+    perl -pi -e 's/^(\s*)CODE_SIGN_STYLE = (\w+);$/$1CODE_SIGN_STYLE = $2;\n$1CODE_SIGN_ENTITLEMENTS = App\/App.entitlements;/' "$pbxproj"
+  fi
+  echo "Associated Domains: applinks:splanc.io on ($(grep -c 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;' "$pbxproj") configs)"
+fi
+
 # Set (or overwrite) a string key. PlistBuddy has no upsert, so try Set then Add.
 set_str() {
   local key="$1" val="$2"
@@ -152,7 +172,16 @@ set_str NSBluetoothPeripheralUsageDescription \
 # Local network: reaching the device's wss:// control plane on the LAN (iOS 14+
 # gates all local-network traffic behind this prompt).
 set_str NSLocalNetworkUsageDescription \
-  "Splanc talks to your Splanc device directly on your local network to map fixtures and drive effects."
+  "Splanc finds the Splanc lights on your network and talks to them directly to map fixtures and drive effects."
+# Bonjour: the connect list finds fixtures on the network by their mDNS adverts
+# (_splanc._tcp, firmware/mdns) through the WssBridge plugin's NetServiceBrowser
+# (net/discovery.ts). iOS 14+ only lets an app browse the service types it
+# declares here; an undeclared type fails with NoAuth (-65555). Rebuilt each run
+# (Delete then Add), so re-running cannot stack duplicates.
+"$pb" -c "Delete :NSBonjourServices" "$plist" 2>/dev/null || true
+"$pb" -c "Add :NSBonjourServices array" "$plist"
+"$pb" -c "Add :NSBonjourServices:0 string _splanc._tcp" "$plist"
+echo "Bonjour: NSBonjourServices = [_splanc._tcp]"
 # Microphone + speech recognition: Acid Mode's voice control (ui/acid/voice.ts)
 # drives the Web Speech API. In a WKWebView both strings are REQUIRED — without
 # them iOS denies the mic and SpeechRecognition errors with "not-allowed" (the

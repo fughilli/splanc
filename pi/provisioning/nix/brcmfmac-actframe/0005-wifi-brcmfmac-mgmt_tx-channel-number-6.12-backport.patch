@@ -1,0 +1,34 @@
+wifi: brcmfmac: send action frames on the right channel (6.12 backport)
+
+Backport of the mgmt_tx channel hunk of upstream f2d7c3c380bf, which
+rpi-6.12.y and 6.12 stable lack. brcmf_cfg80211_mgmt_tx() treats the
+BRCMF_C_GET_CHANNEL result as a frequency and converts it again, so an
+NL80211_CMD_FRAME without a frequency is sent on a bogus channel. Use
+the channel number: the requested channel's hw_value, or the firmware's
+current channel as it is.
+
+Not part of the upstream series (wireless-next already has it); carried
+for the 6.12 Pi kernels only. Drop it when the image kernel has
+f2d7c3c380bf.
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -5605,12 +5605,13 @@
+ 		/* Add the channel. Use the one specified as parameter if any or
+ 		 * the current one (got from the firmware) otherwise
+ 		 */
+-		if (chan)
+-			freq = chan->center_freq;
+-		else
++		if (chan) {
++			chan_nr = chan->hw_value;
++		} else {
+ 			brcmf_fil_cmd_int_get(vif->ifp, BRCMF_C_GET_CHANNEL,
+ 					      &freq);
+-		chan_nr = ieee80211_frequency_to_channel(freq);
++			chan_nr = freq;
++		}
+ 		af_params->channel = cpu_to_le32(chan_nr);
+ 		af_params->dwell_time = cpu_to_le32(params->wait);
+ 		memcpy(action_frame->data, &buf[DOT11_MGMT_HDR_LEN],

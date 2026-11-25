@@ -72,6 +72,21 @@ export interface KernelExports {
   pk_decode_cycle(n: number, ledCount: number, bits: number, symbols: number, secded: number): number;
   pk_stride_phase_count(spacing: number): number;
   pk_stride_lit(led: number, phase: number, spacing: number, anchorDensity: number): number;
+  pk_stride_lit_rolling(
+    led: number,
+    seq: number,
+    ledCount: number,
+    bits: number,
+    symbols: number,
+    secded: number,
+    sync: number,
+    spacing: number,
+    anchorDensity: number,
+    dwellCycles: number,
+    nLeds: number,
+    codeOffset: number,
+  ): number;
+  pk_stride_rolling_dwell(dwellCycles: number): number;
   pk_cycle_ms(cycleFrames: number, bitPeriodMs: number): number;
   pk_phase_ms(t: number, epoch: number, cycleFrames: number, bitPeriodMs: number): number;
   pk_frame_index_at(t: number, epoch: number, cycleFrames: number, bitPeriodMs: number): number;

@@ -1,7 +1,7 @@
 {
-  "comment": "splanc HITL fleet catalog (fleet-identical; baked into every rig image, read by hitl-reserved --catalog). USB ESP32-C6 boards are auto-discovered; network DUTs (a Pi player) are runtime-seeded via scripts/seed-network-dut.sh into the seeded_file below (no redeploy). The FX2 logic analyzer is a shared resource, dormant unless an FX2 is attached. Per-rig values (the provisioning-AP SSID/PSK = hostname) are passed as flags by nix/hitl-app.nix, not baked here. Ports 2222-2233 match the firewall range opened in hitl-app.nix.",
+  "comment": "splanc HITL fleet catalog (fleet-identical; baked into every rig image, read by hitl-reserved --catalog). USB ESP32-C6 boards are auto-discovered; network DUTs (a Pi player) are runtime-seeded via scripts/seed-network-dut.sh into the seeded_file below (no redeploy). The FX2 logic analyzer is a shared resource, dormant unless an FX2 is attached. Per-rig values (the provisioning-AP SSID/PSK = hostname) are passed as flags by nix/hitl-app.nix, not baked here. Ports 2222-2233 match the firewall range opened in hitl-app.nix. lease_seconds is the dead-client timeout (no heartbeat for that long = the holder is gone, the unit is reclaimed); clients heartbeat every 20 s, so 300 s rides out a 5-min tailnet blip while a killed CI job (cancel-in-progress, runner teardown) frees its DUT in <=5 min instead of 30 (2026-11-23: 352 dead holds cost 100 unit-hours in one week).",
   "workspace": "splanc",
-  "lease_seconds": 1800,
+  "lease_seconds": 300,
 
   "resource_types": {
     "esp32c6": {

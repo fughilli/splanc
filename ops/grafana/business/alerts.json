@@ -125,6 +125,30 @@
       "summary": "Webhook calls with bad signatures: a rotated signing secret, or someone probing the endpoint."
     },
     {
+      "uid": "biz-email-failed",
+      "title": "AI credits: verification / recovery emails failing",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_email_failed\"} [1h]))"
+      },
+      "above": 2,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "The email provider (Resend) is refusing sends: users can't verify an email or recover an account."
+    },
+    {
+      "uid": "biz-recovery-spike",
+      "title": "AI credits: account recoveries spiking",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_account_recovered\"} [1h]))"
+      },
+      "above": 20,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "Unusually many account recoveries in an hour: check for account takeover attempts."
+    },
+    {
       "uid": "biz-consumption-failed",
       "title": "AI credits: Apple consumption answer failed",
       "component": "ai-billing",

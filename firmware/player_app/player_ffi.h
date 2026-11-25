@@ -41,6 +41,9 @@ void lm_player_set_identity(const uint8_t *mac, size_t mac_len,
 // LM_GIT_DIRTY / LM_VERSION).
 void lm_player_set_build_info(const uint8_t *commit, size_t commit_len, bool dirty,
                               const uint8_t *version, size_t version_len);
+// A run-time feature appended to welcome.features and the agent manifest (the flash:
+// "flash_<jedec>_suspend_on|off").
+void lm_player_set_extra_feature(const uint8_t *f, size_t len);
 // Render the agent discovery manifest (GET /.well-known/splanc.json, schema
 // "splanc-agent/1") into out (cap bytes); returns its length, or -2 when it
 // doesn't fit. cert_sha256: the TLS certificate's SHA-256, lowercase hex.
@@ -67,6 +70,8 @@ int32_t lm_mdns_announce(const uint8_t *ip, uint8_t *out, size_t cap);
 // whether the last change asked to be persisted (commit, unset = true).
 uint32_t lm_fixture_pose_gen(void);
 bool lm_fixture_pose_commit(void);
+// The pose itself for the mesh topology: 0 unposed, 1 posed (t[3] m, q[4] x y z w, room bytes).
+int32_t lm_fixture_pose_get(float *t, float *q, uint8_t *room, uint32_t room_cap, uint32_t *room_len);
 // Shared effect-time epoch (set_time_base), device-clock ms: true + *epoch_ms when
 // set. The render loop derives effect time = (now - epoch) / 1000.
 bool lm_time_base(int64_t *epoch_ms);
@@ -83,14 +88,31 @@ bool lm_fx_clock(int64_t now_ms, uint32_t wall_dt_ms, float *time_s, float *dt_s
 // (SetTexture.present_at_ms on the shared time base) has come. Once per effect
 // frame, under the player mutex, before lm_fx_update. `now_ms` = millis().
 void lm_tex_present(uint32_t now_ms);
-// Device-clock step guard, every render frame under the player mutex: a millis() step
-// back > 1 s shifts the time base + queued video times by it. Returns the shift (0 = none).
+// Device-clock step guard, every render frame under the player mutex: any millis() step
+// back shifts the time base + queued video times by it. Returns the shift (0 = none).
 int64_t lm_clock_observe(int64_t now_ms);
 // Scheduled changes (apply_at_ms on set_uniforms / set_effect / set_crossfade /
 // set_brightness): apply those due by `now_ms` (millis), in order. Every render frame
 // at its start, under the player mutex. Bits: 1 = applied, 2 = brightness changed
 // (re-run poll_brightness).
 uint32_t lm_sched_apply(int64_t now_ms);
+// Mesh M6 (docs/design/mesh-m6.md): a shared effect's submit_effect frame, loaded by the
+// render task (inside lm_sched_apply, bit 4) at the first frame at/after apply_at_ms. All
+// under the player mutex. lm_fx_stage: 1 staged (*replaced: an earlier staged frame handed
+// back), 0 its time has passed (dispatch it now), -1 refused. lm_fx_staged_take: the applied
+// frame (1 loaded, 2 refused; 0 none yet). lm_fx_stage_cancel: the staged frame, forgotten.
+int32_t lm_fx_stage(const uint8_t *frame, size_t len, uint32_t apply_at_ms, int64_t now_ms, const uint8_t **replaced);
+uint32_t lm_fx_staged_take(const uint8_t **frame, size_t *len, uint32_t *deck);
+const uint8_t *lm_fx_stage_cancel(void);
+// lm_sched_apply bit 8: the staged frame is due; load it with lm_fx_staged_apply (bits back)
+// on a deep stack (mesh_glue's tick stack: a load does not fit the render task's).
+uint32_t lm_fx_staged_apply(void);
+// The look a mesh catch-up carries besides the effect: len(2) || ClientMessage frames
+// (deck A's uniforms, brightness, crossfade). Returns the length, -1 if `cap` is too small.
+int32_t lm_fx_scene_frames(uint8_t *out, size_t cap);
+// The last set_fx_state (a mesh catch-up's `shared state`): 0 none, 1 restored, 2 refused;
+// cleared. *lag_ms: the time the next update() adds.
+uint32_t lm_fx_state_restored(uint32_t *lag_ms);
 // Lock-free video ingest (network task, under the texture-queue lock only): decode +
 // queue a set_texture for lm_tex_present. Returns the TextureAck length in `out`
 // (0 = none), -2 = not a set_texture, -3 = can't be queued (dispatch it normally).
@@ -120,6 +142,27 @@ void lm_kp_set_store(lm_kp_read_fn read, lm_kp_write_fn write, lm_kp_remove_fn r
 // and that target encoded as a set_uniforms ClientMessage frame (length, or <0).
 bool lm_kp_commit(void);
 int32_t lm_kp_commit_frame(uint8_t *out, size_t cap);
+// The keypoint file key ("kp_%08x.<n>") the keypoint arm in frame addresses, 0 if none
+// (player mutex held; no flash), and the effect store's record header size: main.cpp reads
+// those files before it takes the mutex (PR-41).
+uint32_t lm_kp_key(const uint8_t *frame, size_t len);
+uint32_t lm_fxs_header_cap(void);
+// The effect store (effect_store.rs, docs/design/effect-store.md): one record per
+// stored effect, file "fxs.<n>" under the FS base. read / remove as the keypoint
+// hooks; write stores a ++ b as one atomic (power-loss-safe) file and returns 0, -2 when
+// it is refused for space (the room kept for a map upload), or -1 when it failed.
+typedef int32_t (*lm_fxs_write_fn)(const uint8_t *name, size_t name_len, const uint8_t *a, size_t a_len,
+                                   const uint8_t *b, size_t b_len);
+void lm_fxs_set_store(lm_kp_read_fn read, lm_fxs_write_fn write, lm_kp_remove_fn remove);
+// Whether the submit_effect just handled went to the store (not persisted as deck A's).
+bool lm_fxs_last_was_store(void);
+// load_stored_effect: the record ("fxs.<n>") the frame names, or -1. Then, under the
+// player mutex, load the staged record `rec`; the reply goes to out (its length is
+// returned). *persist_len > 0: rec[*persist_off ..] is the submit_effect frame to
+// persist as the boot effect (it landed on deck A, activated).
+int32_t lm_fxs_find(const uint8_t *frame, size_t len);
+int32_t lm_fxs_load(const uint8_t *frame, size_t len, const uint8_t *rec, size_t rec_len, uint8_t *out,
+                    size_t cap, size_t *persist_off, size_t *persist_len);
 // Copy the player's CURRENT display name into out (cap bytes). Returns the
 // length written, or -2 when it doesn't fit. The app polls this after each
 // lm_player_handle so a set_device_name is persisted + reflected to BLE.
@@ -247,7 +290,9 @@ int32_t lm_decode_upload_stream(int32_t arm, LmRefill refill, LmRewind rewind,
 bool lm_pattern_expire(int64_t now_ms);
 bool lm_pattern_timing(int64_t *epoch_ms, uint32_t *bit_period_us,
                        uint32_t *cycle_frames, uint32_t *led_count);
-bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);
+// `seq` is the ABSOLUTE frame since the epoch (not reduced modulo
+// cycle_frames): the rolling stride masks by it.
+bool lm_pattern_color(uint32_t led, uint32_t seq, uint8_t rgb[3]);
 // Record the monotonic-clock time (t_mono_us, raw micros()) at which the frame
 // loop pushed absolute mapping-pattern frame `seq` (before the cycle modulo)
 // to the LEDs, buffered for the phone to drain via get_frame_timing.
@@ -534,6 +579,10 @@ typedef struct {
   bool (*bus_ensure)(void);
   size_t (*scan)(uint8_t *out, size_t cap);
   uint32_t (*cycles)(void);
+  // GPIO driver intrinsics (gpio_read -> 0/1 or -1; gpio_mode 0 input, 1 pull-up,
+  // 2 pull-down -> applied).
+  int32_t (*gpio_read)(uint8_t pin);
+  bool (*gpio_mode)(uint8_t pin, uint8_t mode);
 } LmDrvHost;
 void lm_drv_set_host(const LmDrvHost *host);
 // Run the loaded driver's poll() if due (loop task, player mutex held).
@@ -555,6 +604,30 @@ bool lm_fxdbg_paused(void);
 bool lm_session_busy(int64_t now_ms);
 // Loop task: lapse a pause whose client went away (no session open).
 void lm_fxdbg_poll(uint32_t now_ms, bool session_open);
+
+// -- Lamp power (power_ffi.rs, docs/design/lamp-power.md) ----------------------
+// The config record's size (ledmapper_power::RECORD_LEN, 543) with headroom.
+#define LM_POWER_RECORD_CAP 576
+bool lm_power_seed(const uint8_t *rec, size_t len, int32_t last_on, bool on_stored, bool off_stored);
+// Render task, frame start, player mutex held: bit 1 = render, bit 2 = settled.
+uint32_t lm_power_frame(uint32_t now_ms, uint16_t *level_q8);
+bool lm_power_poll_trigger(uint32_t now_ms);
+uint32_t lm_power_take_load(void);
+void lm_power_set_loading(bool on);
+void lm_power_effect_loaded(uint32_t now_ms);
+uint32_t lm_power_take_store(void);
+uint32_t lm_power_take_clear(void);
+bool lm_power_take_sim(int32_t *pin, uint32_t *pull);
+uint32_t lm_power_cfg_gen(void);
+int32_t lm_power_cfg_record(uint8_t *out, size_t cap);
+bool lm_power_target(bool *settled);
+void lm_power_note_brightness(void);
+void lm_power_tick(bool wss_open, bool ble_connected);
+bool lm_power_subscribed(uint32_t src);
+bool lm_power_push_due(void);
+int32_t lm_power_build_push(uint32_t src, uint32_t now_ms, uint8_t *out, size_t cap);
+void lm_power_push_done(void);
+int32_t lm_power_console(const uint8_t *line, size_t len, uint32_t now_ms, uint8_t *out, size_t cap);
 
 // -- Kiosk mode (kiosk_ffi.rs, docs/design/kiosk-mode.md) ----------------------
 // Loop task only (the gate + handler run under the player mutex, the pollers after).

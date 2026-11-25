@@ -181,6 +181,19 @@ effect:
   this bridge loses the player: changing it back needs Bluetooth (the Splanc
   app) or the wired console. Confirm with the user before going offline.
 
+## Lamp power and ON/OFF transitions (feature `power`)
+
+- `set_power {on}` / `{toggle: true}` switches a lamp on or off. Off = LEDs dark
+  and the effect paused; the lamp stays connected, so `set_power {on: true}`
+  brings it back. Prefer it over `set_brightness 0`. The lid's touch sensor
+  toggles the same state; `get_power` shows what changed it last.
+- `set_transitions {on, off, boot}` picks how it turns on / off: `fade` (the safe
+  default), `cut`, or an effect (`library_id` from `search_effects`, or
+  `source`), optionally at a saved look (`keypoint`) or `uniforms`. Good
+  transition effects declare `uniform float power;` (0 -> 1 turning on, 1 -> 0
+  turning off: one effect serves both directions) and stay cheap. `boot`: `last`
+  (default), `on` or `off`.
+
 ## Writing a new effect
 
 1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;

@@ -33,6 +33,18 @@ export interface PipelineOptions {
   /** Emit dense records every Nth frame (default 3 ≈ 10 Hz at 30 fps —
    * matches the solver's keyframe rate; full rate just burns bandwidth). */
   denseStride?: number;
+  /**
+   * The lit schedule, when the device runs a ROLLING stride
+   * (docs/design/rolling-stride.md): is coded id `ledId` lit at pattern frame
+   * `frame` (absolute, since the epoch; negative before it)? Under a rolling stride a block steps
+   * its lit class while the camera watches, so an LED goes dark and its strip
+   * neighbour lights a few pixels away; the tracker can carry the old track
+   * (and its confirmed id) onto the new spot. The schedule is known exactly,
+   * so a track whose id is not lit at the frame being sighted has hopped: its
+   * id and pending decode are dropped and nothing is emitted under it. Omit
+   * for an all-lit or phased capture (a phase step rebuilds the pipeline).
+   */
+  litAt?: ((ledId: number, frame: number) => boolean) | undefined;
 }
 
 /** Per-frame 2D-stage feedback: one entry per detected blob (see step()). */
@@ -57,6 +69,8 @@ export class CvPipeline {
   private readonly toServerTime: (tLocalMs: number) => number;
   private readonly dense: boolean;
   private readonly denseStride: number;
+  private readonly litAt: ((ledId: number, frame: number) => boolean) | null;
+  private readonly epochMs: number;
   private frameIndex = 0;
 
   constructor(
@@ -68,6 +82,8 @@ export class CvPipeline {
     this.toServerTime = toServerTime;
     this.dense = opts.denseRecords ?? false;
     this.denseStride = Math.max(1, opts.denseStride ?? 3);
+    this.litAt = opts.litAt ?? null;
+    this.epochMs = epochMs;
     // Every LED is lit every frame under the hue carrier, so coasting only
     // bridges occlusion / frame exit — but keep the generous default: a
     // track that survives a full cycle re-acquires its identity instantly.
@@ -111,7 +127,28 @@ export class CvPipeline {
         greens++;
       }
     }
-    const records = this.decoder.step(this.tracker.tracks, meta.tCaptureMs, greens);
+    let records = this.decoder.step(this.tracker.tracks, meta.tCaptureMs, greens);
+    if (this.litAt !== null) {
+      // Rolling stride: a track whose id is not lit where it is sighted hopped
+      // onto a neighbour (see PipelineOptions.litAt).
+      for (let i = 0; i < blobs.length; i++) {
+        const tr = this.tracker.lastAssignment[i] ?? null;
+        if (tr === null) continue;
+        if (tr.ledId !== null && !this.scheduledLit(tr.ledId, meta.tCaptureMs)) {
+          tr.ledId = null;
+          tr.pendingId = null;
+          tr.pendingCount = 0;
+          tr.held.length = 0;
+          tr.heldDense.length = 0;
+        } else if (tr.ledId === null && tr.pendingId !== null && !this.scheduledLit(tr.pendingId, meta.tCaptureMs)) {
+          tr.pendingId = null;
+          tr.pendingCount = 0;
+          tr.held.length = 0;
+          tr.heldDense.length = 0;
+        }
+      }
+      records = records.filter((r) => this.scheduledLit(r.ledId, r.tCaptureMs));
+    }
     if (this.dense) {
       // Dense mode: per-frame samples of every identified blob replace the
       // per-cycle anchor records on the wire (decoder records still label
@@ -179,6 +216,20 @@ export class CvPipeline {
       for (const t of this.tracker.tracks) t.pruneBefore(cutoffServer - offset);
     }
     return records;
+  }
+
+  /**
+   * Was coded id `ledId` lit (by the rolling schedule) when the frame captured
+   * at local time `tCaptureMs` was exposed? The exposure's pattern frame comes
+   * from the decoder's latency alignment; ±2 frames of slack absorb its
+   * sub-frame error and the frame straddling a transition.
+   */
+  private scheduledLit(ledId: number, tCaptureMs: number): boolean {
+    if (this.litAt === null) return true;
+    const bp = this.params.bitPeriodMs;
+    const f = Math.floor((this.toServerTime(tCaptureMs) - this.decoder.stats.alignShiftMs - this.epochMs) / bp);
+    for (let d = -2; d <= 2; d++) if (this.litAt(ledId, f + d)) return true;
+    return false;
   }
 
   get stats() {

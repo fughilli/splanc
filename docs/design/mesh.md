@@ -587,6 +587,18 @@ content id per deck, brightness, scene generation per group, free and min heap, 
 parent it hears best (id + RSSI), time-sync error estimate, Wi-Fi state (associated / mesh-only),
 the hash of its certificate (8 B prefix; full pin on request).
 
+`MeshTopology` (`splanc_mesh::topo`, tag `0x24` on `STATUS`, its own packet so an older member
+ignores it and keeps the 27-byte status): the member's room pose (translation in cm as 3 × i16,
+the rotation as the quaternion's x, y, z × 32767 with w ≥ 0, the room name cut to 16 bytes) and
+its radio neighbours (at most 8: id, average RSSI, unicast delivery %). 36 B with no pose, 65 B
+at most. The neighbours go out every 10 s; the pose when it changes and at least once a minute
+(a generation byte tells a peer its copy is stale). It is flooded like the status, so every
+member keeps every live peer's latest pose and neighbours (`MeshStack::peer_topo`): effects can
+read peers' positions locally later. The app reads it from the gateway with
+`get_mesh{topology}` (paged: a 16-member mesh does not fit one 2 KB reply) for the mesh map.
+The pose comes from the player at the 1 Hz status point (`lm_mesh_pose_fill`, no render lock);
+a front end that runs the mesh for another processor (the P4's C6) fills the same hook.
+
 ### 5.5 Effect programs: content-addressed blobs
 
 1. The app sends `SubmitEffect` to the gateway as today (BLE uses `UploadChunk` reassembly).
@@ -1204,7 +1216,16 @@ The verify runs in the mesh task, once per session, never in the render task. It
 touch effects as long as the render task keeps its higher priority on the single C6 core.
 
 **Recovery.** USB console `mesh admin reset` clears the admin public key on that device; the
-app re-provisions it.
+app re-provisions it. (As built in M7: `MESH LEAVE` erases the whole membership.)
+
+**M7 on hardware** ([mesh-m7.md](mesh-m7.md)): the app's `mesh_admin` provisions, unlocks with
+a signed grant, admits, revokes and ejects; the device key is the per-device TLS key; the
+membership persists in littlefs and survives reboots. On three C6s: a closed mesh forms from
+the site secret in 5.8 s, an unapproved fixture waits until admitted (then joins in 1.5 s),
+an insider's envelope control and beacon epochs are refused, a revocation holds across a
+reboot, and effects stay at 80 fps. A member's grant costs 53–55 ms of C6 CPU (ECDSA verify +
+ECDH), the gateway's Ack 10 ms (ECDH), once per session. On a mesh with an admin key the show
+epoch now travels as the session's signed `TIME_BASE`; beacons only gossip it.
 
 **Threat model.**
 - An attacker with a board extracts its device key and the mesh key. It can then act as that

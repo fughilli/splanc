@@ -49,6 +49,7 @@ import {
 } from "../../net/proto";
 import type { ColorBlock } from "@ledmapper/protocol";
 import { installHardwareSetupStyles } from "./hardwareSetup.css";
+import { deviceHasPower } from "../../power/power";
 import { wireFpsCeiling } from "../../net/ledWire";
 import { openCurtainLayoutSheet } from "../../halloween/layoutSheet";
 import { busyPins, capsFromWire, describeOutput, type EthernetCaps, type EthernetState } from "../../net/ethernet";
@@ -530,11 +531,28 @@ export function HardwareSetupScreen(_router: Router): Screen {
         if (eth) parts.push(eth);
       }
     }
+    const ts = touchGroup();
+    if (ts) parts.push(ts);
     // The per-device stride is local (persisted with the device), so surface it
     // whenever a device is selected — even if its firmware didn't report channels.
     const sg = strideGroup();
     if (sg) parts.push(sg);
     body.replaceChildren(...parts);
+  }
+
+  /** A way to the Sensors page (lamp power: a touch sensor toggles the lamp). */
+  function touchGroup(): HTMLElement | null {
+    if (configState !== "ok" || !deviceHasPower(appState.client?.welcome)) return null;
+    const g = group("Sensors");
+    const hint = document.createElement("div");
+    hint.className = "hw-hint";
+    hint.textContent =
+      "A touch sensor under the lid (TTP223) or another sensor module is set up on its own page, with the agent or a form, and tested live there.";
+    const actions = document.createElement("div");
+    actions.className = "hw-test-actions";
+    actions.append(Button({ label: "Set up a sensor", variant: "quiet", onClick: () => (location.hash = "#/sensors") }));
+    g.append(hint, actions);
+    return g;
   }
 
   /** An unused GPIO strip on a board that also drives network outputs. */

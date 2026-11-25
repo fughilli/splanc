@@ -108,6 +108,21 @@ export class FakePlayer {
     radioOn: true,
   };
   otaPending = false;
+  /** Lamp power (the "power" feature): the power_state this fake reports
+   * (proto3-JSON names). set_power / set_power_config update it like the
+   * firmware's settled state (the fake has no frames: transitions settle at once). */
+  power: Record<string, unknown> = {
+    on: true,
+    phase: 1,
+    brightness: 1,
+    source: 0,
+    boot: 0,
+    onTransition: { style: 1 },
+    offTransition: { style: 1 },
+    seq: 1,
+  };
+  /** Transition effects stored with submit_effect{powerSlot}: slot -> {id, fxb}. */
+  powerEffects = new Map<number, { id: string; fxb: Uint8Array }>();
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
 
@@ -210,6 +225,17 @@ export class FakePlayer {
     for (const c of this.wss.clients) this.reply(c, { type: "fps_state", minFps: 25, maxFps: 80, ...st });
   }
 
+  /** Push the current power_state to every connected session (a lid tap, another client). */
+  pushPowerState(patch: Record<string, unknown> = {}): void {
+    this.power = { ...this.power, ...patch, seq: (this.power["seq"] as number) + 1 };
+    for (const c of this.wss.clients) this.reply(c, { type: "power_state", ...this.power });
+  }
+
+  /** Drop every open session abruptly (a Wi-Fi blip); the server keeps listening. */
+  dropSessions(): void {
+    for (const c of this.wss.clients) c.terminate();
+  }
+
   types(): string[] {
     return this.received.map((m) => m.type);
   }
@@ -270,6 +296,18 @@ export class FakePlayer {
       this.deckActive[0] = activate;
     }
     return { type: "result_ready", mapId: effectId };
+  }
+
+  /** submit_effect{powerSlot}: keep it as that transition's effect (not loaded). */
+  private storePowerEffect(m: Msg): Msg {
+    const slot = m["powerSlot"] as number;
+    const raw = m["fxb"] as string | Uint8Array;
+    const fxb = typeof raw === "string" ? new Uint8Array(Buffer.from(raw, "base64")) : new Uint8Array(raw);
+    const id = m["effectId"] as string;
+    this.powerEffects.set(slot, { id, fxb });
+    const k = slot === 1 ? "onTransition" : "offTransition";
+    this.power = { ...this.power, [k]: { ...(this.power[k] as Record<string, unknown>), effectId: id } };
+    return { type: "result_ready", mapId: id };
   }
 
   private onMessage(ws: WebSocket, m: Msg): void {
@@ -416,6 +454,7 @@ export class FakePlayer {
         this.pose = (m["pose"] as Record<string, unknown>) ?? null;
         return this.reply(ws, this.welcome());
       case "submit_effect":
+        if (m["powerSlot"]) return this.reply(ws, this.storePowerEffect(m));
         return this.reply(
           ws,
           this.applyEffect(m["effectId"] as string, m["fxb"] as Uint8Array, m["activate"] as boolean, (m["deck"] as number) ?? 0),
@@ -430,6 +469,7 @@ export class FakePlayer {
         const frame = Buffer.concat(parts.map((p) => Buffer.from(p, "base64")));
         const inner = decodeClient(new Uint8Array(frame)) as unknown as Msg;
         this.received.push(inner);
+        if (inner["powerSlot"]) return this.reply(ws, this.storePowerEffect(inner));
         return this.reply(
           ws,
           this.applyEffect(inner["effectId"] as string, inner["fxb"] as Uint8Array, inner["activate"] as boolean, (inner["deck"] as number) ?? 0),
@@ -496,6 +536,40 @@ export class FakePlayer {
           this.sensor = { ...this.sensor, calibrationSeq: seq + 1, calibrationResult: "ok", calibrated: true };
         }
         return this.reply(ws, reply);
+      }
+      case "get_power":
+        return this.reply(ws, { type: "power_state", ...this.power });
+      case "set_power": {
+        const on = m["toggle"] === true ? !(this.power["on"] as boolean) : m["on"] === true;
+        this.power = { ...this.power, on, phase: on ? 1 : 0, source: 1, seq: (this.power["seq"] as number) + 1 };
+        return this.reply(ws, { type: "power_state", ...this.power });
+      }
+      case "set_power_config": {
+        const next = { ...this.power };
+        if (m["boot"] !== undefined) next["boot"] = m["boot"];
+        for (const [k, slot] of [["onTransition", 1], ["offTransition", 2]] as const) {
+          const t = m[k] as Record<string, unknown> | undefined;
+          if (!t) continue;
+          const { uniforms, ...rest } = t;
+          const stored = this.powerEffects.get(slot);
+          next[k] = {
+            ...rest,
+            ...(stored ? { effectId: stored.id } : {}),
+            ...(Array.isArray(uniforms) && uniforms.length ? { uniformCount: uniforms.length } : {}),
+          };
+        }
+        if (typeof m["toggleTrigger"] === "string") next["toggleTrigger"] = m["toggleTrigger"];
+        const clear = (m["clearEffects"] as number | undefined) ?? 0;
+        for (const [k, slot] of [["onTransition", 1], ["offTransition", 2]] as const) {
+          if (clear & slot) {
+            this.powerEffects.delete(slot);
+            const { effectId: _drop, ...rest } = (next[k] as Record<string, unknown>) ?? {};
+            next[k] = rest;
+          }
+        }
+        next["seq"] = (next["seq"] as number) + 1;
+        this.power = next;
+        return this.reply(ws, { type: "power_state", ...this.power });
       }
       case "get_wifi_policy":
         return this.reply(ws, { type: "wifi_policy_state", ...this.wifi, otaPending: this.otaPending });
@@ -566,6 +640,21 @@ export interface FakePlayer {
 /** Keypoint arms, modelled closely enough for the bridge: store by uniform name,
  * blend floats linearly (the device's per-kind rules are its own tests'). */
 FakePlayer.prototype.keypoint = function (this: FakePlayer, m: Msg): Msg {
+  // get_keypoint{effectId}: by the effect's id, loaded or not (like the firmware).
+  if (m.type === "get_keypoint" && typeof m["effectId"] === "string") {
+    const id = m["effectId"] as string;
+    const k = this.keypoints.get(id)?.get((m["name"] as string) ?? "");
+    if (!k) return { type: "error", code: "no_keypoint", message: "no keypoint by that name" };
+    return {
+      type: "keypoint",
+      effectId: id,
+      index: k.index,
+      name: m["name"],
+      stale: false,
+      values: Object.entries(k.values).map(([uniform, value]) => ({ uniform, value })),
+      slots: [],
+    };
+  }
   const e = this.deck((m["deck"] as number) ?? 0);
   if (!e) return { type: "error", code: "no_effect", message: "no effect loaded on that deck" };
   const store = this.keypoints.get(e.id) ?? new Map();

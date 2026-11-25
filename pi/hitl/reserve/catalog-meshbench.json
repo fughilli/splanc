@@ -109,13 +109,14 @@
       }
     },
     {
-      "comment": "The RP2350 (Pico 2) RF controller running pi/hitl/meshbench/rfctl (USB CDC, product 'rfctl mesh-bench'). Drives every switch and attenuator of the matrix through the 74HC595 chain, toggles SYNC (analyser D12) on each commit, and timestamps frame starts on its FSTI inputs.",
+      "comment": "The RP2350 (Pico 2) RF controller running pi/hitl/meshbench/rfctl (USB CDC, product 'rfctl mesh-bench'). Drives the matrix's cut switches and delay bank through the 74HC595 chain and the one Jeanoko attenuator per DUT over its PIO UARTs (design §5.2), toggles SYNC (analyser D12) on each commit, and timestamps frame starts on its FSTI inputs. HITL_MESHBENCH_FIXED_DB is a pair's loss without its two attenuators until HITL_MESHBENCH_CAL_JSON (bench_cal.json on this host, atten_cal.py, §5.8) is filled.",
       "name": "rfctl-0",
       "type": "rp2350-rfctl",
       "devices": ["/dev/serial/by-id/usb-splanc_rfctl_mesh-bench_SERIAL_RFCTL-if00:/dev/ttyACM9"],
       "env": {
         "HITL_RFCTL_TTY": "/dev/ttyACM9",
-        "HITL_MESHBENCH_FIXED_DB": "42"
+        "HITL_MESHBENCH_FIXED_DB": "47.1",
+        "HITL_MESHBENCH_CAL_JSON": ""
       }
     },
     {

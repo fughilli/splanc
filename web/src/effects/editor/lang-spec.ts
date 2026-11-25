@@ -35,11 +35,11 @@ export const KEYWORDS = [
  * detail. Type-name keywords are documented richly in TYPES instead. */
 export const KEYWORD_DOCS: Record<string, string> = {
   uniform: "declare a live, user-tweakable parameter with a range + default",
-  state: "declare a value persisted across frames (written in update())",
+  state: "declare a value persisted across frames (written in update()/init()); starts at zero or a constant initial value: `state float level = 0.5;` (compute from uniforms/time in `void init()`)",
   buffer: "declare a hidden per-LED buffer that persists across frames: `buffer vec3 trail;` then read/write `trail[i]` (i an int LED index). Pack narrow to save RAM: `buffer fixed8 t;` (1 B/LED) or `buffer vec3 c : fixed8;` (3 B/LED, read/written as float)",
   texture: "declare a hidden WxH 2D texture: `texture vec3 img(64, 64);` then `sample(img, uv)` (bilinear, always float) / `paint(img, uv, c)` / flat `img[i]`. Add `: fixed8` / `: fixed16` to compress storage (e.g. `texture vec3 img(64,64) : fixed8;`)",
   struct: "declare a composite type: struct Name { float a; vec3 b; };",
-  void: "the return type of update() — produces no value",
+  void: "the return type of update() and init() — produces no value",
   return: "return a value from shade() (or exit update())",
   if: "conditional branch",
   else: "the alternative branch of an if",
@@ -142,9 +142,9 @@ export const BUILTINS: { sig: string; doc: string }[] = [
 export const TYPES: { name: string; doc: string }[] = [
   { name: "float", doc: "32-bit floating point (the default numeric type)" },
   { name: "int", doc: "native 32-bit integer — fast, no soft-float" },
-  { name: "fixed", doc: "Q16.16 fixed-point number — native integer arithmetic, the fast type for per-LED maths (sin/cos take TURNS on it); wrap literals: x * fixed(0.5)" },
-  { name: "fixed16", doc: "Q1.14 reduced-precision fixed-point, range [-2, 2) — integer arithmetic like fixed, sin/cos in turns; overflows past ±2" },
-  { name: "fixed8", doc: "Q1.6 reduced-precision fixed-point, range [-2, 2) — mainly for compact buffer/texture storage (: fixed8)" },
+  { name: "fixed", doc: "Q16.16 fixed-point number — native integer arithmetic, the fast type for per-LED maths (sin/cos take TURNS on it); literals: x * 0.5fx (= fixed(0.5))" },
+  { name: "fixed16", doc: "Q1.14 reduced-precision fixed-point, range [-2, 2) — integer arithmetic like fixed, sin/cos in turns; overflows past ±2; literals: 0.5fx16" },
+  { name: "fixed8", doc: "Q1.6 reduced-precision fixed-point, range [-2, 2) — mainly for compact buffer/texture storage (: fixed8); literals: 0.5fx8" },
   { name: "bool", doc: "boolean (true/false)" },
   { name: "vec2", doc: "2-component vector (x, y)" },
   { name: "vec3", doc: "3-component vector (x, y, z / r, g, b)" },

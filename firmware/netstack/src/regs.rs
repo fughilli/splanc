@@ -74,6 +74,15 @@ pub mod mmio {
 
 /// Register banks in the ESP32-C6 MODEM block. Every WiFi PHY/MAC register lives
 /// in the `0x600A_xxxx` range.
+/// MODEM_SYSCON (`0x600A_9800`): the modem's clock gates and block resets.
+pub mod modem_syscon {
+    /// `MODEM_SYSCON_MODEM_RST_CONF`.
+    pub const RST_CONF: usize = 0x600A_9810;
+    /// The Wi-Fi baseband's reset (bit 8). A pulse leaves the TX/RX tick phase in the FTM
+    /// "41" state on every device (docs/design/mesh-ftm.md §7, S2), with the link up.
+    pub const RST_WIFIBB: u32 = 1 << 8;
+}
+
 pub mod banks {
     // PHY RF / analog / gain / power-detect / bias, plus the PBUS-adjacent regs.
     pub const PHY_RF: usize = 0x600A_0000;
@@ -129,6 +138,10 @@ pub mod mac {
     // (state/error bits read from offsets +0x0/+0x8/+0x14).
     pub const TXQ_STATUS_BASE: usize = 0x600A_54E0;
     pub const TXQ_STATUS_STRIDE: usize = 0x74; // subtracted per queue index
+    // Per-queue FTM timestamp words at `0x600a54f0 - queue*0x74` (+0, +4, +8): the last
+    // ACKed frame's TX stamp (t1) and its ACK's RX stamp (t4), latched by the MAC with no
+    // enable (libpp `lmac_record_txtime`; decode in `ftm::TxFtm`).
+    pub const TXQ_FTM_BASE: usize = 0x600A_54F0;
 
     // TX duration/rate config words and the global TXQ enable.
     pub const TX_CONF0: usize = 0x600A_40F8; // &0xffff | 0x0500_0000

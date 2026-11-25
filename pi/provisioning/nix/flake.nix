@@ -26,7 +26,9 @@
         hostName = "ledmapper";
         board = "raspberry-pi-5"; # or "raspberry-pi-4"
         # ota.nix: over-the-air updates (docs/design/max-ota.md).
-        appModules = [ ./apps.nix ./improv.nix ./fpga.nix ./ota.nix ];
+        # mesh.nix: Wi-Fi power save off for the mesh (docs/design/mesh-pi-transport.md).
+        # brcmfmac-actframe.nix: the patched brcmfmac (plain nl80211 mesh radio, mesh-pi-transport.md §2.1).
+        appModules = [ ./apps.nix ./improv.nix ./fpga.nix ./ota.nix ./mesh.nix ./brcmfmac-actframe.nix ];
         # Baked into BOTH the base and full images: hardware SPI (SK9822/APA102)
         # for the driver. WiFi can be added here too (sbcDeploy.wifi.networks).
         systemModules = [ sbc-deploy.nixosModules.spi ];

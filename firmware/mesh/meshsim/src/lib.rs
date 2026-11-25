@@ -31,8 +31,10 @@ use splanc_mesh::crypto::DeviceKey;
 use splanc_mesh::host_keys::{AdminSigner, HostKey, TestRng};
 use splanc_mesh::membership::{Credentials, MeshState, ProvisionSource};
 use splanc_mesh::msg::{Class, PendingJoin};
-use splanc_mesh::ports::{ControlHeader, Port};
-use splanc_mesh::stack::{CustodianStore, Event, MeshStack, StackConfig};
+use splanc_mesh::blob::{id_of, sha256, BlobDone, BlobId, BlobStore, Hash, SceneMsg};
+use splanc_mesh::gateway::{ReplyMsg, Status};
+use splanc_mesh::ports::{ControlHeader, Port, Targets};
+use splanc_mesh::stack::{CustodianStore, Event, MeshStack, SendError, StackConfig, FETCH_TIMEOUT_US};
 use swarm_net::mesh::Relay;
 use swarm_net::update::Flash;
 
@@ -771,6 +773,12 @@ pub enum Ev {
     SessionSynced { session: u32, gateway: NodeId },
     GrantRenewalDue { session: u32, not_after: u32 },
     ShowEpoch(splanc_mesh::meshtime::ShowEpoch),
+    Ejected,
+    Scene { origin: NodeId, msg: SceneMsg },
+    SceneFailed { origin: NodeId, op_id: u32, code: u16 },
+    Blob(BlobDone),
+    Fetched { op_id: u32, have: usize, of: usize },
+    CatchUp { node: NodeId },
 }
 
 impl From<Event<'_>> for Ev {
@@ -786,10 +794,83 @@ impl From<Event<'_>> for Ev {
             Event::SessionSynced { session, gateway } => Ev::SessionSynced { session, gateway },
             Event::GrantRenewalDue { session, not_after } => Ev::GrantRenewalDue { session, not_after },
             Event::ShowEpoch(e) => Ev::ShowEpoch(e),
+            Event::Ejected => Ev::Ejected,
+            Event::Scene { origin, msg } => Ev::Scene { origin, msg },
+            Event::SceneFailed { origin, op_id, code } => Ev::SceneFailed { origin, op_id, code },
+            Event::Blob(d) => Ev::Blob(d),
+            Event::Fetched { op_id, have, of } => Ev::Fetched { op_id, have, of },
+            Event::CatchUp { node } => Ev::CatchUp { node },
             #[allow(unreachable_patterns)]
             _ => Ev::StateChanged,
         }
     }
+}
+
+/// A device's blobs (M6): complete ones it can serve and apply, and the one it receives.
+#[derive(Default)]
+pub struct SimBlobs {
+    pub held: Vec<(Hash, Vec<u8>)>,
+    pub rx: Option<(Hash, Vec<u8>)>,
+    /// The most bytes it ever held at once (complete + receiving): the C6's heap cost.
+    pub peak: usize,
+}
+
+impl SimBlobs {
+    pub fn put(&mut self, b: &[u8]) -> (Hash, u16) {
+        let h = sha256(b);
+        if !self.held.iter().any(|(x, _)| *x == h) {
+            self.held.push((h, b.to_vec()));
+        }
+        (h, b.len() as u16)
+    }
+
+    pub fn get(&self, h: &Hash) -> Option<&[u8]> {
+        self.held.iter().find(|(x, _)| x == h).map(|(_, b)| b.as_slice())
+    }
+
+    fn note_peak(&mut self) {
+        let n = self.held.iter().map(|(_, b)| b.len()).sum::<usize>() + self.rx.as_ref().map_or(0, |(_, b)| b.len());
+        self.peak = self.peak.max(n);
+    }
+}
+
+impl BlobStore for SimBlobs {
+    fn find(&mut self, id: &BlobId) -> Option<&[u8]> {
+        self.held.iter().find(|(h, _)| id_of(h) == *id).map(|(_, b)| b.as_slice())
+    }
+    fn has(&mut self, hash: &Hash, size: usize) -> bool {
+        self.held.iter().any(|(h, b)| h == hash && b.len() == size)
+    }
+    fn begin(&mut self, hash: &Hash, size: usize) -> bool {
+        self.rx = Some((*hash, vec![0; size]));
+        self.note_peak();
+        true
+    }
+    fn rx(&mut self) -> Option<&mut [u8]> {
+        self.rx.as_mut().map(|(_, b)| b.as_mut_slice())
+    }
+    fn finish(&mut self, hash: &Hash, ok: bool) {
+        if let Some((h, b)) = self.rx.take() {
+            if ok && h == *hash {
+                self.held.push((h, b));
+            }
+        }
+    }
+}
+
+/// What a simulated player did with a scene (M6): the blobs it applied, and when, on the
+/// show clock (mesh ms: the time base every member follows).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Applied {
+    /// Global µs it was handed over (blobs all held).
+    pub at: i64,
+    /// The mesh ms it took effect (`apply_at`, or the mesh ms it was handed over if late or NOW).
+    pub mesh_ms: i64,
+    pub late: bool,
+    pub blobs: Vec<Hash>,
+    /// Catch-up blobs equal to what the player showed already (not reloaded).
+    pub skipped: usize,
+    pub op_id: u32,
 }
 
 /// The roster a simulated gateway can hold (64: a large mesh's every member).
@@ -808,6 +889,12 @@ pub struct SimNode {
     /// What the device would have persisted: the counter mark and the mesh state.
     pub counter_mark: u64,
     pub saved: Option<MeshState>,
+    /// Effect sharing (M6): the device's blobs, what its player applied, the effect it shows,
+    /// and (a gateway) the scene a catch-up sends.
+    pub blobs: SimBlobs,
+    pub applied: Vec<Applied>,
+    pub showing: Option<Hash>,
+    pub scene: Vec<(Hash, u16)>,
 }
 
 impl SimNode {
@@ -914,6 +1001,10 @@ impl World {
             store,
             counter_mark: 0,
             saved: None,
+            blobs: SimBlobs::default(),
+            applied: Vec::new(),
+            showing: None,
+            scene: Vec::new(),
         });
         index
     }
@@ -950,14 +1041,21 @@ impl World {
     pub fn reboot(&mut self, i: usize) {
         self.power_off(i);
         let (id, class, mark) = (self.nodes[i].id, self.nodes[i].class(), self.nodes[i].counter_mark);
-        let saved = self.nodes[i].stack.membership.state;
+        // Through the bytes the firmware writes to littlefs (mesh M7), not the struct.
+        let saved = self.nodes[i].stack.membership.state.and_then(|s| MeshState::decode(&s.encode()));
         let mut stack = self.make_stack(i, id, class, mark);
         let local = self.local(i);
         if let Some(s) = saved {
-            stack.membership.restore(s, local);
+            stack.restore(local, s);
         }
         self.nodes[i].stack = stack;
         self.nodes[i].saved = saved;
+        // RAM blobs are gone; the effect it showed is persisted (the firmware's /lfs/fx.pb,
+        // which its store finds by hash).
+        let showing = self.nodes[i].showing;
+        let b = &mut self.nodes[i].blobs;
+        b.rx = None;
+        b.held.retain(|(h, _)| Some(*h) == showing);
         self.air.0.borrow_mut().st[i].online = true;
     }
 
@@ -986,7 +1084,7 @@ impl World {
                 let now = self.now;
                 let n = &mut self.nodes[k];
                 let mut evs = Vec::new();
-                n.stack.tick(local, &mut n.flash, &mut self.scratch, &mut |e| evs.push((now, Ev::from(e))));
+                n.stack.tick_blobs(local, &mut n.flash, &mut n.blobs, &mut self.scratch, &mut |e| evs.push((now, Ev::from(e))));
                 // The low-priority crypto task gets one job per tick (a few ms of CPU on a C6
                 // in the gaps between render frames; here it is free).
                 n.stack.run_crypto(local);
@@ -1002,6 +1100,7 @@ impl World {
                         n.stack.node.guard.counter_reserved(m);
                         n.counter_mark = m;
                     }
+                    Self::player(n, local, now, &e);
                     n.events.push((t, e));
                 }
                 // Simulated install of a fully received image, then a healthy boot (as M1).
@@ -1017,12 +1116,76 @@ impl World {
                 if self.auto_renew {
                     let g = self.admin.grant(self.mesh_id, session, self.nodes[k].id, self.nodes[k].stack.dev.public_key(), not_after + self.grant_ttl_s);
                     let local = self.local(self.nodes[k].index);
-                    if self.nodes[k].stack.unlock(local, 0, &g).is_ok() {
+                    if self.nodes[k].stack.unlock(local, 0, &g, None).is_ok() {
                         self.renewals += 1;
                     }
                 }
             }
         }
+    }
+
+    /// What the device's firmware does with the mesh's M6 events (mesh_gw.rs on the C6):
+    /// apply a scene's blobs (at their show-clock time), answer the gateway, and as the
+    /// gateway pick the apply time once the targets hold the blob, and catch members up.
+    fn player(n: &mut SimNode, local: i64, now: i64, e: &Ev) {
+        let mesh_ms = n.stack.time.mesh_us(local) / 1_000;
+        match e {
+            Ev::Scene { origin, msg } => {
+                let mut status = Status::Ok;
+                if msg.flags & SceneMsg::APPLY != 0 {
+                    let late = msg.flags & SceneMsg::NOW != 0 || i64::from(msg.apply_at) <= mesh_ms;
+                    let at_ms = if late { mesh_ms } else { i64::from(msg.apply_at) };
+                    let mut skipped = 0;
+                    for (h, _) in msg.blobs() {
+                        if msg.flags & SceneMsg::CATCH_UP != 0 && n.showing == Some(*h) {
+                            skipped += 1;
+                        }
+                    }
+                    if n.blobs.get(&msg.blobs()[0].0).is_none() {
+                        status = Status::Failed;
+                    }
+                    n.showing = Some(msg.blobs()[0].0);
+                    n.applied.push(Applied { at: now, mesh_ms: at_ms, late: late && msg.flags & SceneMsg::NOW == 0, blobs: msg.blobs().iter().map(|b| b.0).collect(), skipped, op_id: msg.op_id });
+                }
+                if msg.want_reply() {
+                    let _ = n.stack.reply(*origin, &ReplyMsg { op_id: msg.op_id, status, arm: 21, code: 0 });
+                }
+            }
+            Ev::Fetched { op_id, .. } => {
+                // Every target has it (or the time ran out): all switch 300 ms from now.
+                let at = (mesh_ms + 300) as u32;
+                if let Ok(msg) = n.stack.distribute_apply(local, Some(at), 3_000_000) {
+                    let h = msg.blobs()[0].0;
+                    n.showing = Some(h);
+                    n.applied.push(Applied { at: now, mesh_ms: i64::from(at), late: false, blobs: vec![h], skipped: 0, op_id: *op_id });
+                }
+            }
+            Ev::CatchUp { node } => {
+                if n.scene.is_empty() {
+                    return;
+                }
+                let Some(t) = Targets::nodes(&[*node]) else { return };
+                let flags = SceneMsg::APPLY | SceneMsg::NOW | SceneMsg::CATCH_UP | SceneMsg::WANT_REPLY;
+                if let Some(msg) = SceneMsg::new(0x0c00_0000 | u32::from(*node), flags, 0, t, &n.scene) {
+                    let _ = n.stack.share(local, 0, &msg, 15_000_000);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Gateway `i` shares an effect blob (and a state blob for catch-ups) with every member
+    /// through connection 0's session: the two-phase share of mesh M6.
+    pub fn share_effect(&mut self, i: usize, op_id: u32, effect: &[u8], state: Option<&[u8]>) -> Result<usize, SendError> {
+        let local = self.local(i);
+        let n = &mut self.nodes[i];
+        let e = n.blobs.put(effect);
+        n.scene = vec![e];
+        if let Some(s) = state {
+            let s = n.blobs.put(s);
+            n.scene.push(s);
+        }
+        n.stack.distribute(local, 0, op_id, Targets::All, e, FETCH_TIMEOUT_US)
     }
 
     /// Run until `cond` holds or `max_ms` pass; the elapsed ms, or None.
@@ -1056,7 +1219,7 @@ impl World {
     pub fn unlock_and_sync(&mut self, i: usize, session: u32, members: &[usize], max_ms: i64) -> Option<i64> {
         let g = self.grant(i, session);
         let t = self.local(i);
-        self.nodes[i].stack.unlock(t, 0, &g).expect("grant");
+        self.nodes[i].stack.unlock(t, 0, &g, None).expect("grant");
         let members: Vec<usize> = members.iter().copied().filter(|&m| m != i).collect();
         self.run_until(max_ms, |w| members.iter().all(|&m| w.nodes[m].synced(session)))
     }

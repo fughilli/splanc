@@ -115,6 +115,22 @@ impl<const P: usize> NetOf<P> {
         }
     }
 
+    /// Splanc: [`NetOf::new`] built in place at `dst`, each field from a frame of its own:
+    /// the stack this needs is the largest field's, not a whole `NetOf` (~9 KB) plus the
+    /// constructors' temporaries (firmware builds the mesh on its 14 KB tick stack).
+    ///
+    /// # Safety
+    /// `dst` is valid for writes; every field is initialised on return.
+    pub unsafe fn init_in(dst: *mut Self, me: u16, hmac_key: Option<[u8; HMAC_KEY_LEN]>, fw_key: [u8; P256_PUBLIC_KEY_LEN], running: u32, seed: u32) {
+        use core::ptr::addr_of_mut;
+        put(addr_of_mut!((*dst).mesh), || MeshOf::new(me, MeshConfig::default(), seed));
+        put(addr_of_mut!((*dst).settings), || Settings::new(me, hmac_key));
+        put(addr_of_mut!((*dst).updater), || Updater::new(me, fw_key, running));
+        put(addr_of_mut!((*dst).changes), NetChanges::default);
+        put(addr_of_mut!((*dst).app), || [None; APP_QUEUE]);
+        addr_of_mut!((*dst).report).write(None);
+    }
+
     pub fn me(&self) -> u16 {
         self.mesh.me
     }
@@ -152,10 +168,17 @@ impl<const P: usize> NetOf<P> {
     /// A neighbour's POLL summary.
     pub fn on_summary(&mut self, t_us: i64, from: u16, b: &[u8]) {
         let Some(s) = Summary::decode(b) else { return };
+        // Splanc: the firmware image updater is host-only (feature `fw_update`) until OTA
+        // over the mesh (Phase 2); the C6 never links it.
+        #[cfg(feature = "fw_update")]
         self.updater.on_summary(t_us, from, s);
+        // Splanc: swarm settings bundles are host-only (feature `swarm_settings`): the C6
+        // firmware has no bundle key (membership is Splanc's), so it could accept none.
+        #[cfg(feature = "swarm_settings")]
         if let Some(o) = self.settings.neighbour(t_us, from, s.generation) {
             self.mesh.send_with_hops(o.dest, o.port, &o.payload[..o.len], false, o.hop_limit);
         }
+        let _ = (t_us, from, s);
     }
 
     pub fn on_mesh(&mut self, t_us: i64, bytes: &[u8], rssi: f32, flash: &mut dyn Flash) {
@@ -164,23 +187,33 @@ impl<const P: usize> NetOf<P> {
     }
 
     pub fn on_fw_request(&mut self, t_us: i64, payload: &[u8]) {
+        #[cfg(feature = "fw_update")]
         self.updater.on_request_at(t_us, payload);
+        let _ = (t_us, payload);
     }
 
     /// A neighbour's manifest frame (link broadcast): adopted if signed, newer and it
     /// fits. Not relayed: a node that adopts it offers it on its own, once it runs and has
     /// validated the image (canary rule).
     pub fn on_fw_manifest(&mut self, payload: &[u8], flash: &mut dyn Flash) {
-        let Some(m) = Manifest::decode(payload) else { return };
-        let was = self.updater.status();
-        self.updater.offer(m, flash);
-        self.note_fw(was);
+        #[cfg(feature = "fw_update")]
+        {
+            let Some(m) = Manifest::decode(payload) else { return };
+            let was = self.updater.status();
+            self.updater.offer(m, flash);
+            self.note_fw(was);
+        }
+        let _ = (payload, flash);
     }
 
     pub fn on_fw_data(&mut self, t_us: i64, payload: &[u8], flash: &mut dyn Flash) {
-        let was = self.updater.status();
-        self.updater.on_data(t_us, payload, flash);
-        self.note_fw(was);
+        #[cfg(feature = "fw_update")]
+        {
+            let was = self.updater.status();
+            self.updater.on_data(t_us, payload, flash);
+            self.note_fw(was);
+        }
+        let _ = (t_us, payload, flash);
     }
 
     /// Start of this node's TDMA slot.
@@ -192,11 +225,14 @@ impl<const P: usize> NetOf<P> {
     pub fn poll(&mut self, t_us: i64, flash: &mut dyn Flash) {
         self.mesh.poll(t_us);
         self.drain_mesh(t_us, flash);
-        while self.mesh.can_send() {
-            let Some(o) = self.settings.next_outgoing() else { break };
-            self.mesh.send_with_hops(o.dest, o.port, &o.payload[..o.len], false, o.hop_limit);
+        #[cfg(feature = "swarm_settings")]
+        {
+            while self.mesh.can_send() {
+                let Some(o) = self.settings.next_outgoing() else { break };
+                self.mesh.send_with_hops(o.dest, o.port, &o.payload[..o.len], false, o.hop_limit);
+            }
+            self.pump_report();
         }
-        self.pump_report();
     }
 
     /// Next frame for this node's slot: mesh first (control traffic is
@@ -207,6 +243,12 @@ impl<const P: usize> NetOf<P> {
         if let Some(n) = self.mesh.next_tx(t_us, out) {
             return Some((FrameKind::Mesh, n));
         }
+        #[cfg(not(feature = "fw_update"))]
+        {
+            let _ = flash;
+            return None;
+        }
+        #[cfg(feature = "fw_update")]
         if out.len() >= MANIFEST_MAX {
             if let Some(m) = self.updater.manifest_offer(t_us) {
                 let raw = m.raw();
@@ -214,13 +256,15 @@ impl<const P: usize> NetOf<P> {
                 return Some((FrameKind::FwManifest, raw.len()));
             }
         }
+        #[cfg(feature = "fw_update")]
         if out.len() >= REQUEST_MAX {
             if let Some((dest, req, n)) = self.updater.next_request(t_us) {
                 out[..n].copy_from_slice(&req[..n]);
                 return Some((FrameKind::FwRequest { dest }, n));
             }
         }
-        self.updater.next_data(out, flash).map(|n| (FrameKind::FwData, n))
+        #[cfg(feature = "fw_update")]
+        return self.updater.next_data(out, flash).map(|n| (FrameKind::FwData, n));
     }
 
     // ---- from the host (node on USB)
@@ -273,11 +317,15 @@ impl<const P: usize> NetOf<P> {
             let h = packet.header;
             let p = packet.payload();
             match h.port {
+                #[cfg(feature = "swarm_settings")]
                 settings::PORT_BUNDLE_DATA | settings::PORT_BUNDLE_REQUEST | settings::PORT_OVERRIDE => {
                     let c = self.settings.on_packet(h.dest, h.port, p);
                     self.merge(c);
                 }
+                #[cfg(feature = "swarm_settings")]
                 PORT_SETTINGS_GET if h.dest == self.me() => self.report = Some((h.origin, 0)),
+                #[cfg(not(feature = "swarm_settings"))]
+                settings::PORT_BUNDLE_DATA | settings::PORT_BUNDLE_REQUEST | settings::PORT_OVERRIDE | PORT_SETTINGS_GET => {}
                 port if port >= PORT_APP || port == PORT_SETTINGS_REPORT => {
                     let mut a = AppPacketOf {
                         origin: h.origin,
@@ -517,4 +565,14 @@ mod tests {
             assert_eq!(x.net.updater.status(), Status::Serving, "node {}: {:?}", i, x.net.updater.summary());
         }
     }
+}
+
+/// Splanc: write `f()` into `dst` from a frame of its own (never inlined), so a big field's
+/// by-value temporary lives only for this call ([`NetOf::init_in`]).
+///
+/// # Safety
+/// `dst` is valid for writes.
+#[inline(never)]
+unsafe fn put<T>(dst: *mut T, f: impl FnOnce() -> T) {
+    dst.write(f())
 }

@@ -98,9 +98,25 @@ pub struct ShowEpoch {
 }
 
 impl ShowEpoch {
+    /// `gen ‖ origin ‖ set ‖ epoch`: the body of the admin session's `TIME_BASE` (mesh M7).
+    pub const LEN: usize = 4 + 2 + 1 + 8;
+
     /// Whether `self` supersedes `other` (a later generation; ties by origin).
     pub fn newer_than(&self, other: &ShowEpoch) -> bool {
         self.gen > other.gen || (self.gen == other.gen && self.origin > other.origin)
+    }
+
+    pub fn encode(&self, out: &mut [u8]) -> Option<usize> {
+        let mut w = W::new(out);
+        w.u32(self.gen).u16(self.origin).u8(self.epoch_mesh_us.is_some() as u8).i64(self.epoch_mesh_us.unwrap_or(0));
+        w.done()
+    }
+
+    pub fn decode(b: &[u8]) -> Option<ShowEpoch> {
+        let mut r = R::new(b);
+        let (gen, origin, set, e) = (r.u32()?, r.u16()?, r.u8()?, r.i64()?);
+        r.end()?;
+        (set <= 1).then_some(ShowEpoch { gen, origin, epoch_mesh_us: (set == 1).then_some(e) })
     }
 }
 
@@ -417,6 +433,9 @@ pub struct TimeStats {
     pub joined: u32,
     pub epochs: u32,
     pub bad: u32,
+    /// Newer epochs heard in beacons and not taken: on a mesh with an admin key only the
+    /// admin session's signed `TIME_BASE` sets the show epoch (mesh M7, desk #79).
+    pub unsigned: u32,
 }
 
 /// One node's mesh time.
@@ -436,6 +455,12 @@ pub struct MeshTime {
     pub peers: [Option<Peer>; PEERS],
     last_update_us: Option<i64>,
     pub epoch: Option<ShowEpoch>,
+    /// Signed epochs (mesh M7): beacons may only gossip the epoch the admin session's
+    /// `TIME_BASE` command authorised ([`MeshTime::authorise`]); any other is ignored.
+    pub epoch_signed: bool,
+    pub epoch_allowed: Option<ShowEpoch>,
+    /// The newest generation heard at all (a gateway originates above it).
+    pub epoch_seen_gen: u32,
     pub stats: TimeStats,
     /// The newest estimate (reports).
     pub last_est: Option<Estimate>,
@@ -457,6 +482,9 @@ impl MeshTime {
             peers: [None; PEERS],
             last_update_us: None,
             epoch: None,
+            epoch_signed: false,
+            epoch_allowed: None,
+            epoch_seen_gen: 0,
             stats: TimeStats::default(),
             last_est: None,
             last_adjust: Adjust::Hold,
@@ -484,6 +512,9 @@ impl MeshTime {
         }
         f!((*dst).last_update_us).write(None);
         f!((*dst).epoch).write(None);
+        f!((*dst).epoch_signed).write(false);
+        f!((*dst).epoch_allowed).write(None);
+        f!((*dst).epoch_seen_gen).write(0);
         f!((*dst).stats).write(TimeStats::default());
         f!((*dst).last_est).write(None);
         f!((*dst).last_adjust).write(Adjust::Hold);
@@ -596,9 +627,14 @@ impl MeshTime {
                 }
             }
         }
-        // 4. The show epoch.
+        // 4. The show epoch (on a signed mesh, only the one the admin session authorised).
         match b.epoch {
             Some(e) if self.epoch.is_none_or(|mine| e.newer_than(&mine)) => {
+                self.epoch_seen_gen = self.epoch_seen_gen.max(e.gen);
+                if self.epoch_signed && self.epoch_allowed != Some(e) {
+                    self.stats.unsigned += 1;
+                    return None;
+                }
                 self.epoch = Some(e);
                 self.stats.epochs += 1;
                 Some(e)
@@ -607,12 +643,27 @@ impl MeshTime {
         }
     }
 
+    /// The admin session's signed `TIME_BASE` (mesh M7): this is the show epoch, whatever
+    /// its generation (the command's per-receiver MAC and sequence make it fresh). Returns it
+    /// if it changed ours.
+    pub fn authorise(&mut self, e: ShowEpoch) -> Option<ShowEpoch> {
+        self.epoch_allowed = Some(e);
+        self.epoch_seen_gen = self.epoch_seen_gen.max(e.gen);
+        if self.epoch == Some(e) {
+            return None;
+        }
+        self.epoch = Some(e);
+        self.stats.epochs += 1;
+        Some(e)
+    }
+
     /// Originate a show epoch (this device's app set or cleared its time base): the next
     /// generation, gossiped from the next beacon on.
     pub fn originate(&mut self, epoch_mesh_us: Option<i64>) -> ShowEpoch {
-        let gen = self.epoch.map_or(1, |e| e.gen.wrapping_add(1).max(1));
+        let gen = self.epoch.map_or(0, |e| e.gen).max(self.epoch_seen_gen).saturating_add(1);
         let e = ShowEpoch { gen, origin: self.me, epoch_mesh_us };
         self.epoch = Some(e);
+        self.epoch_allowed = Some(e);
         self.stats.epochs += 1;
         e
     }
@@ -931,6 +982,41 @@ mod tests {
         // An older generation never wins.
         let stale = TimeBeacon { epoch: Some(e1), ..bc };
         assert_eq!(a.on_beacon(3_500, 2, 3_500, &stale), None);
+    }
+
+    /// Mesh M7 (desk #79): on a mesh with an admin key a member takes only the epoch the
+    /// admin session signed; an insider's beacon epoch is ignored, whatever its generation.
+    #[test]
+    fn signed_epochs_ignore_what_the_session_did_not_authorise() {
+        let mut gw = MeshTime::new(1);
+        let mut insider = MeshTime::new(3);
+        let mut m = MeshTime::new(2);
+        m.epoch_signed = true;
+        let e1 = gw.originate(Some(5_000_000));
+        // The beacon alone does not set it; the signed command does.
+        assert_eq!(m.on_beacon(1_000, 1, 1_000, &gw.beacon(1_000)), None);
+        assert_eq!((m.epoch, m.stats.unsigned), (None, 1));
+        assert_eq!(m.authorise(e1), Some(e1));
+        assert_eq!(m.on_beacon(2_000, 1, 2_000, &gw.beacon(2_000)), None, "already ours");
+        // An insider originates a later generation: ignored.
+        insider.epoch_seen_gen = 1;
+        let forged = insider.originate(Some(9_000_000));
+        assert_eq!(forged.gen, 2);
+        assert_eq!(m.on_beacon(3_000, 3, 3_000, &insider.beacon(3_000)), None);
+        assert_eq!((m.epoch, m.stats.unsigned), (Some(e1), 2));
+        // A rebooted gateway originates above every generation it heard, signed.
+        let mut gw = MeshTime::new(1);
+        gw.on_beacon(4_000, 3, 4_000, &insider.beacon(4_000));
+        let e3 = gw.originate(None);
+        assert_eq!(e3.gen, 3);
+        assert_eq!(m.authorise(e3), Some(e3));
+        // The command's body round-trips.
+        let mut b = [0u8; ShowEpoch::LEN];
+        assert_eq!(e1.encode(&mut b), Some(ShowEpoch::LEN));
+        assert_eq!(ShowEpoch::decode(&b), Some(e1));
+        assert_eq!(e3.encode(&mut b), Some(ShowEpoch::LEN));
+        assert_eq!(ShowEpoch::decode(&b), Some(e3));
+        assert_eq!(ShowEpoch::decode(&b[..ShowEpoch::LEN - 1]), None);
     }
 
     #[test]

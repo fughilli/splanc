@@ -1,0 +1,25 @@
+"""Lamp power (docs/design/lamp-power.md): the on/off state machine with its ON/OFF
+transitions (cut / fade / a stored transition effect on deck B), the toggle-trigger
+step (a driver's trigger counter -> toggle) and the persisted config record. The
+touch sensor is a driver-VM driver (firmware/sensor/drivers/ttp223_touch.fx).
+
+no_std, zero-dependency: the ESP32-C6 player drives it through
+//firmware/player_app:power_ffi.rs, and :power_test covers it on the host."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "power",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_power",
+    edition = "2021",
+)
+
+rust_test(
+    name = "power_test",
+    srcs = ["tests/power.rs"],
+    edition = "2021",
+    deps = [":power"],
+)

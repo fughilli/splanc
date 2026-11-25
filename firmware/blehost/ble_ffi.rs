@@ -7,6 +7,8 @@
 #![no_std]
 #![allow(static_mut_refs)]
 
+use core::mem::MaybeUninit;
+
 use ledmapper_netstack::ble::att::AttPdu;
 use ledmapper_netstack::gatt::{GATT_RSP_MAX, GATT_VAL_MAX};
 use ledmapper_netstack::ble::{AclPacket, L2capReassembler};
@@ -15,15 +17,23 @@ use ledmapper_netstack::improv::{Action, ImprovService, IMPROV_SVC_UUID, MAX_PAS
 use ledmapper_netstack::rx::Buf;
 
 static mut HOST: BleHost = BleHost::new();
-// Statically placed (const-initialized) and rebuilt in place by `reset_improv`, never
-// assigned a fresh by-value ImprovService: that temporary is ~4 KiB of the
-// HCI handler's / setup's stack frame (loopTask). `None` until ns_ble_setup.
-static mut IMPROV_SVC: ImprovService = ImprovService::empty();
+// Statically placed and rebuilt in place by `reset_improv`, never assigned a fresh
+// by-value ImprovService: that temporary is ~4 KiB of the HCI handler's / setup's
+// stack frame (loopTask). Zeroed storage (.bss), initialized in place on first use:
+// a const `ImprovService::empty()` initializer has non-zero bytes and would put the
+// ~4 KiB in .data, which the image also carries in flash. `None` until ns_ble_setup.
+static mut IMPROV_SVC: MaybeUninit<ImprovService> = MaybeUninit::zeroed();
+static mut IMPROV_SVC_INIT: bool = false;
 static mut IMPROV: Option<&'static mut ImprovService> = None;
 
 /// (Re)build the Improv service in place and publish it.
 unsafe fn reset_improv() {
-    let svc = &mut *core::ptr::addr_of_mut!(IMPROV_SVC);
+    let p = (*core::ptr::addr_of_mut!(IMPROV_SVC)).as_mut_ptr();
+    if !IMPROV_SVC_INIT {
+        ImprovService::init_in_place(p);
+        IMPROV_SVC_INIT = true;
+    }
+    let svc = &mut *p;
     svc.reset();
     IMPROV = Some(svc);
 }
@@ -39,6 +49,8 @@ static mut DEVICE_NAME: Buf<32> = Buf::new();
 static mut PENDING_SSID: Buf<MAX_SSID> = Buf::new();
 static mut PENDING_PASS: Buf<MAX_PASS> = Buf::new();
 static mut HAS_PENDING: bool = false;
+/// An Improv Identify RPC arrived; the firmware blinks its outputs (D-259).
+static mut IDENTIFY_PENDING: bool = false;
 static mut NOTIFY_Q: [u16; 4] = [0; 4];
 static mut NOTIFY_N: usize = 0;
 /// Recombines an L2CAP PDU across HCI-ACL fragments. A >MTU ATT write (e.g. the
@@ -306,19 +318,43 @@ fn wrap_att_acl(handle: u16, att: &[u8], out: *mut u8, cap: u32) -> u32 {
 /// 0x28 Instant Passed (see hci.rs). BlueZ applies it via a proper LL update; we
 /// pick up the new interval from the LE Connection Update Complete event.
 fn conn_param_update_req_acl(handle: u16, out: *mut u8, cap: u32) -> u32 {
+    conn_param_req_acl(handle, 600, out, cap)
+}
+
+/// The request itself, with supervision timeout `timeout_10ms` (10 ms units). Each
+/// request carries a fresh signaling identifier (1..=255).
+fn conn_param_req_acl(handle: u16, timeout_10ms: u16, out: *mut u8, cap: u32) -> u32 {
+    static mut SIG_ID: u8 = 0;
+    let id = unsafe {
+        SIG_ID = SIG_ID.wrapping_add(1).max(1);
+        SIG_ID
+    };
     let mut l2: Buf<20> = Buf::new();
     let _ = l2.extend(&12u16.to_le_bytes()); // L2CAP basic length = 12 (the C-frame below)
     let _ = l2.extend(&[0x05, 0x00]); // CID = 0x0005 (LE signaling)
-    let _ = l2.extend(&[0x12, 0x01, 0x08, 0x00]); // Code=Conn Param Update Req, Id=1, CmdLen=8
+    let _ = l2.extend(&[0x12, id, 0x08, 0x00]); // Code=Conn Param Update Req, Id, CmdLen=8
     let _ = l2.extend(&24u16.to_le_bytes()); // interval min = 24 * 1.25ms = 30ms
     let _ = l2.extend(&40u16.to_le_bytes()); // interval max = 40 * 1.25ms = 50ms
     let _ = l2.extend(&0u16.to_le_bytes()); // slave latency = 0 (answer every event when we can)
-    let _ = l2.extend(&600u16.to_le_bytes()); // supervision timeout = 600 * 10ms = 6s
+    let _ = l2.extend(&timeout_10ms.to_le_bytes()); // supervision timeout (600 = 6 s on connect)
     let mut aclb: Buf<24> = Buf::new();
     if acl(handle, l2.as_slice(), &mut aclb).is_err() {
         return 0;
     }
     copy_out(aclb.as_slice(), out, cap)
+}
+
+/// Ask the central (L2CAP Connection Parameter Update Request, same interval 30-50 ms,
+/// latency 0) for a supervision timeout of `timeout_10ms` x 10 ms on the current link, as
+/// a ready-to-send ACL into `out`; 0 bytes if not connected. The central owns the LL
+/// instant, as with the connect-time request. A central that declines (iOS caps the
+/// timeout at 6 s) just keeps the current parameters: the response is ignored.
+#[no_mangle]
+pub extern "C" fn ns_ble_supervision_timeout_req(timeout_10ms: u32, out: *mut u8, cap: u32) -> u32 {
+    let Some(h) = (unsafe { HOST.conn_handle() }) else {
+        return 0;
+    };
+    conn_param_req_acl(h, timeout_10ms.clamp(10, 3200) as u16, out, cap)
 }
 
 /// Process a received HCI packet (event or ACL). Writes any response ACL into
@@ -429,14 +465,16 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
             let mut att: Buf<GATT_RSP_MAX> = Buf::new();
             let outcome = svc.handle_att(pdu.opcode, pdu.params, &mut att);
             // Stash Wi-Fi credentials for the firmware; queue notifications.
-            if let Action::Provision(creds) = outcome.action {
-                unsafe {
+            match outcome.action {
+                Action::Provision(creds) => unsafe {
                     PENDING_SSID.clear();
                     PENDING_PASS.clear();
                     let _ = PENDING_SSID.extend(creds.ssid.as_slice());
                     let _ = PENDING_PASS.extend(creds.pass.as_slice());
                     HAS_PENDING = true;
-                }
+                },
+                Action::Identify => unsafe { IDENTIFY_PENDING = true },
+                _ => {}
             }
             queue_notifications(&outcome.notify);
             if outcome.resp_len == 0 {
@@ -558,6 +596,17 @@ pub extern "C" fn ns_ble_take_wifi(ssid: *mut u8, ssid_cap: u32, pass: *mut u8, 
         let pn = copy_out(PENDING_PASS.as_slice(), pass, pass_cap.saturating_sub(1));
         *pass.add(pn as usize) = 0;
         1
+    }
+}
+
+/// Take a pending Improv Identify request (1 = one arrived since the last call).
+/// The firmware answers it with a brief blink on every output (D-259).
+#[no_mangle]
+pub extern "C" fn ns_ble_take_identify() -> u32 {
+    unsafe {
+        let pending = IDENTIFY_PENDING;
+        IDENTIFY_PENDING = false;
+        pending as u32
     }
 }
 

@@ -19,17 +19,27 @@ import {
   blobPopulation,
   EXPOSURE_SERVO_START,
   ExposureMonitor,
+  AE_BIAS_MAX,
+  AE_BIAS_MIN,
+  AE_BIAS_STEP,
+  DiffuseServo,
+  EXPOSURE_FINE_STEP,
+  type ExposureLever,
+  HELD_ALONE_TICKS,
   planLedBrightness,
+  spotSignals,
   planReconfigure,
   BitRatePlanner,
   recommendConfig,
 } from "../../cv/exposure";
+import type { SceneStats } from "../../cv/exposure";
+import type { Blob } from "../../cv/types";
 import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
 import { LinkTelemetry, type LinkTelemetrySnapshot } from "../../cv/linkTelemetry";
 import { AlphabetPlanner, ChannelQuality, channelSnapshot, formatPrediction } from "../../cv/channelQuality";
 import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
-import { DetectorGL } from "../../cv/detect";
+import { DetectPipeline, DetectorGL, planDetectDownscale } from "../../cv/detect";
 import { blobCrowding, CrowdingWindow, formatLightServo, initialLightServo, planLightServo } from "../../cv/lightServo";
 import {
   type DriverCaptureController,
@@ -42,7 +52,13 @@ import {
   setDriverCaptureError,
 } from "../../driver/guard";
 import { forcedSyncPattern, isStaggered, requestedSyncPattern } from "../../code/gray";
-import { phaseCount as stridePhaseCount } from "../../code/stride";
+import {
+  forcedStrideMode,
+  isRollingStride,
+  phaseCount as stridePhaseCount,
+  requestedStrideMode,
+  rollingLitOracle,
+} from "../../code/stride";
 import {
   fillChannelGaps,
   planChannelCapture,
@@ -51,7 +67,7 @@ import {
   stageLabel,
   type ChannelCapturePlan,
 } from "../../capture/channelCapture";
-import { CaptureUnsupportedError } from "../../xr/capture";
+import { CaptureUnsupportedError, type CaptureFrame } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
 import { SyntheticCaptureSource } from "../../xr/syntheticCaptureSource";
@@ -229,6 +245,10 @@ const forcedSymbols = ((): 2 | 4 | null => {
 // The phone always decodes the CodeParams.syncPattern the device answers with.
 // `?sync=` is a debug override only (e.g. `?sync=v1` forces the old pattern).
 const forcedSync = forcedSyncPattern(qs.get("sync"));
+// Diffuse striding runs ROLLING (docs/design/rolling-stride.md) on players that
+// advertise `stride_rolling`: the lit subset follows the pattern clock, so the
+// phone never reconfigures to stride. `?stride=phased` forces the old schedule.
+const forcedStride = forcedStrideMode(qs.get("stride"));
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
@@ -277,6 +297,10 @@ const DIFFUSE_CLIP_TICKS = 2;
  * exposure doesn't move when the bit rate is renegotiated. */
 const DIFFUSE_EXPOSURE = 0.35;
 const DIFFUSE_EXPOSURE_CAP_MS = 55;
+/** The diffuse servo's range for the manual pin: the band the 2026-11-18 rope
+ * sweep covered (shorter starves every spot into quantisation; longer blooms). */
+const DIFFUSE_EXPOSURE_MIN = 0.15;
+const DIFFUSE_EXPOSURE_MAX = 0.65;
 const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
@@ -792,6 +816,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let perf: CapturePerf | null = null;
   // The running capture's CV queue and overlay task (ui/taskPriority).
   let cvQueueRef: OrderedTaskQueue | null = null;
+  // The running capture's pipelined detector: flush() delivers the frames still
+  // on the GPU (stop), dispose() drops them (teardown).
+  let detectPipeRef: { flush(): void; dispose(): void } | null = null;
   let overlayTaskRef: CoalescedTask | null = null;
   let localDetections: DetectionRecord[] = [];
   let localImu: ImuSample[] = [];
@@ -828,6 +855,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     liveSolver = null;
     cvQueueRef?.clear();
     cvQueueRef = null;
+    detectPipeRef?.dispose();
+    detectPipeRef = null;
     overlayTaskRef?.cancel();
     overlayTaskRef = null;
     liveCanvas.style.display = "none";
@@ -1218,6 +1247,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // manual pin as the fallback. Set once the capture source exists.
       let diffuseExposure: "none" | "ae-bias" | "pinned" = "none";
       let diffuseClipTicks = 0;
+      /** The diffuse servo's AE bias (EV) while on biased auto exposure. */
+      let diffuseBiasEv = DIFFUSE_AE_BIAS_EV;
       let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
       // iOS takes the camera natively: WebKit's getUserMedia offers no exposure
       // control at all and its camera is unreachable from this process, so the
@@ -1321,24 +1352,46 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const skipProbe = profileRun?.skipProbe === true;
       if (!skipProbe) guideEl.textContent = "Measuring light…";
       driverPhase = "probe";
-      if (!skipProbe) await new Promise<void>((resolve) => {
-        const deadline = setTimeout(resolve, 2500);
-        let t0 = -1;
-        capture!.onFrame((f) => {
-          if (t0 < 0) t0 = f.tCaptureMs;
-          const blobs = detector.detectFrame(f);
-          monitor.push({
-            tMs: f.tCaptureMs,
-            blobCount: blobs.length,
-            scene: detector.measureFrame(f),
-          });
-          lastAmbient = f.ambientIntensity ?? lastAmbient;
-          if (f.tCaptureMs - t0 >= 1200) {
+      // The probe runs the same pipelined detection as the capture (D-177), so
+      // the frame interval it negotiates the bit rate from is the DELIVERED rate.
+      // It also picks the detector tier: a GPU that sheds frames at full
+      // detection resolution re-probes at the next coarser one
+      // (planDetectDownscale) — decided here, before any decoding starts.
+      const probeOnce = (ms: number): Promise<{ submitted: number; shed: number }> =>
+        new Promise((resolve) => {
+          const pipe = new DetectPipeline<CaptureFrame>(detectGl, detector);
+          let t0 = -1;
+          let done = false;
+          const finish = (): void => {
+            if (done) return;
+            done = true;
             clearTimeout(deadline);
-            resolve();
-          }
+            const r = { submitted: pipe.submitted, shed: pipe.shed };
+            pipe.dispose();
+            resolve(r);
+          };
+          const deadline = setTimeout(finish, ms + 1300);
+          capture!.onFrame((cf) => {
+            if (done) return;
+            if (t0 < 0) t0 = cf.tCaptureMs;
+            pipe.submit(cf, cf, { measure: true });
+            for (const d of pipe.collect()) {
+              monitor.push({ tMs: d.tag.tCaptureMs, blobCount: d.blobs.length, scene: d.scene });
+              lastAmbient = d.tag.ambientIntensity ?? lastAmbient;
+            }
+            if (cf.tCaptureMs - t0 >= ms) finish();
+          });
         });
-      });
+      if (!skipProbe) {
+        let probe = await probeOnce(1200);
+        for (let next = detector.adaptiveActive ? planDetectDownscale(detector.downscale, probe) : null; next !== null; ) {
+          nativeLog(`[capture] detector shedding ${probe.shed}/${probe.submitted + probe.shed} frames at downscale ${detector.downscale}: trying ${next}`);
+          detector.setDownscale(next);
+          monitor.reset();
+          probe = await probeOnce(800);
+          next = planDetectDownscale(detector.downscale, probe);
+        }
+      }
       const probed = monitor.snapshot();
       const recommended = probed
         ? recommendConfig({
@@ -1370,6 +1423,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Diffuse mode: start on phase 0 of the stride schedule; the tick below
         // rotates the phase. Firmware masks all but the phase's sparse subset.
         ...(diffuse ? { strideSpacing, anchorDensity, stridePhase: 0 } : {}),
+        // Rolling stride where the player runs it: asked for even when the run
+        // starts dense, since the mode sticks across the configures that turn
+        // striding on (live diffuse toggle, per-channel stage switch).
+        ...(requestedStrideMode(forcedStride, c.welcome?.features) ?? {}),
         // Per-channel capture: the code book covers the WHOLE fixture from the
         // start, so ids + code timing never change between stages.
         ...(channelPlan !== null ? { codeSpace: channelPlan.total } : {}),
@@ -1463,6 +1520,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), {
           denseRecords: true,
           decoder: { quality: channelQuality },
+          // Rolling stride: drop ids a track carried onto a neighbour.
+          litAt: rollingLitOracle(p, ledCount) ?? undefined,
         });
         pl.onDetections((records: DetectionRecord[]) => {
           for (const r of records) decodedIds.add(r.ledId);
@@ -1486,11 +1545,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // hue-code + frame timing the decoder expects (matches the device side).
       syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
       // Diffuse phase rotation state (a no-op when !diffuse: phaseTotal === 1).
+      // Under a ROLLING stride (the device says so in codeParams.strideMode) the
+      // phase is never rotated: the lit subset follows the pattern clock, and
+      // the decoded-id coverage is the progress measure.
       let phaseTotal = diffuse ? stridePhaseCount({ spacing: strideSpacing, anchorDensity }) : 1;
       let phaseIdx = 0;
       let lastPhaseAt = performance.now();
+      const strideLine = (): string =>
+        isRollingStride(params)
+          ? `diffuse: rolling stride ${strideSpacing} · ${Math.round((100 * decodedIds.size) / Math.max(1, ledCount))}% decoded`
+          : `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing})`;
       guideEl.textContent = diffuse
-        ? `diffuse: phase 1/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
+        ? `${strideLine()} · ${params.symbols} symbols`
         : `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
       // Per-channel stage state (capture/channelCapture.ts).
       let stageIdx = 0;
@@ -1583,15 +1649,37 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // Camera frames skipped because the CV queue was behind (MAX_CV_BACKLOG).
       let shedFrames = 0;
 
-      capture.onFrame((f) => {
+      // Pipelined detection (cv/detect.ts DetectPipeline, D-177): a frame's GPU
+      // work is read back on a LATER camera frame, so the main thread never
+      // waits for the GPU. onDetected runs once per detected frame, with the
+      // frame it belongs to (its own capture time, pose and K).
+      const detectPipe = new DetectPipeline<CaptureFrame>(detectGl, detector);
+      detectPipeRef = {
+        flush: () => {
+          for (const d of detectPipe.collect(true)) onDetected(d.tag, d.blobs, d.scene, 0);
+        },
+        dispose: () => detectPipe.dispose(),
+      };
+      let submittedFrames = 0;
+      capture.onFrame((cf) => {
         if (!capturing || !capture) return;
         if (cvQueue.backlog >= MAX_CV_BACKLOG && cvQueue.oldestWaitMs >= MAX_CV_LAG_MS) {
           shedFrames++;
           return;
         }
-        const tStart = performance.now();
-        const blobs = detector.detectFrame(f, {});
+        const tSubmit = performance.now();
+        // The scene-measure pass rides along every 6th submitted frame.
+        if (!detectPipe.submit(cf, cf, { measure: submittedFrames % 6 === 0 })) shedFrames++;
+        else submittedFrames++;
+        const submitMs = performance.now() - tSubmit;
+        for (const d of detectPipe.collect()) onDetected(d.tag, d.blobs, d.scene, submitMs);
+      });
+      const onDetected = (f: CaptureFrame, blobs: Blob[], measured: SceneStats | undefined, submitMs: number): void => {
+        // This frame's detect cost: the current submit plus its own readback copy
+        // and CCL (the GPU time itself no longer blocks the thread).
+        const prof = detector.lastProfile;
         const tDetected = performance.now();
+        const tStart = tDetected - submitMs - (prof ? prof.readMs + prof.cclMs : 0);
         // A truncated frame is one the capture source had to clip: too much of it
         // was above threshold to encode (a bright scene before exposure settles).
         // Its detections are incomplete AND spatially biased — the encoder fills
@@ -1600,12 +1688,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // The blob count still goes to the monitor: that's the signal the
         // threshold servo needs to climb out of the bright state.
         const clipped = f.reduced?.truncated === true;
-        const measured = frameCount % 6 === 0 ? detector.measureFrame(f) : undefined;
         monitor.push({
           tMs: f.tCaptureMs,
           blobCount: blobs.length,
           scene: measured,
           blobs: blobPopulation(blobs),
+          // Diffuse servo (D-178): spot SNR over the detector's own noise floor.
+          ...(diffuse ? { spots: spotSignals(blobs, detector.lastNoise?.floor ?? null) ?? undefined } : {}),
         });
         if (measured !== undefined) crowding.push(f.tCaptureMs, blobCrowding(blobs));
         lastAmbient = f.ambientIntensity ?? lastAmbient;
@@ -1798,7 +1887,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             totalMs: tQueued - tStart + (tEnd - tCv),
           });
         });
-      });
+      };
 
       capture.onEnd(() => {
         if (capturing) void stopCapture(true);
@@ -1999,6 +2088,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           strideSpacing?: number;
           anchorDensity?: number;
           stridePhase?: number;
+          strideMode?: "phased" | "rolling";
+          dwellCycles?: number;
         },
         onApplied?: () => void,
       ): void => {
@@ -2025,7 +2116,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             runLink?.attachDecoder(() => pl.stats);
             runLink?.config(performance.now(), params, "reconfigure", monitor.frameIntervalMs());
             guideEl.textContent = diffuse
-              ? `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
+              ? `${strideLine()} · ${params.symbols} symbols`
               : `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
                 ` · LED ${Math.round((params.brightness ?? 1) * 100)}%`;
           })
@@ -2181,6 +2272,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         maybeAdvanceStage();
       };
 
+      // Diffuse capture runs its own servo (cv/exposure.ts DiffuseServo, D-178)
+      // in place of the light servo, unless the user or a URL pinned the levers
+      // or asked for the legacy/forced servos.
+      const diffuseServo = new DiffuseServo();
+      const diffuseServoOn =
+        !servoExposure && !legacyLightServo && forcedBrightness === null && profileRun?.brightness === undefined;
       const exposureTick = setInterval(() => {
         if (!capturing) {
           clearInterval(exposureTick);
@@ -2231,8 +2328,44 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         const wantBit =
           forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs, framesPerBit) : null;
         const pop = monitor.blobPopulation();
-        // Diffuse on biased AE: fall back to the manual pin once spot cores clip.
-        if (diffuseExposure === "ae-bias" && diffuse && pop !== null) {
+        // Diffuse servo (D-178): steers on spot SNR over the detector's noise
+        // floor and per-channel core clipping — not the blob-count / intensity
+        // gates the light servo reads, which assume an unstrided scene. Exposure
+        // is the fine lever (every tick); LED brightness the coarse one, settled
+        // at the start of the capture, then held to a stride-phase boundary.
+        const servoNow = diffuseServoOn && diffuse && !manualMode;
+        const spots = servoNow ? monitor.spotSignals() : null;
+        if (servoNow && spots !== null) {
+          const lever: ExposureLever | null =
+            diffuseExposure === "ae-bias"
+              ? { value: diffuseBiasEv, lo: AE_BIAS_MIN, hi: AE_BIAS_MAX, step: AE_BIAS_STEP }
+              : diffuseExposure === "pinned"
+                ? { value: servoedExposure, lo: DIFFUSE_EXPOSURE_MIN, hi: DIFFUSE_EXPOSURE_MAX, step: EXPOSURE_FINE_STEP }
+                : null;
+          const st = diffuseServo.tick(performance.now(), params.brightness ?? 1, lever, spots);
+          if (st.exposure !== undefined) {
+            if (diffuseExposure === "ae-bias") {
+              diffuseBiasEv = st.exposure;
+              void exposureTarget.setExposureBias?.(st.exposure);
+            } else {
+              servoedExposure = st.exposure;
+              void exposureTarget.setExposure(st.exposure, DIFFUSE_EXPOSURE_CAP_MS);
+            }
+          }
+          // Settle stage only; afterwards brightness waits for a phase boundary.
+          if (st.brightness !== undefined) applyReconfigure({ brightness: st.brightness });
+          if (st.exposure !== undefined || st.brightness !== undefined) {
+            nativeLog(
+              `[servo] diffuse${diffuseServo.settling ? " (settling)" : ""}: snr ${spots.snr.toFixed(1)} ` +
+                `clip ${spots.coreClip.toFixed(2)}${spots.clipChannel >= 0 ? "rgb"[spots.clipChannel] : ""}` +
+                (st.exposure !== undefined ? ` -> exposure ${st.exposure.toFixed(2)}` : "") +
+                (st.brightness !== undefined ? ` -> LED ${Math.round(st.brightness * 100)}%` : ""),
+            );
+          }
+          if (st.brightness !== undefined) return;
+        }
+        // Diffuse on biased AE without the servo: fall back to the manual pin once spot cores clip.
+        if (!servoNow && diffuseExposure === "ae-bias" && diffuse && pop !== null) {
           diffuseClipTicks = pop.satFrac >= DIFFUSE_CLIP_SAT_FRAC ? diffuseClipTicks + 1 : 0;
           if (diffuseClipTicks >= DIFFUSE_CLIP_TICKS) pinDiffuseExposure(`spot cores clipping, sat ${pop.satFrac.toFixed(2)}`);
         }
@@ -2240,7 +2373,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // on its measured floor (cv/lightServo.ts). Exposure applies now;
         // brightness goes through the two-tick confirmation below.
         let servoBright: number | null = null;
-        if (!legacyLightServo && !manualMode && pop !== null) {
+        if (!servoNow && !legacyLightServo && !manualMode && pop !== null) {
           const step = planLightServo(
             { ...lightServo, exposure: servoedExposure },
             { blobCount: report.blobCount, ledCount, ...pop, clipFrac: report.clipFrac, crowding: crowding.value() },
@@ -2253,7 +2386,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             void exposureTarget.setExposure(step.exposure, params.bitPeriodMs / 2);
           }
         }
-        const wantBright = !legacyLightServo
+        const wantBright = servoNow
+          ? null
+          : !legacyLightServo
           ? servoBright
           : forcedBrightness === null && !manualMode && pop !== null
             ? planLedBrightness(params.brightness ?? 1, {
@@ -2290,18 +2425,29 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // in a lit (sparse, non-overlapping) subset. Fixed dwell of a few code
         // cycles per phase; skip if a servo reconfig just fired (they share the
         // configure/epoch-rebuild path via applyReconfigure + `renegotiating`).
+        // A ROLLING stride needs none of this (no configure, no decoder
+        // rebuild): the HUD just shows the decoded-id coverage.
         applyDiffuseSwitch();
         maybeAdvanceStage();
-        if (diffuse && wantDiffuse && !renegotiating) {
+        if (diffuse && isRollingStride(params)) {
+          guideEl.textContent = (channelPlan !== null ? `${stageLabel(channelPlan, stageIdx)} · ` : "") + strideLine();
+        } else if (diffuse && wantDiffuse && !renegotiating) {
           const dwellMs = Math.max(3000, 4 * params.cycleFrames * params.bitPeriodMs);
           if (performance.now() - lastPhaseAt > dwellMs) {
             phaseIdx = (phaseIdx + 1) % phaseTotal;
             lastPhaseAt = performance.now();
-            applyReconfigure({ stridePhase: phaseIdx });
-            guideEl.textContent =
-              (channelPlan !== null ? `${stageLabel(channelPlan, stageIdx)} · ` : "") +
-              `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing})`;
+            // A held diffuse-servo brightness change rides the phase switch's restart.
+            const heldBright = servoNow ? diffuseServo.atPhaseBoundary() : null;
+            applyReconfigure({ stridePhase: phaseIdx, ...(heldBright !== null ? { brightness: heldBright } : {}) });
+            guideEl.textContent = (channelPlan !== null ? `${stageLabel(channelPlan, stageIdx)} · ` : "") + strideLine();
           }
+        }
+        // No phase switch coming (one phase, or a stride that never rotates):
+        // a held brightness change that stays wanted for HELD_ALONE_TICKS
+        // applies on its own — rarely, and costing one decoder restart.
+        if (servoNow && !renegotiating && performance.now() - lastPhaseAt > 3 * Math.max(3000, 4 * params.cycleFrames * params.bitPeriodMs)) {
+          const held = diffuseServo.takeHeld(HELD_ALONE_TICKS);
+          if (held !== null) applyReconfigure({ brightness: held });
         }
       }, 2000);
     } catch (e) {
@@ -2393,8 +2539,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // The device connection is NOT required: the detections are held here, so a
     // session lost mid-capture (taken over, dropped) must not block the solve.
     const c = client();
-    // Frames still queued for decode are part of the capture: finish them
-    // before the loop stops (each queued item checks `capturing`).
+    // Frames still on the GPU or queued for decode are part of the capture:
+    // finish them before the loop stops (each queued item checks `capturing`).
+    detectPipeRef?.flush();
     cvQueueRef?.drain();
     capturing = false;
     runLinkSnapshot = runLink?.snapshot(performance.now()) ?? null;

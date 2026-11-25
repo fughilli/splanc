@@ -487,9 +487,10 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     sections: [
       {
         body: [
-          "The Effects tab is a library of animations, mirroring the maps browser: a " +
-            "search box, tag chips, folders, and a row per saved effect. Tap one to open " +
-            "the editor; the + button creates a new effect from a starter template.",
+          "The Effects tab is the app's home: a card on top says which fixture is " +
+            "connected and what it's playing, then the library: Starters, Examples and " +
+            "your own effects. Tap one to play it on your fixture and adjust its sliders " +
+            "and colours; Open in editor changes its code. The + button creates a new effect.",
         ],
       },
       {
@@ -508,8 +509,8 @@ export const GUIDE_TOPICS: GuideTopic[] = [
       {
         title: "The effects library",
         body:
-          "Animations live here. Each effect is a small shader program that runs on the " +
-          "device. Tap one to edit it, or use the + button to start a new one.",
+          "Animations live here, starters first. Tap one to play it on your fixture and " +
+          "adjust it; Open in editor changes its code. The + button starts a new one.",
       },
       {
         target: ".fab",
@@ -527,8 +528,9 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "effects",
     route: "/effects",
     summary: "Write, preview, and push shader effects with the exact on-device VM.",
-    screenshot: "#/effects",
-    screenshotClick: ".map-row",
+    // A tap on a library row now plays + tunes (the tune sheet); open the
+    // editor directly.
+    screenshot: "#/effects/edit/builtin-rainbow-sweep",
     screenshotDemo: "effect",
     screenshotWaitMs: 2800,
     steps: [
@@ -559,7 +561,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
         caption:
           "Disassembly — the compiled `.fxb` bytecode as a readable op listing, straight from " +
           "the Rust disassembler the device uses.",
-        clicks: [".map-row", ".fxlayout-tablist >> text=Disassembly"],
+        clicks: [".fxlayout-tablist >> text=Disassembly"],
         waitMs: 1200,
       },
       {
@@ -567,7 +569,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
         caption:
           "Device — with a controller connected, push the compiled effect and drive its live " +
           "uniforms straight onto the fixture.",
-        clicks: [".map-row", ".fxlayout-tablist >> text=Device"],
+        clicks: [".fxlayout-tablist >> text=Device"],
         waitMs: 1000,
       },
     ],
@@ -707,6 +709,54 @@ export const GUIDE_TOPICS: GuideTopic[] = [
             "network again. To save airtime when an Auto board's network may be gone for a " +
             "long time, set **Slow down after unseen for** (hours) to opt in to one scan per " +
             "**Slowed scan interval** (15 min by default). It is off (0) unless you set it.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "mesh",
+    title: "Meshing fixtures",
+    icon: "graph",
+    tab: "device",
+    route: "/mesh/new",
+    summary: "Link fixtures with mesh firmware so they change together, on the same frame.",
+    sections: [
+      {
+        body: [
+          "Fixtures with the mesh firmware (their device settings show a **Mesh** section) can " +
+            "talk to each other directly, with no extra hardware. Control one, and every fixture " +
+            "in its mesh changes on the same frame.",
+        ],
+      },
+      {
+        heading: "Create a mesh",
+        bullets: [
+          "Open a fixture's ⋮ device settings and tap **Create a mesh**.",
+          "Pick the fixtures to link (any you have added to the app), then name the mesh.",
+          "The app makes the mesh's admin key and keeps it on this phone or browser, sets each " +
+            "fixture up in turn over its Wi-Fi or Bluetooth connection, and shows them joining and " +
+            "syncing their clocks.",
+        ],
+      },
+      {
+        heading: "Managing a mesh",
+        bullets: [
+          "When the app connects to a fixture in a mesh it created, it unlocks it with the stored key " +
+            "by itself.",
+          "**Control the whole mesh** sends effects, sliders, brightness and crossfades through " +
+            "that fixture to all of them. Each change lands on every fixture on the same frame; a " +
+            "slider being dragged follows within a few milliseconds and settles on the same frame " +
+            "when you let go.",
+          "**Add a fixture to this mesh** runs the same set-up for more fixtures.",
+          "A fixture asking to join shows up with **Admit**. Admit only your own.",
+          "Tap a member to **Remove** it (it leaves and can be added again) or, for a lost or " +
+            "given-away fixture, **Block it for good** (the mesh changes its keys).",
+          "**Back up this mesh** gives you one text with the mesh's admin key. Keep it like a " +
+            "password. On another phone, **Use a mesh from another phone** adds the mesh there, so " +
+            "both can manage it.",
+          "Without that backup only the phone or browser that created a mesh can manage it. If its " +
+            "data is cleared, reset each fixture's mesh from its USB console (`MESH LEAVE`) and " +
+            "create a new one.",
         ],
       },
     ],

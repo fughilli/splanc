@@ -599,6 +599,12 @@ export function walkEntry(
     consts ? (consts[rdU16(code, pcOfPush + 1)] ?? 0) | 0 : undefined;
   const cmpInt = (kind: number, a: number, b: number): boolean =>
     [a < b, a <= b, a > b, a >= b, a === b, a !== b][kind] ?? false;
+  // The compiler's init block (state initial values / `void init()`, D-500)
+  // guards update(): `LoadState done 1; BrFalse I; Jmp update | Ret 0; I: ...`.
+  // The init arm runs once per effect load, not per frame: price the steady
+  // state (the guard's three ops, then update()) and don't count its jump back
+  // into update() as a loop.
+  const guard = initGuardAt(code, entry);
 
   // DFS that returns {min,max} op-histograms for the straight-line-plus-branch
   // region starting at `pc`. `depth` bounds recursion for safety. `env` tracks
@@ -726,12 +732,12 @@ export function walkEntry(
           recent.push(p);
           // Leaving the current if-arm forward (if/else's jump over the else).
           if (stopAt >= 0 && target > stopAt) return { min, max, ex, end: target, env };
-          if (target <= p) looped = true;
+          if (target <= p && !(guard && p === entry + 6)) looped = true;
           p = target;
           continue;
         }
         // A compile-time-known loop/if condition: follow the one path it takes.
-        let known: boolean | undefined;
+        let known: boolean | undefined = guard && p === entry + 3 ? false : undefined;
         // An int operand's value if its push is a const or a known local.
         const srcVal = (at: number): number | undefined =>
           isOp(at, "PushConst") ? constInt(at) : isOp(at, "LoadLocal") ? env.get(code[at + 1]!) : undefined;
@@ -830,6 +836,14 @@ export function walkEntry(
   delete max[DISPATCH_FEATURE];
   delete ex[DISPATCH_FEATURE];
   return { min, max, branched, loopCapped, opsMin, opsMax, looped, exp: ex, opsExp };
+}
+
+/** Whether `entry` starts the compiler's init guard (see walkEntry). */
+function initGuardAt(code: Uint8Array, entry: number): boolean {
+  const op = (n: string): number => NAME_TO_CODE[n]!;
+  if (code[entry] !== op("LoadState") || code[entry + 2] !== 1 || code[entry + 3] !== op("BrFalse")) return false;
+  const after = code[entry + 6] === op("Jmp") ? entry + 9 : code[entry + 6] === op("Ret") ? entry + 8 : -1;
+  return after > 0 && entry + 6 + rdI16(code, entry + 4) === after;
 }
 
 function addScaled(into: OpHistogram, h: OpHistogram, k: number): void {

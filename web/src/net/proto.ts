@@ -101,6 +101,15 @@ const CLIENT_ARMS: Record<string, string> = {
   // The mesh gateway (docs/design/mesh.md §8; net/mesh.ts).
   mesh_send: "meshSend",
   get_mesh: "getMesh",
+  list_stored_effects: "listStoredEffects",
+  load_stored_effect: "loadStoredEffect",
+  delete_stored_effect: "deleteStoredEffect",
+  // Membership and administration (mesh M7; net/mesh.ts MeshAdminOp).
+  mesh_admin: "meshAdmin",
+  // Lamp power (docs/design/lamp-power.md; the "power" feature).
+  set_power: "setPower",
+  get_power: "getPower",
+  set_power_config: "setPowerConfig",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -141,6 +150,8 @@ const SERVER_ARMS: Record<string, string> = {
   ethernet_state: "ethernetState",
   controller_list: "controllerList",
   mesh: "mesh",
+  stored_effect_list: "storedEffectList",
+  power_state: "powerState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -171,7 +182,8 @@ const VEC3_LIST_KEYS = new Set(["trajectory", "polyline"]);
 // Keys carrying a proto `bytes` field. proto3 JSON encodes bytes as a base64
 // string, but the flat TS shapes use Uint8Array (submit_effect.fxb outbound,
 // effect_uniforms.manifest inbound) — convert at this boundary.
-const BYTES_KEYS = new Set(["fxb", "manifest"]);
+// deviceKey / keyHash: the mesh's device keys (MeshState, MeshPending; mesh M7).
+const BYTES_KEYS = new Set(["fxb", "manifest", "deviceKey", "keyHash"]);
 // `data` is a bytes field on both SetTexture (outbound, a Uint8Array we send)
 // and StoredMapChunk (inbound, kept as a base64 string the map decoder unpacks
 // itself). So convert it on ENCODE only, leaving the inbound StoredMapChunk.data
@@ -469,6 +481,7 @@ export interface SetHardwareConfigMessage {
    * test streams commit:false previews and commits once the user confirms. */
   commit?: boolean;
 }
+
 
 /** Request the per-channel hardware config (proto GetHardwareConfig). Reply:
  * hardware_config_state. */
@@ -857,6 +870,137 @@ export interface KioskStatusMessage {
   event?: KioskEventName;
 }
 
+// -- Lamp power (docs/design/lamp-power.md; the "power" feature) --------------
+
+/** PowerTransition.style values. */
+export const POWER_STYLE_CUT = 0;
+export const POWER_STYLE_FADE = 1;
+export const POWER_STYLE_EFFECT = 2;
+/** PowerState.phase values. */
+export const POWER_PHASE_OFF = 0;
+export const POWER_PHASE_ON = 1;
+export const POWER_PHASE_TURNING_ON = 2;
+export const POWER_PHASE_TURNING_OFF = 3;
+/** PowerState.source values (what made the last change). */
+export const POWER_SOURCE_BOOT = 0;
+export const POWER_SOURCE_CLIENT = 1;
+export const POWER_SOURCE_TRIGGER = 2;
+/** PowerConfig boot values. */
+export const POWER_BOOT_LAST = 0;
+export const POWER_BOOT_ON = 1;
+export const POWER_BOOT_OFF = 2;
+/** SubmitEffect.power_slot values. */
+export const POWER_SLOT_ON = 1;
+export const POWER_SLOT_OFF = 2;
+
+/** Turn the lamp on / off (proto SetPower). Reply: power_state. */
+export interface SetPowerMessage {
+  type: "set_power";
+  on?: boolean;
+  /** Flip the current target instead of `on`. */
+  toggle?: boolean;
+  /** Cut straight to the target (no transition). */
+  instant?: boolean;
+  /** This change's transition length (0 = the configured one). */
+  durationMs?: number;
+}
+
+/** How the lamp turns on or off (proto PowerTransition). */
+export interface PowerTransitionFlat {
+  /** POWER_STYLE_CUT / FADE / EFFECT (absent = 0 = cut on a reply). */
+  style?: number;
+  /** 0 / absent = the device default (700 ms on, 900 ms off). */
+  durationMs?: number;
+  /** The stored transition effect's id (read-only; empty = none stored). */
+  effectId?: string;
+  /** EFFECT: slot-addressed uniform preset (a keypoint's look), <= 8 values. */
+  uniforms?: UniformValueFlat[];
+  /** Display label of the look (a keypoint name). */
+  label?: string;
+  /** Replies: how many `uniforms` are stored. */
+  uniformCount?: number;
+}
+
+/** Configure power behaviour (proto SetPowerConfig); unset fields unchanged. */
+export interface SetPowerConfigMessage {
+  type: "set_power_config";
+  /** POWER_BOOT_LAST / ON / OFF. */
+  boot?: number;
+  onTransition?: PowerTransitionFlat;
+  offTransition?: PowerTransitionFlat;
+  /** Forget the stored ON (1) / OFF (2) / both (3) transition effects. */
+  clearEffects?: number;
+  /** The pool trigger (driver export, e.g. "touch_tap") that toggles the
+   * lamp; "" unbinds. */
+  toggleTrigger?: string;
+  /** HITL test hook: override `simGpio`'s internal pull (simPull 1 up, 2 down). */
+  simGpio?: number;
+  simPull?: number;
+}
+
+/** The lamp's power state + config (proto PowerState): the reply to the power
+ * arms and pushed unsolicited on every change. proto3 JSON drops false / zero
+ * fields, so every field may be absent (read through {@link flatPowerState}). */
+export interface PowerStateMessage {
+  type: "power_state";
+  on?: boolean;
+  phase?: number;
+  brightness?: number;
+  effectId?: string;
+  source?: number;
+  boot?: number;
+  onTransition?: PowerTransitionFlat;
+  offTransition?: PowerTransitionFlat;
+  toggleTrigger?: string;
+  triggerCount?: number;
+  seq?: number;
+  transitionLeftMs?: number;
+}
+
+/** A power_state with every field filled in (absent proto3 defaults restored). */
+export interface PowerState {
+  on: boolean;
+  phase: number;
+  brightness: number;
+  effectId: string;
+  source: number;
+  boot: number;
+  onTransition: Required<Omit<PowerTransitionFlat, "uniforms">>;
+  offTransition: Required<Omit<PowerTransitionFlat, "uniforms">>;
+  toggleTrigger: string;
+  triggerCount: number;
+  seq: number;
+  transitionLeftMs: number;
+}
+
+function flatTransition(t: PowerTransitionFlat | undefined): Required<Omit<PowerTransitionFlat, "uniforms">> {
+  return {
+    style: t?.style ?? POWER_STYLE_CUT,
+    durationMs: t?.durationMs ?? 0,
+    effectId: t?.effectId ?? "",
+    label: t?.label ?? "",
+    uniformCount: t?.uniformCount ?? 0,
+  };
+}
+
+/** Fill a power_state's absent proto3 defaults. */
+export function flatPowerState(m: Partial<PowerStateMessage>): PowerState {
+  return {
+    on: m.on ?? false,
+    phase: m.phase ?? POWER_PHASE_OFF,
+    brightness: m.brightness ?? 0,
+    effectId: m.effectId ?? "",
+    source: m.source ?? POWER_SOURCE_BOOT,
+    boot: m.boot ?? POWER_BOOT_LAST,
+    onTransition: flatTransition(m.onTransition),
+    offTransition: flatTransition(m.offTransition),
+    toggleTrigger: m.toggleTrigger ?? "",
+    triggerCount: m.triggerCount ?? 0,
+    seq: m.seq ?? 0,
+    transitionLeftMs: m.transitionLeftMs ?? 0,
+  };
+}
+
 /** Motion-sensor status (proto SensorStatus), as its enum NAME (proto3 JSON). */
 export type SensorStatus =
   | "SENSOR_STATUS_UNSPECIFIED"
@@ -944,6 +1088,34 @@ export interface DriverStateMessage {
   heapBytes: number;
   jitterUsMax: number;
   feedImu: boolean;
+}
+
+// -- The on-device effect store (docs/design/effect-store.md) ----------------
+
+/** One effect in the device's store (proto StoredEffectInfo). `uniforms` are its
+ * uniforms' names (the start of the list if they didn't all fit the store's
+ * summary); `decks` the decks it is loaded on right now. */
+export interface StoredEffectInfoFlat {
+  effectId: string;
+  name?: string;
+  fxbBytes?: number;
+  uniforms?: string[];
+  decks?: number[];
+}
+
+/** Reply to list_stored_effects / delete_stored_effect (proto StoredEffectList). */
+export interface StoredEffectListMessage {
+  type: "stored_effect_list";
+  effects?: StoredEffectInfoFlat[];
+  capacity?: number;
+}
+
+/** Load a stored effect onto a deck (proto LoadStoredEffect). Reply: result_ready. */
+export interface LoadStoredEffectMessage {
+  type: "load_stored_effect";
+  effectId: string;
+  deck?: number;
+  activate?: boolean;
 }
 
 /** Reply to list_effects (proto EffectList). */

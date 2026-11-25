@@ -1,0 +1,26 @@
+"""Zero-initialized storage for firmware `static mut`s.
+
+A Rust static with even one non-zero byte in its const initializer lands in
+`.data`, which the image stores in flash (and copies to RAM at boot), while an
+all-zero one lands in `.bss` (RAM only). `Option<T>::None` is usually NOT
+all-zero (the niche is a `bool`/enum byte inside `T` set to an invalid value), so
+`static mut X: Option<Big> = None` costs `size_of::<Big>()` bytes of flash.
+`BssOption<T>` keeps the tag outside `T` so its empty state is all-zero.
+no_std, zero-dependency."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "bss",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_bss",
+    edition = "2021",
+)
+
+rust_test(
+    name = "bss_test",
+    crate = ":bss",
+    edition = "2021",
+)

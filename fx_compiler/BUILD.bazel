@@ -33,6 +33,18 @@ rust_binary(
     deps = [":fx_compiler"],
 )
 
+# D-500: state initial values + void init().
+rust_test(
+    name = "init_test",
+    srcs = ["tests/init.rs"],
+    compile_data = ["//pi/hitl/harness:ab_demo/dbgInit.fx"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
 rust_test(
     name = "fx_compiler_test",
     srcs = ["tests/compile.rs"],
@@ -56,7 +68,10 @@ rust_test(
 rust_test(
     name = "driver_test",
     srcs = ["tests/driver.rs"],
-    compile_data = ["//firmware/sensor:drivers/mpu6050.fx"],
+    compile_data = [
+        "//firmware/sensor:drivers/mpu6050.fx",
+        "//firmware/sensor:drivers/ttp223_touch.fx",
+    ],
     edition = "2021",
     deps = [
         ":fx_compiler",
@@ -123,6 +138,18 @@ rust_test(
 rust_test(
     name = "integrator_test",
     srcs = ["tests/integrator.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
+# `shared state` (docs/design/fx-mesh-state-and-agents.md): the .fxb footer and the
+# VM's snapshot / restore of exactly the shared slots (a mesh rejoin).
+rust_test(
+    name = "shared_state_test",
+    srcs = ["tests/shared_state.rs"],
     edition = "2021",
     deps = [
         ":fx_compiler",

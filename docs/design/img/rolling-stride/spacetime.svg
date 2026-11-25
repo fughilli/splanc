@@ -1,0 +1,171 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 824' width='1000' height='824' role='img' aria-label='Rolling stride: lit LEDs over time'>
+<title>Rolling stride: lit LEDs over time</title>
+<rect width='1000' height='824' fill='white'/>
+<text x='70.0' y='24.0' font-size='15' fill='#1f2430' text-anchor='start' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>Rolling stride over two periods</text>
+<text x='70.0' y='44.0' font-size='12' fill='#6b7180' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>S=3, A=3 (blocks of 9), D=4 cycles of C=10 frames, hue code v2 · 45 LEDs · P = one period</text>
+<rect x='71.00' y='76.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='71.00' y='436.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='87.00' y='187.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='87.00' y='547.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='103.00' y='328.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='103.00' y='688.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='119.00' y='79.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='119.00' y='439.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='135.00' y='190.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='135.00' y='550.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='151.00' y='331.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='151.00' y='691.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='167.00' y='82.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='167.00' y='442.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='183.00' y='193.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='183.00' y='553.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='199.00' y='304.00' width='14.00' height='120.00' fill='#3aa17e' />
+<rect x='199.00' y='664.00' width='14.00' height='120.00' fill='#3aa17e' />
+<rect x='215.00' y='85.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='215.50' y='415.50' width='13.00' height='29.00' fill='#f7d0d0' stroke='#d64545' stroke-width='1.2' />
+<rect x='215.00' y='445.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='215.50' y='775.50' width='13.00' height='8.00' fill='#f7d0d0' stroke='#d64545' stroke-width='1.2' />
+<rect x='231.00' y='160.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='231.00' y='520.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='247.00' y='301.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='247.00' y='661.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='263.00' y='82.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='263.00' y='412.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='263.00' y='772.00' width='14.00' height='12.00' fill='#2a6fdb' />
+<rect x='279.00' y='163.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='279.00' y='523.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='295.00' y='274.00' width='14.00' height='120.00' fill='#3aa17e' />
+<rect x='295.00' y='634.00' width='14.00' height='120.00' fill='#3aa17e' />
+<rect x='311.00' y='85.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='311.00' y='415.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='311.00' y='775.00' width='14.00' height='9.00' fill='#2a6fdb' />
+<rect x='327.00' y='166.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='327.00' y='526.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='343.00' y='277.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='343.00' y='637.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='359.00' y='88.00' width='14.00' height='30.00' fill='#2a6fdb' />
+<rect x='359.00' y='388.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='359.00' y='748.00' width='14.00' height='36.00' fill='#2a6fdb' />
+<rect x='375.00' y='139.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='375.00' y='499.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='391.00' y='253.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='391.00' y='613.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='407.00' y='64.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='407.00' y='364.00' width='14.00' height='120.00' fill='#2a6fdb' />
+<rect x='407.00' y='724.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='423.00' y='145.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='423.00' y='505.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='439.00' y='256.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='439.00' y='616.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='455.00' y='67.00' width='14.00' height='30.00' fill='#2a6fdb' />
+<rect x='455.00' y='367.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='455.00' y='727.00' width='14.00' height='57.00' fill='#2a6fdb' />
+<rect x='471.00' y='148.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='471.00' y='508.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='487.00' y='259.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='487.00' y='619.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='503.50' y='340.50' width='13.00' height='29.00' fill='#f7d0d0' stroke='#d64545' stroke-width='1.2' />
+<rect x='503.00' y='370.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='503.50' y='700.50' width='13.00' height='29.00' fill='#f7d0d0' stroke='#d64545' stroke-width='1.2' />
+<rect x='503.00' y='730.00' width='14.00' height='54.00' fill='#2a6fdb' />
+<rect x='519.00' y='121.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='519.00' y='481.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='535.00' y='232.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='535.00' y='592.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='551.00' y='346.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='551.00' y='706.00' width='14.00' height='78.00' fill='#2a6fdb' />
+<rect x='567.00' y='97.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='567.00' y='457.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='583.00' y='238.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='583.00' y='598.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='599.00' y='349.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='599.00' y='709.00' width='14.00' height='75.00' fill='#2a6fdb' />
+<rect x='615.00' y='100.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='615.00' y='460.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='631.00' y='241.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='631.00' y='601.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='647.50' y='322.50' width='13.00' height='29.00' fill='#f7d0d0' stroke='#d64545' stroke-width='1.2' />
+<rect x='647.00' y='352.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='647.50' y='682.50' width='13.00' height='29.00' fill='#f7d0d0' stroke='#d64545' stroke-width='1.2' />
+<rect x='647.00' y='712.00' width='14.00' height='60.00' fill='#2a6fdb' />
+<rect x='663.00' y='73.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='663.00' y='433.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='679.00' y='184.00' width='14.00' height='120.00' fill='#3aa17e' />
+<rect x='679.00' y='544.00' width='14.00' height='120.00' fill='#3aa17e' />
+<rect x='695.00' y='325.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='695.00' y='685.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='711.00' y='79.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='711.00' y='439.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='727.00' y='190.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='727.00' y='550.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='743.00' y='331.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='743.00' y='691.00' width='14.00' height='90.00' fill='#2a6fdb' />
+<rect x='759.00' y='82.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='759.00' y='442.00' width='14.00' height='90.00' fill='#e0892b' />
+<rect x='775.00' y='193.00' width='14.00' height='90.00' fill='#3aa17e' />
+<rect x='775.00' y='553.00' width='14.00' height='90.00' fill='#3aa17e' />
+<line x1='70.00' y1='58.00' x2='70.00' y2='784.00' stroke='#1f2430' stroke-width='1.2'/>
+<line x1='214.00' y1='58.00' x2='214.00' y2='784.00' stroke='#1f2430' stroke-width='1.2'/>
+<line x1='358.00' y1='58.00' x2='358.00' y2='784.00' stroke='#1f2430' stroke-width='1.2'/>
+<line x1='502.00' y1='58.00' x2='502.00' y2='784.00' stroke='#1f2430' stroke-width='1.2'/>
+<line x1='646.00' y1='58.00' x2='646.00' y2='784.00' stroke='#1f2430' stroke-width='1.2'/>
+<line x1='790.00' y1='58.00' x2='790.00' y2='784.00' stroke='#1f2430' stroke-width='1.2'/>
+<line x1='60.00' y1='64.00' x2='70.00' y2='64.00' stroke='#1f2430' stroke-width='1.0'/>
+<text x='56.0' y='68.0' font-size='11' fill='#6b7180' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>0P</text>
+<line x1='66.00' y1='94.00' x2='70.00' y2='94.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='124.00' x2='70.00' y2='124.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='154.00' x2='70.00' y2='154.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='184.00' x2='70.00' y2='184.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='214.00' x2='70.00' y2='214.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='244.00' x2='70.00' y2='244.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='274.00' x2='70.00' y2='274.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='304.00' x2='70.00' y2='304.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='334.00' x2='70.00' y2='334.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='364.00' x2='70.00' y2='364.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='394.00' x2='70.00' y2='394.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='60.00' y1='424.00' x2='70.00' y2='424.00' stroke='#1f2430' stroke-width='1.0'/>
+<text x='56.0' y='428.0' font-size='11' fill='#6b7180' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>1P</text>
+<line x1='66.00' y1='454.00' x2='70.00' y2='454.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='484.00' x2='70.00' y2='484.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='514.00' x2='70.00' y2='514.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='544.00' x2='70.00' y2='544.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='574.00' x2='70.00' y2='574.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='604.00' x2='70.00' y2='604.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='634.00' x2='70.00' y2='634.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='664.00' x2='70.00' y2='664.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='694.00' x2='70.00' y2='694.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='724.00' x2='70.00' y2='724.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='66.00' y1='754.00' x2='70.00' y2='754.00' stroke='#c9ccd3' stroke-width='1.0'/>
+<line x1='60.00' y1='784.00' x2='70.00' y2='784.00' stroke='#1f2430' stroke-width='1.0'/>
+<text x='56.0' y='788.0' font-size='11' fill='#6b7180' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>2P</text>
+<text x='78.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>0</text>
+<text x='126.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>3</text>
+<text x='174.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>6</text>
+<text x='222.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>9</text>
+<text x='270.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>12</text>
+<text x='318.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>15</text>
+<text x='366.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>18</text>
+<text x='414.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>21</text>
+<text x='462.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>24</text>
+<text x='510.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>27</text>
+<text x='558.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>30</text>
+<text x='606.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>33</text>
+<text x='654.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>36</text>
+<text x='702.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>39</text>
+<text x='750.0' y='54.0' font-size='9' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>42</text>
+<text x='18.0' y='424.0' font-size='11' fill='#6b7180' text-anchor='middle' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif' transform='rotate(-90 18.0 424.0)'>pattern-clock frame →</text>
+<text x='814.0' y='70.0' font-size='11' fill='#1f2430' text-anchor='start' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>LED class (x mod S)</text>
+<rect x='814.00' y='82.00' width='14.00' height='12.00' fill='#2a6fdb' />
+<text x='836.0' y='92.0' font-size='11' fill='#1f2430' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='814.00' y='102.00' width='14.00' height='12.00' fill='#e0892b' />
+<text x='836.0' y='112.0' font-size='11' fill='#1f2430' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='814.00' y='122.00' width='14.00' height='12.00' fill='#3aa17e' />
+<text x='836.0' y='132.0' font-size='11' fill='#1f2430' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='814.00' y='154.00' width='14.00' height='12.00' fill='#f7d0d0' stroke='#d64545' stroke-width='1.2' />
+<text x='836.0' y='164.0' font-size='11' fill='#1f2430' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>yields (boundary rule)</text>
+<line x1='814.00' y1='188.00' x2='828.00' y2='188.00' stroke='#1f2430' stroke-width='1.2'/>
+<text x='836.0' y='192.0' font-size='11' fill='#1f2430' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>block boundary</text>
+<text x='814.0' y='218.0' font-size='11' fill='#6b7180' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>Each block steps one code</text>
+<text x='814.0' y='233.0' font-size='11' fill='#6b7180' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>cycle after the block to</text>
+<text x='814.0' y='248.0' font-size='11' fill='#6b7180' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>its right: a short wave.</text>
+</svg>

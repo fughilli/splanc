@@ -130,11 +130,13 @@ copy_to_bin(
         "src/net/liveProtocol.ts",
         "src/net/liveSender.ts",  # the live (VJ) protocol, shared with the bridge
         "src/net/mesh.ts",  # the mesh gateway (net/client.ts mesh_send / get_mesh)
+        "src/net/meshEffect.ts",  # effect sharing over the mesh (client.meshShareEffect, M6)
         "src/net/otaUpdate.ts",  # update_firmware (the over-the-air driver)
         "src/net/proto.ts",
         "src/net/textureCodec.ts",
         "src/net/uniformWire.ts",  # wide (mat3/mat4) uniforms: wire chunking + reassembly
         "src/net/wifiPolicy.ts",  # Wi-Fi rejoin policy (get/set_wifi_policy)
+        "src/power/touchDriver.ts",  # the touch-sensor driver template (setup_touch_sensor)
         "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)
         # The 3D map view (and what it imports), for the demo stage's fixture
         # previews (agent/src/stage/view.ts, bundled for the browser).
@@ -221,6 +223,8 @@ ts_project(
             "tests/testdata/diffuse_rope/**",
             # Bench tooling + reference data (tests/tools/diffuse_capture/README.md), not test sources.
             "tests/tools/diffuse_capture/**",
+            # Browser bench page + its CDP runner (tests/tools/detect_bench/README.md).
+            "tests/tools/detect_bench/**",
             "src/solver/spawn.ts",
             # Browser-only: import.meta worker URL / `self` — syntax-invalid or
             # meaningless under the CJS test compile (see their docstrings). The
@@ -240,6 +244,12 @@ ts_project(
             "src/ui/screens/showMode.ts",
             # Halloween play mode compiles its preset tiles with the worker too.
             "src/ui/screens/playMode.ts",
+            # The lamp-power Transitions flow compiles transition effects with it too.
+            "src/ui/screens/powerTransitions.ts",
+            # The Sensors page + kit onboarding compile the touch driver with it.
+            "src/ui/screens/driverCompile.ts",
+            "src/ui/screens/sensors.ts",
+            "src/ui/screens/kitOnboarding.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
             # The JIT fx-bench golden lives here only for the shared
@@ -276,8 +286,17 @@ _TEST_SOURCE_DATA = {
         ":kernel_golden_stagger16",
         ":kernel_golden_stagger16_sym4",
     ],
+    # The kernel's rolling-stride golden (docs/design/rolling-stride.md),
+    # checked through the wasm binding.
+    "tests/rollingStride.test.ts": [
+        ":kernel_golden_stride_rolling",
+    ],
+    # The canonical TTP223 touch driver touchDriverSource() must reproduce.
+    "tests/touchDriver.test.ts": [":drivers_ttp223_touch"],
     # Real diffused-rope frames + exact LED centres (tests/tools/build_diffuse_dataset.py).
     "tests/diffuseRope.test.ts": glob(["tests/testdata/diffuse_rope/**"]),
+    # The same frames as a brightness x exposure grid for the diffuse servo's closed loop.
+    "tests/diffuseServo.test.ts": glob(["tests/testdata/diffuse_rope/**"]),
 }
 
 # The kernel's staggered-pilot goldens, copied into this package (a js_test's
@@ -292,8 +311,16 @@ _TEST_SOURCE_DATA = {
     for g in [
         "golden_stagger16",
         "golden_stagger16_sym4",
+        "golden_stride_rolling",
     ]
 ]
+
+# The canonical touch driver (lamp power), copied in like the goldens above.
+copy_file(
+    name = "drivers_ttp223_touch",
+    src = "//firmware/sensor:drivers/ttp223_touch.fx",
+    out = "firmware_drivers/ttp223_touch.fx",
+)
 
 # One js_test per tests/*.test.ts file, running the emitted CJS under
 # node:test (registering tests at require-time sets the exit code), wrapped by
@@ -693,4 +720,16 @@ sh_binary(
     name = "stage_site",
     srcs = ["stage_site.sh"],
     data = SITE_DATA,
+)
+
+# Feature-preview clip scripts (docs/release-clips.md) and the demo data they
+# serve: checked by //tools/release_clips:release_clips_test, recorded at
+# release time by //tools/release_clips.
+filegroup(
+    name = "clip_scripts",
+    srcs = glob([
+        "src/**/*.clip.json",
+        "src/**/clipdata/*.json",
+    ]),
+    visibility = ["//tools/release_clips:__pkg__"],
 )

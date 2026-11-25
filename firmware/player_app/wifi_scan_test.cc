@@ -271,6 +271,27 @@ static void test_improv_reports_an_ssid_no_sweep_finds() {
   assert(!r.take_clear_on_lease());
 }
 
+static void test_improv_slow_gap_reports_after_three_sweeps_past_the_floor() {
+  // A central waiting on an SSID with nothing to auth to: three sweeps, 13 s apart, and
+  // the third (ending just past the 30 s floor) reports — sooner than the 8-sweep cadence.
+  using R = lm_wifi_scan::ImprovScanReport;
+  const uint32_t gap = lm_wifi_scan::kImprovRescanSlowGapMs, sweep = 1560;
+  R r;
+  const uint32_t t0 = 5000;
+  r.on_fresh_join(t0);
+  uint32_t t = t0 + sweep;
+  assert(r.on_sweep_done(false, t) == R::Action::kNone);
+  assert(!r.take_retry(t + gap - 1, gap));
+  assert(r.take_retry(t + gap, gap));
+  t += gap + sweep;
+  assert(r.on_sweep_done(false, t) == R::Action::kNone);
+  assert(r.take_retry(t + gap, gap));
+  t += gap + sweep;
+  assert(r.on_sweep_done(false, t) == R::Action::kReportNotFound);
+  assert(r.misses() == lm_wifi_scan::kImprovSweeps);
+  assert(t - t0 >= lm_wifi_scan::kImprovReportMs && t - t0 <= 31000);
+}
+
 static void test_improv_three_quick_misses_are_not_enough() {
   // The iOS-bench regression: three sweeps missed the AP inside ~8 s (coex with the
   // phone's BLE link) and the app got UNABLE_TO_CONNECT for a network that was there.
@@ -336,6 +357,8 @@ int main(int argc, char **argv) {
       argc, argv, "wifi_scan",
       {
           {"improv_reports_an_ssid_no_sweep_finds", test_improv_reports_an_ssid_no_sweep_finds},
+          {"improv_slow_gap_reports_after_three_sweeps_past_the_floor",
+           test_improv_slow_gap_reports_after_three_sweeps_past_the_floor},
           {"improv_three_quick_misses_are_not_enough",
            test_improv_three_quick_misses_are_not_enough},
           {"improv_report_floor_is_wrap_safe", test_improv_report_floor_is_wrap_safe},

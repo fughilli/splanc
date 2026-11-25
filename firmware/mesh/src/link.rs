@@ -64,6 +64,9 @@ pub enum Frame<'a> {
     /// A time beacon ([`crate::meshtime::TimeBeacon`], M4): one hop, link broadcast, never
     /// relayed.
     Time(&'a [u8]),
+    /// A ranging message ([`crate::ranging::RangeMsg`]): one hop, link unicast to `dest`,
+    /// never relayed.
+    Range { dest: NodeId, payload: &'a [u8] },
 }
 
 impl<'a> Frame<'a> {
@@ -80,7 +83,7 @@ impl<'a> Frame<'a> {
     /// The link-layer destination (None: broadcast).
     pub fn dst(&self) -> Option<NodeId> {
         match *self {
-            Frame::FwRequest { dest, .. } => Some(dest),
+            Frame::FwRequest { dest, .. } | Frame::Range { dest, .. } => Some(dest),
             _ => None,
         }
     }
@@ -116,6 +119,7 @@ pub fn encode(src: NodeId, frame: Frame<'_>, out: &mut [u8]) -> Option<usize> {
         Frame::FwManifest(b) => (pb::FrameType::FwManifest, b),
         Frame::Summary(b) => (pb::FrameType::Beacon, b),
         Frame::Time(b) => (pb::FrameType::Time, b),
+        Frame::Range { payload, .. } => (pb::FrameType::Range, payload),
     };
     let dst = frame.dst();
     pb::LinkFrameEnc::encode(out, |m| {
@@ -153,6 +157,7 @@ pub fn decode(b: &[u8]) -> Result<Received<'_>, Reject> {
         Ok(pb::FrameType::Beacon) => Frame::Summary(f.summary()),
         Ok(pb::FrameType::Poll) if !f.summary().is_empty() => Frame::Summary(f.summary()),
         Ok(pb::FrameType::Time) => Frame::Time(f.payload()),
+        Ok(pb::FrameType::Range) => Frame::Range { dest: dst.ok_or(Reject::Malformed)?, payload: f.payload() },
         _ => return Err(Reject::NotMesh),
     };
     Ok(Received { src, dst, frame })

@@ -17,6 +17,7 @@ exclude: |
     web/tests/golden_.*\.json|
     firmware/pattern/testdata/golden_.*\.json|
     patches/.*\.patch|
+    pi/provisioning/nix/brcmfmac-actframe/.*\.patch|
     pnpm-lock\.yaml|
     requirements\.lock
   )$

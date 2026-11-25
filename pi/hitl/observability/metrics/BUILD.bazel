@@ -1,0 +1,22 @@
+"""HITL per-gate performance metrics: the CI-log ingest and the dashboard generator.
+
+Both run with the runner's python3 in .github/workflows/fxbench-ingest.yaml (stdlib
+only, no Bazel). The library target lets //pi/hitl/tests unit-test the log parsing,
+the legacy extractors and the summary statistics.
+"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "ingest_lib",
+    srcs = [
+        "gen_dashboard.py",
+        "ingest_hitl_metrics.py",
+        "legacy_extractors.py",
+        "//pi/hitl:observability/fxbench/ingest_fx_bench.py",
+    ],
+    imports = ["."],
+    deps = ["//pi/hitl/harness"],
+)

@@ -108,6 +108,16 @@ message CodeParams {
   // SHARED code-book size (every fixture in the group derives the same bits /
   // cycle_frames from it). Unset = 0 (single-fixture capture).
   optional int32 code_offset = 13;
+  // Rolling stride (docs/design/rolling-stride.md; stride_lit_rolling in
+  // firmware/pattern): "rolling" when the lit subset is the pure function of
+  // (LED, pattern-clock frame) — blocks of anchor_density*stride_spacing LEDs
+  // each stepping their offset on their own clock, every dwell_cycles code
+  // cycles — so the phone never reconfigures to stride (stride_phase is then
+  // unused). Unset/"phased" = the stride_phase schedule above. Echoes what the
+  // device is driving; only set while striding is on.
+  optional string stride_mode = 14;
+  // Rolling dwell D in code cycles (the clamped value the kernel runs).
+  optional int32 dwell_cycles = 15;
 }
 
 // One labeled observation of one LED in one frame (§7.4).
@@ -312,6 +322,12 @@ message StartMappingOptions {
   // reply's code_params.sync_pattern, which is what the client decodes.
   // Unset = "on_off".
   optional string sync_pattern = 12;
+  // Requested stride schedule (CodeParams.stride_mode): "rolling" on players
+  // advertising the "stride_rolling" feature, else (or unset) "phased". A
+  // player without the feature runs phased and its reply says so.
+  optional string stride_mode = 13;
+  // Rolling dwell D in code cycles (unset = the kernel default, 4).
+  optional int32 dwell_cycles = 14;
 }
 
 message StartMapping {
@@ -325,9 +341,15 @@ message ConfigureOptions {
   optional double brightness = 4;
   // Diffuse-capture striding (see StartMappingOptions). The phone re-sends this
   // each epoch to ADVANCE the phase (Configure restamps the pattern epoch).
+  // In rolling mode nothing is re-sent to stride; spacing/anchor still change
+  // the geometry (the diffuse servo's stride on/off).
   optional int32 stride_spacing = 5;
   optional int32 anchor_density = 6;
   optional int32 stride_phase = 7;
+  // Stride schedule / rolling dwell (see StartMappingOptions); unset keeps the
+  // active capture's.
+  optional string stride_mode = 8;
+  optional int32 dwell_cycles = 9;
 }
 
 // Mid-capture renegotiation; reply is PatternState with the new epoch.
@@ -371,6 +393,9 @@ message GetSolveStatus {}
 // Blocks paint [start, start+count); uncovered LEDs are off; painting past
 // the physical strip end IS the probe (the phone binary-searches the strip
 // length by observing which blocks light). Empty blocks = all off.
+// At most 32 blocks: a player refuses more (error bad_message, the current
+// pattern left as it was) rather than drawing a subset; firmware before that
+// latched the first 32 and still replied counting_state.
 // Reply: counting_state.
 message SetCountingPattern {
   repeated ColorBlock blocks = 1;
@@ -483,6 +508,65 @@ message SubmitEffect {
   bool activate = 3;
   // FX deck to load onto: 0 = A (default), 1 = B. See SetCrossfade.
   uint32 deck = 4;
+  // Keep it in the device's effect store (docs/design/effect-store.md) INSTEAD of
+  // loading it: no deck changes, `activate` and `deck` are ignored. An effect with
+  // the same effect_id is replaced. Load it later with load_stored_effect.
+  // Firmware advertising the "effect_store" feature. Reply: result_ready
+  // (id=effect_id), or error (`store_full`, `store_no_space`, `effect_too_large`, `bad_fxb`,
+  // `no_store`).
+  bool store = 5;
+  // The stored effect's display name (store only; at most 32 bytes).
+  string name = 6;
+  // Lamp power (feature "power", docs/design/lamp-power.md): 1 = store this
+  // effect as the ON transition, 2 = as the OFF transition. The effect is
+  // validated and kept on the device, NOT loaded or activated (deck/activate are
+  // ignored); a transition with style EFFECT plays it. Reply: result_ready
+  // (like any submit_effect; the new power_state is also pushed).
+  // Older firmware ignores the field and parks it on `deck`: send deck = 1,
+  // activate = false so that stays harmless.
+  uint32 power_slot = 7;
+}
+
+// The device's effect store (docs/design/effect-store.md): compiled effects kept
+// on its flash, at most `StoredEffectList.capacity` of them, put there with
+// submit_effect{store: true}. Reply: stored_effect_list.
+message ListStoredEffects {}
+
+// Load a stored effect onto a deck, as if it had been submitted there. The effect
+// keeps its effect_id, so its keypoints come with it. Persisted like a deck-A
+// submit_effect when it lands on deck A and is activated. Reply: result_ready
+// (id=effect_id), or error (`not_found`, `effect_too_large`, `bad_fxb`).
+message LoadStoredEffect {
+  string effect_id = 1;
+  // FX deck to load onto: 0 = A (default), 1 = B.
+  uint32 deck = 2;
+  // Make it the deck's active effect (as SubmitEffect.activate).
+  bool activate = 3;
+}
+
+// Remove an effect from the store (what is loaded on a deck keeps running, and
+// its keypoints stay). Reply: stored_effect_list, or error (`not_found`).
+message DeleteStoredEffect {
+  string effect_id = 1;
+}
+
+message StoredEffectInfo {
+  string effect_id = 1;
+  string name = 2;
+  // Bytecode (.fxb) size in bytes.
+  uint32 fxb_bytes = 3;
+  // Its uniforms' names, in manifest order (the start of the list when they don't
+  // all fit the store's summary). The full manifest: load it, then
+  // get_effect_uniforms.
+  repeated string uniforms = 4;
+  // The decks it is loaded on right now (matched by effect_id).
+  repeated uint32 decks = 5;
+}
+
+message StoredEffectList {
+  repeated StoredEffectInfo effects = 1;
+  // How many effects the store holds at most.
+  uint32 capacity = 2;
 }
 
 // Select the active effect by id. "" or "off" clears it (back to the built-in
@@ -1196,6 +1280,22 @@ message ClientMessage {
     // fixtures meshed with this one, and read the mesh.
     MeshSend mesh_send = 99;
     GetMesh get_mesh = 100;
+    // The on-device effect store (docs/design/effect-store.md).
+    ListStoredEffects list_stored_effects = 140;
+    LoadStoredEffect load_stored_effect = 141;
+    DeleteStoredEffect delete_stored_effect = 142;
+    // Mesh membership and administration (mesh M7): join or leave a mesh, unlock the
+    // admin session with a signed grant, admit, revoke, eject. Reply: mesh.admin.
+    MeshAdmin mesh_admin = 101;
+    // A deck's `shared state` values, carried by a mesh catch-up so a fixture that
+    // rejoins continues where the gateway's effect is (docs/design/fx-mesh-state-and-agents.md).
+    // No reply.
+    SetFxState set_fx_state = 102;
+    // Lamp power: on/off, its ON/OFF transitions, the touch sensor
+    // (docs/design/lamp-power.md).
+    SetPower set_power = 130;
+    GetPower get_power = 131;
+    SetPowerConfig set_power_config = 132;
   }
 }
 
@@ -1225,10 +1325,16 @@ message MeshSend {
   // The app's id for this message (echoed in mesh.result); 0 = the gateway picks one.
   uint32 op_id = 1;
   MeshTargets targets = 2;
-  // One encoded ClientMessage (at most ~170 bytes: one mesh packet).
+  // One encoded ClientMessage (at most ~170 bytes: one mesh packet), or a submit_effect
+  // of any size up to the player's effect limit (mesh M6): the gateway checks it, answers
+  // as the load would (result_ready / error), shares it as a content-addressed blob, and
+  // once every target holds it, all of them (and the gateway, unless skip_gateway) load it
+  // on one show-clock frame `lead_ms` (0 = 250 ms) later. Too big for one transport window,
+  // the whole mesh_send goes as UploadChunk windows of kind EFFECT.
   bytes inner = 3;
   bool want_reply = 4;
-  // How long to wait for member answers (0 = 2000 ms).
+  // How long to wait for member answers (0 = 2000 ms; for an effect share, how long the
+  // targets may take to fetch it before the switch: 0 = 12 s).
   uint32 timeout_ms = 5;
   // Schedule `inner` on the mesh's show clock this far ahead (its apply_at_ms, unless it
   // carries one): the gateway and every member apply it on the same frame. 0 = on arrival.
@@ -1238,7 +1344,48 @@ message MeshSend {
 
 // Read the mesh this fixture is in (reply: mesh.state). Also opens the gateway's admin
 // session for this connection on a mesh with no admin key (mesh M5, dev site key).
-message GetMesh {}
+message GetMesh {
+  // Also report the mesh's topology (the app's mesh map): each member's room pose, hops and
+  // radio neighbours (MeshMember.pose / hops / neighbours), and this fixture's own
+  // (MeshState.pose / neighbours). Older firmware ignores it: those fields stay empty.
+  bool topology = 1;
+  // Topology in pages (a reply is one frame): members from this index of `members` on carry
+  // it; MeshState.topology_next says where the next page starts.
+  uint32 topology_from = 2;
+}
+
+// What a mesh member knows of another's room pose (the topology, GetMesh.topology).
+enum MeshPoseState {
+  // Nothing heard yet (older firmware, or a member whose pose has not come by since this
+  // fixture started: it is re-sent at least once a minute).
+  MESH_POSE_UNKNOWN = 0;
+  // It has no room pose (not placed by room localization yet).
+  MESH_POSE_NONE = 1;
+  // `pose` holds it (translation to 1 cm, the rotation, the room name up to 16 bytes).
+  MESH_POSE_SET = 2;
+}
+
+// One radio neighbour of a mesh member (the mesh topology).
+message MeshNeighbour {
+  uint32 node = 1;
+  // Its running-average RSSI as this member hears it, dBm.
+  sint32 rssi = 2;
+  // Unicasts to it that were delivered (MAC-ACKed), percent; absent before the first.
+  optional uint32 tx_ok_pct = 3;
+  // Wi-Fi link ranging (FTM-style timestamps, docs/design/mesh-ftm.md), as the reporting member
+  // measured it: the one-way distance, metres. Absent: not ranged (ranging off, older
+  // firmware, or no estimate yet). UNCALIBRATED unless range_calibrated: a device whose
+  // per-boot phase state is 41 adds 1.6-2.6 m, so treat uncalibrated ranges as relative.
+  optional float range_m = 4;
+  // The estimate's standard error, metres.
+  optional float range_sigma_m = 5;
+  // The per-boot TX/RX clock-phase states of the reporting member and of this neighbour:
+  // 39 (the low-offset state), 41, or 0 unknown.
+  uint32 range_phase_self = 6;
+  uint32 range_phase_peer = 7;
+  // range_m was calibrated against a known distance for these phase states.
+  bool range_calibrated = 8;
+}
 
 enum MeshMemberStatus {
   MESH_MEMBER_OK = 0;
@@ -1308,6 +1455,16 @@ message MeshMember {
   // The last relayed message it refused or failed (the code), and that op's id (low 16 bits).
   uint32 last_error = 12;
   uint32 last_error_op = 13;
+  // The topology (only when GetMesh.topology asked; empty from older firmware):
+  // Mesh hops its last status took to reach this fixture (1 = a direct neighbour; 0 unknown).
+  uint32 hops = 14;
+  // Its room pose (pose_state MESH_POSE_SET); room, translation and rotation only.
+  FixturePose pose = 15;
+  // Its radio neighbours as it reported them (at most 8, strongest first).
+  repeated MeshNeighbour neighbours = 16;
+  // Since its last topology report (absent: none yet; older firmware sends none).
+  optional uint32 topology_ms_ago = 17;
+  MeshPoseState pose_state = 18;
 }
 
 message MeshState {
@@ -1329,15 +1486,197 @@ message MeshState {
   repeated MeshMember members = 11;
   // The last finished mesh_send on this gateway.
   MeshResult last_result = 12;
+  // Membership (mesh M7).
+  MeshMode mode = 13;
+  // 0 unprovisioned, 1 searching, 2 joining (waiting for approval), 3 member.
+  uint32 phase = 14;
+  // The mesh key's epoch (it moves on each rotation).
+  uint32 key_epoch = 15;
+  // Provisioned with an admin key (false: a dev mesh, envelope trust) / a site secret.
+  bool admin_key = 16;
+  bool site_secret = 17;
+  // This fixture's device key (65 bytes, uncompressed P-256): what a grant names.
+  bytes device_key = 18;
+  // The admin session this connection unlocked (0: none), and the members in its roster.
+  uint32 session = 19;
+  uint32 roster = 20;
+  repeated MeshPending pending = 21;
+  // Device keys on the revocation list.
+  uint32 revoked = 22;
+  repeated uint32 groups = 23;
+  // Admin sessions this fixture (as a member) is synced with.
+  uint32 sessions_synced = 24;
+  // Mesh time in seconds (what a grant's expiry is in).
+  uint32 mesh_s = 25;
+  // The topology (GetMesh.topology): this fixture's own room pose and radio neighbours, and
+  // where the next page of member topology starts (0: every member's is in this reply).
+  FixturePose pose = 26;
+  repeated MeshNeighbour neighbours = 27;
+  uint32 topology_next = 28;
+  MeshPoseState pose_state = 29;
 }
 
 // The mesh gateway's replies: `result` answers mesh_send (and is pushed when its member
-// answers are in), `state` answers get_mesh.
+// answers are in), `state` answers get_mesh, `admin` answers mesh_admin.
 message MeshInfo {
   oneof info {
     MeshResult result = 1;
     MeshState state = 2;
+    MeshAdminResult admin = 3;
   }
+}
+
+// --- Mesh membership and administration (docs/design/mesh.md §7, mesh M7) ------
+//
+// A closed mesh: every fixture holds the mesh id and, to join by itself, the site secret
+// (32 bytes the app makes per installation); without it a fixture asks to join and the
+// admin approves it. Administering the mesh needs the admin secret, which only the app
+// (and the bridge) hold: the app signs a session grant for the fixture it is connected to,
+// and presents it with `unlock`. Fixtures hold only the admin public key.
+//
+// On a fixture that already holds an admin key, `provision` and `leave` need this
+// connection unlocked first (a grant), or the USB console (`MESH LEAVE`, physical access).
+
+enum MeshMode {
+  MESH_MODE_CLOSED = 0;
+  MESH_MODE_LOCKED = 1;
+  // Open mode (guests) is M7b.
+  MESH_MODE_OPEN = 2;
+}
+
+// Join a mesh (or re-provision): turns the mesh on, persists it (it stays on across
+// reboots until `leave`).
+message MeshProvision {
+  uint32 mesh_id = 1;
+  // 32 bytes. Absent: the fixture joins by approval (`admit`).
+  bytes site_secret = 2;
+  // The admin public key (65 bytes, uncompressed P-256). Absent only on dev meshes.
+  bytes admin_key = 3;
+  MeshMode mode = 4;
+  // 0: follow the AP (or derive one from the mesh id).
+  uint32 channel = 5;
+  repeated uint32 groups = 6;
+  // The provisioner token this fixture issued when it was last provisioned (desk D-324):
+  // re-provisions a fixture that holds an admin key without a grant.
+  bytes provisioner_token = 7;
+}
+
+// Unlock this fixture as the gateway: the admin's signed grant ("this fixture may command
+// session S until T", 144 bytes, mesh.md §7.9). Lasts until the connection drops.
+message MeshUnlock {
+  bytes grant = 1;
+  // A grant signed by a delegate (docs/design/share-links.md, "Revocable access") comes with
+  // the delegate's certificate from the admin key (138 bytes, admin.rs Delegation).
+  bytes delegation = 2;
+}
+
+// Admit a fixture waiting to join (MeshState.pending).
+message MeshAdmit {
+  uint32 node = 1;
+  bytes key_hash = 2;
+}
+
+// Remove fixtures for good: a rotation to a new mesh key and site secret that leaves them
+// out, and their device keys on the revocation list (signed by the admin; mesh.md §7.6).
+message MeshRevoke {
+  // The signed RekeyOrder (128 bytes).
+  bytes order = 1;
+  // The new mesh key (16 bytes) and site secret (32 bytes) the order commits to.
+  bytes mesh_key = 2;
+  bytes site_secret = 3;
+  // Node ids that get no new key (the revoked ones).
+  repeated uint32 exclude = 4;
+}
+
+// This fixture leaves its mesh: the mesh turns off and its state is erased. On a fixture that
+// holds an admin key: needs an admin session on this connection, or the provisioner token.
+message MeshLeave {
+  bytes provisioner_token = 1;
+}
+
+message MeshAssignGroups {
+  uint32 node = 1;
+  repeated uint32 groups = 2;
+}
+
+// The admin sends one fixture out of the mesh (it leaves, as with `leave`). Not a removal:
+// it could rejoin with the site secret; use `revoke` for that.
+message MeshEject {
+  uint32 node = 1;
+  bytes key_hash = 2;
+}
+
+// The `shared state` of one deck's effect (docs/design/fx-mesh-state-and-agents.md):
+// a mesh catch-up sends it after the effect, and the member restores the values when
+// its own copy of the effect has the same state layout (`layout_hash`, from the
+// compiled program). The member then advances the next update() by the time since
+// the snapshot, so an integrated phase lands where the gateway's is.
+message SetFxState {
+  // 0 = deck A, 1 = deck B.
+  uint32 deck = 1;
+  // ledmapper_fx_vm Program::layout_hash of the effect the values belong to.
+  fixed32 layout_hash = 2;
+  // Effect `time` (seconds) of the frame the snapshot was taken after.
+  float time = 3;
+  // The shared slots' raw 32-bit words, little-endian, in the program's footer order.
+  bytes words = 4;
+}
+
+message MeshAdmin {
+  oneof op {
+    MeshProvision provision = 1;
+    MeshUnlock unlock = 2;
+    MeshAdmit admit = 3;
+    MeshRevoke revoke = 4;
+    MeshLeave leave = 5;
+    MeshAssignGroups groups = 6;
+    MeshEject eject = 7;
+  }
+}
+
+enum MeshAdminError {
+  MESH_ADMIN_OK = 0;
+  MESH_ADMIN_BAD_REQUEST = 1;
+  // This connection holds no admin session (unlock first), or the grant was refused.
+  MESH_ADMIN_LOCKED = 2;
+  // A wrong grant was presented less than 2 s ago (device-wide).
+  MESH_ADMIN_LOCKED_OUT = 3;
+  // The grant is not signed by this mesh's admin key, not for this fixture, or expired.
+  MESH_ADMIN_BAD_GRANT = 4;
+  // The fixture is not a member (no mesh, or still joining).
+  MESH_ADMIN_NO_MESH = 5;
+  // No member has joined the admin session yet (nothing to send to).
+  MESH_ADMIN_NO_MEMBERS = 6;
+  MESH_ADMIN_BUSY = 7;
+  // The rotation order does not verify or does not match the keys.
+  MESH_ADMIN_BAD_ORDER = 8;
+  // Not available on this fixture (no device key, the mesh is not built in).
+  MESH_ADMIN_UNSUPPORTED = 9;
+  // The mesh could not turn on: not enough free memory on the fixture (MeshAdminResult.value:
+  // the bytes it needed in one block).
+  MESH_ADMIN_NO_MEMORY = 10;
+}
+
+message MeshAdminResult {
+  // The MeshAdmin.op field number this answers.
+  uint32 op = 1;
+  MeshAdminError error = 2;
+  // unlock: the session; admit / revoke / eject: mesh packets sent.
+  uint32 value = 3;
+  // provision: the provisioner token (16 bytes, desk D-324), only to the connection that
+  // provisioned. The app keeps it: it lets that user leave or re-provision this fixture
+  // without an admin grant (device-local admin rights; mesh-wide commands still need the
+  // admin key's signed session).
+  bytes provisioner_token = 4;
+}
+
+// A fixture waiting to join this mesh (approval: MeshAdmin.admit).
+message MeshPending {
+  uint32 node = 1;
+  bytes key_hash = 2;
+  uint32 firmware = 3;
+  // The member that heard it.
+  uint32 heard_by = 4;
 }
 
 // --- FX debugger (docs/design/fx-debugger.md) --------------------------------
@@ -2373,6 +2712,113 @@ message FpsState {
   uint32 achieved_fps = 9;
 }
 
+// -- Lamp power (docs/design/lamp-power.md) ------------------------------------
+//
+// A lamp is ON (its effect renders) or OFF (LEDs dark and the effect paused, at
+// almost no CPU; Wi-Fi, BLE, the app and the agent stay connected). A touch
+// sensor under the lid toggles it (`toggle_trigger`), ON and OFF each play
+// a configurable transition, and every change is pushed as power_state to each
+// open session so a lid tap shows up in the app and in a smart home. The touch
+// sensor is a driver-VM driver (gpio_read + debounce in its poll(), like the
+// QWIIC sensors) that exports a TRIGGER counter; `toggle_trigger` names the
+// export that toggles the lamp. The state persists across reboots;
+// PowerConfig `boot` picks what a cold boot does.
+// Player profile: ESP32 players with feature "power"; others answer
+// error{unsupported}.
+
+// Turn the lamp on or off. Reply: power_state.
+message SetPower {
+  // The target state (ignored when `toggle` is set).
+  bool on = 1;
+  // Flip the current target instead (a lamp mid-transition reverses smoothly).
+  bool toggle = 2;
+  // Skip the transition: cut straight to the target state.
+  bool instant = 3;
+  // This change's transition length in ms, overriding the configured one
+  // (0 = the configured duration).
+  uint32 duration_ms = 4;
+}
+
+// Read the power state + config. Reply: power_state.
+message GetPower {}
+
+// How the lamp turns ON or OFF.
+message PowerTransition {
+  // 0 = CUT (instant), 1 = FADE (brightness ramp over the running effect; the
+  // default), 2 = EFFECT: play the effect stored with SubmitEffect.power_slot,
+  // blended with the show (ON: from dark into the effect, then into the show;
+  // OFF: from the show into the effect, then to dark). The effect can read
+  // `uniform float power;` (the lamp's light level: 0 -> 1 while turning on,
+  // 1 -> 0 while turning off) and `uniform float transition;` (0 -> 1 progress).
+  // EFFECT without a stored effect, or while deck B is live in a crossfade,
+  // falls back to FADE.
+  uint32 style = 1;
+  // Length in ms (0 = the default, 700 on / 900 off; clamped to 100..30000).
+  uint32 duration_ms = 2;
+  // The stored transition effect's id (read-only: set by the submit_effect
+  // that stored it; empty = none stored).
+  string effect_id = 3;
+  // EFFECT: uniform values applied to the transition effect when it starts,
+  // slot-addressed in its manifest, e.g. a saved keypoint's look (at most 8;
+  // only set_power_config carries them, power_state reports the count).
+  repeated UniformValue uniforms = 4;
+  // A display label for the look (e.g. the keypoint's name), <= 32 bytes.
+  string label = 5;
+  // power_state only: how many `uniforms` are stored.
+  uint32 uniform_count = 6;
+}
+
+// Configure the lamp's power behaviour. Every field is optional; an unset one
+// is left unchanged. Persisted. Reply: power_state.
+message SetPowerConfig {
+  // What a cold boot does: 0 = restore the last state (the default), 1 = always
+  // on, 2 = always off.
+  optional uint32 boot = 1;
+  // Replaces the whole ON / OFF transition when set (its effect_id is ignored:
+  // the stored effect stays until a new submit_effect power_slot replaces it).
+  PowerTransition on_transition = 2;
+  PowerTransition off_transition = 3;
+  // Forget the stored ON (1) / OFF (2) / both (3) transition effects.
+  uint32 clear_effects = 4;
+  // The uniform-pool trigger (a driver export, e.g. "touch_tap") whose every
+  // increment toggles the lamp; "" unbinds. Unset = unchanged.
+  optional string toggle_trigger = 5;
+  // Test hook (HITL): override GPIO `sim_gpio`'s internal pull to simulate a
+  // sensor on an unwired pin (sim_pull 1 = pull-up, 2 = pull-down, 0 = none).
+  // A wired module's push-pull output overrides the weak pull.
+  optional int32 sim_gpio = 6;
+  uint32 sim_pull = 7;
+}
+
+// The lamp's power state + config. Reply to the power arms, and pushed
+// unsolicited on every change.
+message PowerState {
+  // The target state: true = on (or turning on).
+  bool on = 1;
+  // 0 = OFF, 1 = ON, 2 = TURNING_ON, 3 = TURNING_OFF.
+  uint32 phase = 2;
+  // The output brightness (set_brightness), 0..1.
+  double brightness = 3;
+  // The show's effect (deck A), empty when none.
+  string effect_id = 4;
+  // What made the last change: 0 = BOOT, 1 = CLIENT (set_power), 2 = TRIGGER
+  // (the toggle trigger fired: a lid tap).
+  uint32 source = 5;
+  // PowerConfig.boot (0 = last, 1 = on, 2 = off).
+  uint32 boot = 6;
+  // The configured transitions (uniforms omitted: see uniform_count).
+  PowerTransition on_transition = 7;
+  PowerTransition off_transition = 8;
+  // The bound toggle trigger ("" = none) and how often it toggled the lamp
+  // since boot.
+  string toggle_trigger = 9;
+  uint32 trigger_count = 10;
+  // Bumped on every change: a client keeps the newest and drops a stale push.
+  uint32 seq = 12;
+  // ms left in the running transition (0 = settled).
+  uint32 transition_left_ms = 13;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -2431,5 +2877,10 @@ message ServerMessage {
     // One envelope arm: each extra arm grows every by-value ServerMessage frame in the debug
     // host builds (the fx_debug lesson).
     MeshInfo mesh = 55;
+    // Reply to list_stored_effects / delete_stored_effect.
+    StoredEffectList stored_effect_list = 72;
+    // Reply to set_power / get_power / set_power_config, and pushed unsolicited to every open session on each change
+    // (a lid tap, another client, a transition settling, a brightness change).
+    PowerState power_state = 70;
   }
 }

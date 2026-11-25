@@ -50,6 +50,23 @@ fn welcome_carries_features_and_fxb_format() {
     assert_eq!(w.r#fw_version.as_str(), "1.2.0");
 }
 
+/// The firmware's run-time feature (its flash, PR-41) follows the static ones, in the
+/// welcome and the manifest.
+#[test]
+fn a_run_time_feature_follows_the_static_ones() {
+    let mut p = player();
+    p.set_extra_feature("flash_464016_suspend_on");
+    let Some(SMsg::Welcome(w)) = wire(&mut p, CMsg::Hello(pb::Hello::default())) else {
+        panic!("welcome");
+    };
+    let feats: Vec<&str> = w.r#features.iter().map(|f| f.as_str()).collect();
+    assert_eq!(feats.last(), Some(&"flash_464016_suspend_on"));
+    assert_eq!(feats.len(), FEATURES.len() + 1);
+    let m = manifest(&p, &ManifestExtras::default());
+    let mf = m["protocol"]["features"].as_array().unwrap();
+    assert_eq!(mf.last().unwrap(), "flash_464016_suspend_on");
+}
+
 #[test]
 fn list_effects_is_the_fx_layers_arm() {
     let mut p = player();

@@ -9,6 +9,7 @@ emulator and compares against the reference integer semantics.
 """
 
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -17,6 +18,8 @@ rust_library(
     srcs = ["src/lib.rs"],
     crate_name = "ledmapper_fx_jit",
     edition = "2021",
+    # Not on the render path: built for size on the ESP32 images (//firmware:rust_size.bzl).
+    rustc_flags = COLD_CRATE_RUSTC_FLAGS,
     deps = ["//firmware/fx_vm"],
 )
 

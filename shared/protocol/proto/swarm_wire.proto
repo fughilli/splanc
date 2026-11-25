@@ -54,6 +54,10 @@ enum FrameType {
   // Splanc (mesh M4): a time beacon (payload: splanc_mesh::meshtime::TimeBeacon, its own
   // fixed layout). One hop, broadcast, never relayed or retried.
   FRAME_TYPE_TIME = 11;
+  // Splanc (mesh ranging, docs/design/mesh-ftm.md): a link-range probe or stamp report
+  // (payload: splanc_mesh::ranging::RangeMsg). One hop, unicast (dst set, ACKed: itself an
+  // exchange), never relayed. Older firmware drops it (not a mesh frame type).
+  FRAME_TYPE_RANGE = 12;
 }
 
 // Worst-case encoded header (all ids >= 16384, seq >= 128): ver 2 + type 2 + src 4 + dst 4 +

@@ -1,0 +1,103 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 898 300' width='898' height='300' role='img' aria-label='Block clocks'>
+<title>Block clocks</title>
+<rect width='898' height='300' fill='white'/>
+<text x='90.0' y='24.0' font-size='15' fill='#1f2430' text-anchor='start' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>Each block's dwell schedule</text>
+<text x='90.0' y='44.0' font-size='12' fill='#6b7180' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>Lit class per block (D=4 cycles per dwell). Block b+1 steps one cycle (C=10 frames) before block b.</text>
+<text x='78.0' y='90.0' font-size='11' fill='#1f2430' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>block 0</text>
+<rect x='90.00' y='74.00' width='127.00' height='24.00' fill='#2a6fdb' />
+<text x='154.0' y='91.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='218.00' y='74.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='282.0' y='91.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='346.00' y='74.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='410.0' y='91.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='474.00' y='74.00' width='127.00' height='24.00' fill='#2a6fdb' />
+<text x='538.0' y='91.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='602.00' y='74.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='666.0' y='91.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='730.00' y='74.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='794.0' y='91.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<text x='78.0' y='124.0' font-size='11' fill='#1f2430' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>block 1</text>
+<rect x='90.00' y='108.00' width='95.00' height='24.00' fill='#2a6fdb' />
+<text x='138.0' y='125.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='186.00' y='108.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='250.0' y='125.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='314.00' y='108.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='378.0' y='125.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='442.00' y='108.00' width='127.00' height='24.00' fill='#2a6fdb' />
+<text x='506.0' y='125.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='570.00' y='108.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='634.0' y='125.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='698.00' y='108.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='762.0' y='125.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='826.00' y='108.00' width='31.00' height='24.00' fill='#2a6fdb' />
+<text x='842.0' y='125.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<text x='78.0' y='158.0' font-size='11' fill='#1f2430' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>block 2</text>
+<rect x='90.00' y='142.00' width='63.00' height='24.00' fill='#2a6fdb' />
+<text x='122.0' y='159.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='154.00' y='142.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='218.0' y='159.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='282.00' y='142.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='346.0' y='159.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='410.00' y='142.00' width='127.00' height='24.00' fill='#2a6fdb' />
+<text x='474.0' y='159.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='538.00' y='142.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='602.0' y='159.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='666.00' y='142.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='730.0' y='159.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='794.00' y='142.00' width='63.00' height='24.00' fill='#2a6fdb' />
+<text x='826.0' y='159.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<text x='78.0' y='192.0' font-size='11' fill='#1f2430' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>block 3</text>
+<rect x='90.00' y='176.00' width='31.00' height='24.00' fill='#2a6fdb' />
+<text x='106.0' y='193.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='122.00' y='176.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='186.0' y='193.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='250.00' y='176.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='314.0' y='193.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='378.00' y='176.00' width='127.00' height='24.00' fill='#2a6fdb' />
+<text x='442.0' y='193.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='506.00' y='176.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='570.0' y='193.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='634.00' y='176.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='698.0' y='193.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='762.00' y='176.00' width='95.00' height='24.00' fill='#2a6fdb' />
+<text x='810.0' y='193.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<text x='78.0' y='226.0' font-size='11' fill='#1f2430' text-anchor='end' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>block 4</text>
+<rect x='90.00' y='210.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='154.0' y='227.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='218.00' y='210.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='282.0' y='227.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='346.00' y='210.00' width='127.00' height='24.00' fill='#2a6fdb' />
+<text x='410.0' y='227.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<rect x='474.00' y='210.00' width='127.00' height='24.00' fill='#e0892b' />
+<text x='538.0' y='227.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 1</text>
+<rect x='602.00' y='210.00' width='127.00' height='24.00' fill='#3aa17e' />
+<text x='666.0' y='227.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 2</text>
+<rect x='730.00' y='210.00' width='127.00' height='24.00' fill='#2a6fdb' />
+<text x='794.0' y='227.0' font-size='10' fill='white' text-anchor='middle' font-weight='600' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>class 0</text>
+<line x1='90.00' y1='66.00' x2='90.00' y2='240.00' stroke='#1f2430' stroke-width='0.6'/>
+<line x1='122.00' y1='66.00' x2='122.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='154.00' y1='66.00' x2='154.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='186.00' y1='66.00' x2='186.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='218.00' y1='66.00' x2='218.00' y2='240.00' stroke='#1f2430' stroke-width='0.6'/>
+<line x1='250.00' y1='66.00' x2='250.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='282.00' y1='66.00' x2='282.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='314.00' y1='66.00' x2='314.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='346.00' y1='66.00' x2='346.00' y2='240.00' stroke='#1f2430' stroke-width='0.6'/>
+<line x1='378.00' y1='66.00' x2='378.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='410.00' y1='66.00' x2='410.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='442.00' y1='66.00' x2='442.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='474.00' y1='66.00' x2='474.00' y2='240.00' stroke='#1f2430' stroke-width='0.6'/>
+<line x1='506.00' y1='66.00' x2='506.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='538.00' y1='66.00' x2='538.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='570.00' y1='66.00' x2='570.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='602.00' y1='66.00' x2='602.00' y2='240.00' stroke='#1f2430' stroke-width='0.6'/>
+<line x1='634.00' y1='66.00' x2='634.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='666.00' y1='66.00' x2='666.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='698.00' y1='66.00' x2='698.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='730.00' y1='66.00' x2='730.00' y2='240.00' stroke='#1f2430' stroke-width='0.6'/>
+<line x1='762.00' y1='66.00' x2='762.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='794.00' y1='66.00' x2='794.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='826.00' y1='66.00' x2='826.00' y2='240.00' stroke='#c9ccd3' stroke-width='0.6'/>
+<line x1='858.00' y1='66.00' x2='858.00' y2='240.00' stroke='#1f2430' stroke-width='0.6'/>
+<text x='90.0' y='262.0' font-size='11' fill='#6b7180' text-anchor='start' font-weight='normal' font-family='Inter, system-ui, -apple-system, Segoe UI, sans-serif'>pattern-clock frame → (ticks: code cycles; dark: dwells of block 0)</text>
+</svg>

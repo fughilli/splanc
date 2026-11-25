@@ -25,6 +25,7 @@
 use ledmapper_netstack::p2p;
 
 use crate::backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass, TxStamp};
+use crate::ranging::{LinkRange, Ranging};
 use crate::envelope::Header;
 
 /// Envelope bytes per frame (§5.2: 250-byte bodies, short airtime at 1 Mb/s).
@@ -67,6 +68,11 @@ pub fn airtime_us(rate: u8, bytes: usize) -> u32 {
         k => k,
     };
     p2p::airtime_us(bytes, kbps)
+}
+
+/// Legacy OFDM (the rates whose stamps carry fine timing; DSSS/CCK's do not).
+pub fn is_ofdm(rate: u8) -> bool {
+    !matches!(p2p::rate_kbps(rate), 0 | 1_000 | 2_000 | 5_500 | 11_000)
 }
 
 /// SIFS + the peer's ACK (10 bytes) at the response rate for `rate`, µs.
@@ -119,6 +125,17 @@ pub trait Radio {
     /// a whole tick old. None: use the caller's.
     fn now_us(&mut self) -> Option<i64> {
         None
+    }
+    /// The TX queue's FTM stamp words (t1, t4: [`ledmapper_netstack::ftm::TxFtm`]) of the
+    /// frame [`Radio::tx_done`] just reported ACKed; read only while ranging is on. None:
+    /// this MAC has none.
+    fn tx_ftm(&mut self) -> Option<[u32; 3]> {
+        None
+    }
+    /// Force the FTM tick phase ([`ledmapper_netstack::ftm::force_phase`]); false if not
+    /// done (a frame is armed, or this MAC cannot).
+    fn force_phase(&mut self) -> bool {
+        false
     }
 }
 
@@ -253,6 +270,8 @@ struct Current {
     /// When this attempt was armed, and the last poll that still saw it in flight.
     armed_us: i64,
     poll_us: i64,
+    /// The rate code this attempt went out at (ranging's airtime check).
+    rate: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -482,6 +501,8 @@ pub struct WifiP2p {
     /// beacon's completion, until taken.
     pub last_tx: TxStamp,
     stamp: Option<TxStamp>,
+    /// Link ranging ([`crate::ranging`]): off by default (`ranging.cfg.enabled`).
+    pub ranging: Ranging,
 }
 
 impl WifiP2p {
@@ -508,6 +529,7 @@ impl WifiP2p {
             now_us: 0,
             last_tx: TxStamp::default(),
             stamp: None,
+            ranging: Ranging::new(seed.rotate_left(16)),
         }
     }
 
@@ -693,13 +715,17 @@ impl WifiP2p {
     /// Call every loop pass; never blocks.
     pub fn pump(&mut self, now_us: i64, radio: &mut dyn Radio) {
         self.now_us = self.now_us.max(now_us);
+        // Ranging's phase force, between frames (nothing of ours in flight).
+        if self.ranging.force_pending && self.cur.is_none() && radio.tx_idle(now_us) && radio.force_phase() {
+            self.ranging.on_forced();
+        }
         for _ in 0..3 {
             if self.settle(now_us, radio) {
                 return;
             }
             if self.cur.is_none() {
                 let Some(t) = self.next_target(now_us) else { return };
-                self.cur = Some(Current { target: t, attempt: 1, inflight: false, deadline_us: 0, not_before_us: now_us, armed_us: 0, poll_us: 0 });
+                self.cur = Some(Current { target: t, attempt: 1, inflight: false, deadline_us: 0, not_before_us: now_us, armed_us: 0, poll_us: 0, rate: 0 });
             }
             let mut c = self.cur.unwrap();
             if now_us < c.not_before_us || !radio.tx_idle(now_us) {
@@ -738,6 +764,7 @@ impl WifiP2p {
             radio.hold(now_us, air + 100);
             let armed = radio.now_us().unwrap_or(now_us);
             c.inflight = true;
+            c.rate = rate;
             c.armed_us = armed;
             c.poll_us = armed;
             c.deadline_us = now_us + air as i64 + COMPLETION_SLACK_US;
@@ -773,11 +800,29 @@ impl WifiP2p {
                 self.stamp = Some(st);
                 self.stats.time_stamped += 1;
             }
+            if outcome == Some(TxResult::Ok) && c.attempt == 1 && self.ranging.on() && self.tx_len > 0 {
+                self.range_tx(t, c, radio);
+            }
         } else if self.tx_len > 0 && self.txq[self.tx_head].stamp {
             self.stats.time_lost += 1;
         }
         self.finish(now_us, c, outcome);
         false
+    }
+
+    /// A first-attempt unicast was ACKed: its stamps are a half-exchange (OFDM only: DSSS
+    /// stamps carry no fine timing).
+    fn range_tx(&mut self, now_us: i64, c: Current, radio: &mut dyn Radio) {
+        let Target::Mac { mac, nb } = c.target else { return };
+        if !is_ofdm(c.rate) {
+            return;
+        }
+        let Some(id) = nb.or_else(|| self.nb_index(&mac)).and_then(|i| self.neighbours[i]).map(|n| n.id) else { return };
+        let Some(words) = radio.tx_ftm() else { return };
+        let s = &self.txq[self.tx_head];
+        let len = s.len as usize;
+        let seq = u16::from_le_bytes([s.buf[22], s.buf[23]]) >> 4;
+        self.ranging.on_tx(now_us, id, seq, words, airtime_us(c.rate, len));
     }
 
     fn finish(&mut self, now_us: i64, mut c: Current, outcome: Option<TxResult>) {
@@ -867,6 +912,15 @@ impl WifiP2p {
         // Learn the neighbour from every frame of our mesh (overheard unicasts included).
         let ours = self.cfg.mesh_id.is_none_or(|m| m == h.mesh_id);
         let dup = if ours { self.learn(reap_us, &p, h.src, rssi) } else { false };
+        // Ranging: a first copy of a unicast to us, which our MAC ACKed (its RX vector holds
+        // t2 and our ACK's t3), received clean as legacy OFDM.
+        if ours && self.ranging.on() && p.da == self.cfg.mac && !p.retry {
+            if let (Some(v), Some(raw)) = (v, rxv) {
+                if v.bb_format == p2p::BB_FORMAT_11G && v.rx_state == 0 && v.rxend_state == 0 {
+                    self.ranging.on_rx(reap_us, h.src, p.seq, raw, p2p::airtime_us(frame.len(), v.rate_kbps()));
+                }
+            }
+        }
         // A unicast to another neighbour is still a mesh frame (the flood): hearing a
         // neighbour's relay is what cancels our own (the swarm's relay rule), so it goes up
         // too; the mesh's dedup drops what it already has.
@@ -952,6 +1006,50 @@ impl Backhaul for WifiP2p {
 
     fn may_send(&self, _now_us: i64) -> bool {
         self.tx_len < TXQ
+    }
+
+    fn links(&self, now_us: i64, out: &mut [crate::topo::Link]) -> usize {
+        let mut n = 0usize;
+        for nb in self.neighbours.iter().flatten().filter(|nb| now_us - nb.last_us < LIVE_US) {
+            let range = self.ranging.link(now_us, nb.id).map(|r| crate::topo::RangeC::from_link(&r));
+            let l = crate::topo::Link { node: nb.id, rssi: nb.rssi_avg(), tx_pct: crate::topo::Link::tx_pct_of(nb.tx_ok, nb.tx_fail), range };
+            // Insert, strongest first (at most NEIGHBOURS: no sort needed).
+            let mut i = n.min(out.len());
+            while i > 0 && out[i - 1].rssi < l.rssi {
+                i -= 1;
+            }
+            if i >= out.len() {
+                continue;
+            }
+            let end = (n + 1).min(out.len());
+            out.copy_within(i..end - 1, i + 1);
+            out[i] = l;
+            n = end;
+        }
+        n
+    }
+
+    fn range_out(&mut self, now_us: i64, out: &mut [u8]) -> Option<(NodeId, usize)> {
+        if !self.ranging.on() {
+            return None;
+        }
+        for n in self.neighbours.iter().flatten() {
+            if now_us - n.last_us < LIVE_US {
+                self.ranging.track(now_us, n.id);
+            }
+        }
+        let idle = self.tx_len == 0 && self.cur.is_none();
+        let nbs = &self.neighbours;
+        let live = |id: NodeId| nbs.iter().flatten().any(|n| n.id == id && now_us - n.last_us < LIVE_US);
+        self.ranging.poll(now_us, idle, &live, out)
+    }
+
+    fn range_in(&mut self, now_us: i64, from: NodeId, body: &[u8]) {
+        self.ranging.on_msg(now_us, from, body);
+    }
+
+    fn link_range(&self, now_us: i64, node: NodeId) -> Option<LinkRange> {
+        self.ranging.link(now_us, node)
     }
 }
 
@@ -1255,6 +1353,32 @@ mod tests {
         assert_eq!(w.stats.rx_overflow, 2);
     }
 
+    /// The topology's neighbour list: live neighbours, strongest first, with their unicast
+    /// delivery rate; a full list keeps the strongest.
+    #[test]
+    fn links_list_live_neighbours_strongest_first() {
+        use crate::topo::{Link, TX_UNKNOWN};
+        let mut w = WifiP2p::new(P2pConfig::new(A), 6);
+        let mut b = [0u8; MTU];
+        let mut heard = |w: &mut WifiP2p, t: i64, mac: [u8; 6], id: NodeId, rssi: i8| {
+            let f = frame_from(mac, A, 1 + t as u16, false, &envelope(5, id));
+            w.on_frame(t, &f, Some(&rxv(rssi, t as u32)));
+            while w.recv(&mut b).is_some() {}
+        };
+        heard(&mut w, 1_000_000, B, 0x1130, -60);
+        heard(&mut w, 1_000_010, C, 0x2240, -35);
+        w.neighbours.iter_mut().flatten().find(|n| n.id == 0x1130).unwrap().tx_ok = 3;
+        w.neighbours.iter_mut().flatten().find(|n| n.id == 0x1130).unwrap().tx_fail = 1;
+        let mut out = [Link::EMPTY; 8];
+        let n = w.links(1_500_000, &mut out);
+        assert_eq!(&out[..n], &[Link { node: 0x2240, rssi: -35, tx_pct: TX_UNKNOWN, range: None }, Link { node: 0x1130, rssi: -60, tx_pct: 75, range: None }]);
+        // Only room for one: the strongest.
+        let mut one = [Link::EMPTY; 1];
+        assert_eq!((w.links(1_500_000, &mut one), one[0].node), (1, 0x2240));
+        // Not heard within LIVE_US: gone.
+        assert_eq!(w.links(1_000_010 + LIVE_US, &mut out), 0);
+    }
+
     /// The reap length is word-rounded on silicon: the RX vector's sig_len (MPDU + FCS)
     /// trims the junk, so the envelope bytes come out exact; without a vector, nothing is
     /// trimmed.
@@ -1510,6 +1634,43 @@ mod tests {
         }
         assert!(got[2].contains(&(node_id_from_mac(&B), Port::Reply, b"APP!ucast".to_vec())));
         assert!(!got[0].iter().any(|g| g.2 == b"APP!ucast"));
+        // Topology (crate::topo): A and B report a pose, C none (unposed); within one period
+        // every member holds both peers' poses and their neighbour lists (not only a gateway).
+        use crate::topo::{PoseC, PoseKnown, TOPO_EVERY_US};
+        let pa = PoseKnown::Posed(PoseC::from_pose([1.0, 0.0, -2.5], Some([0.0, 0.38268343, 0.0, 0.9238795]), b"Hall"));
+        let pb = PoseKnown::Posed(PoseC::from_pose([-0.5, 1.2, 0.0], None, b"Hall"));
+        nodes[0].set_pose(pa);
+        nodes[1].set_pose(pb);
+        nodes[2].set_pose(PoseKnown::Unposed);
+        let end = t + 2_000_000;
+        while t < end {
+            t += 1_000;
+            step(&mut nodes, t, &mut got);
+        }
+        let ids: Vec<NodeId> = macs.iter().map(node_id_from_mac).collect();
+        let want = [pa, pb, PoseKnown::Unposed];
+        for (i, n) in nodes.iter().enumerate() {
+            for (j, &peer) in ids.iter().enumerate().filter(|(j, _)| *j != i) {
+                let tp = n.peer_topo(t, peer).unwrap_or_else(|| panic!("node {i} has no topology for {j}"));
+                assert_eq!(tp.pose, want[j], "node {i} sees {j}'s pose");
+                assert!(tp.pose_current() && tp.hops == 1, "node {i} -> {j}: {tp:?}");
+                let mut l: Vec<NodeId> = tp.links().iter().map(|l| l.node).collect();
+                l.sort();
+                let mut others: Vec<NodeId> = ids.iter().copied().filter(|x| *x != peer).collect();
+                others.sort();
+                assert_eq!(l, others, "node {i}: {j}'s neighbours");
+            }
+        }
+        // A pose change goes out at once, well before the next period.
+        let moved = PoseKnown::Posed(PoseC::from_pose([3.0, 0.0, 0.0], None, b"Porch"));
+        nodes[2].set_pose(moved);
+        let end = t + 500_000;
+        while t < end {
+            t += 1_000;
+            step(&mut nodes, t, &mut got);
+        }
+        assert!(500_000 < TOPO_EVERY_US);
+        assert_eq!(nodes[0].peer_topo(t, ids[2]).map(|x| x.pose), Some(moved));
         assert!(!plain_app_bytes, "an app payload went out unencrypted");
         assert!(nodes.iter().all(|n| n.node.guard.stats.bad_mic == 0 && n.node.guard.stats.opened > 0));
         // Fan-out unicasts carried the data (default policy).
