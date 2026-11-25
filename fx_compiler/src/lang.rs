@@ -1349,13 +1349,14 @@ pub static LANG: &[LangEntry] = &[
         category: "uniform ui",
         sigs: &[
             "uniform float name : lo .. hi = v;",
+            "uniform float name : lo .. hi step s = v;",
             "uniform vec3 name : lo .. hi = x, y, z;",
             "uniform vec3 name : vec3(lo..) .. vec3(hi..) = vec3(v);",
             "uniform mat4 name : lo .. hi;",
         ],
-        summary: "uniform annotation `: lo .. hi`: a slider (scalars), numeric per-component sliders (vectors) or a bounded matrix",
-        doc: "A numeric range makes a slider: `lo .. hi` (either may be negative). On a vector one range applies to every component and makes it a numeric vector rather than a colour; `vecN(...) .. vecN(...)` gives each component its own range. On a matrix it bounds every element (the default is ±1000). The uniform's default follows `=`.",
-        example: "uniform float width : 0.02 .. 0.5 = 0.1;\nuniform vec3 dir : -1.0 .. 1.0 = 0.0, 1.0, 0.0;\nvec3 shade(Led led) { return vec3(step(abs(dot(led.pos, dir)), width)); }",
+        summary: "uniform annotation `: lo .. hi` (optionally `step s`): a slider (scalars), numeric per-component sliders (vectors) or a bounded matrix",
+        doc: "A numeric range makes a slider: `lo .. hi` (either may be negative). The slider has the uniform's native precision: continuous for a float, whole numbers for an int, the least step for a fixed type; `step s` after the range snaps the control (editor, MIDI and keypoint blends) to a grid, and `step 0` asks for continuous explicitly. On a vector one range applies to every component and makes it a numeric vector rather than a colour; `vecN(...) .. vecN(...)` gives each component its own range. On a matrix it bounds every element (the default is ±1000). The uniform's default follows `=`.",
+        example: "uniform float width : 0.02 .. 0.5 = 0.1;\nuniform float bands : 1.0 .. 8.0 step 1.0 = 3.0;\nuniform vec3 dir : -1.0 .. 1.0 = 0.0, 1.0, 0.0;\nvec3 shade(Led led) { return vec3(step(abs(dot(led.pos, dir)), width) * fract(led.s * bands)); }",
         related: &["uniform", "unit", "dropdown"],
         ..E
     },
