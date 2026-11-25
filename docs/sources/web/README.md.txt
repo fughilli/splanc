@@ -204,6 +204,12 @@ Release workflow finds the draft, keeps its notes, mirrors them, attaches the
 webapp tarball and publishes it. Without a draft, the workflow creates the
 release with generated notes, and you edit them afterwards (step 3 above).
 
+**Feature previews.** Each app release also records short demo clips of its
+new features (from `<id>.clip.json` scripts next to each feature) and shows
+them above the notes, playing inline. The release waits for the owner to
+approve the notes and clips before it deploys. See
+[docs/release-clips.md](../docs/release-clips.md).
+
 What survives: headings, paragraphs, lists, links (http, https and mailto),
 bold, italic, code, quotes, tables, `<details>`, images and videos. Scripts,
 styles, iframes, forms and inline event handlers are removed. Media are always

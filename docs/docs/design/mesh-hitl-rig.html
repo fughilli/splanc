@@ -237,6 +237,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../release-clips.html">Feature-preview clips</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
@@ -327,8 +328,15 @@
           <section id="mesh-hitl-rig-conducted-rf-real-display-flip-timing">
 <h1>Mesh HITL rig: conducted RF, real display flip timing<a class="headerlink" href="#mesh-hitl-rig-conducted-rf-real-display-flip-timing" title="Link to this heading">¶</a></h1>
 <p>Status: proposed, software built (desk D-92). The hardware is still arriving. Everything below
-that names a part number is a recommendation or a question for the owner (§11). Nothing has been
-bought.</p>
+that names a part number is a recommendation or a question for the owner (§11).</p>
+<p><strong>Revision 2 (2026-11-20): one attenuator per DUT.</strong> The owner overrode desk D-241: no PE4302 step
+attenuators. The owner’s five Jeanoko 0–6 GHz digital attenuators (0–31.75 dB in 0.25 dB steps,
+UART text commands, OLED and buttons) go <strong>one per DUT</strong>, each calibrated per unit on the owner’s
+VNA. The pair chains keep only the HMC849 cut switch and a fixed pad; the HMC7992 delay bank is
+unchanged. This revision reworks the path-loss and isolation budget (§2.1), the controller (§3.3,
+§5), the sequencing rules (§5.4), the calibration (§5.8) and what the scenarios can still do
+(§6.1). The board-level delta for the rfctl-host PCB is in <code class="docutils literal notranslate"><span class="pre">.claude/rigorder/rfctl-host-followup.md</span></code>
+(outside the repo).</p>
 <p>This rig extends the conducted RF bench (<code class="docutils literal notranslate"><span class="pre">/workspace/.claude/rfbench/RF-BENCH.md</span></code>, the “starter
 N = 4” purchase) into a reservable HITL unit that measures what the mesh is for: <strong>every fixture
 showing the same frame at the same instant, while links come and go and change length.</strong> The M4
@@ -345,9 +353,9 @@ data wires, with a 16-channel analyser.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>RP2350 RF controller firmware: line protocol, µs timeline, lease watchdog, safe state, frame-start timestamps</p></td>
+<tr class="row-even"><td><p>RP2350 RF controller firmware: line protocol, µs timeline, lease watchdog, safe state, frame-start timestamps, PIO UART attenuators</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">pi/hitl/meshbench/rfctl/</span></code></p></td>
-<td><p>builds with pico-sdk 2.1.1 (<code class="docutils literal notranslate"><span class="pre">rfctl.uf2</span></code>, 92 KB); core unit-tested under Bazel</p></td>
+<td><p>builds with pico-sdk 2.1.1 (<code class="docutils literal notranslate"><span class="pre">rfctl.uf2</span></code>, 101 KB); core unit-tested under Bazel</p></td>
 </tr>
 <tr class="row-odd"><td><p>Controller simulator (the shipped core behind a simulated HAL)</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">rfctl/sim/sim_main.c</span></code></p></td>
@@ -357,31 +365,35 @@ data wires, with a 16-channel analyser.</p>
 <td><p><code class="docutils literal notranslate"><span class="pre">rfctl.py</span></code></p></td>
 <td><p>tested against the simulator</p></td>
 </tr>
-<tr class="row-odd"><td><p>RF scenarios (link flap, chain re-route, partition/heal, delay-line steps, walking fades, meshsim replay)</p></td>
+<tr class="row-odd"><td><p>Attenuator calibration files, VNA sweep, direct USB driver</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">atten_cal.py</span></code>, <code class="docutils literal notranslate"><span class="pre">jeanoko.py</span></code></p></td>
+<td><p>tested on synthetic sweeps; the VNA’s SCPI commands are unverified</p></td>
+</tr>
+<tr class="row-even"><td><p>RF scenarios (link flap, chain re-route, partition/heal, delay-line steps, walking fades, meshsim replay)</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">scenarios.py</span></code></p></td>
 <td><p>compile and play on the simulator</p></td>
 </tr>
-<tr class="row-even"><td><p>Display pattern</p></td>
+<tr class="row-odd"><td><p>Display pattern</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">meshFlipClock.fx</span></code></p></td>
 <td><p>not yet run on a device</p></td>
 </tr>
-<tr class="row-odd"><td><p>Camera flip timing</p></td>
+<tr class="row-even"><td><p>Camera flip timing</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">flip_cv.py</span></code> (+ <code class="docutils literal notranslate"><span class="pre">camsim.py</span></code>, <code class="docutils literal notranslate"><span class="pre">accuracy.py</span></code>)</p></td>
 <td><p>21 tests; Monte Carlo in §7.5</p></td>
 </tr>
-<tr class="row-even"><td><p>Analyser flip timing</p></td>
+<tr class="row-odd"><td><p>Analyser flip timing</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">la_phase.py</span></code></p></td>
 <td><p>9 tests</p></td>
 </tr>
-<tr class="row-odd"><td><p>Results, HITL metrics, verdict</p></td>
+<tr class="row-even"><td><p>Results, HITL metrics, verdict</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">bench_core.py</span></code></p></td>
 <td><p>schema v1 <code class="docutils literal notranslate"><span class="pre">HITL_METRIC</span></code> records</p></td>
 </tr>
-<tr class="row-even"><td><p>Harness + rig agent</p></td>
+<tr class="row-odd"><td><p>Harness + rig agent</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">hitl_mesh_bench.py</span></code>, <code class="docutils literal notranslate"><span class="pre">meshbench_rig.py</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">--simulate</span></code> runs end to end; hardware path untested</p></td>
 </tr>
-<tr class="row-odd"><td><p>HITL catalog entry</p></td>
+<tr class="row-even"><td><p>HITL catalog entry</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">pi/hitl/reserve/catalog-meshbench.json</span></code></p></td>
 <td><p>placeholders; checked by the PR-24/PR-30 catalog tests</p></td>
 </tr>
@@ -396,9 +408,12 @@ The unit holds the RP2350 controller, 4 TinyC6 u.FL DUTs on the conducted matrix
 boards, the camera and the analyser. Each DUT strip has 3 LEDs. The camera looks down on all
 strips and on a sync LED that the controller drives. The analyser taps 11 strip data lines and
 the controller’s SYNC line. <img alt="topology" src="docs/design/mesh-hitl-rig/topology.png" /></p></li>
-<li><p><strong>Links come and go</strong> through the matrix’s cut switches and attenuators. <strong>Links change length</strong>
-through the delay bank on pair 0–1: 16 lengths from 0 to 375 cm of cable. A scenario is a timeline
-played by the controller on its own clock. Every step is one latch edge, accurate to about 1 µs.</p></li>
+<li><p><strong>Links come and go</strong> through the matrix’s cut switches (one per pair) and <strong>one attenuator per
+DUT</strong>, so a pair’s loss is the sum of its two DUTs’ settings plus a fixed part (§2.1). <strong>Links
+change length</strong> through the delay bank on pair 0–1: 16 lengths from 0 to 375 cm of cable. A
+scenario is a timeline played by the controller on its own clock. Every switch step is one latch
+edge, accurate to about 1 µs. The attenuators are UART units: their commands start on the latch
+edge and land milliseconds later, so the compiler sequences them around the switches (§5.4).</p></li>
 <li><p><strong>Display flip timing.</strong> Each strip shows a three-scale clock of its own show time. A camera frame
 that integrates a flip gives the flip’s instant to a fraction of the exposure. Fits over 1 s windows
 give each fixture’s display offset. The spread across fixtures is the measurement.</p></li>
@@ -447,12 +462,12 @@ camera target.</p>
 <td><p><code class="docutils literal notranslate"><span class="pre">hitl-reserved</span></code> + catalog-meshbench; reservation containers; Tailscale</p></td>
 <td><p>USB: hub(s) with DUTs + controller, camera, analyser</p></td>
 </tr>
-<tr class="row-odd"><td><p>RP2350 controller (Raspberry Pi Pico 2)</p></td>
-<td><p>Every RF switch and attenuator, via a 74HC595 chain; SYNC out; sync LED; 12 frame-start inputs</p></td>
-<td><p>USB CDC to the host; chain to the RF enclosure; SYNC to analyser D12</p></td>
+<tr class="row-odd"><td><p>RP2350 controller (rfctl-host PCB, bare RP2350A)</p></td>
+<td><p>Every RF switch via a 74HC595 chain; one PIO UART per attenuator; SYNC out; sync LED; 12 frame-start inputs</p></td>
+<td><p>USB CDC to the host; chain + UART headers to the RF enclosure; SYNC to analyser D12</p></td>
 </tr>
 <tr class="row-even"><td><p>Conducted matrix (RF-BENCH starter)</p></td>
-<td><p>Per pair: cut switch + 3 DSAs + 10 dB pad. Per node: 8-way Wilkinson splitter. Delay bank in series on pair 0–1</p></td>
+<td><p>Per DUT: a Jeanoko attenuator between its pigtail and its node splitter. Per pair: HMC849 cut switch + 30 dB pad (20 + 10). Per node: 8-way Wilkinson splitter. Delay bank in series on pair 0–1</p></td>
 <td><p>u.FL pigtails from the 4 TinyC6</p></td>
 </tr>
 <tr class="row-odd"><td><p>4 × TinyC6 u.FL</p></td>
@@ -479,7 +494,159 @@ camera target.</p>
 </table>
 </div>
 <p>Each P4 board sits in the same mesh over the air at reduced TX power. It needs no matrix port. If
-its C6 has an antenna connector, it can take the matrix’s AUX port on a node splitter (RF-BENCH §2).</p>
+its C6 has an antenna connector, it can take the matrix’s AUX port on a node splitter (RF-BENCH §2).
+A conducted P4 needs its own attenuator, which takes the spare unit.</p>
+<section id="path-loss-and-isolation-with-one-attenuator-per-dut">
+<h3>2.1 Path loss and isolation with one attenuator per DUT<a class="headerlink" href="#path-loss-and-isolation-with-one-attenuator-per-dut" title="Link to this heading">¶</a></h3>
+<p>Each DUT’s Jeanoko sits between its u.FL pigtail cable and its node splitter’s common port. The
+pair chains keep the cut switch and a fixed pad. For pair i–j, with the cut switch through:</p>
+<p><strong>L_ij = F_ij + A_i + A_j</strong></p>
+<ul class="simple">
+<li><p>F_ij is the fixed part: both node sides (pigtail, 1 m RG400, the splitter’s through loss) plus the
+pair chain (2 × 50 cm RG400, the HMC849, the pad).</p></li>
+<li><p>A_i is DUT i’s unit: its insertion loss plus its setting (0–31.75 dB), from its VNA table (§5.8).</p></li>
+</ul>
+<p><strong>The new limitation: a detour skips the relay’s attenuator.</strong> A cut pair i–k with a live common
+neighbour j still leaks: i’s splitter → chain i–j → <strong>port to port across j’s splitter</strong> → chain j–k
+→ k’s splitter. That path never passes j’s common port, so it never passes A_j. Relative to the
+pair’s own through loss, the detour costs one extra pair chain plus the splitter isolation:</p>
+<p><strong>detour_ik|j = (L_ik if it were through) + c + I</strong>, with c = the pair-chain loss, I ≈ 20 dB.</p>
+<p>In the old design every detour crossed two pair chains’ DSAs, so a cut was about L_ij + L_jk deep.
+Now a cut is only <strong>c + I</strong> deeper than the same pair through. The fixed <strong>pair pad is the only lever</strong>
+on that margin, so this revision raises it from 10 dB (the cart as first written) to 30 dB (the
+bought 10 dB pad stacked on a 20 dB pad). TX power compensates for the higher fixed loss: link
+edges move with TX (RF-BENCH §1).</p>
+<p>Element losses at 2.44 GHz (per side or per chain):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Element</p></th>
+<th class="head"><p>Loss (dB)</p></th>
+<th class="head"><p>Source</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Node side: u.FL pigtail 0.3 + 1 m RG400 1.5 + 8-way Wilkinson through 10.5</p></td>
+<td><p>12.3</p></td>
+<td><p>RF-BENCH §1</p></td>
+</tr>
+<tr class="row-odd"><td><p>Pair chain: 2 × 50 cm RG400 1.5 + HMC849 on 1.0 + pad</p></td>
+<td><p>2.5 + pad</p></td>
+<td><p>to-buy line 13</p></td>
+</tr>
+<tr class="row-even"><td><p>Jeanoko at 0 dB (insertion loss)</p></td>
+<td><p><strong>1.5–6</strong></p></td>
+<td><p>listing: ≤ 1.5 dB “(greater at the high end)”; Silicon Chip measured ~6 dB at 2.5 GHz on the same module family. <strong>The VNA decides</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Jeanoko range</p></td>
+<td><p>0–31.75 in 0.25 steps</p></td>
+<td><p>listing: ±0.25 dB accuracy (unverified)</p></td>
+</tr>
+<tr class="row-even"><td><p>HMC849 isolation − IL</p></td>
+<td><p>55</p></td>
+<td><p>56 dB isolation, 1.0 dB IL</p></td>
+</tr>
+<tr class="row-odd"><td><p>Wilkinson port-to-port isolation</p></td>
+<td><p>~20</p></td>
+<td><p>owner’s atopile 1×8; measure</p></td>
+</tr>
+<tr class="row-even"><td><p>Delay bank on pair 0–1 (4 × HMC7992 0.7 + RG402 arms)</p></td>
+<td><p>+2.8 to +4.5</p></td>
+<td><p>calibrated per state</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The budget per pair (N = 4, 2.44 GHz). The 30 dB column is the recommendation:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head"><p>Pad 10 dB (as bought)</p></th>
+<th class="head"><p>Pad 20 dB</p></th>
+<th class="head"><p><strong>Pad 30 dB (20 + 10)</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>F_ij (no attenuators)</p></td>
+<td><p>37.1</p></td>
+<td><p>47.1</p></td>
+<td><p><strong>57.1</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Min path loss (both units at 0; IL 1.5 … 6 each)</p></td>
+<td><p>40.1 … 49.1</p></td>
+<td><p>50.1 … 59.1</p></td>
+<td><p><strong>60.1 … 69.1</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>Max path loss (both units at 31.75)</p></td>
+<td><p>103.6 … 112.6</p></td>
+<td><p>113.6 … 122.6</p></td>
+<td><p><strong>123.6 … 132.6</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Span on one pair</p></td>
+<td><p>63.5</p></td>
+<td><p>63.5</p></td>
+<td><p><strong>63.5</strong> (was 94.5 with 3 DSAs)</p></td>
+</tr>
+<tr class="row-even"><td><p>Span between two pairs sharing a node</p></td>
+<td><p>31.75</p></td>
+<td><p>31.75</p></td>
+<td><p><strong>31.75</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Span between two disjoint pairs</p></td>
+<td><p>63.5</p></td>
+<td><p>63.5</p></td>
+<td><p><strong>63.5</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>Detour margin, cut vs through (c + I)</p></td>
+<td><p>32.5</p></td>
+<td><p>42.5</p></td>
+<td><p><strong>52.5</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">link_flap</span></code> cut in a full mesh at L (2 detours + the open switch)</p></td>
+<td><p>L + 29.6</p></td>
+<td><p>L + 39.4</p></td>
+<td><p><strong>L + 48.5</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>Cut with no live common neighbour (partition): through + switch</p></td>
+<td><p>L + 55</p></td>
+<td><p>L + 55</p></td>
+<td><p><strong>L + 55</strong> (both ends’ detours cross an open switch too)</p></td>
+</tr>
+<tr class="row-odd"><td><p>1M / 6M / MCS7 edges at TX +2 dBm: 101 / 96 / 77 dB</p></td>
+<td><p>all inside, 1M by only 2.6 dB at IL 1.5</p></td>
+<td><p>all inside</p></td>
+<td><p><strong>all inside</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>… at TX +20 dBm: 119 / 114 / 95 dB</p></td>
+<td><p>MCS7 only</p></td>
+<td><p>MCS7; 6M and 1M only at high IL</p></td>
+<td><p><strong>all inside</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>RX at min loss, TX +20 dBm</p></td>
+<td><p>−20 … −29 dBm</p></td>
+<td><p>−30 … −39</p></td>
+<td><p><strong>−40 … −49</strong> (ceiling −10 ✔)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Cut depth.</strong> A cut is the power sum of its direct path (L + 55 dB through the open HMC849) and
+every detour. With a live common neighbour, the detour dominates: L + c + I, minus 3 dB for two
+neighbours. For example, <code class="docutils literal notranslate"><span class="pre">link_flap</span></code> in a full mesh at 70 dB cuts pair 0–1 to <strong>118.5 dB</strong> with
+30 dB pads; with 10 dB pads, at 60 dB, only to 89.6 dB, which a 1M receiver at +2 dBm still hears.
+<code class="docutils literal notranslate"><span class="pre">scenarios.Bench.path_loss</span></code> models all of this, and <code class="docutils literal notranslate"><span class="pre">compile()</span></code> warns when a cut stays under
+100 dB.</p></li>
+<li><p><strong>Radiated leakage</strong> still caps every cut (no shield boxes, RF-BENCH §5). The rule stands:
+TX_bench ≤ L_leak − 109 dBm, measured in assembly step 14.</p></li>
+<li><p><strong>The monitor tap</strong> sits on the node splitter, after the unit, so the sniffer sees each DUT
+through its own attenuator plus 30 dB. The fifth unit (<code class="docutils literal notranslate"><span class="pre">attx</span></code>, header U6) is a calibrated spare.
+It can also go in the monitor path if the HackRF needs level control.</p></li>
+<li><p><strong>N = 6</strong> needs six units: one more than owned with no spare, two with a spare. Owner decision
+(§11.2 Q12, D-335): buy them at the N = 6 build, not now.</p></li>
+</ul>
+</section>
 </section>
 <section id="wiring-and-gpio-maps">
 <h2>3. Wiring and GPIO maps<a class="headerlink" href="#wiring-and-gpio-maps" title="Link to this heading">¶</a></h2>
@@ -634,8 +801,8 @@ UART0 37/38 are never used.</p>
 <p>GND goes to the controller, which shares ground with the hub. The map lives in the catalog
 (<code class="docutils literal notranslate"><span class="pre">HITL_LA_MAP</span></code>).</p>
 </section>
-<section id="controller-pico-2-rp2350a">
-<h3>3.3 Controller (Pico 2, RP2350A)<a class="headerlink" href="#controller-pico-2-rp2350a" title="Link to this heading">¶</a></h3>
+<section id="controller-rfctl-host-pcb-bare-rp2350a">
+<h3>3.3 Controller (rfctl-host PCB, bare RP2350A)<a class="headerlink" href="#controller-rfctl-host-pcb-bare-rp2350a" title="Link to this heading">¶</a></h3>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -647,11 +814,23 @@ UART0 37/38 are never used.</p>
 <tr class="row-even"><td><p>GP2 / GP3 / GP4</p></td>
 <td><p>SPI0 SCK → all 595 SRCLK / TX → chip 0 SER / RX ← last chip QH’ (selftest loopback)</p></td>
 </tr>
+<tr class="row-odd"><td><p>GP22, GP26, GP27, GP28</p></td>
+<td><p>UART TX to attenuators <code class="docutils literal notranslate"><span class="pre">att0</span></code>–<code class="docutils literal notranslate"><span class="pre">att3</span></code> (headers ATT U0–U3), one PIO state machine each, 115200 8N1</p></td>
+</tr>
+<tr class="row-even"><td><p>GP23, GP24</p></td>
+<td><p>UART TX to <code class="docutils literal notranslate"><span class="pre">att4</span></code>, <code class="docutils literal notranslate"><span class="pre">att5</span></code> (U4, U5) at N = 6. These are internal on a Pico 2 module: on a module build, move them to GP0/GP1 in the board table</p></td>
+</tr>
+<tr class="row-odd"><td><p>GP29</p></td>
+<td><p>UART TX to <code class="docutils literal notranslate"><span class="pre">attx</span></code>, the spare or monitor unit (U6)</p></td>
+</tr>
+<tr class="row-even"><td><p>GP9</p></td>
+<td><p>shared acknowledge line (UART1 RX): each unit’s TX through a Schottky diode, wired-AND, with a 4.7 kΩ pull-up. Only <code class="docutils literal notranslate"><span class="pre">attcheck</span></code> reads it</p></td>
+</tr>
 <tr class="row-odd"><td><p>GP5</p></td>
 <td><p>RCLK (latch), all chips</p></td>
 </tr>
 <tr class="row-even"><td><p>GP6</p></td>
-<td><p>/OE, all chips, <strong>10 kΩ pull-up</strong>: outputs hi-Z until the safe vector is latched</p></td>
+<td><p>/OE, all chips, <strong>4.7 kΩ pull-up</strong>: outputs hi-Z until the safe vector is latched</p></td>
 </tr>
 <tr class="row-odd"><td><p>GP7</p></td>
 <td><p>SYNC out (toggles at every commit) → analyser D12</p></td>
@@ -668,10 +847,44 @@ UART0 37/38 are never used.</p>
 </tbody>
 </table>
 </div>
-<p>The chain is <strong>18 × 74HC595, 144 bits</strong>: 108 for the DSAs, 18 for the cut switches, 12 for the
-delay bank, 6 spare (<code class="docutils literal notranslate"><span class="pre">rfctl/board_default.c</span></code>). The procurement list has 16 chips, so buy 2 more
-(§11.1). Pull every control line to its safe level with a resistor: DSA bits high (31.5 dB) and
-switch EN high (all off). The lines then sit safe while /OE is high.</p>
+<p>The chain is <strong>6 × 74HC595, 48 bits</strong> (<code class="docutils literal notranslate"><span class="pre">rfctl/board_default.c</span></code>, board <code class="docutils literal notranslate"><span class="pre">jeanoko-n4</span></code>):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Bits</p></th>
+<th class="head"><p>Device</p></th>
+<th class="head"><p>Lines</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0–5</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dlyA</span></code>: bank A in switch, out switch</p></td>
+<td><p>V1, V2, EN each</p></td>
+</tr>
+<tr class="row-odd"><td><p>6–11</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dlyB</span></code>: bank B in, out</p></td>
+<td><p>V1, V2, EN each</p></td>
+</tr>
+<tr class="row-even"><td><p>12–23</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cut01</span> <span class="pre">cut02</span> <span class="pre">cut03</span> <span class="pre">cut12</span> <span class="pre">cut13</span> <span class="pre">cut23</span></code> (pair p at 12 + 2p)</p></td>
+<td><p>VCTL, EN</p></td>
+</tr>
+<tr class="row-odd"><td><p>24–41</p></td>
+<td><p>N = 6 growth: <code class="docutils literal notranslate"><span class="pre">cut04</span> <span class="pre">cut05</span> <span class="pre">cut14</span> <span class="pre">cut15</span> <span class="pre">cut24</span> <span class="pre">cut25</span> <span class="pre">cut34</span> <span class="pre">cut35</span> <span class="pre">cut45</span></code> (board <code class="docutils literal notranslate"><span class="pre">jeanoko-n6</span></code>)</p></td>
+<td><p>VCTL, EN</p></td>
+</tr>
+<tr class="row-even"><td><p>42–47</p></td>
+<td><p>spare</p></td>
+<td><p>—</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>N = 4 uses 24 bits (3 chips). The PCB fits all 6 chips, so N = 6 needs no expander board. Every line
+has a pull-up, and the firmware drives the bits no device owns high too (<code class="docutils literal notranslate"><span class="pre">spare_high</span></code>). With all
+lines high, every HMC849 has EN high (both throws isolated) and every HMC7992 has EN high (all off).
+The lines then sit safe while /OE is high. The legacy 144-bit three-DSA table stays in the tree as
+board <code class="docutils literal notranslate"><span class="pre">pe4302</span></code> (<code class="docutils literal notranslate"><span class="pre">rfctl/board_pe4302.c</span></code>), for the simulator and the tests.</p>
 </section>
 </section>
 <section id="usb-and-power-budget">
@@ -693,15 +906,19 @@ switch EN high (all off). The lines then sit safe while /OE is high.</p>
 <td><p>≈ 0.5 A board + 16 × 60 mA = 1.5 A</p></td>
 <td><p>× 2 → 3.0 A: <strong>strips on a separate 5 V supply</strong>, not USB</p></td>
 </tr>
-<tr class="row-even"><td><p>Pico 2 + 18 × 595 + 18 DSA + 11 switch modules</p></td>
-<td><p>≈ 0.25 A</p></td>
-<td><p>own 5 V 3 A supply (procurement line 13); USB data only</p></td>
+<tr class="row-even"><td><p>rfctl-host (RP2350A + 6 × 595) + 6 HMC849 + 4 HMC7992 modules</p></td>
+<td><p>≈ 0.2 A</p></td>
+<td><p>own 5 V supply; USB data only</p></td>
 </tr>
-<tr class="row-odd"><td><p>Camera (UVC)</p></td>
+<tr class="row-odd"><td><p>5 Jeanoko units (7 at N = 6)</p></td>
+<td><p>≈ 0.1 A each (MCU + OLED, estimate: meter one)</p></td>
+<td><p>5 V from the rfctl-host’s USB-A power ports (power only), not the host’s USB</p></td>
+</tr>
+<tr class="row-even"><td><p>Camera (UVC)</p></td>
 <td><p>0.25–0.5 A</p></td>
 <td><p>own controller</p></td>
 </tr>
-<tr class="row-even"><td><p>Analyser (DSLogic class)</p></td>
+<tr class="row-odd"><td><p>Analyser (DSLogic class)</p></td>
 <td><p>0.3–0.5 A</p></td>
 <td><p>own controller</p></td>
 </tr>
@@ -724,9 +941,12 @@ camera on the other’s. This decides the host (Q1).</p></li>
 <section id="why-an-rp2350-and-this-design">
 <h3>5.1 Why an RP2350 and this design<a class="headerlink" href="#why-an-rp2350-and-this-design" title="Link to this heading">¶</a></h3>
 <p>The controller plays the scenario on its own clock, so USB and host jitter never reach the RF
-timing. An RP2350 with no radio cannot leak into the bench. The 595 chain makes every line one
-latch edge: all switches and attenuators of a step change in the same instant. SYNC and the sync LED
-mark that instant for the analyser and the camera.</p>
+timing. An RP2350 with no radio cannot leak into the bench. The 595 chain makes every switch line
+one latch edge: all switches of a step change in the same instant. SYNC and the sync LED mark that
+instant for the analyser and the camera. The attenuators can’t join that instant: each Jeanoko has
+its own MCU that takes a text command. The controller starts every attenuator command of a step
+on that step’s latch edge, in parallel on PIO UARTs, and the compiler moves the step earlier or
+later so the RF change lands where the scenario needs it (§5.4).</p>
 </section>
 <section id="device-model">
 <h3>5.2 Device model<a class="headerlink" href="#device-model" title="Link to this heading">¶</a></h3>
@@ -744,17 +964,55 @@ mark that instant for the analyser and the camera.</p>
 <td><p>an index into a code table of raw line patterns (any truth table, including “all off”)</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">cut01</span></code> (0 = cut, 1 = through), <code class="docutils literal notranslate"><span class="pre">dlyA</span></code> (0–3 = arm, 4 = off), <code class="docutils literal notranslate"><span class="pre">syncled</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">atten</span></code></p></td>
-<td><p>parallel DSA, value in dB (0–31.5, 0.5 steps), line i = bit i</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">att01a</span></code>, <code class="docutils literal notranslate"><span class="pre">att01b</span></code>, <code class="docutils literal notranslate"><span class="pre">att01c</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">atten_uart</span></code></p></td>
+<td><p>UART text-command unit (Jeanoko), value in dB (0–31.75, 0.25 steps); one TX GPIO, a PIO state machine per unit</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">att0</span></code>–<code class="docutils literal notranslate"><span class="pre">att3</span></code>, <code class="docutils literal notranslate"><span class="pre">attx</span></code> (default board)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">atten_serial</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">atten</span></code></p></td>
+<td><p>parallel DSA, value in dB (0–31.5, 0.5 steps), line i = bit i</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">att01a</span></code>, <code class="docutils literal notranslate"><span class="pre">att01b</span></code>, <code class="docutils literal notranslate"><span class="pre">att01c</span></code> (legacy <code class="docutils literal notranslate"><span class="pre">pe4302</span></code> board)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">atten_serial</span></code></p></td>
 <td><p>PE4302 serial (CLK, DATA, LE on direct GPIOs)</p></td>
-<td><p>none on the default board</p></td>
+<td><p>none</p></td>
 </tr>
 </tbody>
 </table>
 </div>
+<p>Three board tables build into the core: <code class="docutils literal notranslate"><span class="pre">jeanoko-n4</span></code> (the default and the firmware’s), <code class="docutils literal notranslate"><span class="pre">jeanoko-n6</span></code>
+(the same bench grown to 6 nodes: 15 cuts, <code class="docutils literal notranslate"><span class="pre">att0</span></code>–<code class="docutils literal notranslate"><span class="pre">att5</span></code>, <code class="docutils literal notranslate"><span class="pre">attx</span></code>) and <code class="docutils literal notranslate"><span class="pre">pe4302</span></code> (the revision 1 table,
+3 DSAs per pair). The simulator takes <code class="docutils literal notranslate"><span class="pre">--board</span></code>. The protocol is unchanged (<code class="docutils literal notranslate"><span class="pre">proto=1</span></code>). New fields
+are appended, so an older host still parses every reply.</p>
+<p><strong>The Jeanoko command set</strong> (Silicon Chip Nov 2021 and PE Dec 2024 reviews of this module family,
+and <code class="docutils literal notranslate"><span class="pre">github.com/emptemp/att6000_control</span></code>). The Amazon listing (B0FHSZ6N8G) names no interface;
+<strong>confirm on the units that arrive</strong> (desk D-152):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head"><p></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Port</p></td>
+<td><p>micro-USB (power + serial). A 4-pin header next to the OLED is “provision for a separate serial interface”. It is untested in the reviews; it is probably the MCU’s 3.3 V UART</p></td>
+</tr>
+<tr class="row-odd"><td><p>Framing</p></td>
+<td><p>115200 8N1, LF line end</p></td>
+</tr>
+<tr class="row-even"><td><p>Set</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">wv0XXYY\n</span></code> sets XX.YY dB (<code class="docutils literal notranslate"><span class="pre">wv02375</span></code> = 23.75 dB); the unit answers <code class="docutils literal notranslate"><span class="pre">ok\r\n</span></code> (one review saw <code class="docutils literal notranslate"><span class="pre">OK</span></code>) and shows the value on its OLED</p></td>
+</tr>
+<tr class="row-odd"><td><p>Power-up</p></td>
+<td><p>0.00 dB</p></td>
+</tr>
+<tr class="row-even"><td><p>MCU</p></td>
+<td><p>probably an STM32F103; attenuator chip HMC1119 or PE43713 (7 bits, 0.25 dB)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The firmware’s command is 8 bytes: 694 µs on the wire.</p>
 <p><strong>The switch codes are provisional</strong> (HMC7992-class: V1, V2, and an all-off line). They must be
 checked against the switches that arrive before first power-up (Q2). The safe state is only safe if
 these codes are right.</p>
@@ -773,7 +1031,7 @@ these codes are right.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">hello</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">ok</span> <span class="pre">rfctl</span> <span class="pre">proto=1</span> <span class="pre">board=starter-n4</span> <span class="pre">devices=27</span> <span class="pre">chain=144</span> <span class="pre">timeline_cap=8192</span> <span class="pre">edge_lines=16</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ok</span> <span class="pre">rfctl</span> <span class="pre">proto=1</span> <span class="pre">board=jeanoko-n4</span> <span class="pre">devices=14</span> <span class="pre">chain=48</span> <span class="pre">timeline_cap=8192</span> <span class="pre">edge_lines=16</span> <span class="pre">uart=5</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">list</span></code> / <code class="docutils literal notranslate"><span class="pre">state</span></code> / <code class="docutils literal notranslate"><span class="pre">get</span> <span class="pre">&lt;dev&gt;</span></code></p></td>
 <td><p>the device table / every value + chain hex / one value</p></td>
@@ -791,51 +1049,135 @@ these codes are right.</p>
 <td><p>manage and run the timeline. <code class="docutils literal notranslate"><span class="pre">play</span></code> refuses a first step less than 400 µs away</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">status</span></code></p></td>
-<td><p>playing, next/n, now, t0, steps, late_last/max, faults, lease left, sync count, FSTI state</p></td>
+<td><p>playing, next/n, now, t0, steps, late_last/max, faults, lease left, sync count, FSTI state, <code class="docutils literal notranslate"><span class="pre">uart_sent</span></code>, <code class="docutils literal notranslate"><span class="pre">uart_deferred</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">log</span> <span class="pre">[n]</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">attcheck</span> <span class="pre">[&lt;dev&gt;…]</span></code></p></td>
+<td><p>re-send each UART attenuator’s value, one unit at a time, and wait (≤ 50 ms) for its <code class="docutils literal notranslate"><span class="pre">ok</span></code> on the acknowledge line: <code class="docutils literal notranslate"><span class="pre">att</span> <span class="pre">&lt;dev&gt;</span> <span class="pre">ok|timeout|stuck_low|absent</span> <span class="pre">value=…</span> <span class="pre">latency_us=…</span></code>. Refused while playing</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">log</span> <span class="pre">[n]</span></code></p></td>
 <td><p>the last steps: scheduled vs actual commit µs</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">lease</span> <span class="pre">&lt;ms&gt;</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">lease</span> <span class="pre">&lt;ms&gt;</span></code></p></td>
 <td><p>watchdog: no command for ms → timeline stopped + safe state + fault</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cap</span> <span class="pre">&lt;mask&gt;</span> <span class="pre">[holdoff_us]</span></code> / <code class="docutils literal notranslate"><span class="pre">capread</span> <span class="pre">[n]</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cap</span> <span class="pre">&lt;mask&gt;</span> <span class="pre">[holdoff_us]</span></code> / <code class="docutils literal notranslate"><span class="pre">capread</span> <span class="pre">[n]</span></code></p></td>
 <td><p>frame-start timestamps: the first rising edge after holdoff, per FSTI line</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">time</span></code> / <code class="docutils literal notranslate"><span class="pre">ping</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">time</span></code> / <code class="docutils literal notranslate"><span class="pre">ping</span></code></p></td>
 <td><p>controller µs (the host fits a clock map from ping midpoints)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">selftest</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">selftest</span></code></p></td>
 <td><p>shifts a pattern through the chain twice and compares QH’; outputs never move</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">latelimit</span> <span class="pre">&lt;us&gt;</span></code> / <code class="docutils literal notranslate"><span class="pre">clearfaults</span></code> / <code class="docutils literal notranslate"><span class="pre">bootsel</span></code> / <code class="docutils literal notranslate"><span class="pre">reset</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">latelimit</span> <span class="pre">&lt;us&gt;</span></code> / <code class="docutils literal notranslate"><span class="pre">clearfaults</span></code> / <code class="docutils literal notranslate"><span class="pre">bootsel</span></code> / <code class="docutils literal notranslate"><span class="pre">reset</span></code></p></td>
 <td><p>—</p></td>
 </tr>
 </tbody>
 </table>
 </div>
+<p>Faults: 0x01 lease, 0x02 late step, 0x04 chain selftest, 0x08 frame-start overflow, <strong>0x10 a UART
+command had to wait</strong> for its unit (it went out later, from the main loop).</p>
 </section>
 <section id="timing">
 <h3>5.4 Timing<a class="headerlink" href="#timing" title="Link to this heading">¶</a></h3>
-<p>The main loop stages a step 400 µs early: it shifts the chain in while outputs are unchanged. A
-hardware alarm fires 20 µs before the step. The handler spins to the exact µs with interrupts off,
-then raises RCLK, sets the direct GPIOs and toggles SYNC in one SIO write.</p>
+<p><strong>Switches (cuts, delay bank, sync LED): unchanged.</strong> The main loop stages a step 400 µs early: it
+shifts the chain in while outputs are unchanged. A hardware alarm fires 20 µs before the step. The
+handler spins to the exact µs with interrupts off, then raises RCLK, sets the direct GPIOs and
+toggles SYNC in one SIO write.</p>
 <ul class="simple">
 <li><p>Expected lateness: ≤ 1 µs. It is measured (<code class="docutils literal notranslate"><span class="pre">log</span></code>) and faulted above <code class="docutils literal notranslate"><span class="pre">latelimit</span></code> (50 µs).</p></li>
-<li><p>Minimum step spacing: 50 µs. 144 bits at 10 MHz SPI take 15 µs.</p></li>
-<li><p>The DSAs settle in about 1 µs. The SP4T switches settle in about 0.1–1 µs. During a delay-bank
-change the path is open for under 1 µs: a link changes length without being cut for longer.</p></li>
+<li><p>Minimum step spacing: 50 µs. 48 bits at 10 MHz SPI take 5 µs.</p></li>
+<li><p>The SP4T switches settle in about 0.1–1 µs. During a delay-bank change the path is open for under
+1 µs: a link changes length without being cut for longer.</p></li>
+</ul>
+<p><strong>Attenuators: milliseconds, after the latch.</strong> In the same handler, right after the latch edge,
+the firmware loads each changed unit’s 8-byte command into that unit’s PIO TX FIFO. All the units
+of a step start within a few µs of RCLK, in parallel. Then, per unit:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Phase</p></th>
+<th class="head"><p>Time</p></th>
+<th class="head"><p>Known?</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Command on the wire, 8 bytes at 115200</p></td>
+<td><p>0.69 ms</p></td>
+<td><p>exact</p></td>
+</tr>
+<tr class="row-odd"><td><p>The unit’s MCU parses it and writes its DSA chip</p></td>
+<td><p>t_proc</p></td>
+<td><p><strong>unknown: measure</strong> (§5.8 step 6)</p></td>
+</tr>
+<tr class="row-even"><td><p>The DSA chip settles</p></td>
+<td><p>~1 µs</p></td>
+<td><p>datasheet</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Landing: T_land = T_issue + 0.69 ms + t_proc</strong></p></td>
+<td><p>default 3 ms until measured</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">latency_us</span></code> in the calibration</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A unit takes one command at a time. A command for a unit that is still sending waits in the
+firmware (<code class="docutils literal notranslate"><span class="pre">uart_deferred</span></code>, fault 0x10) and goes out from the main loop as soon as the FIFO has room.
+The compiler keeps commands for one unit ≥ 1 ms apart, so a played scenario never defers. Fading
+runs at up to ~300 Hz per unit at a 3 ms latency. <code class="docutils literal notranslate"><span class="pre">walk_fade</span></code> uses 100 Hz.</p>
+<p><strong>Sequencing rules (<code class="docutils literal notranslate"><span class="pre">scenarios.compile</span></code>).</strong> A scenario step at time T is split. Its switches stay
+on T’s latch edge. Its attenuator changes move:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>The step…</p></th>
+<th class="head"><p>Attenuator commands start at</p></th>
+<th class="head"><p>So that</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>closes</strong> any cut (a link appears)</p></td>
+<td><p>T − latency − 2 ms guard</p></td>
+<td><p>every unit has landed before the link opens: make-before</p></td>
+</tr>
+<tr class="row-odd"><td><p>only <strong>opens</strong> cuts (links go away)</p></td>
+<td><p>T, on the same latch edge</p></td>
+<td><p>the links are already gone when the units move: break-before</p></td>
+</tr>
+<tr class="row-even"><td><p>changes attenuators only (fades, replays)</p></td>
+<td><p>T − latency</p></td>
+<td><p>the RF lands on T, ± the unit’s latency jitter</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p>The event instant, its mark and the sync-LED toggle stay at T, the switch edge.</p></li>
+<li><p>A UART-only step that lands within 50 µs of another step joins that step.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Compiled.uart</span></code> lists (t_issue, t_land, device, value) for every attenuator change. The results
+can then put error bars on attenuator-only events.</p></li>
+<li><p><strong>Never rely on two units moving together.</strong> Each pair loss depends on two units, so during the
+~ms between two landings a link passes through an intermediate value. Anything that has to be
+simultaneous (a link appearing or vanishing) is done with the cut switches.</p></li>
+<li><p>A changed unit also changes <strong>every live link of its DUT</strong>, not just the pair named in the step
+(§6.1).</p></li>
 </ul>
 </section>
 <section id="safe-default">
 <h3>5.5 Safe default<a class="headerlink" href="#safe-default" title="Link to this heading">¶</a></h3>
 <ul class="simple">
-<li><p><strong>Power-up.</strong> /OE is high, so the 595 outputs are hi-Z and the pull resistors hold the lines safe.
-The firmware shifts in and latches the safe vector: every DSA at 31.5 dB, every cut open, the delay
-bank at arm 0, the sync LED off. Only then does it drive /OE low.</p></li>
+<li><p><strong>Power-up.</strong> /OE is high, so the 595 outputs are hi-Z and the pull resistors hold the lines safe:
+every cut open and the delay bank all-off. The firmware shifts in and latches the safe vector:
+every cut open, the delay bank at arm 0 (pair 0–1 is cut anyway), the sync LED off. Only then does
+it drive /OE low. It also sends 31.75 dB to every attenuator.</p></li>
+<li><p><strong>The attenuators power up at 0 dB</strong>, and may boot after the controller (OLED init). So the cut
+switches carry the safe state on their own: a cut is in series with every pair. The firmware
+re-sends every unit’s value every 0.5 s for 5 s after power-up and after every <code class="docutils literal notranslate"><span class="pre">safe</span></code> or lease
+expiry. <code class="docutils literal notranslate"><span class="pre">attcheck</span></code> confirms each unit.</p></li>
 <li><p>A hardware watchdog (500 ms) resets a hung loop back into that state.</p></li>
 <li><p>The <code class="docutils literal notranslate"><span class="pre">lease</span></code> covers a dead host or agent. The rig agent always takes one.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">safe</span></code> and <code class="docutils literal notranslate"><span class="pre">stop</span></code> work while playing.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">safe</span></code> and <code class="docutils literal notranslate"><span class="pre">stop</span></code> work while playing. <code class="docutils literal notranslate"><span class="pre">safe</span></code> opens every cut on one latch edge (µs), then the
+attenuators follow to 31.75 dB (ms).</p></li>
 </ul>
 </section>
 <section id="build-and-flash">
@@ -848,22 +1190,120 @@ bank at arm 0, the sync LED off. Only then does it drive /OE low.</p></li>
 The core, the board table, the unit test and the simulator build under Bazel
 (<code class="docutils literal notranslate"><span class="pre">//pi/hitl/meshbench/rfctl:{rfctl_core_test,rfctl_sim}</span></code>). pico-sdk’s own Bazel support would pull
 an ARM toolchain and picotool into the root module for one target, so the firmware stays on
-pico-sdk CMake. The CMake flow is verified to build.</p>
+pico-sdk CMake. The CMake flow is verified to build (revision 2: <code class="docutils literal notranslate"><span class="pre">rfctl.uf2</span></code> 101 KB, <code class="docutils literal notranslate"><span class="pre">-Werror</span></code>, with
+the PIO UART transmitters). The PIO program is pico-examples’ <code class="docutils literal notranslate"><span class="pre">uart_tx</span></code>, hand-assembled into
+<code class="docutils literal notranslate"><span class="pre">pico/main.c</span></code>, so the build needs no <code class="docutils literal notranslate"><span class="pre">pioasm</span></code> step.</p>
+</section>
+<section id="fallback-the-units-on-usb">
+<h3>5.7 Fallback: the units on USB<a class="headerlink" href="#fallback-the-units-on-usb" title="Link to this heading">¶</a></h3>
+<p>If a unit’s header turns out not to be a usable UART, its micro-USB port is (both reviews drove it
+that way). Then:</p>
+<ul class="simple">
+<li><p>the units hang off a powered USB hub on the bench host (one of the two Atolla hubs owned);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">jeanoko.py</span></code> drives each unit directly (<code class="docutils literal notranslate"><span class="pre">Jeanoko(port).set(dB)</span></code>, which waits for <code class="docutils literal notranslate"><span class="pre">ok</span></code>);</p></li>
+<li><p>the harness, not the controller, times the attenuator changes. Host and USB jitter add about
+1–10 ms on top of t_proc. The rules in §5.4 still apply, with a larger guard;</p></li>
+<li><p>the lease no longer covers the attenuators. The cuts still carry the safe state;</p></li>
+<li><p>every unit is another USB cable into the RF enclosure (a leak path: clip a ferrite on each) and
+another <code class="docutils literal notranslate"><span class="pre">/dev/serial/by-id</span></code> entry. Identical units may share a USB serial number, so the
+catalog must name them by hub port path.</p></li>
+</ul>
+<p>The rfctl-host design keeps both paths open: UART headers for the controller, and power-only USB-A
+ports that also fit the units’ own cables.</p>
+</section>
+<section id="attenuator-calibration-per-unit-on-the-vna">
+<h3>5.8 Attenuator calibration (per unit, on the VNA)<a class="headerlink" href="#attenuator-calibration-per-unit-on-the-vna" title="Link to this heading">¶</a></h3>
+<p>Each unit gets its own table: S21 at all 128 settings at the mesh channels. The table follows the
+unit (label each one, J1–J7) and is copied into the bench file for its slot. Tooling:
+<code class="docutils literal notranslate"><span class="pre">atten_cal.py</span></code> (<code class="docutils literal notranslate"><span class="pre">//pi/hitl/meshbench:atten_cal</span></code>).</p>
+<ol class="arabic simple">
+<li><p><strong>VNA set-up.</strong> The owner’s 28 GHz VNA. Use 2.40–2.50 GHz, 201 points (plus 2412/2437/2462 MHz,
+Wi-Fi channels 1, 6 and 11), IF bandwidth 1 kHz, port power −10 dBm (the units take &lt; 1 W). Do a
+full 2-port SOLT calibration at the ends of the two test cables (GSS405 50 cm). Check it with a
+thru: |S21| &lt; 0.05 dB.</p></li>
+<li><p><strong>Drive the unit</strong> from the controller on its ATT header (<code class="docutils literal notranslate"><span class="pre">--rfctl</span> <span class="pre">…</span> <span class="pre">--dev</span> <span class="pre">att0</span></code>), or over its
+own USB (<code class="docutils literal notranslate"><span class="pre">--jeanoko</span> <span class="pre">/dev/ttyUSB0</span></code>). Let it boot for 5 s. Confirm <code class="docutils literal notranslate"><span class="pre">attcheck</span></code> → ok.</p></li>
+<li><p><strong>Sweep:</strong> <code class="docutils literal notranslate"><span class="pre">atten_cal.py</span> <span class="pre">sweep</span> <span class="pre">--unit</span> <span class="pre">J1</span> <span class="pre">…</span> <span class="pre">--scpi</span> <span class="pre">&lt;vna&gt;:5025</span> <span class="pre">--out</span> <span class="pre">J1.csv</span></code>. It steps 0 → 31.75 dB,
+waits 50 ms per step, reads one sweep, and repeats 0 dB at the end. That is about a minute per
+unit. The default SCPI commands (<code class="docutils literal notranslate"><span class="pre">INIT:IMM;*OPC?</span></code>, <code class="docutils literal notranslate"><span class="pre">CALC:DATA:FDAT?</span></code>, <code class="docutils literal notranslate"><span class="pre">SENS:FREQ:DATA?</span></code>) suit most
+SCPI VNAs. Check them against the owner’s VNA manual. With no SCPI, export one Touchstone file
+per setting and write the CSV (<code class="docutils literal notranslate"><span class="pre">setting_db,freq_mhz,s21_db</span></code>) by hand.</p></li>
+<li><p><strong>Repeat and reverse</strong> once per unit (31.75 → 0). The two runs agree to ≤ 0.1 dB rms, or the unit
+is suspect. Record the 0 dB drift between the start and the end.</p></li>
+<li><p><strong>Return loss:</strong> S11 and S22 ≤ −14 dB (VSWR 1.5) at 0, 15 and 31.75 dB. The listing claims ≤ 1.4.</p></li>
+<li><p><strong>Latency</strong> (t_proc, §5.4): use the VNA in CW zero-span mode at 2437 MHz, if it has one, or the
+HackRF on a 20 dB pad. Toggle 0 ↔ 20 dB with <code class="docutils literal notranslate"><span class="pre">set</span></code> 20 times, and time the RF step from the
+controller’s SYNC edge (analyser D12, or the VNA’s trigger input). Store the median plus
+2 × the spread as <code class="docutils literal notranslate"><span class="pre">latency_us</span></code>. <code class="docutils literal notranslate"><span class="pre">attcheck</span></code>’s <code class="docutils literal notranslate"><span class="pre">latency_us</span></code> (command end → <code class="docutils literal notranslate"><span class="pre">ok</span></code>) is a lower bound
+to compare it with.</p></li>
+<li><p><strong>Unit file:</strong> <code class="docutils literal notranslate"><span class="pre">atten_cal.py</span> <span class="pre">unit</span> <span class="pre">--unit</span> <span class="pre">J1</span> <span class="pre">--csv</span> <span class="pre">J1.csv</span> <span class="pre">--latency-us</span> <span class="pre">2600</span> <span class="pre">--out</span> <span class="pre">J1.json</span></code>, then
+<code class="docutils literal notranslate"><span class="pre">atten_cal.py</span> <span class="pre">check</span> <span class="pre">J1.json</span></code>: insertion loss, range, worst step error, monotonicity.</p></li>
+<li><p><strong>Bench file</strong>, after assembly (§12 step 15): measure each pair end to end at both units’ 0 dB
+(cut through, delay bank at 0 cm), then
+<code class="docutils literal notranslate"><span class="pre">atten_cal.py</span> <span class="pre">bench</span> <span class="pre">--channel</span> <span class="pre">2462</span> <span class="pre">--map</span> <span class="pre">att0=J1.json,…</span> <span class="pre">--pairs</span> <span class="pre">01=…,02=…</span> <span class="pre">--out</span> <span class="pre">bench_cal.json</span></code>.
+Put it on the rig host and point <code class="docutils literal notranslate"><span class="pre">HITL_MESHBENCH_CAL_JSON</span></code> at it.</p></li>
+</ol>
+<p><strong>Unit file</strong> (<code class="docutils literal notranslate"><span class="pre">meshbench.atten_cal/1</span></code>):</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;schema&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;meshbench.atten_cal/1&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;unit&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;J1&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Jeanoko 0-6 GHz digital attenuator (B0FHSZ6N8G)&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;measured_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-11-21T10:00:00Z&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;vna&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;model&gt;, SOLT at the GSS405 cable ends, -10 dBm, 1 kHz IFBW&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;freqs_mhz&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">2412</span><span class="p">,</span><span class="w"> </span><span class="mi">2437</span><span class="p">,</span><span class="w"> </span><span class="mi">2462</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;settings_db&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">0.25</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;... 128 values ...&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">31.75</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;s21_db&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[[</span><span class="s2">&quot;128 values at 2412 MHz&quot;</span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;… 2437&quot;</span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;… 2462&quot;</span><span class="p">]],</span>
+<span class="w">  </span><span class="nt">&quot;latency_us&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2600</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Bench file</strong> (<code class="docutils literal notranslate"><span class="pre">meshbench.bench_cal/1</span></code>), which <code class="docutils literal notranslate"><span class="pre">scenarios.Bench(...,</span> <span class="pre">cal=atten_cal.load(path))</span></code>
+loads:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;schema&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;meshbench.bench_cal/1&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;channel_mhz&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2462</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;units&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;att0&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;J1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;att1&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;J2&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;att2&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;J3&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;att3&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;J4&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;attx&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;J5&quot;</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;atten&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;att0&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;unit&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;J1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;loss_db&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;128 values: -S21 at the channel&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;latency_us&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2600</span><span class="p">}},</span>
+<span class="w">  </span><span class="nt">&quot;pair_fixed_db&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;01&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">57.4</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;02&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">57.9</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;03&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">58.1</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;12&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">57.0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;13&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">57.6</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;23&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">57.2</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;node_side_db&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">12.3</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;splitter_isolation_db&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">20.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;cut_isolation_db&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">55.0</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">loss_db[k]</span></code> is the unit’s loss at setting k × 0.25 dB, <strong>insertion loss included</strong>, interpolated
+to the bench channel.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pair_fixed_db</span></code> is F_ij: the end-to-end measurement minus the two units’ <code class="docutils literal notranslate"><span class="pre">loss_db[0]</span></code>.</p></li>
+<li><p>The compiler picks, for each unit, the setting whose calibrated loss is nearest the fit’s target.
+Each unit’s <code class="docutils literal notranslate"><span class="pre">latency_us</span></code> replaces the 3 ms default in the sequencing (§5.4).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">node_side_db</span></code> and the two isolations feed the leak model (§2.1). Replace them with the measured
+values when they exist (Wilkinson port to port on the VNA; RF-BENCH §5 for the switch).</p></li>
+</ul>
 </section>
 </section>
 <section id="scenarios-links-that-come-and-go-and-change-length">
 <h2>6. Scenarios: links that come and go and change length<a class="headerlink" href="#scenarios-links-that-come-and-go-and-change-length" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">scenarios.py</span></code> builds on the board’s device names. <code class="docutils literal notranslate"><span class="pre">compile()</span></code> does five things:</p>
+<p><code class="docutils literal notranslate"><span class="pre">scenarios.py</span></code> builds on the board’s device names. It picks the <strong>node model</strong> when the board has
+<code class="docutils literal notranslate"><span class="pre">att&lt;i&gt;</span></code> units (the default) and the <strong>pair model</strong> for the legacy three-DSA table. <code class="docutils literal notranslate"><span class="pre">compile()</span></code>:</p>
 <ul class="simple">
 <li><p>merges steps;</p></li>
 <li><p>drops values that didn’t change;</p></li>
 <li><p>prepends the sync-LED start code (toggles at 0, 80, 160, 400, 480 and 800 ms, an unambiguous
 pattern for the camera);</p></li>
 <li><p>toggles the LED at every labelled event;</p></li>
-<li><p>checks spacing, capacity (8192 entries) and <strong>sneak paths</strong> (RF-BENCH §3).</p></li>
+<li><p><strong>sequences the UART attenuators</strong> around each step’s latch edge (§5.4) and spaces each unit’s
+commands ≥ 1 ms apart;</p></li>
+<li><p>checks spacing, capacity (8192 entries) and <strong>leak paths</strong>.</p></li>
 </ul>
-<p>A cut pair whose two-hop detour through a third node is under 100 dB is flagged, because there the
-“cut” is not real.</p>
+<p>A cut pair whose effective loss is under 100 dB is flagged, because there the “cut” is not real.
+In the node model the effective loss is the power sum of the direct path through the open switch
+and every one-hop detour (§2.1). The pair model keeps the revision 1 check (L_ij + L_jk).</p>
+<p><strong>Node model API.</strong> <code class="docutils literal notranslate"><span class="pre">Bench.topology({pair:</span> <span class="pre">dB})</span></code> closes the listed pairs, opens the rest, and
+<strong>fits</strong> the node units by least squares (0–31.75 dB each, then the nearest calibrated step). Nodes
+with no live link go to 31.75 dB. Every pair it misses by more than 1 dB becomes a compile
+warning. <code class="docutils literal notranslate"><span class="pre">Bench.loss(pair,</span> <span class="pre">dB,</span> <span class="pre">state)</span></code> moves the higher-numbered node’s unit and keeps the other
+one. <code class="docutils literal notranslate"><span class="pre">Bench.link(pair,</span> <span class="pre">up)</span></code> only switches; the link’s loss is what its units give.</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -915,6 +1355,71 @@ pattern for the camera);</p></li>
 <p>Untested on hardware: whether the starter matrix’s real isolation is good enough for “cut” to mean
 cut without shield boxes (RF-BENCH §5). Measure it in assembly step 14. Until then, run at reduced
 TX power.</p>
+<section id="what-one-attenuator-per-dut-can-and-can-t-do">
+<h3>6.1 What one attenuator per DUT can and can’t do<a class="headerlink" href="#what-one-attenuator-per-dut-can-and-can-t-do" title="Link to this heading">¶</a></h3>
+<p>With N units for N(N−1)/2 pairs, the live pair losses are not independent. For any four distinct
+nodes, L_ij + L_kl = L_ik + L_jl (after the fixed parts). N = 4 has 6 pairs and 4 knobs, so 2
+constraints. The cut switches remove any pair from the matrix, so the constraints bind only among
+live pairs. What follows, with 30 dB pads (§2.1):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Scenario</p></th>
+<th class="head"><p>Node model</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">baseline</span></code></p></td>
+<td><p>✔ exact</p></td>
+<td><p>every unit at (L − F_ij)/2 − IL; needs L ≥ min loss (60–69 dB)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">link_flap</span></code></p></td>
+<td><p>✔</p></td>
+<td><p>the cut is the switch. In a full mesh at L the cut pair still has 2 detours: <strong>L + 48.5 dB</strong> (118.5 dB at 70). With per-pair DSAs it was 2L − 1 dB (119 dB at 60)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">chain_reroute</span></code></p></td>
+<td><p>⚠ re-parameterised</p></td>
+<td><p>3 chain links + 4 knobs: exact. A backup <strong>weaker</strong> than the chain links it joins is impossible (L_02 − L_01 = A_2 − A_1 ≤ L_12 − F). Default now: an <strong>equal-strength</strong> backup. A weak backup needs a heavier fixed pad on that chain (+20 dB on pair 0–2), entered in <code class="docutils literal notranslate"><span class="pre">pair_fixed_db</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">partition_heal</span></code></p></td>
+<td><p>✔ best case</p></td>
+<td><p>every cross pair’s paths cross an open switch: ≈ L + 55 dB. Unchanged in effect</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">length_steps</span></code></p></td>
+<td><p>✔ unchanged</p></td>
+<td><p>delay bank only</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">walk_fade</span></code></p></td>
+<td><p>⚠ becomes a node fade</p></td>
+<td><p>the fade moves one DUT’s unit, so <strong>all of that DUT’s links fade together</strong>, like a person standing beside that fixture. Depth ≤ the unit’s headroom (31.75 dB − its base setting). The default base loss is the bench minimum + 4 dB (each unit at 2 dB), which leaves 29.75 dB; deeper Rayleigh nulls clip (warned). A fade on one link alone is impossible</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">from_meshsim</span></code></p></td>
+<td><p>⚠ approximate</p></td>
+<td><p>each export instant is fitted (least squares over the live pairs; pairs past the edge are cut). Misses over 3 dB are warned per instant. Validate against the <strong>achieved</strong> losses (<code class="docutils literal notranslate"><span class="pre">Bench.path_loss</span></code>), not the sim’s targets. Movement where one node walks away from the others fits well; independent per-pair fading doesn’t</p></td>
+</tr>
+<tr class="row-odd"><td><p>hidden terminal (A and C hear B, not each other)</p></td>
+<td><p>✔</p></td>
+<td><p>B low, A and C high, cut A–C: margin c + I = 52.5 dB (via B)</p></td>
+</tr>
+<tr class="row-even"><td><p>asymmetric spans</p></td>
+<td><p>limit</p></td>
+<td><p>pairs sharing a node differ by ≤ 31.75 dB; disjoint pairs by ≤ 63.5 dB</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Mapping proposal.</strong> Express scenarios as <strong>node attenuation + a cut set</strong> where possible.</p>
+<ul class="simple">
+<li><p>Node attenuation stands for “how far this fixture is from everything” or “a body near this
+fixture”.</p></li>
+<li><p>The cut set stands for “which links exist”.</p></li>
+</ul>
+<p>Pair-specific losses come from the fit, which says what it missed. A scenario that needs a fixed
+per-pair geometry (one pair always weaker) uses heavier pads on those chains. That is an assembly
+option, recorded in <code class="docutils literal notranslate"><span class="pre">bench_cal.json</span></code>. Anything more needs per-pair attenuators again (the
+revision 1 design).</p>
+</section>
 </section>
 <section id="camera-flip-timing">
 <h2>7. Camera flip timing<a class="headerlink" href="#camera-flip-timing" title="Link to this heading">¶</a></h2>
@@ -1380,17 +1885,17 @@ mesh frames for an Espressif OUI.</p></li>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>74HC595</p></td>
-<td><p>+2 (16 → 18)</p></td>
-<td><p>144 control bits for the N = 4 board table (§3.3)</p></td>
+<tr class="row-even"><td><p>Step attenuators</p></td>
+<td><p><strong>no PE4302</strong> (D-241 overridden). 5 owned Jeanoko units, one per DUT + 1 spare; +1–2 for N = 6 (B0FHSZ6N8G, $42.29), <strong>bought at the N = 6 build</strong></p></td>
+<td><p>§2.1, Q12</p></td>
 </tr>
-<tr class="row-odd"><td><p>Pull resistors (10 kΩ × 150, SIP networks)</p></td>
-<td><p>new</p></td>
-<td><p>safe levels while /OE is high</p></td>
+<tr class="row-odd"><td><p>Pair pads</p></td>
+<td><p>30 dB per pair = the bought 10 dB + a 20 dB: <strong>+3 BECEN 20 dB 2-packs</strong> for N = 4 (to-buy line 4: 2 → 5 packs, +$60; owner TODO)</p></td>
+<td><p>§2.1, Q13</p></td>
 </tr>
 <tr class="row-even"><td><p>Controller</p></td>
-<td><p>Raspberry Pi Pico 2 (RP2350A, no W) replaces the “any C6” controller</p></td>
-<td><p>owner request; no radio by construction; µs alarms</p></td>
+<td><p>the rfctl-host PCB (bare RP2350A, 6 × 74HC595 for 48 bits, pulls, 7 UART attenuator headers, 7 power-only USB-A ports); see the follow-up to the atopile prompt</p></td>
+<td><p>§3.3, Q11</p></td>
 </tr>
 <tr class="row-odd"><td><p>74AHCT125</p></td>
 <td><p>1 per DUT board (6)</p></td>
@@ -1434,7 +1939,8 @@ mesh frames for an Espressif OUI.</p></li>
 </section>
 <section id="questions-for-the-owner">
 <h3>11.2 Questions for the owner<a class="headerlink" href="#questions-for-the-owner" title="Link to this heading">¶</a></h3>
-<p>Each is one decision with options; ★ marks the recommendation.</p>
+<p>Each is one decision with options; ★ marks the recommendation. Q11–Q13 are answered (desk
+D-334–D-336); the answer is marked <strong>[chosen]</strong>.</p>
 <ul class="simple">
 <li><p><strong>Q1 — Host.</strong></p>
 <ul>
@@ -1445,11 +1951,12 @@ target, and only works if it has ≥ 3 independent USB controllers.</p></li>
 </ul>
 </li>
 <li><p><strong>Q2 — What arrived.</strong> Which RF switches (part, SPST/SP4T, absorptive?, control lines and truth
-table, logic level), which DSAs (model, serial or parallel header), and which delay-line lengths
-and cable type?</p>
+table, logic level), which delay-line lengths and cable type, and, on one Jeanoko: a photo of
+the 4-pin header by the OLED (pin labels), the logic level on it (meter the TX pin at idle), and
+whether <code class="docutils literal notranslate"><span class="pre">wv01000</span></code> sent to that header sets 10 dB.</p>
 <ul>
 <li><p>★ A: send photos or links, and I fill the board table and safe codes before power-up.</p></li>
-<li><p>B: use HMC7992 / PE4302-parallel as assumed.</p></li>
+<li><p>B: use HMC849 / HMC7992 as assumed, and the units over USB (§5.7) until the header is checked.</p></li>
 </ul>
 </li>
 <li><p><strong>Q3 — P4+C6 boards and RF.</strong></p>
@@ -1505,24 +2012,51 @@ and cable type?</p>
 <li><p>B: keep the bench standalone with <code class="docutils literal notranslate"><span class="pre">--gate-cmd</span></code>.</p></li>
 </ul>
 </li>
+<li><p><strong>Q11 — How the controller reaches the attenuators.</strong> Answered: A.</p>
+<ul>
+<li><p>★ <strong>[chosen]</strong> A: 3.3 V UART headers on the rfctl-host, from PIO TX pins, with a shared acknowledge line
+(§3.3), plus power-only USB-A ports. The changes stay on the controller clock and under its
+lease. USB (§5.7) remains a fallback with no board change.</p></li>
+<li><p>B: a USB hub to the units’ micro-USB ports, timed by the host (no board change, ms jitter, no
+lease, 5–7 more USB cables into the enclosure).</p></li>
+</ul>
+</li>
+<li><p><strong>Q12 — More units for N = 6</strong> (B0FHSZ6N8G, $42.29 each). Answered: C.</p>
+<ul>
+<li><p>★ A: buy 2 now: 7 = 6 DUTs + 1 spare, all calibrated in one VNA session.</p></li>
+<li><p>B: buy 1 now: 6, no spare.</p></li>
+<li><p><strong>[chosen]</strong> C: buy at the N = 6 build. The new units get their own VNA session then (§5.8).</p></li>
+</ul>
+</li>
+<li><p><strong>Q13 — Pair pad.</strong> Answered: A (3 more BECEN 20 dB 2-packs, ~$60, on the owner’s to-buy list).</p>
+<ul>
+<li><p>★ <strong>[chosen]</strong> A: 30 dB per pair (the bought 10 dB + a 20 dB): cut margin 52.5 dB, and every link edge is
+reachable at full TX power.</p></li>
+<li><p>B: 20 dB: margin 42.5 dB; <code class="docutils literal notranslate"><span class="pre">link_flap</span></code> cuts at ~L + 39 dB.</p></li>
+<li><p>C: 10 dB as bought: margin 32.5 dB. Cuts in a full mesh stay audible at TX ≥ 0 dBm.</p></li>
+</ul>
+</li>
 </ul>
 </section>
 </section>
 <section id="assembly-checklist-owner">
 <h2>12. Assembly checklist (owner)<a class="headerlink" href="#assembly-checklist-owner" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p>Unpack and photograph the switches, DSAs and delay lines. Answer Q2. Don’t power any RF part yet.</p></li>
-<li><p>Check the NanoVNA reaches 2.6 GHz (Q9). VNA every delay cable (one-way delay) and label it.
-Spot-check one DSA’s 0 and 31.5 dB states (RF-BENCH §7).</p></li>
-<li><p>Build the controller board: Pico 2, 18 × 74HC595 daisy-chained (QH’ → SER), shared
-SRCLK/RCLK//OE, the last QH’ → GP4, a 10 kΩ pull-up on /OE, pull resistors on every control line to
-its safe level, and a 5 V 3 A supply.</p></li>
+<li><p>Unpack and photograph the switches, the Jeanoko units (and the header by the OLED) and the delay
+lines. Answer Q2. Label the units J1–J5. Don’t power any RF part yet.</p></li>
+<li><p>VNA every delay cable (one-way delay) and label it. <strong>Calibrate every Jeanoko</strong> (§5.8 steps 1–7)
+→ <code class="docutils literal notranslate"><span class="pre">J1.json</span></code> … <code class="docutils literal notranslate"><span class="pre">J5.json</span></code>.</p></li>
+<li><p>Fit the controller: the rfctl-host PCB (bare RP2350A, 6 × 74HC595, pulls; see the follow-up),
+on a 5 V supply.</p></li>
 <li><p>Flash <code class="docutils literal notranslate"><span class="pre">rfctl.uf2</span></code> (§5.6). Check <code class="docutils literal notranslate"><span class="pre">hello</span></code>, <code class="docutils literal notranslate"><span class="pre">selftest</span></code> → <code class="docutils literal notranslate"><span class="pre">chain=pass</span></code>, and <code class="docutils literal notranslate"><span class="pre">state</span></code> (all safe). Probe
-a DSA line and a switch EN line: both high.</p></li>
-<li><p>Wire the DSAs and switches to the chain per <code class="docutils literal notranslate"><span class="pre">board_default.c</span></code>. Toggle each device with
-<code class="docutils literal notranslate"><span class="pre">set</span> <span class="pre">&lt;dev&gt;</span> <span class="pre">&lt;v&gt;</span></code> and check its lines with a meter or the analyser. Fix any wrong code in the table.</p></li>
-<li><p>Assemble the matrix in the aluminium enclosure (RF-BENCH §2): pair chains, splitters, the delay
-bank on pair 0–1, 50 Ω on every unused port, SMA torqued.</p></li>
+a switch EN line: high. Plug one unit into ATT U0 and its USB-A power port: its OLED shows 31.75
+within 5 s, and <code class="docutils literal notranslate"><span class="pre">attcheck</span> <span class="pre">att0</span></code> → ok.</p></li>
+<li><p>Wire the switches to the chain per <code class="docutils literal notranslate"><span class="pre">board_default.c</span></code> and the units to ATT U0–U3 (U6 = the
+spare). Toggle each device with <code class="docutils literal notranslate"><span class="pre">set</span> <span class="pre">&lt;dev&gt;</span> <span class="pre">&lt;v&gt;</span></code> and check its lines with a meter or the analyser
+(or the unit’s OLED). Fix any wrong code in the table.</p></li>
+<li><p>Assemble the matrix in the aluminium enclosure (RF-BENCH §2): pair chains (cut switch + 30 dB pad),
+one unit between each DUT cable and its node splitter, splitters, the delay bank on pair 0–1, 50 Ω
+on every unused port, SMA torqued.</p></li>
 <li><p>Fit TinyC6 u.FL pigtails (mate once). Connect nodes 0–3. Terminate the node AUX and monitor ports.</p></li>
 <li><p>Wire the strips: 3 LEDs, 330 Ω, a 74AHCT125 buffer, green-only test with any effect. Use GPIO20
 and GPIO14 on each TinyC6 and the 16 lanes on each P4 (§3.1). Strip 5 V comes from the separate
@@ -1538,8 +2072,9 @@ Close the enclosure.</p></li>
 <li><p>Isolation (RF-BENCH §5): per pair with its cables unplugged, a CW tone at max power from one
 DUT, raw RSSI on the other. Record L_leak. Set the bench TX power rule
 (TX ≤ L_leak − 99 − 10 dBm).</p></li>
-<li><p>Path-loss calibration: every pair end to end at all-zero DSAs → <code class="docutils literal notranslate"><span class="pre">HITL_MESHBENCH_FIXED_DB</span></code> (and
-per-pair values for a future <code class="docutils literal notranslate"><span class="pre">bench_cal.json</span></code>).</p></li>
+<li><p>Path-loss calibration: every pair end to end with both its units at 0 dB → <code class="docutils literal notranslate"><span class="pre">atten_cal.py</span> <span class="pre">bench</span></code>
+→ <code class="docutils literal notranslate"><span class="pre">bench_cal.json</span></code> on the rig host, <code class="docutils literal notranslate"><span class="pre">HITL_MESHBENCH_CAL_JSON</span></code> (§5.8 step 8). Spot-check 3 random
+unit states per pair against <code class="docutils literal notranslate"><span class="pre">Bench.path_loss</span></code>: ≤ 0.5 dB.</p></li>
 <li><p>Camera calibration (§7.4): layout boxes → <code class="docutils literal notranslate"><span class="pre">HITL_MESHBENCH_LAYOUT_JSON</span></code>; exposure-sweep response
 LUT; on/off levels.</p></li>
 <li><p>Zero check: two strips of one C6 read 0 ± 50 µs on camera and analyser.</p></li>
@@ -1557,6 +2092,14 @@ the host (follow-ups 1–4 in §10).</p></li>
 <ul class="simple">
 <li><p><strong>Isolation without shield boxes</strong> may cap “cut” at 100–110 dB (RF-BENCH §5). Run at low TX
 power and measure first.</p></li>
+<li><p><strong>Detours bypass the relay’s unit</strong> (§2.1). A cut beside a live common neighbour is only c + I
+(52.5 dB with 30 dB pads) below the same pair through. The pad sets it; measure the Wilkinson
+port-to-port isolation, which is half of it.</p></li>
+<li><p><strong>The Jeanoko interface is from reviews of the same module family, not from this listing.</strong> The
+header pinout and level, <code class="docutils literal notranslate"><span class="pre">wv0XXYY</span></code>, <code class="docutils literal notranslate"><span class="pre">ok</span></code> and t_proc are unconfirmed until the units arrive (Q2).
+USB (§5.7) is the fallback.</p></li>
+<li><p><strong>Jeanoko insertion loss at 2.44 GHz</strong> is 1.5 dB on the listing and ~6 dB in the review. That
+moves the min loss by 9 dB per pair. The VNA decides.</p></li>
 <li><p><strong>The switch truth table</strong> decides the safe state (Q2).</p></li>
 <li><p><strong>The <code class="docutils literal notranslate"><span class="pre">time</span></code> precision in the VM.</strong> If effect time is float32 seconds, its step at 600 s of show
 time is 61 µs. The workload should re-base the time base at each run start; check it on the
@@ -1608,11 +2151,14 @@ anyway).</p></li>
             <ul>
 <li><a class="reference internal" href="#">Mesh HITL rig: conducted RF, real display flip timing</a><ul>
 <li><a class="reference internal" href="#summary">1. Summary</a></li>
-<li><a class="reference internal" href="#topology">2. Topology</a></li>
+<li><a class="reference internal" href="#topology">2. Topology</a><ul>
+<li><a class="reference internal" href="#path-loss-and-isolation-with-one-attenuator-per-dut">2.1 Path loss and isolation with one attenuator per DUT</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#wiring-and-gpio-maps">3. Wiring and GPIO maps</a><ul>
 <li><a class="reference internal" href="#strips">3.1 Strips</a></li>
 <li><a class="reference internal" href="#analyser-channels">3.2 Analyser channels</a></li>
-<li><a class="reference internal" href="#controller-pico-2-rp2350a">3.3 Controller (Pico 2, RP2350A)</a></li>
+<li><a class="reference internal" href="#controller-rfctl-host-pcb-bare-rp2350a">3.3 Controller (rfctl-host PCB, bare RP2350A)</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#usb-and-power-budget">4. USB and power budget</a></li>
@@ -1623,9 +2169,14 @@ anyway).</p></li>
 <li><a class="reference internal" href="#timing">5.4 Timing</a></li>
 <li><a class="reference internal" href="#safe-default">5.5 Safe default</a></li>
 <li><a class="reference internal" href="#build-and-flash">5.6 Build and flash</a></li>
+<li><a class="reference internal" href="#fallback-the-units-on-usb">5.7 Fallback: the units on USB</a></li>
+<li><a class="reference internal" href="#attenuator-calibration-per-unit-on-the-vna">5.8 Attenuator calibration (per unit, on the VNA)</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#scenarios-links-that-come-and-go-and-change-length">6. Scenarios: links that come and go and change length</a></li>
+<li><a class="reference internal" href="#scenarios-links-that-come-and-go-and-change-length">6. Scenarios: links that come and go and change length</a><ul>
+<li><a class="reference internal" href="#what-one-attenuator-per-dut-can-and-can-t-do">6.1 What one attenuator per DUT can and can’t do</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#camera-flip-timing">7. Camera flip timing</a><ul>
 <li><a class="reference internal" href="#camera">7.1 Camera</a></li>
 <li><a class="reference internal" href="#the-pattern-meshflipclock-fx">7.2 The pattern (<code class="docutils literal notranslate"><span class="pre">meshFlipClock.fx</span></code>)</a></li>
