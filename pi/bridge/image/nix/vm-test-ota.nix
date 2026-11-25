@@ -311,8 +311,11 @@ in
         assert roots == "", roots
         machine.succeed(f"nix-store --check-validity {A}")
         assert machine.succeed(f"nix-store -q --roots {A}").strip() != ""
-        # The next boot is B as well.
-        machine.reboot()
+        # The next boot is B as well. Reboot from inside the guest: machine.reboot()
+        # sends ctrl-alt-delete through QEMU, and under TCG the key can land while
+        # the virtio keyboard is still being hotplugged and be lost (CI run
+        # 45679279165 waited out the test's hour for a reboot that never came).
+        machine.succeed("systemd-run --on-active=1 --timer-property=AccuracySec=100ms systemctl reboot")
         wait_reboot()
         assert booted() == B, booted()
         machine.succeed("systemctl is-active splanc-ota-dummy.service")
