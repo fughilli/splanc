@@ -120,15 +120,21 @@ Frame" (the P2P default of 200 ms makes the firmware answer `BCME_BUSY` to the n
 Tested on the DUT Pis with brcmfmac rebuilt for their 6.12.87 kernel: `NL80211_CMD_FRAME`
 unicast 100/100 ACKed, absent peer 20/20 NO_ACK, broadcast 100/100 reported sent (94/100
 distinct received), `NL80211_CMD_REGISTER_FRAME` 92/100 received with
-`NL80211_ATTR_RX_SIGNAL_DBM`. Two limits remain: ~50 ms per send (the driver's 40 ms
-`P2P_AF_RETRY_DELAY_TIME` sleep before the first attempt, left alone), and the 6.12 trees lack
+`NL80211_ATTR_RX_SIGNAL_DBM`. Two limits remained: ~50 ms per send (the driver's 40 ms
+`P2P_AF_RETRY_DELAY_TIME` sleep before the first attempt; fixed locally by 0006, below), and the 6.12 trees lack
 upstream's mgmt_tx channel fix (f2d7c3c380bf): without it, `NL80211_CMD_FRAME` without a
 frequency sends with a bogus channel and the firmware answers `BCME_BUSY`. The passthrough
 is faster (~1–5 ms per send).
 
 **Carried in the Pi images (owner's decision).** The player image
 (`pi/provisioning/nix/brcmfmac-actframe.nix`) carries the four patches plus a backport of the
-f2d7c3c380bf channel hunk (`brcmfmac-actframe/0005-*.patch`). Only the driver is rebuilt, from
+f2d7c3c380bf channel hunk (`brcmfmac-actframe/0005-*.patch`) and a local sixth patch
+(`0006-*.patch`, owner decision D-357) that sends non-P2P action frames without the 40 ms
+delay before the first attempt (P2P/GAS frames and every retry keep it). On a DUT Pi 3B+, A/B
+against 0001-0005, 100 frames each: unicast send p50 54.8 → 8.8 ms (100/100 ACKed, 100/100
+received), broadcast 51.2 → 5.7 ms (93/100 distinct received vs 97), ping/pong RTT p50 61.8 →
+18.0 ms (150/150), absent peer 20/20 NO_ACK both (its retries still wait), AP link unharmed.
+Only the driver is rebuilt, from
 the image kernel's own source, config and patches; the modules go to
 `lib/modules/<ver>/updates`, which depmod prefers over the kernel's. The kernel's `dev` output
 is in no binary cache we pull from (the kernel itself is, on fugstudio.cachix.org), so the
@@ -368,16 +374,16 @@ link, receive filters, pacing). mac80211_hwsim needs a kernel with modules (§6)
 The mesh crates are `no_std` and build unchanged for the host. A Pi node is
 `splanc_mesh::Node<WifiBackhaul<R>, P>` with `R` = `Nl80211Mgmt` on the image's patched
 brcmfmac, else `BrcmActframe` (`radio::auto_via`), driven every ≤ 5 ms; sends should move to a
-TX thread so the loop never waits on SDIO (or, on the patched driver, its ~50 ms per send).
+TX thread so the loop never waits on SDIO (or, on the patched driver, its ~6–9 ms p50 per send, up to ~60–80 ms at p99).
 Needs root (or `CAP_NET_ADMIN` for the registration and the vendor command, plus tracefs access
 for the tap on a stock kernel). The patched driver comes with the image (§2.1).
 
 ## 8. Decisions for the owner
 
 1. **Kernel patch**: decided (carry it in our Pi kernels now; the tap and passthrough stay
-   as the fallback for stock kernels, §2.1). Open: the ~50 ms per send on the plain path. A
-   local sixth patch could skip the 40 ms `P2P_AF_RETRY_DELAY_TIME` before the first attempt
-   for non-P2P action frames (not tested on hardware).
+   as the fallback for stock kernels, §2.1). The ~50 ms per send on the plain path:
+   decided (D-357), local patch 0006 skips the 40 ms `P2P_AF_RETRY_DELAY_TIME` before the first
+   attempt for non-P2P action frames (DUT-tested, §2.1).
 2. **Buy one AR9271 adapter** (~$15–35) for a HITL mesh sniffer. Nothing else is needed.
 3. **Open UDP 47811** in the Pi images when the IP backhaul ships (M10).
 

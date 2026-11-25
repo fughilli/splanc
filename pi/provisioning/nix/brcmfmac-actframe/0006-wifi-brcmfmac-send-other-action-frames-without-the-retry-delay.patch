@@ -1,0 +1,52 @@
+wifi: brcmfmac: send other action frames without the retry delay (local)
+
+brcmf_p2p_send_action_frame() sleeps P2P_AF_RETRY_DELAY_TIME (40 ms)
+before every attempt when a channel is set, including the first. That
+delay belongs to the P2P/GAS exchanges; for the other action frames
+patch 0004 now sends (Splanc's vendor-specific Public Action mesh
+frames), it makes each NL80211_CMD_FRAME block ~50 ms instead of the
+~5-10 ms the firmware round trip takes.
+
+Skip the delay before the first attempt for those frames only. P2P
+public action, GAS and P2P action frames keep it, and a retry of any
+frame still waits.
+
+Local to Splanc's Pi images (pi/provisioning/nix/brcmfmac-actframe.nix),
+not part of the upstream series. Applies on top of 0001-0005.
+
+Tested on a Pi 3B+ (CYW43455, fw 7.45.265, 6.12.87), A/B against
+0001-0005 with 100 frames each: unicast send p50 54.8 -> 8.8 ms (all
+ACKed), broadcast 51.2 -> 5.7 ms, ping/pong RTT p50 61.8 -> 18.0 ms;
+an absent peer still gets 20/20 NO_ACK after its retries.
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+@@ -1743,6 +1743,7 @@
+ 	uint delta_ms;
+ 	unsigned long dwell_jiffies = 0;
+ 	bool dwell_overflow = false;
++	bool p2p_af = true;
+ 
+ 	u32 requested_dwell = le32_to_cpu(af_params->dwell_time);
+ 	action_frame = &af_params->action_frame;
+@@ -1812,6 +1813,7 @@
+ 			  category, action);
+ 		af_params->dwell_time =
+ 			cpu_to_le32(requested_dwell & ~CUSTOM_RETRY_MASK);
++		p2p_af = false;
+ 	}
+ 
+ 	/* if connecting on primary iface, sleep for a while before sending
+@@ -1871,7 +1873,10 @@
+ 	while (!p2p->block_gon_req_tx &&
+ 	       (!ack) && (tx_retry < P2P_AF_TX_MAX_RETRY) &&
+ 		!dwell_overflow) {
+-		if (af_params->channel)
++		/* P2P and GAS exchanges wait before every attempt. Other
++		 * action frames go out at once; their retries still wait.
++		 */
++		if (af_params->channel && (p2p_af || tx_retry))
+ 			msleep(P2P_AF_RETRY_DELAY_TIME);
+ 
+ 		ack = !brcmf_p2p_tx_action_frame(ifp, p2p, af_params);
