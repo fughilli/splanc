@@ -233,9 +233,11 @@
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../release-clips.html">Feature-preview clips</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
@@ -255,6 +257,7 @@
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effect-store.html">On-device effect store</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
@@ -412,6 +415,20 @@ highlighter, the completion source, the AI prompt, and any docs never drift.</p>
 </section>
 <section id="inline-diagnostics-from-the-compiler">
 <h3>Inline diagnostics from the compiler<a class="headerlink" href="#inline-diagnostics-from-the-compiler" title="Link to this heading">¶</a></h3>
+<blockquote>
+<div><p><strong>As built (D-501, 2026-11).</strong> The editor is a transparent <code class="docutils literal notranslate"><span class="pre">&lt;textarea&gt;</span></code> over a
+highlighted <code class="docutils literal notranslate"><span class="pre">&lt;pre&gt;</span></code> (no CodeMirror; see highlight.ts), so diagnostics are drawn
+by a third layer between them: the same text, transparent, with a tinted band
+on each line with an error / warning and a red / yellow wavy underline under
+the span (<code class="docutils literal notranslate"><span class="pre">effects/editor/editing.ts</span></code> <code class="docutils literal notranslate"><span class="pre">diagnosticsHtml</span></code>). The compiler still
+reports one <code class="docutils literal notranslate"><span class="pre">{line,</span> <span class="pre">col,</span> <span class="pre">msg}</span></code> per diagnostic (1-based); the span is the token
+starting there, or the last token before it when the position is whitespace /
+end of line. Hovering a squiggle — or the caret inside one — shows the message.
+The same module carries the keyboard editing (Tab / Shift+Tab indent and
+outdent at a 4-space stop, Enter auto-indent by parse depth, the electric <code class="docutils literal notranslate"><span class="pre">}</span></code>,
+⌘⇧F / Ctrl+Shift+F format) and the <code class="docutils literal notranslate"><span class="pre">row</span> <span class="pre">:</span> <span class="pre">col</span></code> readout in the status line.
+The CodeMirror plan below is kept for its reasoning.</p>
+</div></blockquote>
 <p>The compiler is the single source of truth for correctness — the editor does
 <strong>no</strong> semantic checking of its own. Wire CM6’s <code class="docutils literal notranslate"><span class="pre">linter</span></code> to the wasm compiler:</p>
 <ul class="simple">
@@ -579,6 +596,14 @@ identical artifacts.</p></li>
 the fields (<code class="docutils literal notranslate"><span class="pre">name,</span> <span class="pre">type,</span> <span class="pre">ui_kind,</span> <span class="pre">min,</span> <span class="pre">max,</span> <span class="pre">step,</span> <span class="pre">default|options</span></code>). The
 compiler is the only thing that produces it; the editor and preview never
 synthesize one.</p></li>
+<li><p><strong>Slider <code class="docutils literal notranslate"><span class="pre">step</span></code> is the uniform’s native precision</strong> (D-541). Values ride the
+wire and flash as f32, so a <code class="docutils literal notranslate"><span class="pre">float</span></code> slider is continuous (<code class="docutils literal notranslate"><span class="pre">step:</span> <span class="pre">0</span></code>, which the
+editor renders as <code class="docutils literal notranslate"><span class="pre">step=&quot;any&quot;</span></code> and the MIDI router and firmware keypoint blend
+treat as “no snap”); an <code class="docutils literal notranslate"><span class="pre">int</span></code> steps by 1 and a <code class="docutils literal notranslate"><span class="pre">fixed</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed16</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed8</span></code> by
+its LSB. An explicit grid is <code class="docutils literal notranslate"><span class="pre">uniform</span> <span class="pre">float</span> <span class="pre">n</span> <span class="pre">:</span> <span class="pre">0..8</span> <span class="pre">step</span> <span class="pre">0.5</span> <span class="pre">=</span> <span class="pre">2.0;</span></code> (<code class="docutils literal notranslate"><span class="pre">step</span></code>
+follows the range, before the optional unit string). Earlier compilers emitted
+<code class="docutils literal notranslate"><span class="pre">(hi-lo)/100</span></code> for every range; old firmware and apps read <code class="docutils literal notranslate"><span class="pre">step:</span> <span class="pre">0</span></code> as
+continuous, so no format bump.</p></li>
 <li><p><strong>Agent-facing manifest fields.</strong> Each uniform’s object also carries an explicit
 <code class="docutils literal notranslate"><span class="pre">min</span></code>/<code class="docutils literal notranslate"><span class="pre">max</span></code> (a slider’s range; <code class="docutils literal notranslate"><span class="pre">0..1</span></code> for a toggle or colour; <code class="docutils literal notranslate"><span class="pre">0..n-1</span></code> for a
 dropdown) so an agent can clamp without knowing the UI vocabulary, an optional
