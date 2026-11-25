@@ -217,6 +217,19 @@ fn main() -> std::io::Result<()> {
         g.configure(".ledmapper.v1.Welcome.pose", Config::new().skip(true));
     }
 
+    // Network time (SNTP, docs/design/wall-clock.md). Two override servers at most. The
+    // firmware reads set_clock_config IN PLACE (pbview) and writes clock_state zero-copy
+    // (clock_ffi.rs), so its profile drops the ClockNtp strings and the request's list
+    // from the by-value envelopes.
+    if firmware {
+        g.configure(".ledmapper.v1.ClockState.ntp", Config::new().skip(true));
+        g.configure(".ledmapper.v1.SetClockConfig.ntp_servers", Config::new().skip(true));
+    } else {
+        g.configure(".ledmapper.v1.ClockNtp.servers", Config::new().max_len(2));
+        g.configure(".ledmapper.v1.ClockNtp.dhcp_servers", Config::new().max_len(2).max_bytes(16));
+        g.configure(".ledmapper.v1.SetClockConfig.ntp_servers", Config::new().max_len(2));
+    }
+
     // Uniform keypoints (docs/design/uniform-keypoints.md). The firmware reads the
     // requests IN PLACE (pbview) and encodes both replies zero-copy (ffi.rs), so its
     // profile drops every repeated field from the by-value envelopes; the host

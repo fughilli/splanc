@@ -46,6 +46,24 @@
 #include "rate_ctl.h"       // adaptive data TX rate (Minstrel-like, legacy rates)
 #include "serial_log.h"     // Console(): the ordered, lossless log ring (identity lines)
 
+// Network time (sntp_ffi.rs in the player, D-561). Weak: the OTA loader and the P4's front
+// end (relay_main.cpp) link no SNTP client, and then none of this runs.
+extern "C" {
+void lm_sntp_seed(uint32_t seed) __attribute__((weak));
+void lm_sntp_net(const uint8_t *ip, const uint8_t *mask, const uint8_t *router, const uint8_t *dns,
+                 size_t n_dns, const uint8_t *ntp, size_t n_ntp, int64_t now_us) __attribute__((weak));
+void lm_sntp_net_down(void) __attribute__((weak));
+size_t lm_sntp_poll(int64_t now_us, uint8_t *out, size_t cap, uint8_t *dst, uint16_t *dport,
+                    uint16_t *sport) __attribute__((weak));
+uint16_t lm_sntp_port(void) __attribute__((weak));
+bool lm_sntp_stamping(void) __attribute__((weak));
+void lm_sntp_note_frame(int64_t reap_us, uint32_t hw_us) __attribute__((weak));
+bool lm_sntp_rx(int64_t reap_us, uint32_t hw_us, bool has_hw, const uint8_t *src, uint16_t sport,
+                uint16_t dport, const uint8_t *data, size_t len) __attribute__((weak));
+bool lm_sntp_take_round(void) __attribute__((weak));
+size_t lm_sntp_status_line(int64_t now_us, uint8_t *out, size_t cap) __attribute__((weak));
+}
+
 extern "C" {
 void ns_mac_rx_install();
 void ns_mac_rx_stats(uint32_t *out);  // [ring high-water, full-ring polls] (high-water resets)
@@ -213,6 +231,22 @@ bool g_have_offer = false, g_leased = false;
 // heapless netstack acquired the lease once and never renewed, so it went unreachable
 // a lease-time after provisioning (the CoolerKids "works briefly, then dead" symptom).
 uint32_t g_lease_secs = 0, g_lease_ms = 0, g_last_renew_ms = 0;
+// The lease's subnet mask, router (option 3) and the router's MAC once a one-shot ARP
+// who-has (or the router's own ARP traffic) told us. Off-subnet traffic to a peer we have
+// never heard from goes to the router's MAC instead of the BSSID: on a mesh or commercial
+// AP the AP is not the router (wall-clock.md R2). Unknown -> the BSSID, as before.
+uint8_t g_mask[4] = {0}, g_router_ip[4] = {0}, g_router_mac[6] = {0};
+bool g_router_known = false, g_router_mac_ok = false;
+uint8_t g_arp_tries = 0;
+uint32_t g_arp_next_ms = 0;
+// The frame being handled: when link_recv reaped it (esp_timer us) and its RX-vector
+// stamp (g_rx_hw_ok: the reap kept the vector: the mesh's reap, or while an NTP request is
+// out). The SNTP client maps the stamp to the radio's arrival (firmware/sntp stamp.rs).
+int64_t g_rx_reap_us = 0;
+uint32_t g_rx_hw_us = 0;
+bool g_rx_hw_ok = false;
+bool g_sntp_stamp = false;  // an NTP request is out: reap with the RX vector
+uint8_t g_sntp_rxv[92];     // that vector (p2p::RXV_LEN)
 const uint8_t GATEWAY[4] = {10, 42, 0, 1};
 bool g_pinged = false;
 bool g_hwkey = false;
@@ -549,7 +583,9 @@ int build_dhcp(uint8_t *p, const uint8_t *mac, uint32_t xid, uint8_t msg_type,
   dhcp[d++] = 53; dhcp[d++] = 1; dhcp[d++] = msg_type; // DHCP message type
   if (req_ip) { dhcp[d++] = 50; dhcp[d++] = 4; memcpy(dhcp + d, req_ip, 4); d += 4; } // requested IP
   if (server_id) { dhcp[d++] = 54; dhcp[d++] = 4; memcpy(dhcp + d, server_id, 4); d += 4; } // server id
-  dhcp[d++] = 55; dhcp[d++] = 4; dhcp[d++] = 1; dhcp[d++] = 3; dhcp[d++] = 6; dhcp[d++] = 51; // param req
+  // param req: mask, router, DNS, NTP servers (the SNTP client, D-561), lease time
+  dhcp[d++] = 55; dhcp[d++] = 5; dhcp[d++] = 1; dhcp[d++] = 3; dhcp[d++] = 6; dhcp[d++] = 42;
+  dhcp[d++] = 51;
   dhcp[d++] = 255;                          // end
   int udp_len = 8 + d;
   int ip_len = 20 + udp_len;
@@ -917,9 +953,18 @@ static void learn_neighbor(const uint8_t *src_ip) {
   memcpy(n.mac, g_rx_sa, 6);
 }
 
+// Whether `ip` is off our subnet (needs the router): unicast only, with a known mask.
+static bool off_subnet(const uint8_t *ip) {
+  if (ip[0] >= 224 || !(g_mask[0] | g_mask[1] | g_mask[2] | g_mask[3])) return false;
+  for (int i = 0; i < 4; i++)
+    if ((ip[i] & g_mask[i]) != (g_offer_ip[i] & g_mask[i])) return true;
+  return false;
+}
+
 static const uint8_t *neighbor_mac(const uint8_t *dst_ip) {
   for (const Neighbor &n : g_neigh)
     if (memcmp(n.ip, dst_ip, 4) == 0) return n.mac;
+  if (g_router_mac_ok && off_subnet(dst_ip)) return g_router_mac;
   return g_bssid;
 }
 
@@ -1140,6 +1185,18 @@ void handle_arp(const uint8_t *pt, int pl) {
     Serial.printf("  ARP oper=%u who-has %u.%u.%u.%u (we=%u.%u.%u.%u) from %02x:%02x:%02x\n", oper,
                   arp[24], arp[25], arp[26], arp[27], g_offer_ip[0], g_offer_ip[1], g_offer_ip[2],
                   g_offer_ip[3], arp[8], arp[9], arp[10]);
+  // The router's MAC, from its reply to our who-has or from its own requests (wall-clock.md
+  // R2: the next hop for off-subnet peers we have not heard from, e.g. NTP and DNS).
+  if (g_router_known && (oper == 1 || oper == 2) && memcmp(arp + 14, g_router_ip, 4) == 0 &&
+      (arp[8] | arp[9] | arp[10] | arp[11] | arp[12] | arp[13]) != 0 && !(arp[8] & 1)) {
+    if (!g_router_mac_ok || memcmp(g_router_mac, arp + 8, 6) != 0)
+      Serial.printf("[arp] router %u.%u.%u.%u is at %02x:%02x:%02x:%02x:%02x:%02x (bssid %s)\n",
+                    g_router_ip[0], g_router_ip[1], g_router_ip[2], g_router_ip[3], arp[8], arp[9],
+                    arp[10], arp[11], arp[12], arp[13],
+                    memcmp(arp + 8, g_bssid, 6) == 0 ? "same" : "differs");
+    memcpy(g_router_mac, arp + 8, 6);
+    g_router_mac_ok = true;
+  }
   if (oper != 1 || memcmp(arp + 24, g_offer_ip, 4) != 0) return; // not a request for our IP
   Serial.println("  ARP -> replying");
   uint8_t payload[8 + 28];
@@ -1208,6 +1265,29 @@ static void reclaim_rst() {
     g_stale_rst_left = 2;
     g_group_tx_quiet_until_ms = now + 250;
   }
+}
+
+// ARP who-has `tpa` (broadcast). The caller gates it like the gratuitous ARP: only while no
+// wss is up and group TX isn't held quiet.
+void send_arp_request(const uint8_t *tpa) {
+  uint8_t payload[8 + 28];
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06};
+  memcpy(payload, llc, 8);
+  uint8_t *r = payload + 8;
+  r[0] = 0x00; r[1] = 0x01;      // htype: Ethernet
+  r[2] = 0x08; r[3] = 0x00;      // ptype: IPv4
+  r[4] = 6; r[5] = 4;            // hlen, plen
+  r[6] = 0x00; r[7] = 0x01;      // oper: request
+  memcpy(r + 8, OUR_MAC, 6);     // sha = our MAC
+  memcpy(r + 14, g_offer_ip, 4); // spa = our IP
+  memset(r + 18, 0, 6);          // tha = unknown
+  memcpy(r + 24, tpa, 4);        // tpa = the router
+  const uint8_t bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  uint8_t hdr[24];
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0; hdr[3] = 0;
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, bcast, 6);
+  put_seq(hdr);
+  tx_l2(hdr, payload, 8 + 28, "ARP who-has router");
 }
 
 void send_gratuitous_arp() {
@@ -1350,6 +1430,14 @@ void handle_l3(const uint8_t *pt, int pl) {
     const int udplen = (udp[4] << 8) | udp[5];
     if (udplen < 8 || udplen > iplen - ihl) return;
     uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
+    // Network time: the SNTP client's DNS and NTP replies (its port only while a round
+    // runs), with the frame's reap time and RX stamp.
+    if (g_leased && lm_sntp_rx && dport != 0 && dport == lm_sntp_port()) {
+      lm_sntp_rx(g_rx_reap_us, g_rx_hw_us, g_rx_hw_ok, ip + 12, sport, dport, udp + 8,
+                 (size_t)(udplen - 8));
+      g_sntp_stamp = lm_sntp_stamping();
+      return;
+    }
     if (dport == kOscUdpPort && g_leased) { // native OSC (docs/design/live-control.md)
       // The sender is where OSC we send goes (netstack_osc_send): the last one wins.
       memcpy(g_osc_peer_ip, ip + 12, 4);
@@ -1416,6 +1504,28 @@ void handle_l3(const uint8_t *pt, int pl) {
         g_last_good.remember(g_ssid, g_pass);    // the network to fall back to (psk_reject.h)
         g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
         memcpy(g_offer_ip, dh + 16, 4); // commit the leased IP
+        // The network options (mask, router, DNS, NTP): the next hop + the SNTP client.
+        {
+          const DhcpLeaseOptions lo = dhcp_reply_options(dh, (size_t)(udplen - 8));
+          static const uint8_t kMask24[4] = {255, 255, 255, 0};
+          memcpy(g_mask, lo.has_mask ? lo.mask : kMask24, 4);
+          if (!lo.has_router || memcmp(g_router_ip, lo.router, 4) != 0 || !g_router_known) {
+            g_router_mac_ok = false;  // a new router: ARP for it again
+            g_arp_tries = 0;
+            g_arp_next_ms = millis();
+          }
+          g_router_known = lo.has_router;
+          if (lo.has_router) memcpy(g_router_ip, lo.router, 4);
+          if (first)
+            Serial.printf("[dhcp] opts mask=%u.%u.%u.%u router=%s%u.%u.%u.%u dns=%u ntp=%u%s%u.%u.%u.%u\n",
+                          g_mask[0], g_mask[1], g_mask[2], g_mask[3], lo.has_router ? "" : "none/",
+                          g_router_ip[0], g_router_ip[1], g_router_ip[2], g_router_ip[3], lo.n_dns,
+                          lo.n_ntp, lo.n_ntp ? " first=" : " ", lo.ntp[0][0], lo.ntp[0][1],
+                          lo.ntp[0][2], lo.ntp[0][3]);
+          if (lm_sntp_net)
+            lm_sntp_net(g_offer_ip, g_mask, lo.has_router ? lo.router : nullptr, lo.dns[0],
+                        lo.n_dns, lo.ntp[0], lo.n_ntp, esp_timer_get_time());
+        }
         // Drift fork: the TCP listener binds our IP exactly ONCE (g_tcp_started one-shot at
         // the bind site) and freezes it in g_listen_ip. Any mid-session IP change — a
         // lease-lapse re-DISCOVER (see "lease EXPIRED — re-DISCOVER"), or a T1/T2 renewal
@@ -2949,6 +3059,57 @@ __attribute__((always_inline)) static inline void serve_slot() {
   }
 }
 
+// ---- Network time (sntp_ffi.rs, docs/design/wall-clock.md, D-561) ----------------------
+// Every loop pass while leased: the one-shot ARP for the router, then whatever the SNTP
+// client wants sent (a DNS query, NTP requests: unicast, small, a few an hour; never blocks).
+// A mesh-only member has no lease, so this never runs there.
+static void poll_router_arp() {
+  if (!g_router_known || g_router_mac_ok || g_arp_tries >= 3) return;
+  // Broadcast: never beside a live wss (the gratuitous-ARP rule); the BSSID stays the
+  // next hop until it answers.
+  if (any_ws_up() || group_tx_quiet() || (int32_t)(millis() - g_arp_next_ms) < 0) return;
+  g_arp_tries++;
+  g_arp_next_ms = millis() + 1000;
+  send_arp_request(g_router_ip);
+}
+
+// noinline: its line buffer never sits on the stack under the TLS paths (stack_bound).
+__attribute__((noinline)) static void sntp_service(bool up) {
+  static bool was_up = false, seeded = false;
+  if (!lm_sntp_poll) return;
+  if (!up) {
+    if (was_up) {
+      lm_sntp_net_down();
+      g_sntp_stamp = false;
+      was_up = false;
+    }
+    return;
+  }
+  was_up = true;
+  if (!seeded) {
+    uint32_t seed = 0;
+    esp_fill_random(&seed, sizeof seed);
+    lm_sntp_seed(seed);
+    seeded = true;
+  }
+  poll_router_arp();
+  int64_t now = esp_timer_get_time();
+  for (int k = 0; k < 4; k++, now = esp_timer_get_time()) {  // T1 = each request's own send
+    uint8_t dst[4];
+    uint16_t dport = 0, sport = 0;
+    const size_t n = lm_sntp_poll(now, tx_ip_slot() + kUdpPayloadOff, kTxIpCap - kUdpPayloadOff, dst,
+                                  &dport, &sport);
+    if (n == 0) break;
+    send_udp_slot(dst, sport, dport, (int)n, 64, nullptr);
+  }
+  g_sntp_stamp = lm_sntp_stamping();
+  if (lm_sntp_take_round()) {
+    char line[320];
+    if (lm_sntp_status_line(now, reinterpret_cast<uint8_t *>(line), sizeof line) > 0)
+      Serial.printf("[t=%lu] %s\n", (unsigned long)millis(), line);
+  }
+}
+
 void netstack_loop() {
   {
     uint32_t now_us = (uint32_t)micros();
@@ -3797,6 +3958,7 @@ void netstack_loop() {
       g_have_offer = false;
     }
   }
+  sntp_service(st == DONE && g_leased);
   // Gratuitous-ARP announce, ONLY while no wss client is connected. A peer that joins
   // the AP after us (the phone joining amd-rig-ap after the C6 leased) can't resolve us
   // via our unreliable responder round-trip on a plain AP, so re-announce every ~3s so it

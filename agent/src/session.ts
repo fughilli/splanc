@@ -863,9 +863,31 @@ export class DeviceSession {
   /** Set the lamp's clock (set_clock): `time` (ISO 8601 with its zone) replaces it as an
    * explicit set; without it the bridge's own UTC is pushed. `tz` (an IANA name or a
    * POSIX rule) sets the zone; without it the bridge host's zone is sent. */
-  async setClock(opts: { time?: string; tz?: string }): Promise<Record<string, unknown>> {
+  async setClock(opts: {
+    time?: string;
+    tz?: string;
+    networkTime?: boolean;
+    ntpServers?: string[];
+  }): Promise<Record<string, unknown>> {
     this.assertUnlocked();
     this.requireClock();
+    if (opts.networkTime !== undefined || opts.ntpServers !== undefined) {
+      if (!this.has("sntp")) {
+        throw new ToolError(`the player's firmware (${this.fwVersion}) has no network time; update it (update_firmware)`);
+      }
+      const st = await this.run(() =>
+        this.client.setClockConfig({
+          ...(opts.networkTime !== undefined ? { ntpEnabled: opts.networkTime } : {}),
+          ...(opts.ntpServers !== undefined ? { ntpServers: opts.ntpServers, replaceNtpServers: true } : {}),
+          syncNow: true,
+        }),
+      );
+      if (st.lastSet === "bad_server") {
+        throw new ToolError("a time server must be a host name or an IPv4 address");
+      }
+      // Only the network-time settings were asked for: done.
+      if (opts.time === undefined && opts.tz === undefined) return clockView(st);
+    }
     let zone;
     let at: number | undefined;
     try {

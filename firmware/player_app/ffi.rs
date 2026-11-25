@@ -79,6 +79,9 @@ pub mod effect_store;
 // The wall clock (docs/design/wall-clock.md): the software RTC on esp_timer, the
 // POSIX TZ zone, set_wall_clock / get_clock, the soft-reset carry-over.
 pub mod clock_ffi;
+// Network time (docs/design/wall-clock.md, D-561): the //firmware/sntp client the
+// netstack drives, set_clock_config, clock_state.ntp.
+pub mod sntp_ffi;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -2039,6 +2042,9 @@ pub unsafe extern "C" fn lm_player_handle(
             return clock_ffi::handle_set_wall_clock(frame, recv_ms, out, out_cap)
         }
         Some(clock_ffi::ARM_GET_CLOCK) => return clock_ffi::handle_get_clock(recv_ms, out, out_cap),
+        Some(clock_ffi::ARM_SET_CLOCK_CONFIG) => {
+            return clock_ffi::handle_set_clock_config(frame, recv_ms, out, out_cap)
+        }
         // FX debugger: pause / step, and snapshots streamed zero-copy into `out`.
         Some(fxdbg::ARM_FX_DEBUG_CONTROL) => return fxdbg::handle_control(frame, recv_ms, out, out_cap),
         Some(fxdbg::ARM_GET_FX_SNAPSHOT) => return fxdbg::handle_snapshot(frame, recv_ms, out, out_cap),
@@ -3180,6 +3186,9 @@ macro_rules! features {
         // The wall clock (docs/design/wall-clock.md): set_wall_clock / get_clock ->
         // clock_state, a POSIX TZ zone, kept across soft resets.
         "wall_clock",
+        // Network time (D-561): set_clock_config.ntp_*, clock_state.ntp. The netstack
+        // C6 runs its own SNTP client; the P4 runs esp_sntp on Ethernet.
+        "sntp",
         $($extra),*
     ] };
 }

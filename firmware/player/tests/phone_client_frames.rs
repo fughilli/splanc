@@ -125,6 +125,7 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetPowerConfig(_)
         | CMsg::SetWallClock(_)
         | CMsg::GetClock(_)
+        | CMsg::SetClockConfig(_)
         | CMsg::OtaBegin(_)
         | CMsg::OtaChunk(_)
         | CMsg::OtaFinish(_)
@@ -233,6 +234,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetPowerConfig(_) => "set_power_config",
         CMsg::SetWallClock(_) => "set_wall_clock",
         CMsg::GetClock(_) => "get_clock",
+        CMsg::SetClockConfig(_) => "set_clock_config",
         CMsg::OtaBegin(_) => "ota_begin",
         CMsg::OtaChunk(_) => "ota_chunk",
         CMsg::OtaFinish(_) => "ota_finish",

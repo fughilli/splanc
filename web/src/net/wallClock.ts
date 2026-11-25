@@ -38,6 +38,65 @@ export interface SetWallClockMessage {
   tzName?: string;
 }
 
+/** proto SetClockConfig, flat (network time, feature "sntp"). */
+export interface SetClockConfigMessage {
+  type: "set_clock_config";
+  ntpEnabled?: boolean;
+  useDhcpNtp?: boolean;
+  /** With replaceNtpServers: the override (<= 2; empty = DHCP, then pool.ntp.org). */
+  ntpServers?: string[];
+  replaceNtpServers?: boolean;
+  syncNow?: boolean;
+}
+
+/** proto ClockNtp as decoded. */
+export interface ClockNtpMessage {
+  enabled?: boolean;
+  useDhcp?: boolean;
+  servers?: string[];
+  dhcpServers?: string[];
+  network?: boolean;
+  server?: string;
+  rttMs?: number;
+  syncedAgeS?: number;
+  lastResult?: string | number;
+  rounds?: number;
+  fails?: number;
+  nextPollS?: number;
+  intervalS?: number;
+  lastOffer?: string | number;
+}
+
+export type ClockNtpResult =
+  | "none"
+  | "synced"
+  | "no_servers"
+  | "dns_timeout"
+  | "dns_error"
+  | "timeout"
+  | "kiss_of_death"
+  | "unsynchronised"
+  | "bad_reply"
+  | "disagree"
+  | "unconfirmed";
+
+/** The lamp's network-time client (clock_state.ntp), defaults filled. */
+export interface ClockNtp {
+  enabled: boolean;
+  useDhcp: boolean;
+  servers: string[];
+  dhcpServers: string[];
+  network: boolean;
+  server: string;
+  rttMs: number;
+  syncedAgeS: number;
+  lastResult: ClockNtpResult;
+  rounds: number;
+  fails: number;
+  nextPollS: number;
+  intervalS: number;
+}
+
 /** proto ClockState as decoded (proto3 JSON: int64 as strings, enums as names). */
 export interface ClockStateMessage {
   type: "clock_state";
@@ -57,6 +116,7 @@ export interface ClockStateMessage {
   steps?: number;
   monoJumps?: number;
   lastSet?: string | number;
+  ntp?: ClockNtpMessage;
 }
 
 export type ClockSource = "none" | "sntp" | "mesh" | "push" | "rtc" | "carry";
@@ -67,7 +127,8 @@ export type ClockSetResult =
   | "disagrees"
   | "implausible"
   | "locked"
-  | "bad_tz";
+  | "bad_tz"
+  | "bad_server";
 
 /** A clock_state with defaults filled and enums shortened. */
 export interface ClockState {
@@ -88,11 +149,53 @@ export interface ClockState {
   steps: number;
   monoJumps: number;
   lastSet: ClockSetResult;
+  /** Network time (feature "sntp"); absent on lamps without it. */
+  ntp?: ClockNtp;
 }
 
 const SOURCES: ClockSource[] = ["none", "sntp", "mesh", "push", "rtc", "carry"];
 const PUSHERS: (WallClockPusher | "none")[] = ["none", "app", "bridge", "manual", "frontend"];
-const RESULTS: ClockSetResult[] = ["none", "accepted", "not_better", "disagrees", "implausible", "locked", "bad_tz"];
+const RESULTS: ClockSetResult[] = [
+  "none",
+  "accepted",
+  "not_better",
+  "disagrees",
+  "implausible",
+  "locked",
+  "bad_tz",
+  "bad_server",
+];
+const NTP_RESULTS: ClockNtpResult[] = [
+  "none",
+  "synced",
+  "no_servers",
+  "dns_timeout",
+  "dns_error",
+  "timeout",
+  "kiss_of_death",
+  "unsynchronised",
+  "bad_reply",
+  "disagree",
+  "unconfirmed",
+];
+
+export function flatClockNtp(m: ClockNtpMessage): ClockNtp {
+  return {
+    enabled: m.enabled ?? false,
+    useDhcp: m.useDhcp ?? false,
+    servers: m.servers ?? [],
+    dhcpServers: m.dhcpServers ?? [],
+    network: m.network ?? false,
+    server: m.server ?? "",
+    rttMs: m.rttMs ?? 0,
+    syncedAgeS: m.syncedAgeS ?? 0,
+    lastResult: NTP_RESULTS[enumIndex(m.lastResult, NTP_RESULTS, "CLOCK_NTP_RESULT_")] ?? "none",
+    rounds: m.rounds ?? 0,
+    fails: m.fails ?? 0,
+    nextPollS: m.nextPollS ?? 0,
+    intervalS: m.intervalS ?? 0,
+  };
+}
 
 /** An enum field (a NAME from proto3 JSON, or a number) as its index. */
 function enumIndex(v: string | number | undefined, names: readonly string[], prefix: string): number {
@@ -126,6 +229,7 @@ export function flatClockState(m: Partial<ClockStateMessage>): ClockState {
     steps: m.steps ?? 0,
     monoJumps: m.monoJumps ?? 0,
     lastSet: RESULTS[enumIndex(m.lastSet, RESULTS, "CLOCK_SET_RESULT_")] ?? "none",
+    ...(m.ntp ? { ntp: flatClockNtp(m.ntp) } : {}),
   };
 }
 
@@ -260,4 +364,34 @@ export function clockDetail(st: ClockState | null): string {
               ? "Kept across a restart"
               : "Set";
   return `${how} ${ago(st.ageS)} · ${plusMinus(st.errMs)}`;
+}
+
+const NTP_FAIL_TEXT: Record<ClockNtpResult, string> = {
+  none: "",
+  synced: "",
+  no_servers: "no time server to ask",
+  dns_timeout: "can't look up the time server",
+  dns_error: "can't look up the time server",
+  timeout: "no answer from the time server",
+  kiss_of_death: "the time server asked it to wait",
+  unsynchronised: "the time server isn't synchronised",
+  bad_reply: "a bad answer from the time server",
+  disagree: "two time servers disagreed",
+  unconfirmed: "only one time server answered",
+};
+
+/**
+ * The network-time line: "Network time: 162.159.200.1 (18 ms)",
+ * "Network time: no answer from the time server", "Network time: off", or ""
+ * when the lamp has no network-time client (or no reading yet).
+ */
+export function ntpDetail(st: ClockState | null): string {
+  const n = st?.ntp;
+  if (!n) return "";
+  if (!n.enabled) return "Network time: off";
+  if (!n.network) return "Network time: waiting for Wi-Fi";
+  if (n.lastResult === "none") return "Network time: asking…";
+  const fail = NTP_FAIL_TEXT[n.lastResult];
+  if (fail) return `Network time: ${fail}`;
+  return `Network time: ${n.server} (${n.rttMs} ms)`;
 }

@@ -10,6 +10,7 @@ import { Button, toast } from "../kit";
 import {
   clockDetail,
   lampLocalTime,
+  ntpDetail,
   lampUtcNow,
   lampZoneLabel,
   pushWallClock,
@@ -63,7 +64,10 @@ export function ClockSection(client: ClockSectionClient): HTMLElement {
   zone.className = "clk-zone";
   const detail = document.createElement("span");
   detail.className = "clk-detail";
-  text.append(cap, time, zone, detail);
+  // Network time (firmware feature "sntp"): where the lamp's own sync stands.
+  const ntp = document.createElement("span");
+  ntp.className = "clk-detail";
+  text.append(cap, time, zone, detail, ntp);
 
   let cur: ClockState | null = null;
   let readAt = 0; // performance.now() of the reading
@@ -81,6 +85,8 @@ export function ClockSection(client: ClockSectionClient): HTMLElement {
 
   const paint = (): void => {
     el.dataset["valid"] = String(cur?.valid ?? true);
+    ntp.textContent = ntpDetail(cur);
+    ntp.hidden = ntp.textContent === "";
     setBtn.disabled = busy;
     if (!cur || !cur.valid) {
       time.textContent = cur ? "Not set" : "…";

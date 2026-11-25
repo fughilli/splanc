@@ -1300,6 +1300,9 @@ message ClientMessage {
     // time zone (a POSIX TZ rule), read it back. Reply: clock_state.
     SetWallClock set_wall_clock = 111;
     GetClock get_clock = 112;
+    // Network time (SNTP) settings: on/off, the DHCP-offered servers, an override.
+    // Owner only (kiosk: refused). Reply: clock_state.
+    SetClockConfig set_clock_config = 113;
   }
 }
 
@@ -2877,6 +2880,8 @@ enum ClockSetResult {
   CLOCK_SET_RESULT_LOCKED = 5;
   // `tz` is not a valid POSIX TZ rule (the time, if any, was still considered).
   CLOCK_SET_RESULT_BAD_TZ = 6;
+  // set_clock_config: an NTP server is not a host name or an IPv4 literal (nothing changed).
+  CLOCK_SET_RESULT_BAD_SERVER = 7;
 }
 
 // Set the wall clock (and/or the zone). Reply: clock_state.
@@ -2930,6 +2935,69 @@ message ClockState {
   uint32 mono_jumps = 15;
   // The outcome of the set_wall_clock this replies to (RESULT_NONE for get_clock).
   ClockSetResult last_set = 16;
+  // Network time on the lamp (feature "sntp"); unset on players without it.
+  ClockNtp ntp = 17;
+}
+
+// Network time (SNTP, docs/design/wall-clock.md, D-561): the lamp asks the NTP servers
+// its DHCP lease offers (option 42), else pool.ntp.org (through the lease's DNS), or the
+// owner's override. A round asks two servers and takes the time only when they agree.
+// Polls back off from 64 s to 1 h while synced, 15 s to 5 min while failing. A mesh-only
+// member (no AP lease) doesn't run it.
+message SetClockConfig {
+  // Unset = unchanged.
+  optional bool ntp_enabled = 1;
+  // Use the lease's NTP servers (when there is no override). Unset = unchanged.
+  optional bool use_dhcp_ntp = 2;
+  // With replace_ntp_servers: the override, up to 2 host names or IPv4 literals
+  // (<= 64 bytes each); empty = none (DHCP, then pool.ntp.org).
+  repeated string ntp_servers = 3;
+  bool replace_ntp_servers = 4;
+  // Run a round now (tests, "Sync now").
+  bool sync_now = 5;
+}
+
+// What the last SNTP round did.
+enum ClockNtpResult {
+  CLOCK_NTP_RESULT_NONE = 0;
+  CLOCK_NTP_RESULT_SYNCED = 1;
+  // No server to ask (no override, no DHCP NTP option, no resolver).
+  CLOCK_NTP_RESULT_NO_SERVERS = 2;
+  CLOCK_NTP_RESULT_DNS_TIMEOUT = 3;
+  CLOCK_NTP_RESULT_DNS_ERROR = 4;
+  // No server answered (no internet, a firewall, a dead server).
+  CLOCK_NTP_RESULT_TIMEOUT = 5;
+  // Kiss-o'-death (the server asked us to back off or refused us).
+  CLOCK_NTP_RESULT_KISS_OF_DEATH = 6;
+  CLOCK_NTP_RESULT_UNSYNCHRONISED = 7;
+  CLOCK_NTP_RESULT_BAD_REPLY = 8;
+  // Two servers disagreed (a misconfigured or spoofed server): the time was not taken.
+  CLOCK_NTP_RESULT_DISAGREE = 9;
+  // Only one of two servers answered and nothing confirmed it.
+  CLOCK_NTP_RESULT_UNCONFIRMED = 10;
+}
+
+message ClockNtp {
+  bool enabled = 1;
+  bool use_dhcp = 2;
+  // The owner's override ("" each = none).
+  repeated string servers = 3;
+  // What the lease offered (dotted quads) and whether there is a lease at all.
+  repeated string dhcp_servers = 4;
+  bool network = 5;
+  // The last good round: the server that was used, its round trip and age.
+  string server = 6;
+  uint32 rtt_ms = 7;
+  uint32 synced_age_s = 8;
+  ClockNtpResult last_result = 9;
+  uint32 rounds = 10;
+  uint32 fails = 11;
+  // Seconds until the next poll, and the current synced poll interval.
+  uint32 next_poll_s = 12;
+  uint32 interval_s = 13;
+  // The last good sample's offer to the clock (ACCEPTED, or NOT_BETTER when the clock
+  // already had a more certain time).
+  ClockSetResult last_offer = 14;
 }
 
 message ServerMessage {

@@ -113,3 +113,50 @@ every accepted set and every 10 minutes. The USB console takes `CLOCK STATUS` an
 - `//web:posixTz_test`, `//web:wallClock_test`, agent tests.
 - HITL `//pi/hitl/harness:clock_app_netstack`: an app-style sync, then a soft reset
   keeps the clock, while render keeps running with no late frames.
+
+## Network time (SNTP, D-561)
+
+The lamp sets its own clock from the network (`Source::Sntp`, the best-ranked source), with
+no app or bridge needed. Feature `sntp`.
+
+- **Which server.** The owner's override (`set_clock_config.ntp_servers`, up to two host
+  names or IPv4 literals) when set. Otherwise the NTP servers the DHCP lease offers
+  (option 42, now requested), topped up with `pool.ntp.org`, resolved through the lease's
+  DNS servers (option 6), else the router. `use_dhcp_ntp` turns the option-42 part off;
+  `ntp_enabled` turns SNTP off. The settings persist in NVS (`clk_ntp`).
+- **Cross-check.** A round asks two servers when it can (two option-42 servers, or one
+  plus the pool, or two pool addresses) and takes the time only when they agree (offsets
+  within the two error bounds + 50 ms). A lone answer counts when the round had one server
+  or when it matches the last accepted sample within 1 s (+500 ppm of the time since).
+  Otherwise the round fails (`DISAGREE`, `UNCONFIRMED`) and the clock is left alone.
+- **Backoff.** After a good round 64 s, doubling to 1 h. After a failed round 15 s,
+  doubling to 5 min. A kiss-o'-death waits 5 min. A random 1/8 of the interval is added.
+- **Error.** δ/2 + the server's root delay/2 + root dispersion. T4 is the radio's
+  arrival: while a request is out, the netstack reaps with the MAC's RX vector and the
+  client maps its 1 MHz stamp onto esp_timer by the reap-lag floor (`firmware/sntp`
+  `stamp.rs`), so a TLS record or a flash write in the loop doesn't add to the error.
+- **Next hop.** The netstack now reads DHCP options 1, 3, 6 and 42 and sends a one-shot
+  ARP who-has for the router (up to 3 tries, never beside a live wss). Off-subnet traffic
+  to a peer it hasn't heard from goes to the router's MAC once known, else the BSSID as
+  before. That is what makes DNS and NTP work on mesh or commercial APs where the AP is
+  not the router.
+- **No blipping.** Everything runs on the loop task: a round is one small DNS query and
+  two 48-byte requests, a few times an hour. The sample is offered to the clock on the
+  next `lm_clock_tick` (under the player mutex); one measured across an esp_timer
+  step-back is dropped.
+- **Mesh-only members** never get a lease, so they never run SNTP; they take wall time
+  from the mesh (PR-8).
+- **P4.** With Ethernet the P4 runs IDF lwIP's `esp_sntp` with the same settings and
+  offers each sync through `lm_clock_offer_sntp` (error 50 ms: lwIP gives none). A P4 + C6
+  lamp without Ethernet gets its time from the app and the bridge (the front end runs no
+  SNTP yet).
+- **Protocol.** `set_clock_config` (C 113, owner only: kiosk refuses it) → `clock_state`,
+  which now carries `ntp` (`ClockNtp`: settings, the lease's servers, the last round's
+  result, server, round trip, age, next poll).
+- **Console.** `CLOCK SNTP` prints the `[sntp]` line (also logged after every round);
+  `CLOCK SNTP NOW` runs a round now.
+- **Tests.** `//firmware/sntp:codec_test` (golden DNS/NTP packets, KoD, LI 3, era
+  pivot, RX floor), `//firmware/sntp:client_test` (server choice, cross-check, backoff,
+  strays, spoofs), `//firmware/player_app:sntp_test` (the C ABI end to end into the
+  clock), `//firmware/player_app:dhcp_reply_test` (the options), HITL
+  `//pi/hitl/harness:clock_sntp_netstack`.

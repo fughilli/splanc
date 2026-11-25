@@ -831,7 +831,8 @@ impl Player {
             | CMsg::SetPowerConfig(_)
             // The wall clock: the player_app clock layer (clock_ffi.rs).
             | CMsg::SetWallClock(_)
-            | CMsg::GetClock(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
+            | CMsg::GetClock(_)
+            | CMsg::SetClockConfig(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.

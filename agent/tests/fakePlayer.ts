@@ -124,6 +124,8 @@ export class FakePlayer {
   /** The wall clock (the "wall_clock" feature): the last set_wall_clock taken, as the
    * firmware would keep it (UTC ms at a fake-device-clock ms). */
   wallClock: { unixMs: number; atDeviceMs: number; tz: string; tzName: string; pushedBy: string } | null = null;
+  /** Network time (the "sntp" feature): the owner's settings, as set_clock_config leaves them. */
+  ntp = { enabled: true, useDhcp: true, servers: [] as string[] };
 
   /** Transition effects stored with submit_effect{powerSlot}: slot -> {id, fxb}. */
   powerEffects = new Map<number, { id: string; fxb: Uint8Array }>();
@@ -244,6 +246,7 @@ export class FakePlayer {
       tz: c.tz,
       tzName: c.tzName,
       lastSet,
+      ...(this.features.includes("sntp") ? { ntp: { ...this.ntp, network: true } } : {}),
     };
   }
 
@@ -582,6 +585,15 @@ export class FakePlayer {
       }
       case "get_clock":
         return this.reply(ws, this.clockState("CLOCK_SET_RESULT_NONE"));
+      case "set_clock_config": {
+        if (m["ntpEnabled"] !== undefined) this.ntp.enabled = m["ntpEnabled"] === true;
+        if (m["replaceNtpServers"] === true) {
+          const list = ((m["ntpServers"] as string[] | undefined) ?? []).filter((x) => x !== "");
+          if (list.some((x) => /\s/.test(x))) return this.reply(ws, this.clockState("CLOCK_SET_RESULT_BAD_SERVER"));
+          this.ntp.servers = list;
+        }
+        return this.reply(ws, this.clockState("CLOCK_SET_RESULT_ACCEPTED"));
+      }
       case "set_power": {
         const on = m["toggle"] === true ? !(this.power["on"] as boolean) : m["on"] === true;
         this.power = { ...this.power, on, phase: on ? 1 : 0, source: 1, seq: (this.power["seq"] as number) + 1 };
