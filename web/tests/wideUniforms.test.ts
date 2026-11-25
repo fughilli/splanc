@@ -135,7 +135,7 @@ function mount(uniforms: FxUniform[]): { host: FakeElement; panel: UniformPanel;
 test("panel: a ranged vector is one signed slider per component, never a colour picker", () => {
   const { host, panel, changes } = mount([PLANE, P]);
   try {
-    assert.equal(host.querySelectorAll("input[type=color]").length, 0);
+    assert.equal(host.querySelectorAll(".k-cswatch").length, 0);
     const ranges = host.querySelectorAll("input[type=range]");
     assert.equal(ranges.length, 7);
     const names = host.querySelectorAll(".upanel-name").map((n) => n.textContent);
@@ -180,7 +180,7 @@ test("panel: a mat4 is a 4×4 grid, row-major on screen over column-major storag
     const after = host.querySelector(".upanel-mat")!.querySelectorAll("input");
     assert.equal(after[1]!.value, String(dev[4]), "row 0, column 1 = storage index 4");
     // The unranged vec3 is still a colour.
-    assert.equal(host.querySelectorAll("input[type=color]").length, 1);
+    assert.equal(host.querySelectorAll(".k-cswatch").length, 1);
   } finally {
     host.remove();
   }
