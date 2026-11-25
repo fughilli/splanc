@@ -664,6 +664,29 @@ size_t lm_sntp_status_line(int64_t now_us, uint8_t *out, size_t cap);
 // NUL-terminated into out, cap >= 65). Returns the config generation (bumps on a change).
 uint32_t lm_sntp_config_get(bool *enabled, bool *use_dhcp, uint32_t k, char *out, size_t cap);
 
+// -- Hardware RTC (rtc_ffi.rs, docs/design/wall-clock.md "Hardware RTC") ---------------
+// Loop task only; lm_rtc_poll WITHOUT the player mutex (I2C waits never hold a frame).
+#define LM_RTC_POLL_LOG 1u
+#define LM_RTC_PERSIST_CFG 1u
+#define LM_RTC_PERSIST_WB 2u
+// Boot, before lm_rtc_begin: the NVS config ("rtc_cfg", 0 = autodetect) and when this
+// lamp last wrote the chip ("rtc_wb", UTC s, 0 = never).
+void lm_rtc_configure(uint16_t cfg, int64_t last_wb_unix_s);
+// Boot, with the sensor bus up (after lm_sensor_begin): detect + one read. Returns the
+// chip found (1 DS3231, 2 PCF8563, 3 RV-3028) or 0. Writes nothing to the chip.
+uint8_t lm_rtc_begin(int64_t now_us);
+// A config change wants the bus brought up (sensor_bus.cpp drv_bus_ensure).
+bool lm_rtc_wants_bus(void);
+// An RTC chip is detected.
+bool lm_rtc_present(void);
+// Every loop pass: re-detect / write-back / hourly read when due. LM_RTC_POLL_* bits.
+uint32_t lm_rtc_poll(int64_t now_us, bool bus_up);
+// What to persist since the last call (LM_RTC_PERSIST_* bits): *cfg -> "rtc_cfg",
+// *wb_unix_s -> "rtc_wb".
+uint32_t lm_rtc_persist(uint16_t *cfg, int64_t *wb_unix_s);
+// The "[rtc] ..." status line, NUL-terminated. Returns its length.
+size_t lm_rtc_status_line(uint8_t *out, size_t cap);
+
 // -- Kiosk mode (kiosk_ffi.rs, docs/design/kiosk-mode.md) ----------------------
 // Loop task only (the gate + handler run under the player mutex, the pollers after).
 #define LM_KIOSK_SRC_INTERNAL 0

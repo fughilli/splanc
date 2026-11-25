@@ -1300,8 +1300,9 @@ message ClientMessage {
     // time zone (a POSIX TZ rule), read it back. Reply: clock_state.
     SetWallClock set_wall_clock = 111;
     GetClock get_clock = 112;
-    // Network time (SNTP) settings: on/off, the DHCP-offered servers, an override.
-    // Owner only (kiosk: refused). Reply: clock_state.
+    // The clock's configuration (owner only; a locked kiosk is refused): network time
+    // (SNTP: on/off, the DHCP-offered servers, an override) and the hardware RTC chip.
+    // Reply: clock_state.
     SetClockConfig set_clock_config = 113;
   }
 }
@@ -2902,6 +2903,9 @@ message SetWallClock {
   optional string tz = 5;
   // The IANA name the rule came from, for display ("Europe/Berlin"). Persisted with tz.
   optional string tz_name = 6;
+  // Also write the time to the hardware RTC (if one is fitted) once it is accepted,
+  // even when the chip agrees within a second. Ignored from a locked kiosk session.
+  bool write_rtc = 7;
 }
 
 // Read the wall clock. Reply: clock_state.
@@ -2937,6 +2941,8 @@ message ClockState {
   ClockSetResult last_set = 16;
   // Network time on the lamp (feature "sntp"); unset on players without it.
   ClockNtp ntp = 17;
+  // The hardware RTC (feature "rtc"; absent fields = no chip).
+  RtcState rtc = 20;
 }
 
 // Network time (SNTP, docs/design/wall-clock.md, D-561): the lamp asks the NTP servers
@@ -2944,6 +2950,9 @@ message ClockState {
 // owner's override. A round asks two servers and takes the time only when they agree.
 // Polls back off from 64 s to 1 h while synced, 15 s to 5 min while failing. A mesh-only
 // member (no AP lease) doesn't run it.
+//
+// Set the clock's configuration. Unset fields are unchanged. Persisted.
+// Fields 1-15: network time; 16 on: the hardware RTC.
 message SetClockConfig {
   // Unset = unchanged.
   optional bool ntp_enabled = 1;
@@ -2955,6 +2964,11 @@ message SetClockConfig {
   bool replace_ntp_servers = 4;
   // Run a round now (tests, "Sync now").
   bool sync_now = 5;
+  // Which RTC chip: AUTO (default), OFF, or a chip taken at `rtc_addr` without
+  // the signature check (for a part that fails it). Re-detected at once.
+  optional RtcChip rtc_chip = 16;
+  // Its 7-bit address (0 = the chip's default).
+  optional uint32 rtc_addr = 17;
 }
 
 // What the last SNTP round did.
@@ -2998,6 +3012,53 @@ message ClockNtp {
   // The last good sample's offer to the clock (ACCEPTED, or NOT_BETTER when the clock
   // already had a more certain time).
   ClockSetResult last_offer = 14;
+}
+
+// -- Hardware RTC (docs/design/wall-clock.md "Hardware RTC") ---------------------
+//
+// An I2C RTC chip on the sensor bus (SDA/SCL as the IMU): the lamp keeps time
+// across a power loss. Read at boot and hourly as a clock source; written back
+// when a better source (SNTP, mesh, app or bridge) sets the time and the chip is
+// off by more than 1 s, lost time, or once a day. The chip holds UTC.
+
+// RTC chips the firmware drives natively.
+enum RtcChip {
+  // In config: autodetect (RV-3028 at 0x52, PCF8563 at 0x51, DS3231 at 0x68 by
+  // register signature, so an MPU-6050 at 0x68 is never taken for one). In state:
+  // none found.
+  RTC_CHIP_AUTO = 0;
+  RTC_CHIP_DS3231 = 1;
+  // Also the BM8563 (M5Stack).
+  RTC_CHIP_PCF8563 = 2;
+  RTC_CHIP_RV3028 = 3;
+  // In config: no hardware RTC, never probe.
+  RTC_CHIP_OFF = 15;
+}
+
+message RtcState {
+  // The configured chip (AUTO / OFF / forced) and address (0 = default).
+  RtcChip configured = 1;
+  uint32 configured_addr = 2;
+  // The chip found (AUTO = none) and its address.
+  RtcChip chip = 3;
+  uint32 addr = 4;
+  bool present = 5;
+  // Its last reading was a kept time (no oscillator-stop / VL / power-on flag).
+  bool time_valid = 6;
+  // It had lost time when first read this boot: battery missing or flat (a cheap
+  // DS3231 board may also be cooking a non-rechargeable cell; see the doc).
+  bool battery_low = 7;
+  // Die temperature, centi-degrees C (DS3231 only; has_temp).
+  bool has_temp = 8;
+  sint32 temp_cc = 9;
+  // Chip minus wall clock at its last reading, ms (±500: whole seconds).
+  sint64 offset_ms = 10;
+  // Seconds since its last reading / since this lamp last wrote it (0 = never).
+  uint32 read_age_s = 11;
+  uint32 since_write_s = 12;
+  uint32 reads = 13;
+  uint32 writes = 14;
+  uint32 errors = 15;
 }
 
 message ServerMessage {

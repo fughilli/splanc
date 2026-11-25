@@ -112,7 +112,13 @@ const skipDrivers = DRIVERS_IN_PROTO ? false : "this bundle's protocol has no dr
 
 test("drivers: scan, deploy (compiled here), state, remove", { skip: skipDrivers }, async () => {
   const s = await connect(["drivers"]);
-  assert.deepEqual(await s.scanI2c(), { addresses: ["0x40", "0x68"] });
+  const scan = await s.scanI2c();
+  assert.deepEqual(scan["addresses"], ["0x40", "0x68"]);
+  // Labelled from the known-parts table: 0x68 is an IMU or a DS3231 clock (both native).
+  const labels = scan["labels"] as Record<string, string>;
+  assert.match(labels["0x68"]!, /DS3231 Real-time clock .*\(native\)/);
+  assert.match(labels["0x68"]!, /MPU6050 .*\(native\)/);
+  assert.match(labels["0x40"]!, /INA219/);
   const src = "export float t;\nvoid poll() { t = float(i2c_read8(64, 0)); }";
   const r = await s.deployDriver(src, 20, false);
   assert.equal(r["running"], true);

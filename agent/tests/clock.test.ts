@@ -85,6 +85,49 @@ test("set_clock: an IANA zone and an explicit time", { skip }, async () => {
   s.close();
 });
 
+test("the hardware clock chip: get_clock's view, write_rtc, rtc_chip", { skip }, async () => {
+  player.features = [...player.features, "rtc"];
+  player.rtc = {
+    configured: "RTC_CHIP_AUTO",
+    chip: "RTC_CHIP_RV3028",
+    addr: 0x52,
+    present: true,
+    timeValid: true,
+    offsetMs: "-120",
+    sinceWriteS: 7200,
+    reads: 3,
+    writes: 1,
+  };
+  const s = await connect(["wall_clock", "rtc"]);
+  await until(() => sent("set_wall_clock").length > 0);
+  const r = await s.getClock();
+  assert.deepEqual(r["hardware_clock"], {
+    chip: "RV-3028 at 0x52",
+    keeps_time: true,
+    offset_ms: -120,
+    last_written: "120 min ago",
+  });
+  await s.setClock({ writeRtc: true, rtcChip: "ds3231", rtcAddr: 0x68 });
+  const cfg = sent("set_clock_config").at(-1)!;
+  assert.equal(cfg["rtcChip"], "RTC_CHIP_DS3231");
+  assert.equal(cfg["rtcAddr"], 0x68);
+  assert.equal(sent("set_wall_clock").at(-1)!["writeRtc"], true);
+  // No chip, turned off: said so.
+  player.rtc = { configured: "RTC_CHIP_OFF" };
+  assert.match(String((await s.getClock())["hardware_clock"]), /^off/);
+  s.close();
+});
+
+test("rtc options need the firmware feature", { skip }, async () => {
+  const s = await connect(["wall_clock"]);
+  await until(() => sent("set_wall_clock").length > 0);
+  await assert.rejects(s.setClock({ writeRtc: true }), /hardware-clock/);
+  assert.equal(sent("set_clock_config").length, 0);
+  const r = await s.getClock();
+  assert.equal(r["hardware_clock"], undefined, "no chip, auto: nothing to show");
+  s.close();
+});
+
 test("firmware without the wall clock gets a clear error and nothing is sent", { skip }, async () => {
   player.features = player.features.filter((f) => f !== "wall_clock");
   const s = await connect([]);

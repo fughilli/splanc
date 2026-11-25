@@ -1,0 +1,51 @@
+"""Hardware RTC chips (docs/design/wall-clock.md "Hardware RTC"): the RtcChip
+trait, DS3231 / PCF8563 / RV-3028 drivers, the registry that detects one on the
+sensor I2C bus (DS3231 vs MPU-6050 at 0x68 by register signature), and the
+read-offer / write-back policy that ties a chip to the wall clock.
+
+no_std, never allocates; the sensor core's I2cBus seam. Linked into the player
+app (firmware/player_app/rtc_ffi.rs, loop task only). Host-tested against
+register-file fakes in :rtc_test."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "rtc",
+    srcs = [
+        "src/ds3231.rs",
+        "src/lib.rs",
+        "src/pcf8563.rs",
+        "src/policy.rs",
+        "src/rv3028.rs",
+    ],
+    crate_name = "ledmapper_rtc",
+    edition = "2021",
+    # A few transactions an hour on the loop task: built for size.
+    rustc_flags = COLD_CRATE_RUSTC_FLAGS,
+    deps = [
+        "//firmware/clock",
+        "//firmware/sensor",
+    ],
+)
+
+rust_test(
+    name = "rtc_test",
+    srcs = [
+        "tests/fake_rtc.rs",
+        "tests/rtc.rs",
+        "//firmware/sensor:tests/fake_mpu.rs",
+    ],
+    crate_root = "tests/rtc.rs",
+    edition = "2021",
+    deps = [
+        ":rtc",
+        "//firmware/clock",
+        "//firmware/sensor",
+    ],
+)
+
+# The chip fakes, shared with //firmware/player_app:rtc_test (the C ABI over them).
+exports_files(["tests/fake_rtc.rs"])

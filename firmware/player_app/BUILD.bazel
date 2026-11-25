@@ -110,6 +110,7 @@ rust_static_library(
         "fxdbg.rs",
         "kiosk_ffi.rs",
         "power_ffi.rs",
+        "rtc_ffi.rs",
         "sensor_ffi.rs",
         "sntp_ffi.rs",
         "uniform_pool.rs",
@@ -153,6 +154,7 @@ rust_static_library(
         "//firmware/ota",
         "//firmware/player:player_fw",
         "//firmware/power",
+        "//firmware/rtc",
         "//firmware/sensor",
         "//firmware/sntp",
         "//firmware/store",
@@ -176,6 +178,7 @@ rust_library(
         "fxdbg.rs",
         "kiosk_ffi.rs",
         "power_ffi.rs",
+        "rtc_ffi.rs",
         "sensor_ffi.rs",
         "sntp_ffi.rs",
         "uniform_pool.rs",
@@ -203,6 +206,7 @@ rust_library(
         "//firmware/ota",
         "//firmware/player",
         "//firmware/power",
+        "//firmware/rtc",
         "//firmware/sensor",
         "//firmware/sntp",
         "//firmware/store",
@@ -303,6 +307,28 @@ rust_test(
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# The hardware RTC (rtc_ffi.rs) through the C ABI over register-file chip fakes: no chip
+# changes nothing, lost-time fill, boot source, write-back at the set phase + verify +
+# throttle + write_rtc, set_clock_config, and lm_clock_offer / lm_clock_now. Own binary.
+rust_test(
+    name = "rtc_test",
+    srcs = [
+        "tests/rtc.rs",
+        "//firmware/rtc:tests/fake_rtc.rs",
+        "//firmware/sensor:tests/fake_mpu.rs",
+    ],
+    crate_root = "tests/rtc.rs",
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//firmware/rtc",
+        "//firmware/sensor",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],

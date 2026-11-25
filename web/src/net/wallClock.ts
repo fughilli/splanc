@@ -36,9 +36,96 @@ export interface SetWallClockMessage {
   tz?: string;
   /** IANA name, for display. */
   tzName?: string;
+  /** Also write the lamp's hardware RTC (feature "rtc") once accepted. */
+  writeRtc?: boolean;
 }
 
-/** proto SetClockConfig, flat (network time, feature "sntp"). */
+/** RTC chips the firmware drives (proto RtcChip). "auto" = autodetect in config, none
+ * found in state; "off" = never probe. */
+export type RtcChip = "auto" | "ds3231" | "pcf8563" | "rv3028" | "off";
+const RTC_CHIPS: Record<number, RtcChip> = { 0: "auto", 1: "ds3231", 2: "pcf8563", 3: "rv3028", 15: "off" };
+/** Display names. */
+export const RTC_CHIP_NAMES: Record<RtcChip, string> = {
+  auto: "auto",
+  ds3231: "DS3231",
+  pcf8563: "PCF8563",
+  rv3028: "RV-3028",
+  off: "off",
+};
+
+/** The proto enum name for a chip ("rv3028" -> "RTC_CHIP_RV3028"). */
+export function rtcChipName(c: RtcChip): string {
+  return `RTC_CHIP_${c.toUpperCase()}`;
+}
+
+/** proto RtcState as decoded. */
+export interface RtcStateMessage {
+  configured?: string | number;
+  configuredAddr?: number;
+  chip?: string | number;
+  addr?: number;
+  present?: boolean;
+  timeValid?: boolean;
+  batteryLow?: boolean;
+  hasTemp?: boolean;
+  tempCc?: number;
+  offsetMs?: string | number;
+  readAgeS?: number;
+  sinceWriteS?: number;
+  reads?: number;
+  writes?: number;
+  errors?: number;
+}
+
+/** clock_state.rtc with defaults filled. */
+export interface RtcState {
+  configured: RtcChip;
+  configuredAddr: number;
+  /** The chip found ("auto" = none). */
+  chip: RtcChip;
+  addr: number;
+  present: boolean;
+  timeValid: boolean;
+  batteryLow: boolean;
+  /** °C, DS3231 only. */
+  tempC: number | null;
+  offsetMs: number;
+  readAgeS: number;
+  /** 0 = never written by this lamp. */
+  sinceWriteS: number;
+  reads: number;
+  writes: number;
+  errors: number;
+}
+
+function rtcChip(v: string | number | undefined): RtcChip {
+  if (typeof v === "number") return RTC_CHIPS[v] ?? "auto";
+  if (typeof v !== "string") return "auto";
+  const short = (v.startsWith("RTC_CHIP_") ? v.slice(9) : v).toLowerCase();
+  return (Object.values(RTC_CHIPS) as string[]).includes(short) ? (short as RtcChip) : "auto";
+}
+
+export function flatRtcState(m: RtcStateMessage | undefined): RtcState {
+  const r = m ?? {};
+  return {
+    configured: rtcChip(r.configured),
+    configuredAddr: r.configuredAddr ?? 0,
+    chip: rtcChip(r.chip),
+    addr: r.addr ?? 0,
+    present: r.present ?? false,
+    timeValid: r.timeValid ?? false,
+    batteryLow: r.batteryLow ?? false,
+    tempC: r.hasTemp ? (r.tempCc ?? 0) / 100 : null,
+    offsetMs: num(r.offsetMs),
+    readAgeS: r.readAgeS ?? 0,
+    sinceWriteS: r.sinceWriteS ?? 0,
+    reads: r.reads ?? 0,
+    writes: r.writes ?? 0,
+    errors: r.errors ?? 0,
+  };
+}
+
+/** proto SetClockConfig, flat (fields 1-15: network time, feature "sntp"; 16 on: the hardware RTC, feature "rtc"). */
 export interface SetClockConfigMessage {
   type: "set_clock_config";
   ntpEnabled?: boolean;
@@ -47,6 +134,8 @@ export interface SetClockConfigMessage {
   ntpServers?: string[];
   replaceNtpServers?: boolean;
   syncNow?: boolean;
+  rtcChip?: string;
+  rtcAddr?: number;
 }
 
 /** proto ClockNtp as decoded. */
@@ -117,6 +206,7 @@ export interface ClockStateMessage {
   monoJumps?: number;
   lastSet?: string | number;
   ntp?: ClockNtpMessage;
+  rtc?: RtcStateMessage;
 }
 
 export type ClockSource = "none" | "sntp" | "mesh" | "push" | "rtc" | "carry";
@@ -151,6 +241,8 @@ export interface ClockState {
   lastSet: ClockSetResult;
   /** Network time (feature "sntp"); absent on lamps without it. */
   ntp?: ClockNtp;
+  /** The hardware RTC (feature "rtc"; present = false without one). */
+  rtc: RtcState;
 }
 
 const SOURCES: ClockSource[] = ["none", "sntp", "mesh", "push", "rtc", "carry"];
@@ -216,7 +308,8 @@ export function flatClockState(m: Partial<ClockStateMessage>): ClockState {
     valid: m.valid ?? false,
     unixMs: num(m.unixMs),
     deviceMs: num(m.deviceMs),
-    source: SOURCES[enumIndex(m.source, SOURCES, "CLOCK_SOURCE_")] ?? "none",
+    // The proto name is CLOCK_SOURCE_HW_RTC; the short form here is "rtc".
+    source: SOURCES[enumIndex(m.source === "CLOCK_SOURCE_HW_RTC" ? 4 : m.source, SOURCES, "CLOCK_SOURCE_")] ?? "none",
     pushedBy: PUSHERS[enumIndex(m.pushedBy, PUSHERS, "WALL_CLOCK_PUSHER_")] ?? "none",
     errMs: m.errMs ?? 0,
     ageS: m.ageS ?? 0,
@@ -230,6 +323,7 @@ export function flatClockState(m: Partial<ClockStateMessage>): ClockState {
     monoJumps: m.monoJumps ?? 0,
     lastSet: RESULTS[enumIndex(m.lastSet, RESULTS, "CLOCK_SET_RESULT_")] ?? "none",
     ...(m.ntp ? { ntp: flatClockNtp(m.ntp) } : {}),
+    rtc: flatRtcState(m.rtc),
   };
 }
 
@@ -293,6 +387,8 @@ export async function pushWallClock(
     rounds?: number;
     now?: () => number;
     utcNow?: () => number;
+    /** Also write the hardware RTC once accepted (feature "rtc"). */
+    writeRtc?: boolean;
   } = {},
 ): Promise<ClockState | null> {
   if (!deviceHasWallClock(client.welcome)) return null;
@@ -301,7 +397,7 @@ export async function pushWallClock(
   const utcNow = opts.utcNow ?? (() => Date.now());
   const zone = opts.zone === undefined ? phonePosixTz() : opts.zone;
   const req = wallClockRequest(sync, now(), utcNow(), opts.pushedBy ?? "app", zone);
-  return client.setWallClock(req);
+  return client.setWallClock(opts.writeRtc ? { ...req, writeRtc: true } : req);
 }
 
 // ---- the device-sheet card's text -------------------------------------------

@@ -5,7 +5,8 @@
 //
 // What a module may do from its hooks: publish named values into the uniform pool
 // (lm_pool_publish, in publish() or frame() only), claim OSC addresses, keep its own task,
-// its own NVS namespace and its own peripherals, and log.
+// its own NVS namespace and its own peripherals, log, and be a time source for the wall
+// clock or read it (lm_clock_offer / lm_clock_now, below).
 #ifndef FIRMWARE_PLAYER_APP_PLAYER_MODULE_H_
 #define FIRMWARE_PLAYER_APP_PLAYER_MODULE_H_
 
@@ -53,6 +54,46 @@ bool lm_module_osc_send(const uint8_t *data, size_t len);
 
 // The player's async console log (serial_log.h), for modules.
 void lm_module_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+// -- The wall clock (docs/design/wall-clock.md "Time sources for module authors") -------
+// The player keeps UTC on a software RTC disciplined by source offers: SNTP, the mesh, an
+// app or bridge push, a hardware RTC on the sensor bus, the soft-reset carry-over. A
+// module can be one more source (a GNSS receiver with PPS, a DCF77/MSF/WWVB radio clock,
+// an RTC on its own bus) and can read the clock (to timestamp, or to act at a time).
+//
+// - The clock keeps the offer with the LOWEST CURRENT ERROR: each offer's error grows with
+//   its age (40 ppm for the device crystal; the source's own rate for an RTC). An offer
+//   that disagrees by > 60 s with a fresh, better-ranked source, or predates the firmware
+//   (2026-01-01), is refused. Corrections > 1 s step; smaller ones slew (<= 500 ppm).
+// - Effect time (`time`, `dt`) never moves with the wall clock.
+// - The clock may be invalid (no source since power-on): lm_clock_now returns false. Never
+//   act on a time while it is false, and treat err_ms as the honest bound.
+
+// lm_clock_offer `source`. A reference (GNSS, radio clock, a network time protocol of the
+// module's own) ranks with SNTP and shows as source SNTP in clock_state; PUSH ranks with
+// the app; RTC ranks with a hardware RTC chip.
+#define LM_CLOCK_SRC_REFERENCE 1
+#define LM_CLOCK_SRC_PUSH 3
+#define LM_CLOCK_SRC_RTC 4
+
+// Offer the time: `unix_ms` (UTC ms since 1970, no leap seconds) was true when esp_timer
+// (esp_timer_get_time(), µs) read `at_us`, within ±`err_ms` (> 0: be honest; e.g. a GNSS
+// fix with PPS: 1, an NMEA sentence without PPS: 500, a radio clock: 50). Taken at the next
+// loop pass (a few ms). Any task, any hook; never blocks. Returns 0 queued, 1 busy (one
+// offer is still waiting: retry next poll), -1 refused (bad source, time or error).
+#ifdef __cplusplus
+extern "C" {
+#endif
+int lm_clock_offer(int64_t unix_ms, int64_t at_us, uint32_t err_ms, uint8_t source);
+
+// The wall clock now: UTC ms into *unix_ms and its error bound into *err_ms (either may be
+// null). False while the clock is not set (outputs untouched). Any task, including the
+// frame() hook on the render task: a few integer ops on a snapshot the loop task
+// publishes every pass (it can lag a correction by one pass).
+bool lm_clock_now(int64_t *unix_ms, uint32_t *err_ms);
+#ifdef __cplusplus
+}  // extern "C"
+#endif
 
 // Registers `module` (an LmPlayerModule) at static-initialization time.
 #define LM_PLAYER_MODULE(module) \

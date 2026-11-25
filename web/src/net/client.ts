@@ -1505,8 +1505,10 @@ export class LedMapperClient {
     return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
   }
 
-  /** Network-time settings (feature "sntp"): on/off, the DHCP-offered servers, an
-   * override (up to 2 names or IPv4 literals), or a round now. Reply: clock_state. */
+  /** The clock's config: network time (feature "sntp": on/off, the DHCP-offered servers,
+   * an override of up to 2 names or IPv4 literals, or a round now) and the hardware RTC
+   * chip (feature "rtc": "auto", "off" or a chip at `rtcAddr`, 0 = its default). Owner
+   * only. Reply: clock_state. */
   async setClockConfig(req: Omit<SetClockConfigMessage, "type">, timeoutMs = 5000): Promise<ClockState> {
     const msg = { type: "set_clock_config", ...req } as unknown as ClientMessage;
     return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);

@@ -88,6 +88,33 @@ export const KNOWN_SENSORS: KnownSensor[] = [
     addresses: [0x46, 0x47],
     measures: ["pressure", "temperature"],
   },
+  // Real-time clocks: the firmware drives these natively as the lamp's hardware clock
+  // (docs/design/wall-clock.md "Hardware RTC"; clock_state.rtc), no VM driver. A DS3231
+  // shares 0x68 with an MPU-6050 (GY-521, AD0 low): both can't be on one bus at 0x68;
+  // strap the IMU to 0x69 or use a PCF8563 / RV-3028.
+  {
+    part: "DS3231",
+    label: "Real-time clock (±2 ppm, temperature)",
+    addresses: [0x68],
+    measures: ["time", "temperature"],
+    datasheet: "https://www.analog.com/media/en/technical-documentation/data-sheets/DS3231.pdf",
+    native: true,
+  },
+  {
+    part: "PCF8563",
+    label: "Real-time clock (also BM8563)",
+    addresses: [0x51],
+    measures: ["time"],
+    datasheet: "https://www.nxp.com/docs/en/data-sheet/PCF8563.pdf",
+    native: true,
+  },
+  {
+    part: "RV-3028-C7",
+    label: "Real-time clock (±1 ppm, 45 nA)",
+    addresses: [0x52],
+    measures: ["time"],
+    native: true,
+  },
   {
     part: "MPU9250",
     label: "9-axis IMU",
@@ -240,6 +267,15 @@ export function identifyScan(addresses: number[]): AddressMatch[] {
     out.push({ address, candidates: sensorsAtAddress(address) });
   }
   return out;
+}
+
+/** A one-line label for a scanned address: its candidates ("DS3231 real-time clock
+ * (native) / MPU6050 6-axis IMU ... (native)"), or "unknown". For the scan_i2c
+ * results the app and the agent show. */
+export function scanLabel(address: number): string {
+  const c = sensorsAtAddress(address);
+  if (c.length === 0) return "unknown";
+  return c.map((s) => `${s.part} ${s.label}${s.native ? " (native)" : ""}`).join(" / ");
 }
 
 /** Format a 7-bit address as `0x4A` (uppercase, two digits). */

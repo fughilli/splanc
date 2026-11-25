@@ -12,6 +12,7 @@ import {
   lampZoneLabel,
   ntpDetail,
   pushWallClock,
+  rtcChipName,
   wallClockRequest,
   type ClockState,
   type SetWallClockMessage,
@@ -90,6 +91,49 @@ test("clock_state decodes into the flat state", () => {
   assert.equal(empty.valid, false);
   assert.equal(empty.source, "none");
   assert.equal(empty.lastSet, "none");
+});
+
+test("clock_state.rtc (feature rtc) and the HW_RTC source decode; set_clock_config round-trips", () => {
+  const frame = encodeServer({
+    type: "clock_state",
+    valid: true,
+    unixMs: String(T),
+    source: "CLOCK_SOURCE_HW_RTC",
+    rtc: {
+      chip: "RTC_CHIP_DS3231",
+      addr: 0x68,
+      present: true,
+      timeValid: true,
+      hasTemp: true,
+      tempCc: -950,
+      offsetMs: "-120",
+      sinceWriteS: 3600,
+      writes: 2,
+    },
+  } as unknown as ServerMessage);
+  const st = flatClockState(decodeServer(frame) as never);
+  assert.equal(st.source, "rtc");
+  assert.equal(st.rtc.chip, "ds3231");
+  assert.equal(st.rtc.configured, "auto");
+  assert.equal(st.rtc.addr, 0x68);
+  assert.equal(st.rtc.present, true);
+  assert.equal(st.rtc.tempC, -9.5);
+  assert.equal(st.rtc.offsetMs, -120);
+  assert.equal(st.rtc.writes, 2);
+  // No chip: absent, no temperature.
+  const none = flatClockState({ type: "clock_state" });
+  assert.equal(none.rtc.present, false);
+  assert.equal(none.rtc.tempC, null);
+  const back = decodeClient(
+    encodeClient({ type: "set_clock_config", rtcChip: rtcChipName("rv3028"), rtcAddr: 0x52 } as unknown as ClientMessage),
+  ) as unknown as Record<string, unknown>;
+  assert.equal(back["type"], "set_clock_config");
+  assert.equal(back["rtcChip"], "RTC_CHIP_RV3028");
+  assert.equal(back["rtcAddr"], 0x52);
+  const wr = decodeClient(
+    encodeClient({ type: "set_wall_clock", unixMs: String(T), writeRtc: true } as unknown as ClientMessage),
+  ) as unknown as Record<string, unknown>;
+  assert.equal(wr["writeRtc"], true);
 });
 
 function state(p: Partial<ClockState>): ClockState {

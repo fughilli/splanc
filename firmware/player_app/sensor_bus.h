@@ -51,5 +51,10 @@ void sensor_loop();
 // an unwired pin sees a level change. Loop task.
 void sensor_gpio_sim(int pin, int pull);
 
+// The hardware RTC on the sensor bus (rtc_ffi.rs): every loop pass, WITHOUT the player
+// mutex (an hourly ~0.5 ms read, a write-back when due, a re-detect after
+// set_clock_config). Never from the render task.
+void sensor_rtc_poll();
+
 // Append the sensor status to the periodic serial report (no-op when absent).
 void sensor_log_status();

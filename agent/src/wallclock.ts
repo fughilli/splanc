@@ -3,11 +3,12 @@
  * get_clock / set_clock tools' views and the request a set builds. The push
  * itself (sync, then UTC at a device-clock instant) is the app's,
  * web/src/net/wallClock.ts; the zone comes from the bridge host (hostTz.ts) or
- * the tool's `tz` (an IANA name or a POSIX rule).
+ * the tool's `tz` (an IANA name or a POSIX rule). A hardware RTC chip (feature "rtc")
+ * shows as `hardware_clock`.
  */
 
 import { parsePosixTz, posixTzFromIntl, type PhoneTz } from "../../web/src/net/posixTz";
-import { lampLocalTime, lampZoneLabel, ntpDetail, type ClockState } from "../../web/src/net/wallClock";
+import { lampLocalTime, lampZoneLabel, ntpDetail, RTC_CHIP_NAMES, type ClockState } from "../../web/src/net/wallClock";
 
 /** A tool input `tz`: an IANA zone ("Europe/Berlin") or a POSIX rule
  * ("CET-1CEST,M3.5.0,M10.5.0/3"). Throws an Error with a user-facing message. */
@@ -64,6 +65,22 @@ export function clockView(st: ClockState): Record<string, unknown> {
       ...(n.nextPollS ? { next_poll_s: n.nextPollS } : {}),
       summary: ntpDetail(st),
     };
+  }
+  const r = st.rtc;
+  if (r.present) {
+    const chip: Record<string, unknown> = {
+      chip: `${RTC_CHIP_NAMES[r.chip]} at 0x${r.addr.toString(16).padStart(2, "0")}`,
+      keeps_time: r.timeValid,
+    };
+    if (r.batteryLow) chip["battery"] = "lost time at the last power-off: coin cell missing or flat";
+    if (r.tempC !== null) chip["temperature_c"] = r.tempC;
+    if (r.reads > 0 && r.timeValid) chip["offset_ms"] = r.offsetMs;
+    chip["last_written"] = r.sinceWriteS > 0 ? `${Math.round(r.sinceWriteS / 60)} min ago` : "never by this lamp";
+    if (r.errors > 0) chip["bus_errors"] = r.errors;
+    out["hardware_clock"] = chip;
+  } else if (r.configured !== "auto") {
+    out["hardware_clock"] =
+      r.configured === "off" ? "off (set_clock rtc_chip=auto to look for one)" : `${RTC_CHIP_NAMES[r.configured]} configured but not answering`;
   }
   return out;
 }

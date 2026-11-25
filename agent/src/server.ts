@@ -512,8 +512,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description:
         "Read each lamp's wall clock (time of day, not the effect clock): whether it is set, UTC and the lamp's " +
         "local time, its time zone (an IANA name and the POSIX rule it stores, so DST stays right offline), where " +
-        "the time came from (a phone, this bridge, set by hand, kept across a restart) and its error. A lamp " +
-        "without a hardware clock chip loses the time on a power loss until the app or this bridge reconnects.",
+        "the time came from (a phone, this bridge, set by hand, kept across a restart, its clock chip) and its " +
+        "error. A lamp without a hardware clock chip loses the time on a power loss until the app or this bridge " +
+        "reconnects; one with a chip (hardware_clock: DS3231, PCF8563 or RV-3028 on the sensor I2C bus) keeps it.",
       inputSchema: { players },
     },
     ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.getClock()))),
@@ -527,7 +528,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "with its zone, e.g. 2026-11-25T07:00:00-05:00) sets the time explicitly, replacing a more accurate one: " +
         "use it only when the user asks for a specific time. Network time (lamps with feature sntp): " +
         "network_time on/off; ntp_servers replaces the time servers (up to 2 host names or IPv4 addresses; [] = " +
-        "the router's, else pool.ntp.org).",
+        "the router's, else pool.ntp.org). Lamps with a hardware clock chip (feature `rtc`) " +
+        "write a good time to it by themselves; write_rtc forces that now, and rtc_chip picks the chip (auto: " +
+        "detect; off: ignore a fitted one; or a part the detection misses, at rtc_addr).",
       inputSchema: {
         tz: z.string().max(64).optional().describe("IANA zone or POSIX TZ rule; default: the bridge's zone"),
         time: z.string().optional().describe("ISO 8601 with a zone; default: the bridge's clock"),
@@ -537,10 +540,16 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           .max(2)
           .optional()
           .describe("override the time servers; [] = the router's (DHCP), else pool.ntp.org"),
+        write_rtc: z.boolean().optional().describe("also write the hardware clock chip now"),
+        rtc_chip: z
+          .enum(["auto", "off", "ds3231", "pcf8563", "rv3028"])
+          .optional()
+          .describe("the hardware clock chip; default: unchanged (auto-detect)"),
+        rtc_addr: z.number().int().min(0).max(127).optional().describe("its 7-bit I2C address (0 = the chip's default)"),
         players,
       },
     },
-    ({ tz, time, network_time, ntp_servers, players: sel }) =>
+    ({ tz, time, network_time, ntp_servers, write_rtc, rtc_chip, rtc_addr, players: sel }) =>
       guard(async () =>
         ok(
           await fan(sel, (s) =>
@@ -549,6 +558,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
               ...(time !== undefined ? { time } : {}),
               ...(network_time !== undefined ? { networkTime: network_time } : {}),
               ...(ntp_servers !== undefined ? { ntpServers: ntp_servers } : {}),
+              ...(write_rtc !== undefined ? { writeRtc: write_rtc } : {}),
+              ...(rtc_chip !== undefined ? { rtcChip: rtc_chip } : {}),
+              ...(rtc_addr !== undefined ? { rtcAddr: rtc_addr } : {}),
             }),
           ),
         ),
@@ -1116,7 +1128,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Probe the player's sensor I2C bus and list the 7-bit addresses that answer (to identify an attached " +
-        "module before writing a driver for it). Feature `drivers`.",
+        "module before writing a driver for it), each labelled with the parts that usually live there. Parts " +
+        "marked (native) need no driver: the firmware runs them itself (the IMU; a DS3231 / PCF8563 / RV-3028 " +
+        "clock chip, see get_clock). Feature `drivers`.",
       inputSchema: { players },
     },
     ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.scanI2c()))),

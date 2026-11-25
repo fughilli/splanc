@@ -34,7 +34,8 @@ pub struct LmI2cOps {
     pub cycles: Option<unsafe extern "C" fn() -> u32>,
 }
 
-struct FfiBus(*const LmI2cOps);
+/// The bus the C++ callbacks drive (shared with the driver VM and the RTC).
+pub(crate) struct FfiBus(*const LmI2cOps);
 
 fn bus_result(r: i32) -> Result<(), BusError> {
     match r {
@@ -303,6 +304,12 @@ pub unsafe extern "C" fn lm_sensor_set_ops(ops: *const LmI2cOps) {
     if !ops.is_null() {
         *addr_of_mut!(OPS) = core::ptr::read(ops);
     }
+}
+
+/// The installed bus (the RTC driver's handle; rtc_ffi.rs). Callbacks unset:
+/// every transaction fails with `Other`.
+pub(crate) unsafe fn ffi_bus() -> FfiBus {
+    FfiBus(addr_of!(OPS))
 }
 
 pub(crate) unsafe fn bus_write(addr: u8, bytes: &[u8]) -> bool {
