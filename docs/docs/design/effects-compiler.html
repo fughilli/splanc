@@ -415,6 +415,20 @@ highlighter, the completion source, the AI prompt, and any docs never drift.</p>
 </section>
 <section id="inline-diagnostics-from-the-compiler">
 <h3>Inline diagnostics from the compiler<a class="headerlink" href="#inline-diagnostics-from-the-compiler" title="Link to this heading">¶</a></h3>
+<blockquote>
+<div><p><strong>As built (D-501, 2026-11).</strong> The editor is a transparent <code class="docutils literal notranslate"><span class="pre">&lt;textarea&gt;</span></code> over a
+highlighted <code class="docutils literal notranslate"><span class="pre">&lt;pre&gt;</span></code> (no CodeMirror; see highlight.ts), so diagnostics are drawn
+by a third layer between them: the same text, transparent, with a tinted band
+on each line with an error / warning and a red / yellow wavy underline under
+the span (<code class="docutils literal notranslate"><span class="pre">effects/editor/editing.ts</span></code> <code class="docutils literal notranslate"><span class="pre">diagnosticsHtml</span></code>). The compiler still
+reports one <code class="docutils literal notranslate"><span class="pre">{line,</span> <span class="pre">col,</span> <span class="pre">msg}</span></code> per diagnostic (1-based); the span is the token
+starting there, or the last token before it when the position is whitespace /
+end of line. Hovering a squiggle — or the caret inside one — shows the message.
+The same module carries the keyboard editing (Tab / Shift+Tab indent and
+outdent at a 4-space stop, Enter auto-indent by parse depth, the electric <code class="docutils literal notranslate"><span class="pre">}</span></code>,
+⌘⇧F / Ctrl+Shift+F format) and the <code class="docutils literal notranslate"><span class="pre">row</span> <span class="pre">:</span> <span class="pre">col</span></code> readout in the status line.
+The CodeMirror plan below is kept for its reasoning.</p>
+</div></blockquote>
 <p>The compiler is the single source of truth for correctness — the editor does
 <strong>no</strong> semantic checking of its own. Wire CM6’s <code class="docutils literal notranslate"><span class="pre">linter</span></code> to the wasm compiler:</p>
 <ul class="simple">
