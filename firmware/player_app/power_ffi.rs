@@ -72,6 +72,16 @@ pub(crate) unsafe fn xf_override() -> Option<f32> {
     *addr_of!(XF_OVERRIDE)
 }
 
+/// A schedule rule turns the lamp on / off (sched_ffi.rs; render, at its frame).
+pub(crate) unsafe fn scheduled(on: bool, duration_ms: u32, now: u32) {
+    request(on, false, duration_ms, pw::SOURCE_SCHEDULE, now);
+}
+
+/// A power transition is playing its effect on deck B.
+pub(crate) unsafe fn owns_deck_b() -> bool {
+    machine().owns_deck_b()
+}
+
 /// The lamp is settled off (nothing renders).
 pub(crate) unsafe fn dark() -> bool {
     (*addr_of!(MACHINE)).phase() == pw::PHASE_OFF

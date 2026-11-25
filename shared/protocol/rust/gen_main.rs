@@ -255,6 +255,18 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    // Schedules (docs/design/schedule.md): the firmware parses and encodes the rules
+    // itself (//firmware/schedule wire form, sched_ffi.rs), so its profile drops them
+    // from the by-value envelope; the host profile holds a frame / a page (4).
+    g.configure(".ledmapper.v1.ScheduleRule.label", Config::new().max_bytes(24));
+    for field in [".ledmapper.v1.SetSchedule.rules", ".ledmapper.v1.ScheduleState.rules"] {
+        if firmware {
+            g.configure(field, Config::new().skip(true));
+        } else {
+            g.configure(field, Config::new().max_len(4));
+        }
+    }
+
     // Firmware update (docs/design/ota.md). Neither firmware image decodes or encodes
     // these through the generated bindings: the app and the loader intercept the OTA
     // arms and use the hand-coded codec in //firmware/ota (wire.rs, cross-checked
