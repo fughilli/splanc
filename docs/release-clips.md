@@ -204,6 +204,22 @@ After **Changes needed**, the run stops. To fix the release:
 
 Then **Re-run failed jobs**. The review is asked again with a new desk item.
 
+**The draft.** `app_previews` makes the draft with `release_clips ensure-draft`
+(or reuses the tag's existing one, keeping its notes), and the webapp job
+publishes that same draft with `release_clips finalize`. Both match a draft by
+its name as well as its tag, because GitHub reports a draft's tag as
+`untagged-<id>` once another release claims it. softprops/action-gh-release
+isn't used for app releases: it looks releases up by tag, which never finds a
+draft, so app-v1.17.0 shipped as a new, empty release beside the reviewed draft.
+
+**Clip links in the draft.** A draft's files are served only under the draft's
+placeholder tag (`/releases/download/untagged-<id>/`), so the draft's "Feature
+previews" link those URLs, which play for anyone who can see the draft. The
+final `/releases/download/<tag>/` URLs exist only once the release is
+published, so the publish step runs `release_clips relink --tag <tag>`, which
+points the notes at them. If that step fails (it doesn't block the deploy), run
+`GH_TOKEN=… python3 tools/release_clips/release_clips.py relink --tag <tag>`.
+
 TestFlight builds (`macos.yaml`) are not behind this gate.
 
 One-time setup: create the `release-review` environment (Settings →

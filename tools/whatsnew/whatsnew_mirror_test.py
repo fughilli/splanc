@@ -138,6 +138,35 @@ class SelectionTest(unittest.TestCase):
         capped = wm.select_releases(rel, wm.APP_TAG, 10, up_to="app-v1.9.10")
         self.assertEqual([r["tag_name"] for r in capped], ["app-v1.9.10", "app-v1.9.2"])
 
+    def test_an_untagged_draft_is_matched_by_name_once(self):
+        # GitHub reports a draft's tag as untagged-<id> once another release claims
+        # the tag (app-v1.17.0): match it by name, keep the newest draft only, and
+        # a published release beats any draft.
+        rows = [
+            {"tag_name": "untagged-aa", "name": "app-v1.17.0", "draft": True, "created_at": "2026-11-23T00:00:00Z"},
+            {"tag_name": "untagged-bb", "name": "app-v1.17.0", "draft": True, "created_at": "2026-11-25T00:00:00Z"},
+            {"tag_name": "app-v1.16.0", "name": "app-v1.16.0", "draft": False},
+        ]  # fmt: skip
+        picked = wm.select_releases(rows, wm.APP_TAG, 10, up_to="app-v1.17.0")
+        self.assertEqual([r["tag_name"] for r in picked], ["app-v1.17.0", "app-v1.16.0"])
+        self.assertEqual(picked[0]["created_at"], "2026-11-25T00:00:00Z")
+        self.assertEqual(
+            [r["tag_name"] for r in wm.select_releases(rows, wm.APP_TAG, 10)], ["app-v1.16.0"]
+        )
+        rows.append(
+            {
+                "tag_name": "app-v1.17.0",
+                "name": "app-v1.17.0",
+                "draft": False,
+                "created_at": "2026-11-20T00:00:00Z",
+            }
+        )
+        picked = wm.select_releases(rows, wm.APP_TAG, 10, up_to="app-v1.17.0")
+        self.assertEqual(
+            [(r["tag_name"], r["draft"]) for r in picked],
+            [("app-v1.17.0", False), ("app-v1.16.0", False)],
+        )
+
     def test_up_to_draft_is_included(self):
         # The Release workflow mirrors its own (still draft) release before publishing it.
         picked = wm.select_releases(load_fixture(), wm.APP_TAG, 10, up_to="app-v1.11.0")
