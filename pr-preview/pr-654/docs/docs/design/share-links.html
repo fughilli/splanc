@@ -422,22 +422,25 @@ link can’t be enforced against someone who keeps the bytes.</p></li>
 <section id="decisions-for-the-owner">
 <h2>Decisions for the owner<a class="headerlink" href="#decisions-for-the-owner" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p><strong>Default mode.</strong> Built as: the link opens by itself, and “Send a code separately” is an
-opt-in switch (smoothest handoff, as asked). Alternative: code on by default for <code class="docutils literal notranslate"><span class="pre">mesh</span></code>
-links (they grant everything) and off for <code class="docutils literal notranslate"><span class="pre">fixture</span></code> links. Recommendation: code on by
-default for <code class="docutils literal notranslate"><span class="pre">mesh</span></code>.</p></li>
-<li><p><strong>Delegated admins instead of copying the key</strong> (needs firmware). The owner’s admin key
+<li><p><strong>Default mode. Decided (2026-11-24): code on by default for <code class="docutils literal notranslate"><span class="pre">mesh</span></code> links</strong>, which grant
+everything; the sender can turn it off. <code class="docutils literal notranslate"><span class="pre">fixture</span></code> links open by themselves unless the
+sender turns the code on.</p></li>
+<li><p><strong>Delegated admins instead of copying the key</strong> (needs firmware). Decided (2026-11-24):
+build it; see “Revocable access” below. The owner’s admin key
 signs a sub-admin certificate <code class="docutils literal notranslate"><span class="pre">{pubkey,</span> <span class="pre">rights,</span> <span class="pre">not_after}</span></code>, and members accept grants from
 it until <code class="docutils literal notranslate"><span class="pre">not_after</span></code> or until a revocation order names it. The link then carries the
 receiver’s <em>own</em> key (or the receiver sends back its public key) instead of the owner’s
 secret, so it can expire and be revoked. That is the only way to get “share for the
 weekend”. Recommendation: yes, as mesh M9, after the bench PRs land.</p></li>
-<li><p><strong>Opening the native app.</strong> On iOS, <code class="docutils literal notranslate"><span class="pre">https://splanc.io/app/…</span></code> opens Safari, not the
-Capacitor app, until the app has the Associated Domains entitlement
-(<code class="docutils literal notranslate"><span class="pre">applinks:splanc.io</span></code>) and splanc.io serves <code class="docutils literal notranslate"><span class="pre">/.well-known/apple-app-site-association</span></code> for
-<code class="docutils literal notranslate"><span class="pre">/app/*</span></code> (the Studio-Fug/splanc.io repo). Android needs <code class="docutils literal notranslate"><span class="pre">assetlinks.json</span></code> plus an intent
-filter once there is an Android build. The installed PWA on Android already takes links
-in its scope. Both are small, but they touch the release and site repos. Proceed?</p></li>
+<li><p><strong>Opening the native app. Decided (2026-11-24): yes.</strong> splanc.io serves
+<code class="docutils literal notranslate"><span class="pre">/.well-known/apple-app-site-association</span></code> naming <code class="docutils literal notranslate"><span class="pre">D9JWD94AGX.dev.splanc.app</span></code> for
+<code class="docutils literal notranslate"><span class="pre">/app/</span></code> with fragment <code class="docutils literal notranslate"><span class="pre">/share?*</span></code> only (Studio-Fug/splanc.io#15), so other <code class="docutils literal notranslate"><span class="pre">/app</span></code> links
+still open the web app. The app gets <code class="docutils literal notranslate"><span class="pre">applinks:splanc.io</span></code> from <code class="docutils literal notranslate"><span class="pre">web/ios-config/apply.sh</span></code>
+behind <code class="docutils literal notranslate"><span class="pre">SPLANC_IOS_ASSOCIATED_DOMAINS=1</span></code>: like Sign in with Apple, the distribution
+profile must include Associated Domains first, or a signed build fails. <code class="docutils literal notranslate"><span class="pre">&#64;capacitor/app</span></code>
+reports the opened link (<code class="docutils literal notranslate"><span class="pre">web/src/net/appLinks.ts</span></code>), and the app applies its fragment
+as the route. Android needs <code class="docutils literal notranslate"><span class="pre">assetlinks.json</span></code> plus an intent filter once there is an
+Android build; the installed PWA on Android already takes links in its scope.</p></li>
 </ol>
 </section>
 <section id="the-wider-social-feature-set">
