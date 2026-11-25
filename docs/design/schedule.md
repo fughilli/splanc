@@ -1,8 +1,8 @@
 # Wall-clock schedules
 
 Status: PR-6 of the real-time effects plan (desk D-559). The firmware engine, the protocol
-and a HITL lane. The app's schedule screen and the MCP tools come in PR-7; group schedules
-over the mesh come in PR-8.
+and a HITL lane. The app's schedule screen and the MCP tools come in PR-7. PR-8 adds the
+mesh: wall time on mesh time and group schedules ("On a mesh" below).
 
 "At 07:00 on weekdays, fade up." "Thirty minutes before sunset, crossfade to the evening
 effect." Each lamp stores and fires its own rules on its own wall clock, in its own zone
@@ -134,10 +134,58 @@ A lamp holds 24 rules. The pure logic is the no_std crate `//firmware/schedule`,
 - The firmware profile carries no rules in its by-value envelope. `sched_ffi.rs` encodes
   them zero-copy.
 
+## On a mesh (PR-8)
+
+Each lamp still stores and fires its own rules (D-564); what the mesh shares is the wall
+clock they fire on.
+
+- **The record.** The gateway's admin session sends its wall clock as one record on the
+  admin-class mesh port `CLOCK = 25` (`splanc_mesh::wallclock`; port 24 is claimed by the
+  open mesh-tesla stack, #551). It is signed per receiver like `TIME_BASE`, or carries
+  envelope trust on a dev mesh with no admin key. The record holds:
+  - `wall_minus_mesh_us`, UTC µs minus mesh µs;
+  - a generation and the sender;
+  - the sender's clock source and error;
+  - the zone (the POSIX rule and the IANA name).
+- **Who sends it.** Only a gateway whose own clock is set from somewhere other than the mesh
+  (the app, the bridge, SNTP, an RTC, a soft-reset carry-over). A record never comes back
+  around as its own source. It goes out:
+  - at once;
+  - when the gateway's clock moves against mesh time by more than 0.5 ms (at most every
+    2 s);
+  - when the source or the zone changes;
+  - every 30 s for members that joined or rebooted since.
+- **Members.** A member maps the record through its own mesh-time fit
+  (`MeshStack::wall_map`) and offers it to its software RTC as source `Mesh` every 10 s. A
+  mesh-only member (no SNTP, no app) gets its time this way. A member with a better source of
+  its own keeps that for its display clock. Members adopt the record's zone: one site, one
+  zone, so a rule written for 07:00 fires at the same local time on every lamp.
+- **Same frame everywhere.** `sched_ffi.rs` converts a fire instant through the record
+  (`clock_ffi::mesh_due_ms`), on the gateway too. That gives one mesh instant `M` on every
+  member, whatever each lamp's own clock says. With frames on the show epoch's grid (the
+  mesh time base), the rule is queued half a frame before grid frame
+  `k = ceil((M − epoch) / period)`, so each member's apply queue releases it on frame `k`
+  whatever its millisecond rounding. The log line is `[sched] mesh id= k=`.
+- **Group schedules.** `set_schedule`, `delete_schedule` and `set_clock_config` (the
+  location sun rules need) are on the relay allow-list. The app writes a group's rules with
+  `mesh_send{targets: group, inner: set_schedule}`, one rule per frame (a mesh packet holds
+  about 200 B), and gets each member's answer in the `MeshResult`. `set_wall_clock` is not
+  relayed: wall time reaches members as the record, which a relayed message's arrival time
+  can't match.
+- **Status.** Each member broadcasts a small clock status (tag `0x25` on `STATUS`, its own
+  packet, so an older gateway still decodes the 27-byte status) on change and every 60 s.
+  `get_mesh` lists it per member (`MeshMember.clock_source`, `clock_err_ms`) and reports the
+  gateway's own (`MeshState.clock_source`, `clock_err_ms`, `clock_gen`, `clock_origin`).
+  The console's `MESH TIME` adds an `[mt] wall` line. The log shows `[mt] clock sent` on the
+  gateway and `[mt] clock taken` on a member, for the first record from a sender and for any
+  record that changed the zone.
+
 ## Log
 
 - `[sched] boot: N rules, location set|none`
 - `[sched] fire id= in_ms=`, when a rule is handed out
+- `[sched] mesh id= k=`, when it was mapped through the mesh's record (`k`: its grid frame,
+  -1 off the grid)
 - `[sched] applied id= at_ms= due_ms= late_ms= unix_ms=`, the frame it landed on and that
   frame's wall time
 - `[sched] skip id= why=` (1 LIVE, 2 NO_EFFECT, 3 BUSY)
@@ -177,6 +225,21 @@ A lamp holds 24 rules. The pure logic is the no_std crate `//firmware/schedule`,
   - a held rule is skipped as LIVE;
   - after a soft reset, the reconcile brings the scheduled effect back;
   - render runs with no late frame throughout.
+- `//firmware/mesh/meshsim:meshsim_test` `wall_clock_on_mesh_time` (PR-8): six simulated
+  fixtures (clocks off by up to 0.2 s and ±20 ppm). Members agree on wall time within
+  200 µs, a rule's instant lands on the same grid frame, a late joiner gets the record within
+  one refresh, members never re-originate, and their clock status reaches the gateway. The
+  same runs on a dev mesh, with a group `set_schedule` fanned out.
+- `schedule_test` (PR-8 part): a member's fires go through the record's instant (7 ms off
+  its own clock), half a frame ahead of the grid frame with an epoch, and it adopts the zone.
+- HITL `//pi/hitl/harness:mesh_clock_schedule` (PR-8, two DUTs on one rig, the dev mesh
+  image):
+  - the gateway gets wall time from the harness; the member gets none;
+  - the member must report source MESH;
+  - a group rule written once through `mesh_send` fires on both;
+  - both apply it on the same grid frame (`[mt] apply k=`, as `mesh_apply_at_skew`), within
+    one frame after the instant;
+  - render runs with no late frame, and the DUT serial logs are kept.
 
 ## Not here yet
 
@@ -186,8 +249,7 @@ A lamp holds 24 rules. The pure logic is the no_std crate `//firmware/schedule`,
   - `list_schedules` / `set_schedule` / `delete_schedule` tools;
   - the bridge renewing `hold_s` while Show Mode's lock is held;
   - regenerating `web/src/gen/ledmapper_pb.ts` and adding the arms to `web/src/net/proto.ts`.
-- **PR-8:** group rules fanned out over the mesh.
 - **`player_rs`:** answering the arms by wiring the crate into `pi/player_rs/src/schedule.rs`.
-- **The HITL lane** uses one DUT. Two DUTs changing on the same frame (the plan's
-  two-analyzer check) waits for the mesh lane (PR-8). Until then the same-frame property
-  rests on each lamp landing within one frame of the wall instant.
+- **The app's group editor.** The firmware fans a group's rules out (PR-8). The app's
+  schedule screen still writes one lamp; sending a group's rules through `mesh_send` is an
+  app change.

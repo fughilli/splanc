@@ -15,6 +15,12 @@
 //!   hardware RTC always; a LOCKED kiosk session only while the clock is unset
 //!   (and its tz only while none is set). The gate passes both arms as Read
 //!   (kiosk_ffi.rs); this handler enforces the rest.
+//! - **The mesh (RTC PR-8, D-564).** mesh_ffi.rs reads this clock for the gateway's
+//!   `CLOCK` record ([`lm_clock_wall_get`], [`lm_clock_zone_get`]) and hands back the record
+//!   in force mapped onto esp_timer ([`lm_clock_mesh`]): a member offers it as source
+//!   `Mesh` (and adopts the record's zone), and every node, the gateway included, converts
+//!   schedule instants through it ([`mesh_due_ms`]), so a group's rule fires on the same
+//!   grid frame everywhere.
 //! - **Render never touches any of this.** Every entry point here runs on the
 //!   loop task (the message handlers and the 20 Hz tick), so plain statics, like
 //!   wifi_ffi.rs. Effects keep their own `time` / `dt` on the show epoch.
@@ -134,6 +140,8 @@ pub unsafe extern "C" fn lm_clock_test_reset() {
     LAST_STATUS_US = i64::MIN;
     POOL_AT = i64::MIN;
     (*addr_of_mut!(POOL)).valid = false;
+    MESH = None;
+    MESH_OFFERED = None;
 }
 
 /// Reads esp_timer through the step guard: a step back moves the clock's anchors
@@ -201,6 +209,177 @@ pub(crate) unsafe fn zone() -> (&'static PosixTz, u32) {
 
 /// Every zone change since boot (TZ_GEN is reset by the persist poll's view).
 static mut TZ_GEN_ALL: u32 = 0;
+
+// -- the mesh's wall clock (RTC PR-8) ---------------------------------------------
+
+/// The mesh's wall-clock record mapped onto this device (mesh_ffi.rs, every 50 ms).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MeshLink {
+    /// UTC µs minus raw esp_timer µs, and minus mesh µs.
+    pub wall_minus_local_us: i64,
+    pub wall_minus_mesh_us: i64,
+    /// Mesh µs minus raw esp_timer µs.
+    pub mesh_minus_local_us: i64,
+    /// The mesh's show epoch (mesh µs) when frames are on its grid.
+    pub epoch_mesh_us: Option<i64>,
+    pub err_us: i64,
+    pub gen: u32,
+    pub origin: u16,
+    /// This device sent the record (the gateway): it is not offered back to its own clock.
+    pub own: bool,
+    /// Raw esp_timer µs of the update.
+    pub at_us: i64,
+}
+
+static mut MESH: Option<MeshLink> = None;
+/// The record generation last offered, and when (raw µs).
+static mut MESH_OFFERED: Option<(u32, u16, i64)> = None;
+/// A member re-offers the mesh's time this often (its error grows meanwhile).
+const MESH_REOFFER_US: i64 = 10 * US_PER_SEC;
+/// The link is used for schedules while updated within this long.
+const MESH_LINK_STALE_US: i64 = 2 * US_PER_SEC;
+
+/// The mesh link in force (schedules, status), if fresh.
+pub(crate) unsafe fn mesh_link() -> Option<MeshLink> {
+    let l = (*addr_of!(MESH))?;
+    let now = raw_mono_us();
+    (now.saturating_sub(l.at_us) <= MESH_LINK_STALE_US && l.at_us <= now).then_some(l)
+}
+
+/// Device ms (the `now_ms` domain) at which a rule due at UTC µs `fire_unix_us` applies
+/// on a mesh: the instant mapped through the mesh's record (the same mesh instant on every
+/// member), and with frames on the show epoch's grid, half a frame before grid frame
+/// k = ceil((M − epoch) / period), so every member's queue releases it on frame k whatever
+/// its ms rounding. `period_us`: this device's frame period. None off the mesh.
+pub(crate) unsafe fn mesh_due_ms(fire_unix_us: i64, now_ms: i64, period_us: i64) -> Option<(i64, Option<i64>)> {
+    let l = mesh_link()?;
+    let now = raw_mono_us();
+    let m = fire_unix_us.saturating_sub(l.wall_minus_mesh_us);
+    let (target_mesh, k) = match l.epoch_mesh_us {
+        Some(e) if period_us > 0 => {
+            let rel = m - e;
+            let k = rel.div_euclid(period_us) + i64::from(rel.rem_euclid(period_us) != 0);
+            (e + k * period_us - period_us / 2, Some(k))
+        }
+        _ => (m, None),
+    };
+    let local = target_mesh - l.mesh_minus_local_us;
+    Some((now_ms + (local - now).div_euclid(1000), k))
+}
+
+/// The wall clock for the mesh (mesh_ffi.rs): UTC µs at raw esp_timer `*at_us`, its error
+/// bound now and its source (`ClockSource`). Returns 0 (and source 0) while invalid.
+///
+/// # Safety
+/// Pointers writable. Loop task.
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_wall_get(unix_us: *mut i64, at_us: *mut i64, err_us: *mut i64, source: *mut u8) -> u32 {
+    let now = mono_now();
+    let st = (*addr_of!(CLOCK)).status(now);
+    *at_us = now;
+    *source = st.source.map_or(0, |s| s.to_u8());
+    *err_us = st.uncertainty_us;
+    match st.unix_us {
+        Some(u) => {
+            *unix_us = u;
+            1
+        }
+        None => {
+            *unix_us = 0;
+            0
+        }
+    }
+}
+
+/// The zone (POSIX rule, IANA name) for the mesh's record; returns a counter bumped on
+/// every change.
+///
+/// # Safety
+/// Pointers writable; the returned slices live until the next zone change. Loop task.
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_zone_get(rule: *mut *const u8, rule_len: *mut u32, name: *mut *const u8, name_len: *mut u32) -> u32 {
+    *rule = addr_of!(TZ_STR) as *const u8;
+    *rule_len = TZ_LEN as u32;
+    *name = addr_of!(TZ_NAME) as *const u8;
+    *name_len = TZ_NAME_LEN as u32;
+    TZ_GEN_ALL
+}
+
+/// The mesh's record mapped onto this device (mesh_ffi.rs, every 50 ms while it holds one
+/// and mesh time is synced). `epoch_mesh_us`: i64::MIN when frames are not on a show-epoch
+/// grid. A member offers it to the clock as source Mesh on a new record and every 10 s.
+///
+/// # Safety
+/// Loop task.
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_mesh(
+    wall_minus_local_us: i64,
+    wall_minus_mesh_us: i64,
+    epoch_mesh_us: i64,
+    err_us: i64,
+    gen: u32,
+    origin: u16,
+    own: bool,
+) -> u32 {
+    let now = mono_now();
+    let l = MeshLink {
+        wall_minus_local_us,
+        wall_minus_mesh_us,
+        mesh_minus_local_us: wall_minus_local_us - wall_minus_mesh_us,
+        epoch_mesh_us: (epoch_mesh_us != i64::MIN).then_some(epoch_mesh_us),
+        err_us: err_us.max(0),
+        gen,
+        origin,
+        own,
+        at_us: now,
+    };
+    MESH = Some(l);
+    if own {
+        return 0;
+    }
+    let due = match *addr_of!(MESH_OFFERED) {
+        Some((g, o, at)) => g != gen || o != origin || now.saturating_sub(at) >= MESH_REOFFER_US || at > now || !clock().is_valid(),
+        None => true,
+    };
+    if !due {
+        return 0;
+    }
+    MESH_OFFERED = Some((gen, origin, now));
+    let offer = Offer::new(Source::Mesh, now.saturating_add(wall_minus_local_us), now, l.err_us);
+    match clock().offer(offer, now) {
+        Ok(_) => {
+            PUSHED_BY = PUSHER_NONE;
+            EVENT_GEN = EVENT_GEN.wrapping_add(1);
+            1
+        }
+        Err(_) => 0,
+    }
+}
+
+/// The mesh's zone (a member adopts the record's: one site, one zone). Returns 1 if it
+/// changed this lamp's.
+///
+/// # Safety
+/// Slices readable. Loop task.
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_mesh_zone(rule: *const u8, rule_len: u32, name: *const u8, name_len: u32) -> u32 {
+    let r = core::slice::from_raw_parts(rule, rule_len as usize);
+    let n = core::slice::from_raw_parts(name, name_len as usize);
+    let Ok(rs) = core::str::from_utf8(r) else { return 0 };
+    if tz_str() == r && tz_name() == n {
+        return 0;
+    }
+    set_zone(rs, n) as u32
+}
+
+/// The mesh no longer gives a record (off, left, or mesh time lost).
+///
+/// # Safety
+/// Loop task.
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_mesh_clear() {
+    MESH = None;
+}
 
 // -- clock_state ------------------------------------------------------------------
 
@@ -690,6 +869,13 @@ pub unsafe extern "C" fn lm_clock_status_line(out: *mut u8, cap: usize) -> usize
             tz.utc_offset_s(u),
             st.uncertainty_us / 1000,
             st.age_us / US_PER_SEC,
+        );
+    }
+    if let Some(m) = mesh_link() {
+        let _ = write!(
+            l,
+            " mesh_gen={} mesh_origin={:04x} mesh_own={} mesh_err_us={}",
+            m.gen, m.origin, m.own as u8, m.err_us
         );
     }
     let _ = write!(

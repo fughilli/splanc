@@ -77,6 +77,10 @@ probe!(MESH_RAM_rekeyer, Rekeyer);
 probe!(MESH_RAM_rekey_member, RekeyMember);
 probe!(MESH_RAM_router, Router);
 probe!(MESH_RAM_admin_gate, AdminGate);
+// RTC PR-8: the wall clock on mesh time, and the gateway's member table (each member's
+// clock status rides in it).
+probe!(MESH_RAM_wall, splanc_mesh::wallclock::WallMesh);
+probe!(MESH_RAM_fanout_16, splanc_mesh::gateway::Fanout<16>);
 // Open mode (feature `open_mode`, M7b): what it will add.
 #[cfg(feature = "open_mode")]
 probe!(MESH_RAM_open_guest_table, splanc_mesh::guest::GuestTable<{ splanc_mesh::guest::GUESTS }>);

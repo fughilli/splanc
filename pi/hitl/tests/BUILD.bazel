@@ -66,6 +66,7 @@ py_test(
         "test_max_ota_core.py",
         "test_mesh_app_e2e_core.py",
         "test_mesh_apply_at_skew_core.py",
+        "test_mesh_clock_schedule_core.py",
         "test_mesh_effect_core.py",
         "test_mesh_gateway_core.py",
         "test_mesh_join_admin_core.py",

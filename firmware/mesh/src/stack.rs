@@ -42,6 +42,7 @@ use crate::node::{MtuTooSmall, Node, NodeConfig, Rx};
 use crate::ports::{ControlHeader, Inbound, Port, Role, RouteCtx, RouteReject, Router, Targets, SESSION_ENVELOPE};
 use crate::rekey::{NewKeys, RekeyMember, RekeyMsg, RekeyOrder, Rekeyer};
 use crate::security::{Domain, FrameGuard, MeshSecurity};
+use crate::wallclock::{ClockStatus, LocalWall, WallMesh, WallRecord, Zone, RECORD_MAX, T_CLOCK_STATUS};
 
 /// Largest plain frame (a `JoinAccept` in its envelope) plus room.
 pub const PLAIN_MAX: usize = 192;
@@ -168,6 +169,9 @@ pub enum Event<'a> {
     /// A newer show epoch (§6.3, M4) arrived in a time beacon: map it onto this device's
     /// time base.
     ShowEpoch(ShowEpoch),
+    /// The admin session's wall-clock record (RTC PR-8, [`crate::wallclock`]) is now in
+    /// force here ([`MeshStack::wall`]): offer it to the device's clock.
+    WallClock { gen: u32, origin: NodeId },
     /// An admin session's gateway confirmed our freshness: its commands are accepted.
     SessionSynced { session: u32, gateway: NodeId },
     /// Gateway: this session's grant expires at `not_after` (mesh seconds); the app should
@@ -360,6 +364,8 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     /// Signed `TIME_BASE` commands sent (gateway) and taken (member).
     pub epochs_sent: u32,
     pub epochs_signed: u32,
+    /// The wall clock on mesh time (RTC PR-8): the record in force and when to send ours.
+    pub wall: WallMesh,
     /// Blobs and scenes (M6): the bulk side, the scene this member works on, the gateway's
     /// share in progress, its scene generation and the members to catch up.
     pub blobs: Blobs,
@@ -487,6 +493,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(epoch_announce, false);
         w!(epochs_sent, 0);
         w!(epochs_signed, 0);
+        w!(wall, WallMesh::new());
         w!(blobs, Blobs::new());
         w!(scene, None);
         w!(dist, None);
@@ -557,6 +564,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         self.pending_acks = [None; CRYPTO_ACKS];
         self.epoch_announce = false;
         self.time.epoch_allowed = None;
+        self.wall.clear();
         self.scene = None;
         self.dist = None;
         self.catchup = [None; CATCHUPS];
@@ -830,6 +838,10 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             if self.epoch_announce && self.node.net.mesh.can_send() {
                 self.announce_epoch(now_us);
             }
+            // The wall clock (RTC PR-8): a gateway whose own clock is set sends it on mesh time.
+            if self.node.net.mesh.can_send() {
+                self.announce_wall(now_us);
+            }
             // Only when the outbox has room: a packet the mesh can't queue would be lost
             // until the next round (a C6 gateway's outbox holds 4).
             if let (Some(rk), Some(gs), true) = (self.rekeyer.as_mut(), self.gateway.as_ref(), self.node.net.mesh.can_send()) {
@@ -914,6 +926,19 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 if self.node.net.send(BROADCAST, Port::Status as u8, &b[..len], false).is_some() {
                     let jitter = (self.rng.u32() as i64).rem_euclid(topo::TOPO_EVERY_US / 4);
                     self.topo.sent(now_us, &m, topo::TOPO_EVERY_US - jitter);
+                    sent_status = true;
+                }
+            }
+        }
+        // 6d. The wall clock's status (RTC PR-8): its own small packet, not in the same pass.
+        if !sent_status && self.wall.reported && self.membership.is_member() && self.node.net.mesh.can_send() {
+            let st = self.wall.status();
+            if self.wall.status_due(now_us, &st) {
+                let mut b = [0u8; ClockStatus::LEN];
+                if let Some(n) = st.encode(&mut b) {
+                    if self.node.net.send(BROADCAST, Port::Status as u8, &b[..n], false).is_some() {
+                        self.wall.status_went(now_us, st);
+                    }
                 }
             }
         }
@@ -1138,6 +1163,55 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         }
     }
 
+    /// The connection the wall-clock record goes out under: a signing session, or on a dev
+    /// mesh with no admin key (envelope trust) any connection that opened the gateway.
+    fn clock_conn(&self) -> Option<usize> {
+        self.signing_conn().or_else(|| if self.envelope_trust() { (0..admin::MAX_CONNECTIONS).find(|&c| self.gate.is_unlocked(c)) } else { None })
+    }
+
+    /// The device's own wall clock (None: invalid) and zone, each pass (RTC PR-8). A gateway
+    /// whose clock is set and not from the mesh originates the record from it.
+    pub fn set_local_wall(&mut self, l: Option<LocalWall>, zone: Zone) {
+        self.wall.set_local(l, zone);
+    }
+
+    /// The wall clock in force here mapped onto the local clock: `(UTC − local µs, UTC − mesh
+    /// µs, its error now µs)`. None without a record or before mesh time is synced.
+    pub fn wall_map(&self, now_us: i64) -> Option<(i64, i64, i64)> {
+        let r = self.wall.rec?;
+        if !self.time.synced() {
+            return None;
+        }
+        let err = self.wall.err_now(now_us, if self.wall.own { 0 } else { self.time.err_us })?;
+        Some((r.wall_minus_mesh_us.saturating_add(self.time.clock.offset_us), r.wall_minus_mesh_us, err))
+    }
+
+    /// Send this gateway's wall clock as its session's `CLOCK` record when it is due
+    /// ([`crate::wallclock`]).
+    fn announce_wall(&mut self, now_us: i64) {
+        if !self.time.synced() {
+            return;
+        }
+        let Some(conn) = self.clock_conn() else { return };
+        let Some(c) = self.wall.candidate(now_us, self.time.mesh_us(now_us), self.time.err_us) else { return };
+        if !self.wall.due(now_us, &c) {
+            return;
+        }
+        let mut probe = c;
+        probe.gen = self.wall.rec.map_or(0, |r| r.gen).wrapping_add(1);
+        probe.origin = self.me();
+        let mut b = [0u8; RECORD_MAX];
+        let Some(n) = probe.encode(&mut b) else { return };
+        match self.send_admin(now_us, conn, Port::Clock, &b[..n], None) {
+            // No member confirmed yet: it is still this node's clock (its schedules map
+            // through it); the next round tries the members again.
+            Ok(_) | Err(SendError::NoRecipients) => {
+                self.wall.sent(now_us, self.me(), c);
+            }
+            Err(_) => {}
+        }
+    }
+
     fn send_session(&mut self, to: NodeId, m: &SessionMsg, want_ack: bool) {
         let mut b = [0u8; 200];
         if let Some(n) = m.encode(&mut b) {
@@ -1249,6 +1323,16 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     }
                 }
             }
+            // The wall clock (RTC PR-8). Admin-class: signed, or envelope trust on a dev mesh
+            // (the router refuses envelope framing on a mesh that holds an admin key).
+            Port::Clock => match WallRecord::decode(body) {
+                Some(r) => {
+                    if self.wall.take(now_us, self.me(), r) {
+                        on(Event::WallClock { gen: r.gen, origin: r.origin });
+                    }
+                }
+                None => self.wall.stats.bad += 1,
+            },
             Port::Status if body.first() == Some(&T_PROBE) => {}
             Port::Status if body.first() == Some(&T_PENDING_JOIN) => {
                 if let Some(p) = PendingJoin::decode(body) {
@@ -1260,6 +1344,11 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 if let Some(st) = StatusMsg::decode(body) {
                     self.fanout.on_status(now_us, origin, st);
                     self.fanout.note_hops(origin, self.rx_hops.saturating_add(1));
+                }
+            }
+            Port::Status if body.first() == Some(&T_CLOCK_STATUS) => {
+                if let Some(c) = ClockStatus::decode(body) {
+                    self.fanout.on_clock(now_us, origin, c);
                 }
             }
             Port::Status if body.first() == Some(&T_TOPO) => {

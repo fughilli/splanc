@@ -125,6 +125,8 @@ const NOTE_N: usize = 6;
 static mut NOTES: [Option<(u8, u8, i64)>; NOTE_N] = [None; NOTE_N];
 const NOTE_FIRE: u8 = 1;
 const NOTE_SKIP: u8 = 2;
+/// The fire was mapped through the mesh's wall clock (v: the grid frame, -1 off the grid).
+const NOTE_MESH: u8 = 3;
 
 /// Render-side ramps: (from, to, start device ms, duration ms).
 #[derive(Clone, Copy)]
@@ -471,16 +473,24 @@ unsafe fn pend(p: Pending) -> bool {
 /// clock at `utc_ms`.
 unsafe fn on_fire(f: Fire, now_ms: i64, utc_ms: i64) -> u32 {
     let s = f.slot;
-    let due = if f.catch_up {
-        now_ms
-    } else {
-        now_ms + (f.at_s * 1000 - utc_ms).max(0)
+    // On a mesh (RTC PR-8) the instant goes through the mesh's wall-clock record, the same
+    // mesh instant on every member, onto the show epoch's frame grid: a group's rule fires on
+    // the same frame everywhere. Elsewhere: this lamp's own clock.
+    let period_us = 1_000_000 / i64::from((*addr_of!(super::FPS)).rung_fps().max(1));
+    let mesh = if f.catch_up { None } else { clock_ffi::mesh_due_ms(f.at_s * 1_000_000, now_ms, period_us) };
+    let due = match (f.catch_up, mesh) {
+        (true, _) => now_ms,
+        (false, Some((d, _))) => d.max(now_ms),
+        (false, None) => now_ms + (f.at_s * 1000 - utc_ms).max(0),
     };
     if live_now() {
         skip(s.id, SKIP_LIVE);
         return TICK_LOG;
     }
     note(s.id, NOTE_FIRE, due - now_ms);
+    if let Some((_, k)) = mesh {
+        note(s.id, NOTE_MESH, k.unwrap_or(-1));
+    }
     let mut b = [0u8; HDR + 8];
     match s.kind {
         ActionKind::Power => {
@@ -877,6 +887,9 @@ pub unsafe extern "C" fn lm_sched_status_line(now_ms: i64, out: *mut u8, cap: us
         match what {
             NOTE_FIRE => {
                 let _ = write!(l, "[sched] fire id={id} in_ms={v}");
+            }
+            NOTE_MESH => {
+                let _ = write!(l, "[sched] mesh id={id} k={v}");
             }
             _ => {
                 let _ = write!(l, "[sched] skip id={id} why={v}");

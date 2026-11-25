@@ -1476,6 +1476,10 @@ message MeshMember {
   // Since its last topology report (absent: none yet; older firmware sends none).
   optional uint32 topology_ms_ago = 17;
   MeshPoseState pose_state = 18;
+  // Its wall clock (RTC; 0 from older firmware or while it is not set): the source
+  // (CLOCK_SOURCE_MESH = the gateway's record on mesh time) and its error bound, ms.
+  ClockSource clock_source = 19;
+  uint32 clock_err_ms = 20;
 }
 
 message MeshState {
@@ -1525,6 +1529,13 @@ message MeshState {
   repeated MeshNeighbour neighbours = 27;
   uint32 topology_next = 28;
   MeshPoseState pose_state = 29;
+  // The wall clock (RTC; docs/design/schedule.md "On a mesh"): this fixture's source and
+  // error bound (ms), and the mesh's wall-clock record it maps schedules through (its
+  // generation and the gateway that sent it; 0 = none).
+  ClockSource clock_source = 30;
+  uint32 clock_err_ms = 31;
+  uint32 clock_gen = 32;
+  uint32 clock_origin = 33;
 }
 
 // The mesh gateway's replies: `result` answers mesh_send (and is pushed when its member

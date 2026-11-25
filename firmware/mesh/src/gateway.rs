@@ -2,9 +2,12 @@
 //! to needs to command the whole mesh, and what a member needs to answer it.
 //!
 //! - **The relay allow-list** ([`relay_arm`]): the `ClientMessage` arms a member dispatches
-//!   when they arrive over the mesh. Live look control only: effect selection, uniforms,
+//!   when they arrive over the mesh. Live look control: effect selection, uniforms,
 //!   brightness, crossfade, keypoint blends, and an effect upload small enough for one mesh
-//!   packet. Never firmware updates, renames, Wi-Fi credentials or policy, trust, kiosk, or
+//!   packet; and the group's wall-clock schedule (RTC PR-8, D-564: the app writes the same
+//!   rules to every member of a group through the gateway, and each lamp fires its own):
+//!   `set_schedule`, `delete_schedule` and `set_clock_config` (the location sun rules need).
+//!   Never firmware updates, renames, Wi-Fi credentials or policy, trust, kiosk, or
 //!   anything that reads bulk state. The gateway checks it before sending; every member checks
 //!   it again before dispatching (a member never trusts the sender's check).
 //! - **Scheduling** ([`with_apply_at`]): the gateway stamps `apply_at_ms` (on the mesh's show
@@ -16,6 +19,9 @@
 //!   firmware, uptime, heap, fps, brightness, mesh-time state and error, last error.
 //! - **Topology** ([`crate::topo::TopoMsg`], `STATUS` port next to the status): room pose and
 //!   radio neighbours, kept per member on every node.
+//! - **Clock status** ([`crate::wallclock::ClockStatus`], `STATUS` port, its own small packet
+//!   so an older gateway keeps decoding the 27-byte status): the wall clock's source and
+//!   error (RTC PR-8).
 //! - **Aggregation** ([`Fanout`]): the gateway's member table (from adverts, status and
 //!   replies) and its pending operations; an operation completes when every expected member
 //!   answered or its timeout passed, and becomes one [`OpResult`] (the app's `MeshResult`).
@@ -25,6 +31,7 @@
 use crate::backhaul::NodeId;
 use crate::ports::Targets;
 use crate::topo::{Topo, TopoMsg};
+use crate::wallclock::ClockStatus;
 
 /// `ClientMessage` arm numbers (ledmapper.proto) the relay policy names.
 pub mod arm {
@@ -44,10 +51,17 @@ pub mod arm {
     pub const MESH_ADMIN: u32 = 101;
     /// A deck's `shared state` (a catch-up's state blob; docs/design/fx-mesh-state-and-agents.md).
     pub const SET_FX_STATE: u32 = 102;
+    /// Wall clock and schedules (RTC; docs/design/schedule.md).
+    pub const SET_WALL_CLOCK: u32 = 111;
+    pub const SET_CLOCK_CONFIG: u32 = 113;
+    pub const SET_SCHEDULE: u32 = 114;
+    pub const DELETE_SCHEDULE: u32 = 115;
 }
 
-/// The arms a member dispatches from the mesh (module docs).
-pub const RELAYED: [u32; 7] = [
+/// The arms a member dispatches from the mesh (module docs). Not `set_wall_clock`: wall time
+/// reaches members as the `CLOCK` record on mesh time ([`crate::wallclock`]), which a relayed
+/// control's arrival time (hops, retries) can't match.
+pub const RELAYED: [u32; 10] = [
     arm::SUBMIT_EFFECT,
     arm::SET_EFFECT,
     arm::SET_UNIFORMS,
@@ -55,6 +69,9 @@ pub const RELAYED: [u32; 7] = [
     arm::SET_CROSSFADE,
     arm::BLEND_KEYPOINTS,
     arm::SET_FX_STATE,
+    arm::SET_CLOCK_CONFIG,
+    arm::SET_SCHEDULE,
+    arm::DELETE_SCHEDULE,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,6 +336,8 @@ pub struct Member {
     pub status_us: i64,
     /// Its room pose, neighbours and hop count ([`crate::topo`]).
     pub topo: Topo,
+    /// Its wall clock's source and error, and when it said so (RTC PR-8).
+    pub clock: Option<(ClockStatus, i64)>,
 }
 
 /// One relayed control the gateway is collecting answers for (or has finished).
@@ -398,9 +417,9 @@ impl<const N: usize> Fanout<N> {
             .position(|m| m.is_some_and(|m| m.node == node))
             .or_else(|| self.members.iter().position(|m| m.is_none()))
             .unwrap_or_else(|| (0..N).min_by_key(|&i| self.members[i].map_or(i64::MIN, |m| m.seen_us)).unwrap_or(0));
-        let m = self.members[i].get_or_insert(Member { node, seen_us: now_us, status: None, status_us: 0, topo: Topo::EMPTY });
+        let m = self.members[i].get_or_insert(Member { node, seen_us: now_us, status: None, status_us: 0, topo: Topo::EMPTY, clock: None });
         if m.node != node {
-            *m = Member { node, seen_us: now_us, status: None, status_us: 0, topo: Topo::EMPTY };
+            *m = Member { node, seen_us: now_us, status: None, status_us: 0, topo: Topo::EMPTY, clock: None };
         }
         m.seen_us = now_us;
         m
@@ -426,6 +445,11 @@ impl<const N: usize> Fanout<N> {
     /// A member's topology message ([`crate::topo`]).
     pub fn on_topo(&mut self, now_us: i64, node: NodeId, t: &TopoMsg) {
         self.touch(now_us, node).topo.apply(now_us, t);
+    }
+
+    /// A member's clock status ([`crate::wallclock::ClockStatus`]).
+    pub fn on_clock(&mut self, now_us: i64, node: NodeId, c: ClockStatus) {
+        self.touch(now_us, node).clock = Some((c, now_us));
     }
 
     /// Hops a status-port message from `node` took to get here (1 = a direct neighbour).
@@ -575,6 +599,11 @@ mod tests {
         assert_eq!(relay_arm(&[0xda, 0x01, 3, 0x0a, 1, b'x']), Err(Refuse::NotAllowed(27)));
         assert_eq!(relay_arm(&[0xb2, 0x04, 0]), Err(Refuse::NotAllowed(70)));
         assert_eq!(relay_arm(&[0xd2, 0x05, 0]), Err(Refuse::NotAllowed(90)));
+        // A group's schedule goes to every member (RTC PR-8); wall time itself does not.
+        assert_eq!(relay_arm(&[0x92, 0x07, 0]), Ok(arm::SET_SCHEDULE));
+        assert_eq!(relay_arm(&[0x9a, 0x07, 0]), Ok(arm::DELETE_SCHEDULE));
+        assert_eq!(relay_arm(&[0x8a, 0x07, 0]), Ok(arm::SET_CLOCK_CONFIG));
+        assert_eq!(relay_arm(&[0xfa, 0x06, 0]), Err(Refuse::NotAllowed(arm::SET_WALL_CLOCK)));
         // Trailing bytes, a varint arm, a short body, nothing.
         let mut b = brightness();
         b.push(0);
