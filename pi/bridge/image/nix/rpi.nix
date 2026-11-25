@@ -45,6 +45,19 @@
       "logo.nologo"
     ]
     ++ lib.optional (config.security.lsm != [ ]) "lsm=${lib.concatStringsSep "," config.security.lsm}"
+    # Boot time to the splash (measured on a Pi 3A+, 2026-11-24: /init at 1.06 s
+    # instead of 1.74 s). The bcm2835 mailbox probe takes ~0.5 s and every driver
+    # that asks the firmware something waits behind it: probe those in the
+    # background so stage 1 (and the splash) starts without them. Not
+    # driver_async_probe=*: that reorders the gpiochips (the firmware's expander
+    # became gpiochip0, and the HAT keys broke; hat.use_soc_gpiochip now copes).
+    # actpwr_trig_init waits ~0.24 s on the firmware for the PWR LED trigger
+    # (the LED stays on as the firmware left it); scx_init (sched_ext, unused)
+    # takes ~0.12 s.
+    ++ [
+      "driver_async_probe=dwc2,raspberrypi-cpufreq,leds-gpio,bcm2835_vchiq"
+      "initcall_blacklist=actpwr_trig_init,scx_init"
+    ]
     ++ config.splancBridge.kernelParams
   );
 
@@ -67,6 +80,18 @@
     };
     options.camera_auto_detect.enable = false;
   };
+  # The USB controller of boards with nothing behind it on the board (Pi 3A+,
+  # board-type 0x0e; Zero 2 W, 0x12): the mainline dwc2 driver, probed in the
+  # background, instead of the downstream dwc_otg, whose init holds the boot for
+  # ~0.9 s. Pi 3B/3B+ keep dwc_otg (their Ethernet sits behind it, and dwc_otg's
+  # FIQ handles that hub's split transactions better).
+  hardware.raspberry-pi.extra-config = lib.mkAfter ''
+    [board-type=0x0e]
+    dtoverlay=dwc2,dr_mode=host
+    [board-type=0x12]
+    dtoverlay=dwc2,dr_mode=host
+    [all]
+  '';
   hardware.i2c.enable = true;
 
   services.udev.extraRules = ''
