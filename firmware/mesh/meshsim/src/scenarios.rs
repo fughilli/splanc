@@ -14,6 +14,7 @@ use splanc_mesh::ports::{Port, Targets};
 use splanc_mesh::rekey::{RekeyHead, RekeyOrder, RekeyWraps};
 use splanc_mesh::security::FrameGuard;
 use splanc_mesh::stack::SendError;
+use splanc_mesh::admin::UnlockError;
 use swarm_net::mesh::{Header as MeshHeader, PacketOf, BROADCAST};
 
 use super::*;
@@ -80,6 +81,13 @@ fn control(w: &mut World, op: u32, t: Targets) -> i64 {
     w.now()
 }
 
+/// Send control `op` from gateway `gw`'s connection 0.
+fn control_on(w: &mut World, gw: usize, op: u32, t: Targets) -> i64 {
+    let local = w.local(gw);
+    w.nodes[gw].stack.send_control(local, CONN, op, t, b"set_uniforms{speed=0.5}").expect("control");
+    w.now()
+}
+
 /// Who got control `op` (index, count, latency ms of the first).
 fn receivers(w: &World, op: u32, sent: i64) -> Vec<(usize, usize, f64)> {
     w.nodes
@@ -128,9 +136,9 @@ fn radiolarians_self_configure_and_take_control() {
     let t = w.local(GW);
     assert_eq!(w.nodes[GW].stack.send_control(t, CONN, 1, Targets::All, b"x"), Err(SendError::Locked));
     let rogue = AdminSigner::from_secret(b"not-the-admin!!!", w.mesh_id).grant(w.mesh_id, 9, id(GW), w.nodes[GW].stack.dev.public_key(), 99_999);
-    assert!(w.nodes[GW].stack.unlock(t, 1, &rogue).is_err());
+    assert!(w.nodes[GW].stack.unlock(t, 1, &rogue, None).is_err());
     let g = w.grant(GW, SESSION);
-    assert!(w.nodes[GW].stack.unlock(t + 1_000_000, CONN, &g).is_err(), "locked out");
+    assert!(w.nodes[GW].stack.unlock(t + 1_000_000, CONN, &g, None).is_err(), "locked out");
     w.run_ms(2_100);
     let sync_ms = w.unlock_and_sync(GW, SESSION, &all, 10_000).expect("members confirm the session");
     for n in &w.nodes[1..] {
@@ -461,6 +469,61 @@ fn removal_rekey_64_fixtures() {
     let (ms, bytes, packets, revoked) = removal(64, true, 9);
     assert!(ms < 20_000, "{ms}");
     eprintln!("rekey 64 fixtures (8x8 grid, 4 m): converged in {ms} ms; {bytes} B in {packets} packets; rejoins refused {revoked}");
+}
+
+/// Revocable access (docs/design/share-links.md): a delegate the admin key certified
+/// administers the mesh through one gateway (its certificate travels ahead of its grant);
+/// the owner, through another gateway, rotates the keys with the delegate on the revocation
+/// list; every member drops the delegate's session, its gateway locks, and the delegate's
+/// grant is refused from then on.
+#[test]
+fn a_delegate_administers_until_the_owner_revokes_it() {
+    let n = 6;
+    let mut w = room(n, 21);
+    let all: Vec<usize> = (0..n).collect();
+    let c = creds(&w);
+    form(&mut w, &all, &c, 0, 30_000);
+
+    let delegate = AdminSigner::from_secret(b"a delegate's key", w.mesh_id);
+    let cert = w.admin.delegation(w.mesh_id, delegate.public(), admin::NO_EXPIRY);
+    let local_s = (w.local(GW) / 1_000_000) as u32;
+    let g = delegate.delegated_grant(w.mesh_id, SESSION, w.nodes[GW].id, w.nodes[GW].stack.dev.public_key(), local_s + 3600);
+
+    // Without its certificate the gateway refuses the grant.
+    let t = w.local(GW);
+    assert_eq!(w.nodes[GW].stack.unlock(t, CONN, &g, None), Err(UnlockError::BadGrant));
+    w.run_ms(2_100);
+    let t = w.local(GW);
+    w.nodes[GW].stack.unlock(t, CONN, &g, Some(&cert)).expect("a certified delegate's grant");
+    let members: Vec<usize> = (1..n).collect();
+    let ms = w.run_until(60_000, |w| members.iter().all(|&m| w.nodes[m].synced(SESSION))).expect("members synced to the delegate's session");
+    let sent = control(&mut w, 41, Targets::All);
+    w.run_ms(2_000);
+    assert_eq!(receivers(&w, 41, sent).len(), n - 1, "the delegate commands every member");
+    eprintln!("delegate: {} members synced in {ms} ms, commands reach all", n - 1);
+
+    // The owner, on another gateway, revokes it with a key rotation.
+    const OWNER_GW: usize = 1;
+    const OWNER_SESSION: u32 = 2;
+    w.unlock_and_sync(OWNER_GW, OWNER_SESSION, &all, 60_000).expect("owner session");
+    let dh = splanc_mesh::crypto::key_hash(&delegate.public());
+    let (mk, ss) = ([0xA6u8; 16], [0x6Au8; 32]);
+    let order = RekeyOrder::sign(&w.admin, w.mesh_id, 2, &mk, &ss, 1, &[dh]);
+    let t = w.local(OWNER_GW);
+    w.nodes[OWNER_GW].stack.rotate(t, CONN, order, &mk, &ss, &[], &mut |_| {}).unwrap();
+    let others: Vec<usize> = (0..n).filter(|&i| i != OWNER_GW).collect();
+    w.run_until(60_000, |w| others.iter().all(|&i| !w.nodes[i].synced(SESSION))).expect("every member dropped the delegate's session");
+    assert!(w.nodes[GW].stack.gateway.is_none(), "the delegate's gateway session is gone");
+    assert!(!w.nodes[GW].stack.signing_session(CONN), "its connection is locked");
+    assert!(w.nodes.iter().all(|x| x.stack.sessions.delegation(&dh).is_none()), "no member keeps its certificate");
+
+    // Its grant (and a fresh one) is refused from now on; the owner still commands.
+    w.run_ms(2_100);
+    let t = w.local(GW);
+    assert_eq!(w.nodes[GW].stack.unlock(t, CONN, &g, Some(&cert)), Err(UnlockError::BadGrant));
+    let sent = control_on(&mut w, OWNER_GW, 43, Targets::All);
+    w.run_ms(2_000);
+    assert_eq!(receivers(&w, 43, sent).len(), n - 1, "the owner's session is untouched");
 }
 
 /// A command for 64 members takes several packets (per-receiver MACs).

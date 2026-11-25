@@ -26,6 +26,15 @@
 //!    `(payload - 13 - body) / 8` recipients, ~20 at 200 B, so a larger target set takes
 //!    several packets).
 //!
+//! 4. **Delegated admins** (docs/design/share-links.md, "Revocable access"). The admin key
+//!    can certify another key with a [`Delegation`] ("this key may sign grants for mesh M
+//!    until T"). Grants signed by it carry its key hash ([`Grant::by`]); members verify the
+//!    certificate once (it travels on its own, ahead of the grant: the two don't fit one
+//!    packet) and then the grant against the certified key. Revoking a delegate is the
+//!    admin's key rotation with the delegate's key hash on the revocation list
+//!    ([`Revocations`]): members drop its certificate and its sessions, and refuse it from
+//!    then on. A delegate cannot sign rotation orders or further delegations.
+//!
 //! What a compromised member can still do: relay or drop, send group-key data traffic under
 //! any source id (status, replies: not security-relevant), and command through a grant only
 //! if the admin granted it a session.
@@ -33,6 +42,7 @@
 use crate::backhaul::NodeId;
 use crate::crypto::{ct_eq, hmac, key_hash, p256_verify_parts, pairwise_key, DeviceKey, Entropy, KeyHash, PublicKey};
 use crate::codec::{R, W};
+use crate::rekey::Revocations;
 
 pub const ADMIN_SECRET_LEN: usize = 16;
 /// A wrong grant locks unlocking out this long (kiosk's `UNLOCK_LOCKOUT_MS`).
@@ -64,7 +74,8 @@ pub const ACK_RETRY_US: i64 = 1_000_000;
 /// app renews in the background in M8; 5 min of slack for the app's view of mesh time).
 pub const MAX_GRANT_S: u32 = 12 * 3600 + 300;
 
-/// "Gateway G may issue commands for session S until T", signed by the admin key.
+/// "Gateway G may issue commands for session S until T", signed by the admin key, or by a
+/// delegate the admin key certified ([`Delegation`]; `by` names it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grant {
     pub mesh_id: u32,
@@ -74,10 +85,15 @@ pub struct Grant {
     /// Expiry in mesh seconds (§6; until M4, the gateway's notion of time).
     pub not_after: u32,
     pub sig: [u8; 64],
+    /// The delegate key's hash when a delegate signed it (None: the admin key). Not under
+    /// the signature: a wrong one only points the verify at a key that didn't sign.
+    pub by: Option<KeyHash>,
 }
 
 impl Grant {
+    /// An admin-signed grant on the wire; a delegated one is [`Grant::LEN_DELEGATED`].
     pub const LEN: usize = 1 + 4 + 4 + 2 + 65 + 4 + 64;
+    pub const LEN_DELEGATED: usize = Grant::LEN + 8;
 
     /// The signed bytes, as parts.
     pub fn signed<'a>(&self, buf: &'a mut [u8; 87]) -> &'a [u8] {
@@ -94,11 +110,83 @@ impl Grant {
     }
 
     fn encode_into(&self, w: &mut W<'_>) {
-        w.u8(T_GRANT).u32(self.mesh_id).u32(self.session).u16(self.gateway).put(&self.gateway_key).u32(self.not_after).put(&self.sig);
+        w.u8(if self.by.is_some() { T_GRANT_D } else { T_GRANT });
+        w.u32(self.mesh_id).u32(self.session).u16(self.gateway).put(&self.gateway_key).u32(self.not_after).put(&self.sig);
+        if let Some(h) = &self.by {
+            w.put(h);
+        }
     }
 
-    fn decode_from(r: &mut R<'_>) -> Option<Grant> {
-        Some(Grant { mesh_id: r.u32()?, session: r.u32()?, gateway: r.u16()?, gateway_key: r.arr()?, not_after: r.u32()?, sig: r.arr()? })
+    fn decode_from(r: &mut R<'_>, delegated: bool) -> Option<Grant> {
+        let mut g = Grant { mesh_id: r.u32()?, session: r.u32()?, gateway: r.u16()?, gateway_key: r.arr()?, not_after: r.u32()?, sig: r.arr()?, by: None };
+        if delegated {
+            g.by = Some(r.arr()?);
+        }
+        Some(g)
+    }
+}
+
+/// A delegation certificate (never expires).
+pub const NO_EXPIRY: u32 = 0;
+/// Certificates a member keeps (one per admin session it can hold).
+pub const DELEGATIONS: usize = SESSIONS;
+
+/// "This key may sign grants for mesh M until T (mesh seconds; [`NO_EXPIRY`]: until
+/// revoked)", signed by the admin key. A delegate's grants never outlive it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Delegation {
+    pub mesh_id: u32,
+    pub key: PublicKey,
+    pub not_after: u32,
+    pub sig: [u8; 64],
+}
+
+impl Delegation {
+    pub const LEN: usize = 1 + 4 + 65 + 4 + 64;
+
+    /// "SMdeleg1" ‖ mesh id ‖ key ‖ not_after.
+    pub fn signed<'a>(&self, buf: &'a mut [u8; 81]) -> &'a [u8] {
+        let mut w = W::new(buf);
+        w.put(b"SMdeleg1").u32(self.mesh_id).put(&self.key);
+        let n = w.u32(self.not_after).done().unwrap_or(0);
+        &buf[..n]
+    }
+
+    pub fn verify(&self, admin_key: &PublicKey) -> bool {
+        let mut b = [0u8; 81];
+        let m = self.signed(&mut b);
+        p256_verify_parts(admin_key, &[m], &self.sig)
+    }
+
+    /// The delegate's key hash (what grants and the revocation list name it by).
+    pub fn hash(&self) -> KeyHash {
+        key_hash(&self.key)
+    }
+
+    /// Still valid at `mesh_time_s`.
+    pub fn live(&self, mesh_time_s: u32) -> bool {
+        self.not_after == NO_EXPIRY || self.not_after >= mesh_time_s
+    }
+
+    /// A grant expiring at `not_after` stays inside this certificate.
+    pub fn covers(&self, not_after: u32) -> bool {
+        self.not_after == NO_EXPIRY || not_after <= self.not_after
+    }
+
+    pub fn encode(&self, out: &mut [u8]) -> Option<usize> {
+        let mut w = W::new(out);
+        w.u8(T_DELEGATION).u32(self.mesh_id).put(&self.key).u32(self.not_after).put(&self.sig);
+        w.done()
+    }
+
+    pub fn decode(b: &[u8]) -> Option<Delegation> {
+        let mut r = R::new(b);
+        if r.u8()? != T_DELEGATION {
+            return None;
+        }
+        let d = Delegation { mesh_id: r.u32()?, key: r.arr()?, not_after: r.u32()?, sig: r.arr()? };
+        r.end()?;
+        Some(d)
     }
 }
 
@@ -106,12 +194,18 @@ pub const T_GRANT: u8 = 0x40;
 pub const T_ACK: u8 = 0x41;
 pub const T_CONFIRM: u8 = 0x42;
 pub const T_REQUEST: u8 = 0x43;
+/// A grant signed by a delegate (the grant ‖ the delegate's key hash).
+pub const T_GRANT_D: u8 = 0x44;
+/// A delegation certificate (the gateway sends it ahead of a delegated grant).
+pub const T_DELEGATION: u8 = 0x45;
 
 /// Session and freshness messages (the `FRESHNESS` port; authenticated by signature or
 /// pairwise MAC, not by the shared key).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionMsg {
     Grant(Grant),
+    /// The certificate of the delegate that signed the session's grant.
+    Delegation(Delegation),
     /// Member → gateway: my device key, a nonce, MAC(pairwise, session ‖ node ‖ nonce).
     Ack { session: u32, node: NodeId, key: PublicKey, nonce: u64, mac: [u8; 8] },
     /// Gateway → member: my counter now, bound to your nonce.
@@ -125,6 +219,7 @@ impl SessionMsg {
         let mut w = W::new(out);
         match self {
             SessionMsg::Grant(g) => g.encode_into(&mut w),
+            SessionMsg::Delegation(d) => return d.encode(out),
             SessionMsg::Ack { session, node, key, nonce, mac } => {
                 w.u8(T_ACK).u32(*session).u16(*node).put(key).put(&nonce.to_be_bytes()).put(mac);
             }
@@ -141,7 +236,9 @@ impl SessionMsg {
     pub fn decode(b: &[u8]) -> Option<SessionMsg> {
         let mut r = R::new(b);
         let m = match r.u8()? {
-            T_GRANT => SessionMsg::Grant(Grant::decode_from(&mut r)?),
+            T_GRANT => SessionMsg::Grant(Grant::decode_from(&mut r, false)?),
+            T_GRANT_D => SessionMsg::Grant(Grant::decode_from(&mut r, true)?),
+            T_DELEGATION => return Delegation::decode(b).map(SessionMsg::Delegation),
             T_ACK => SessionMsg::Ack {
                 session: r.u32()?,
                 node: r.u16()?,
@@ -248,6 +345,8 @@ impl<'a> Command<'a> {
 pub struct MemberSession {
     pub session: u32,
     pub gateway: NodeId,
+    /// The delegate whose grant opened it (None: the admin key's).
+    pub by: Option<KeyHash>,
     pub gateway_hash: KeyHash,
     pub key: [u8; 16],
     pub not_after: u32,
@@ -267,6 +366,10 @@ pub enum GrantReject {
     Expired,
     /// ECDH with the gateway's key failed.
     BadKey,
+    /// Signed by a delegate on the revocation list.
+    Revoked,
+    /// Signed by a delegate whose certificate this member doesn't hold yet (it asks).
+    UnknownDelegate,
 }
 
 /// What a member does with a command.
@@ -294,6 +397,10 @@ pub enum CommandReject {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SessionStats {
     pub grants_verified: u32,
+    pub delegations: u32,
+    pub delegations_rejected: u32,
+    /// Sessions and certificates dropped because their delegate was revoked.
+    pub revoked_dropped: u32,
     /// Grants that only extended an existing session's expiry.
     pub renewals: u32,
     pub grants_rejected: u32,
@@ -309,6 +416,8 @@ pub struct SessionStats {
 /// A member's admin sessions.
 pub struct Sessions {
     s: [Option<MemberSession>; SESSIONS],
+    /// Verified delegation certificates.
+    delegs: [Option<Delegation>; DELEGATIONS],
     pub stats: SessionStats,
 }
 
@@ -322,8 +431,12 @@ impl Sessions {
     pub const fn new() -> Sessions {
         Sessions {
             s: [None; SESSIONS],
+            delegs: [None; DELEGATIONS],
             stats: SessionStats {
                 grants_verified: 0,
+                delegations: 0,
+                delegations_rejected: 0,
+                revoked_dropped: 0,
                 renewals: 0,
                 grants_rejected: 0,
                 confirms: 0,
@@ -356,6 +469,86 @@ impl Sessions {
         self.s.iter().flatten().find(|s| s.session == session)
     }
 
+    /// Whether a grant's signer is known here (the admin key, or a certificate held).
+    pub fn knows_signer(&self, g: &Grant) -> bool {
+        g.by.is_none_or(|h| self.delegation(&h).is_some())
+    }
+
+    pub fn delegation(&self, h: &KeyHash) -> Option<&Delegation> {
+        self.delegs.iter().flatten().find(|d| ct_eq(&d.hash(), h))
+    }
+
+    /// Whether a certificate needs verifying (one not held yet).
+    pub fn delegation_needs_crypto(&self, d: &Delegation) -> bool {
+        !self.delegs.iter().flatten().any(|x| x == d)
+    }
+
+    /// A certificate heard: verify it once (ECDSA) and keep it. False: refused.
+    pub fn on_delegation(&mut self, d: &Delegation, admin_key: Option<&PublicKey>, mesh_id: u32, mesh_time_s: u32, revoked: &Revocations) -> bool {
+        if !self.delegation_needs_crypto(d) {
+            return true;
+        }
+        let ok = d.mesh_id == mesh_id && d.live(mesh_time_s) && !revoked.contains(&d.hash()) && admin_key.is_some_and(|k| d.verify(k));
+        if !ok {
+            self.stats.delegations_rejected += 1;
+            return false;
+        }
+        self.stats.delegations += 1;
+        // Replace a certificate for the same key (a re-issue), an empty slot, or one no
+        // session uses.
+        let h = d.hash();
+        let used = |x: &Option<Delegation>| x.is_some_and(|x| self.s.iter().flatten().any(|s| s.by == Some(x.hash())));
+        let i = self
+            .delegs
+            .iter()
+            .position(|x| x.is_some_and(|x| ct_eq(&x.hash(), &h)))
+            .or_else(|| self.delegs.iter().position(|x| x.is_none()))
+            .or_else(|| self.delegs.iter().position(|x| !used(x)))
+            .unwrap_or(0);
+        self.delegs[i] = Some(*d);
+        true
+    }
+
+    /// The grant's signer checks out: the admin key, or a held, live, unrevoked delegate
+    /// whose certificate covers the grant's expiry.
+    fn authorise(&self, g: &Grant, admin_key: Option<&PublicKey>, mesh_time_s: u32, revoked: &Revocations) -> Result<(), GrantReject> {
+        let Some(h) = g.by else {
+            return if admin_key.is_some_and(|k| g.verify(k)) { Ok(()) } else { Err(GrantReject::BadSignature) };
+        };
+        if revoked.contains(&h) {
+            return Err(GrantReject::Revoked);
+        }
+        let d = self.delegation(&h).ok_or(GrantReject::UnknownDelegate)?;
+        if !d.live(mesh_time_s) || !d.covers(g.not_after) {
+            return Err(GrantReject::Expired);
+        }
+        if g.verify(&d.key) {
+            Ok(())
+        } else {
+            Err(GrantReject::BadSignature)
+        }
+    }
+
+    /// The revocation list changed (a rotation): drop the certificates and sessions of
+    /// delegates now on it. Returns how many sessions went.
+    pub fn drop_revoked(&mut self, revoked: &Revocations) -> usize {
+        let mut n = 0;
+        for d in self.delegs.iter_mut() {
+            if d.is_some_and(|x| revoked.contains(&x.hash())) {
+                *d = None;
+                self.stats.revoked_dropped += 1;
+            }
+        }
+        for s in self.s.iter_mut() {
+            if s.is_some_and(|x| x.by.is_some_and(|h| revoked.contains(&h))) {
+                *s = None;
+                n += 1;
+                self.stats.revoked_dropped += 1;
+            }
+        }
+        n
+    }
+
     /// A grant heard: verify it once (ECDSA), derive the pairwise key (ECDH), and return
     /// the Ack to send. A grant already held is not re-verified; its Ack is re-sent only if
     /// still unconfirmed.
@@ -366,6 +559,7 @@ impl Sessions {
         mesh_time_s: u32,
         g: &Grant,
         admin_key: Option<&PublicKey>,
+        revoked: &Revocations,
         mesh_id: u32,
         me: NodeId,
         dev: &dyn DeviceKey,
@@ -374,14 +568,20 @@ impl Sessions {
         if g.mesh_id != mesh_id {
             return Err(GrantReject::WrongMesh);
         }
-        if let Some(s) = self.s.iter_mut().flatten().find(|s| s.session == g.session && s.gateway == g.gateway) {
+        if let Some(i) = self.s.iter().position(|s| s.is_some_and(|s| s.session == g.session && s.gateway == g.gateway)) {
             // A renewal: the same session with a later expiry. One signature check, no new
-            // keys, roster or acks (design §7.9, "when crypto cost is paid").
-            if g.not_after > s.not_after {
-                if !admin_key.is_some_and(|k| g.verify(k)) {
+            // keys, roster or acks (design §7.9, "when crypto cost is paid"). The same signer
+            // only: a delegate can't extend the admin's session, nor the admin a delegate's.
+            let held = self.s[i].unwrap();
+            if g.not_after > held.not_after {
+                let r = if g.by != held.by { Err(GrantReject::BadSignature) } else { self.authorise(g, admin_key, mesh_time_s, revoked) };
+                if let Err(e) = r {
                     self.stats.grants_rejected += 1;
-                    return Err(GrantReject::BadSignature);
+                    return Err(e);
                 }
+            }
+            let s = self.s[i].as_mut().unwrap();
+            if g.not_after > s.not_after {
                 s.not_after = g.not_after;
                 self.stats.renewals += 1;
             }
@@ -397,9 +597,12 @@ impl Sessions {
             self.stats.grants_rejected += 1;
             return Err(GrantReject::Expired);
         }
-        if !admin_key.is_some_and(|k| g.verify(k)) {
-            self.stats.grants_rejected += 1;
-            return Err(GrantReject::BadSignature);
+        if let Err(e) = self.authorise(g, admin_key, mesh_time_s, revoked) {
+            // An unknown delegate isn't a bad grant: the member asks for the certificate.
+            if e != GrantReject::UnknownDelegate {
+                self.stats.grants_rejected += 1;
+            }
+            return Err(e);
         }
         let key = pairwise_key(dev, &g.gateway_key, mesh_id, me, g.gateway).ok_or(GrantReject::BadKey)?;
         self.stats.grants_verified += 1;
@@ -409,6 +612,7 @@ impl Sessions {
         let s = MemberSession {
             session: g.session,
             gateway: g.gateway,
+            by: g.by,
             gateway_hash: key_hash(&g.gateway_key),
             key,
             not_after: g.not_after,
@@ -519,20 +723,23 @@ pub struct RosterStats {
 /// pairwise keys (`N` entries: 16 on a standalone C6, 64+ where RAM allows).
 pub struct GatewaySession<const N: usize> {
     pub grant: Grant,
+    /// The certificate of the delegate that signed `grant` (sent ahead of it).
+    pub delegation: Option<Delegation>,
     roster: [Option<RosterEntry>; N],
     pub stats: RosterStats,
 }
 
 impl<const N: usize> GatewaySession<N> {
-    pub fn new(grant: Grant) -> Self {
-        GatewaySession { grant, roster: [None; N], stats: RosterStats::default() }
+    pub fn new(grant: Grant, delegation: Option<Delegation>) -> Self {
+        GatewaySession { grant, delegation, roster: [None; N], stats: RosterStats::default() }
     }
 
     /// A renewal of this session (same session and gateway key, later expiry): keep the
     /// roster and its pairwise keys.
-    pub fn renew(&mut self, grant: Grant) -> bool {
-        if grant.session == self.grant.session && grant.gateway_key == self.grant.gateway_key && grant.not_after > self.grant.not_after {
+    pub fn renew(&mut self, grant: Grant, delegation: Option<Delegation>) -> bool {
+        if grant.session == self.grant.session && grant.gateway_key == self.grant.gateway_key && grant.by == self.grant.by && grant.not_after > self.grant.not_after {
             self.grant = grant;
+            self.delegation = delegation;
             true
         } else {
             false
@@ -600,7 +807,8 @@ impl<const N: usize> GatewaySession<N> {
 pub enum UnlockError {
     /// A bad grant was presented less than 2 s ago (device-wide).
     LockedOut,
-    /// Not signed by the admin key, not for this gateway, or expired (starts the lockout).
+    /// Not signed by the admin key (or a live, certified, unrevoked delegate), not for this
+    /// gateway, or expired (starts the lockout).
     BadGrant,
     /// This device holds no admin public key.
     NoAdminKey,
@@ -629,7 +837,9 @@ impl AdminGate {
         mesh_time_s: u32,
         conn: usize,
         g: &Grant,
+        delegation: Option<&Delegation>,
         admin_key: Option<&PublicKey>,
+        revoked: &Revocations,
         mesh_id: u32,
         me: NodeId,
         my_key: &PublicKey,
@@ -644,15 +854,39 @@ impl AdminGate {
             self.lockout_until_us = None;
         }
         let Some(ak) = admin_key else { return Err(UnlockError::NoAdminKey) };
-        let ok = g.mesh_id == mesh_id && g.gateway == me && g.gateway_key == *my_key && g.not_after >= mesh_time_s
-            && g.not_after - mesh_time_s <= MAX_GRANT_S
-            && g.verify(ak);
+        let shape = g.mesh_id == mesh_id && g.gateway == me && g.gateway_key == *my_key && g.not_after >= mesh_time_s
+            && g.not_after - mesh_time_s <= MAX_GRANT_S;
+        // The signer: the admin key, or a delegate the admin key certified, still live, not
+        // revoked, whose certificate covers the grant (two verifies, at unlock only).
+        let signed = match (g.by, delegation) {
+            (None, _) => g.verify(ak),
+            (Some(h), Some(d)) => {
+                ct_eq(&d.hash(), &h) && d.mesh_id == mesh_id && d.live(mesh_time_s) && d.covers(g.not_after) && !revoked.contains(&h)
+                    && d.verify(ak)
+                    && g.verify(&d.key)
+            }
+            (Some(_), None) => false,
+        };
+        let ok = shape && signed;
         if !ok {
             self.lockout_until_us = Some(now_us + UNLOCK_LOCKOUT_US);
             return Err(UnlockError::BadGrant);
         }
         self.unlocked[conn] = Some(g.session);
         Ok(())
+    }
+
+    /// A revoked delegate's session: every connection holding it (and the detached slot)
+    /// is locked.
+    pub fn drop_session(&mut self, session: u32) {
+        for u in self.unlocked.iter_mut() {
+            if *u == Some(session) {
+                *u = None;
+            }
+        }
+        if self.detached == Some(session) {
+            self.detached = None;
+        }
     }
 
     /// Envelope trust (a mesh with no admin key, mesh M5): connection `conn` holds the
@@ -756,17 +990,17 @@ mod tests {
         let g = grant(&admin, &gw, 7, 1000);
         // The gateway unlocks its connection with the grant.
         let mut gate = AdminGate::new();
-        assert_eq!(gate.unlock(0, 0, 0, &g, Some(&admin.public()), MESH, 1, &gw.public_key()), Ok(()));
+        assert_eq!(gate.unlock(0, 0, 0, &g, None, Some(&admin.public()), &Revocations::default(), MESH, 1, &gw.public_key()), Ok(()));
         let forged = Grant { not_after: 99_999, ..g };
-        assert_eq!(gate.unlock(0, 0, 1, &forged, Some(&admin.public()), MESH, 1, &gw.public_key()), Err(UnlockError::BadGrant));
-        assert_eq!(gate.unlock(1_000_000, 0, 1, &g, Some(&admin.public()), MESH, 1, &gw.public_key()), Err(UnlockError::LockedOut));
+        assert_eq!(gate.unlock(0, 0, 1, &forged, None, Some(&admin.public()), &Revocations::default(), MESH, 1, &gw.public_key()), Err(UnlockError::BadGrant));
+        assert_eq!(gate.unlock(1_000_000, 0, 1, &g, None, Some(&admin.public()), &Revocations::default(), MESH, 1, &gw.public_key()), Err(UnlockError::LockedOut));
         // Members verify once, ack, get confirmed.
-        let mut gs = GatewaySession::<8>::new(g);
+        let mut gs = GatewaySession::<8>::new(g, None);
         let mut s2 = Sessions::new();
         let mut s3 = Sessions::new();
         for (s, dev, id) in [(&mut s2, &m2, 2u16), (&mut s3, &m3, 3)] {
-            let ack = s.on_grant(0, 0, &g, Some(&admin.public()), MESH, id, dev, &mut rng).unwrap().unwrap();
-            assert_eq!(s.on_grant(10, 0, &g, Some(&admin.public()), MESH, id, dev, &mut rng), Ok(None), "verified once");
+            let ack = s.on_grant(0, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, id, dev, &mut rng).unwrap().unwrap();
+            assert_eq!(s.on_grant(10, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, id, dev, &mut rng), Ok(None), "verified once");
             let (to, conf) = gs.on_ack(&ack, &gw, MESH, 1, 5_000).unwrap();
             assert_eq!(to, id);
             assert_eq!(s.on_confirm(1, &conf, id), Some((1, 5_000)));
@@ -796,10 +1030,10 @@ mod tests {
         let n = seal_command(MESH, 7, 5_030, 16, b"x", &[(4, [0; 16])], &mut buf).unwrap();
         assert_eq!(s4.check(&Command::parse(&buf[..n]).unwrap(), 1, 16, MESH, 4, 0), Verdict::Hold { session: 7 });
         // Expired grants are refused.
-        assert_eq!(s4.on_grant(0, 2000, &g, Some(&admin.public()), MESH, 4, &m2, &mut rng), Err(GrantReject::Expired));
+        assert_eq!(s4.on_grant(0, 2000, &g, Some(&admin.public()), &Revocations::default(), MESH, 4, &m2, &mut rng), Err(GrantReject::Expired));
         // A grant not signed by the admin key.
         let rogue = AdminSigner::from_secret(b"fedcba9876543210", MESH).grant(MESH, 8, 1, gw.public_key(), 1000);
-        assert_eq!(s4.on_grant(0, 0, &rogue, Some(&admin.public()), MESH, 4, &m2, &mut rng), Err(GrantReject::BadSignature));
+        assert_eq!(s4.on_grant(0, 0, &rogue, Some(&admin.public()), &Revocations::default(), MESH, 4, &m2, &mut rng), Err(GrantReject::BadSignature));
     }
 
     /// After a reboot (no session state), an old command captured off the air is refused:
@@ -811,9 +1045,9 @@ mod tests {
         let (gw, m2) = (HostKey::from_seed(1), HostKey::from_seed(2));
         let mut rng = TestRng(9);
         let g = grant(&admin, &gw, 7, 1000);
-        let mut gs = GatewaySession::<4>::new(g);
+        let mut gs = GatewaySession::<4>::new(g, None);
         let mut s = Sessions::new();
-        let ack = s.on_grant(0, 0, &g, Some(&admin.public()), MESH, 2, &m2, &mut rng).unwrap().unwrap();
+        let ack = s.on_grant(0, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, 2, &m2, &mut rng).unwrap().unwrap();
         let (_, conf) = gs.on_ack(&ack, &gw, MESH, 1, 100).unwrap();
         s.on_confirm(1, &conf, 2);
         let k = gs.entry(2).unwrap().key;
@@ -826,7 +1060,7 @@ mod tests {
         assert_eq!(s.check(&c_old, 1, 16, MESH, 2, 0), Verdict::Hold { session: 7 });
         let mut recent = [0u8; 64];
         let n_recent = seal_command(MESH, 7, 99_990, 16, b"recent", &[(2, k)], &mut recent).unwrap(); // 10 frames before the sync
-        let ack = s.on_grant(0, 0, &g, Some(&admin.public()), MESH, 2, &m2, &mut rng).unwrap().unwrap();
+        let ack = s.on_grant(0, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, 2, &m2, &mut rng).unwrap().unwrap();
         let (_, conf) = gs.on_ack(&ack, &gw, MESH, 1, 100_000).unwrap();
         assert_eq!(s.on_confirm(1, &conf, 2), Some((1, 100_000)));
         assert_eq!(s.check(&c_old, 1, 16, MESH, 2, 0), Verdict::Reject(CommandReject::Stale));
@@ -843,14 +1077,14 @@ mod tests {
         let admin = AdminSigner::from_secret(b"0123456789abcdef", MESH);
         let gw = HostKey::from_seed(1);
         let g = grant(&admin, &gw, 7, 1000);
-        let mut gs = GatewaySession::<4>::new(g);
+        let mut gs = GatewaySession::<4>::new(g, None);
         let mut rng = TestRng(1);
         let mut s = Sessions::new();
-        let ack = s.on_grant(0, 0, &g, Some(&admin.public()), MESH, 2, &HostKey::from_seed(2), &mut rng).unwrap().unwrap();
+        let ack = s.on_grant(0, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, 2, &HostKey::from_seed(2), &mut rng).unwrap().unwrap();
         assert!(gs.on_ack(&ack, &gw, MESH, 1, 0).is_some());
         // Another device claiming node 2.
         let mut s_evil = Sessions::new();
-        let evil = s_evil.on_grant(0, 0, &g, Some(&admin.public()), MESH, 2, &HostKey::from_seed(66), &mut rng).unwrap().unwrap();
+        let evil = s_evil.on_grant(0, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, 2, &HostKey::from_seed(66), &mut rng).unwrap().unwrap();
         assert!(gs.on_ack(&evil, &gw, MESH, 1, 0).is_none());
         assert_eq!(gs.stats.key_conflicts, 1);
         // An Ack whose MAC was not made with the claimed key.
@@ -887,9 +1121,9 @@ mod tests {
         let now_s = 5_000;
         let mut gate = AdminGate::new();
         let long = grant(&admin, &gw, 7, now_s + MAX_GRANT_S + 1);
-        assert_eq!(gate.unlock(0, now_s, 0, &long, Some(&admin.public()), MESH, 1, &gw.public_key()), Err(UnlockError::BadGrant));
+        assert_eq!(gate.unlock(0, now_s, 0, &long, None, Some(&admin.public()), &Revocations::default(), MESH, 1, &gw.public_key()), Err(UnlockError::BadGrant));
         let ok = grant(&admin, &gw, 7, now_s + 12 * 3600);
-        assert_eq!(gate.unlock(3_000_000, now_s, 0, &ok, Some(&admin.public()), MESH, 1, &gw.public_key()), Ok(()));
+        assert_eq!(gate.unlock(3_000_000, now_s, 0, &ok, None, Some(&admin.public()), &Revocations::default(), MESH, 1, &gw.public_key()), Ok(()));
     }
     /// A clock that steps back must not hold an unconfirmed member's Ack retries.
     #[test]
@@ -899,9 +1133,132 @@ mod tests {
         let mut rng = TestRng(5);
         let g = grant(&admin, &gw, 7, 1000);
         let mut s = Sessions::new();
-        s.on_grant(50_000_000, 0, &g, Some(&admin.public()), MESH, 2, &m2, &mut rng).unwrap().unwrap();
+        s.on_grant(50_000_000, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, 2, &m2, &mut rng).unwrap().unwrap();
         assert!(s.due_ack(50_100_000, 2, &m2).is_none(), "not due yet");
         assert!(s.due_ack(12_000_000, 2, &m2).is_some(), "the clock stepped back 38 s: due now");
         assert!(s.due_ack(12_100_000, 2, &m2).is_none(), "and paced again from there");
     }
+
+    fn revoked(h: KeyHash) -> Revocations {
+        let mut r = Revocations::default();
+        r.apply(1, &[h]);
+        r
+    }
+
+    /// A delegate's grant: refused until its certificate is held, accepted after, never
+    /// beyond the certificate, and dropped with its sessions once revoked.
+    #[test]
+    fn delegated_grants_follow_their_certificate() {
+        let admin = AdminSigner::from_secret(b"0123456789abcdef", MESH);
+        let delegate = AdminSigner::from_secret(b"fedcba9876543210", MESH);
+        let (gw, m2) = (HostKey::from_seed(1), HostKey::from_seed(2));
+        let mut rng = TestRng(9);
+        let none = Revocations::default();
+        let cert = admin.delegation(MESH, delegate.public(), 5_000);
+        let g = delegate.delegated_grant(MESH, 7, 1, gw.public_key(), 1_000);
+
+        // Wire round trips: the delegated grant names its delegate; the certificate stands alone.
+        let mut b = [0u8; 200];
+        let n = SessionMsg::Grant(g).encode(&mut b).unwrap();
+        assert_eq!(n, Grant::LEN_DELEGATED);
+        assert_eq!(SessionMsg::decode(&b[..n]), Some(SessionMsg::Grant(g)));
+        let n = SessionMsg::Delegation(cert).encode(&mut b).unwrap();
+        assert_eq!(n, Delegation::LEN);
+        assert_eq!(SessionMsg::decode(&b[..n]), Some(SessionMsg::Delegation(cert)));
+
+        let mut s = Sessions::new();
+        assert!(!s.knows_signer(&g));
+        assert_eq!(s.on_grant(0, 0, &g, Some(&admin.public()), &none, MESH, 2, &m2, &mut rng), Err(GrantReject::UnknownDelegate));
+        // A certificate the admin key didn't sign, or for another mesh, is refused.
+        let forged = delegate.delegation(MESH, delegate.public(), NO_EXPIRY);
+        assert!(!s.on_delegation(&forged, Some(&admin.public()), MESH, 0, &none));
+        assert!(!s.on_delegation(&cert, Some(&admin.public()), MESH + 1, 0, &none));
+        assert!(s.on_delegation(&cert, Some(&admin.public()), MESH, 0, &none));
+        assert!(s.knows_signer(&g));
+        assert!(s.on_grant(0, 0, &g, Some(&admin.public()), &none, MESH, 2, &m2, &mut rng).unwrap().is_some());
+        assert_eq!(s.get(7).unwrap().by, g.by);
+
+        // A grant outliving its certificate is refused.
+        let mut s2 = Sessions::new();
+        s2.on_delegation(&cert, Some(&admin.public()), MESH, 0, &none);
+        let long = delegate.delegated_grant(MESH, 8, 1, gw.public_key(), 6_000);
+        assert_eq!(s2.on_grant(0, 0, &long, Some(&admin.public()), &none, MESH, 2, &m2, &mut rng), Err(GrantReject::Expired));
+        // So is an expired certificate.
+        assert!(!s2.on_delegation(&admin.delegation(MESH, HostKey::from_seed(5).public_key(), 10), Some(&admin.public()), MESH, 11, &none));
+        // A delegate can't extend the admin's session.
+        let ag = grant(&admin, &gw, 9, 1_000);
+        s2.on_grant(0, 0, &ag, Some(&admin.public()), &none, MESH, 2, &m2, &mut rng).unwrap();
+        let mut hijack = delegate.delegated_grant(MESH, 9, 1, gw.public_key(), 2_000);
+        hijack.gateway = ag.gateway;
+        assert_eq!(s2.on_grant(0, 0, &hijack, Some(&admin.public()), &none, MESH, 2, &m2, &mut rng), Err(GrantReject::BadSignature));
+        assert_eq!(s2.get(9).unwrap().not_after, 1_000);
+
+        // Revoked: its certificate and session go, the admin's stay, and it is refused.
+        let rev = revoked(cert.hash());
+        s.on_grant(0, 0, &ag, Some(&admin.public()), &none, MESH, 2, &m2, &mut rng).unwrap();
+        assert_eq!(s.drop_revoked(&rev), 1);
+        assert!(s.get(7).is_none() && s.get(9).is_some());
+        assert!(s.delegation(&cert.hash()).is_none());
+        assert!(!s.on_delegation(&cert, Some(&admin.public()), MESH, 0, &rev));
+        assert_eq!(s.on_grant(0, 0, &g, Some(&admin.public()), &rev, MESH, 2, &m2, &mut rng), Err(GrantReject::Revoked));
+    }
+
+    /// The gateway unlocks for a delegate only with its live, unrevoked certificate.
+    #[test]
+    fn a_gateway_unlocks_for_a_certified_delegate_only() {
+        let admin = AdminSigner::from_secret(b"0123456789abcdef", MESH);
+        let delegate = AdminSigner::from_secret(b"fedcba9876543210", MESH);
+        let gw = HostKey::from_seed(1);
+        let none = Revocations::default();
+        let cert = admin.delegation(MESH, delegate.public(), NO_EXPIRY);
+        let g = delegate.delegated_grant(MESH, 7, 1, gw.public_key(), 1_000);
+        let other = admin.delegation(MESH, HostKey::from_seed(4).public_key(), NO_EXPIRY);
+        let mut t = 0;
+        let mut try_unlock = |d: Option<&Delegation>, r: &Revocations| {
+            t += 3_000_000; // past any lockout
+            AdminGate::new().unlock(t, 0, 0, &g, d, Some(&admin.public()), r, MESH, 1, &gw.public_key())
+        };
+        assert_eq!(try_unlock(None, &none), Err(UnlockError::BadGrant), "no certificate");
+        assert_eq!(try_unlock(Some(&other), &none), Err(UnlockError::BadGrant), "someone else's certificate");
+        assert_eq!(try_unlock(Some(&cert), &revoked(cert.hash())), Err(UnlockError::BadGrant), "revoked");
+        let short = admin.delegation(MESH, delegate.public(), 500);
+        assert_eq!(try_unlock(Some(&short), &none), Err(UnlockError::BadGrant), "grant outlives the certificate");
+        assert_eq!(try_unlock(Some(&cert), &none), Ok(()));
+
+        let mut gate = AdminGate::new();
+        gate.unlock(0, 0, 0, &g, Some(&cert), Some(&admin.public()), &none, MESH, 1, &gw.public_key()).unwrap();
+        gate.unlock(0, 0, 3, &g, Some(&cert), Some(&admin.public()), &none, MESH, 1, &gw.public_key()).unwrap();
+        gate.drop_session(7);
+        assert!(!gate.is_unlocked(0) && !gate.is_unlocked(3));
+    }
+
+
+    fn unhex<const N: usize>(h: &str) -> [u8; N] {
+        let mut o = [0u8; N];
+        for (i, b) in o.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap();
+        }
+        o
+    }
+
+    /// Bytes the app signed (web/src/net/meshKeys.ts signDelegation / signGrant with `by`;
+    /// admin secret 000102…0f, delegate secret 101112…1f, mesh 5e1f00d1): the firmware
+    /// decodes them and its gateway unlocks with them.
+    #[test]
+    fn the_app_s_delegation_and_delegated_grant_unlock_a_gateway() {
+        let admin_pk: PublicKey = unhex("04c882530d916498946920c10b9f048b0312eee19bf5684f2bf8c9de2350003bd2baa0ab9fe5df66d64a705ebef5b9ade6e9fdcd3e4cafb90dfbd9b07d772dfc18");
+        let gk: PublicKey = unhex("04982e4e877f382ea003f5360c5d4669e9ad1f3ca7f6d85b6bbbeae650d5529adf6befef4c20297b7293a7ac7f180d3e8fa3f8d4d7fb1a2b345047d857e3d6188a");
+        let cert: [u8; Delegation::LEN] = unhex("455e1f00d10493334570f6e5e9885d720f322a6bdca44897cd7ad573df40fcaa5f6d1177fbf11a5460f4826fc93db4c579e2ade40b1d669d224b5318a9b5c7e972b8944f541b00001c203266d64e4c3da177a5bb3f5cdb45148ede2a49ef8e3e09455cba37c6723cbba74dc155b967449f8d562eff3c2601483fd9ce5d547ab51b1c10326454d709e54f");
+        let grant: [u8; Grant::LEN_DELEGATED] = unhex("445e1f00d1000000073a4104982e4e877f382ea003f5360c5d4669e9ad1f3ca7f6d85b6bbbeae650d5529adf6befef4c20297b7293a7ac7f180d3e8fa3f8d4d7fb1a2b345047d857e3d6188a00000e10eb6cfa240e1a7caeaa7cc2e52095ba7a5da43faf543e2efd9e7bf3f9a5d4d80d30983372b1d4a9e2ddca31aaadccd2f407b8cc165ca5db4d6b2ef192679274718bf80e18c0b569e2");
+        let mesh = 0x5e1f_00d1;
+        let d = Delegation::decode(&cert).expect("certificate");
+        assert_eq!((d.mesh_id, d.not_after), (mesh, 7200));
+        assert!(d.verify(&admin_pk));
+        let Some(SessionMsg::Grant(g)) = SessionMsg::decode(&grant) else { panic!("grant") };
+        assert_eq!((g.session, g.gateway, g.not_after, g.by), (7, 0x3a41, 3600, Some(d.hash())));
+        assert!(g.verify(&d.key));
+        let mut gate = AdminGate::new();
+        assert_eq!(gate.unlock(0, 0, 0, &g, Some(&d), Some(&admin_pk), &Revocations::default(), mesh, 0x3a41, &gk), Ok(()));
+    }
+
 }
