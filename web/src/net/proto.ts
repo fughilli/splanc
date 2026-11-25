@@ -183,7 +183,9 @@ const VEC3_LIST_KEYS = new Set(["trajectory", "polyline"]);
 // string, but the flat TS shapes use Uint8Array (submit_effect.fxb outbound,
 // effect_uniforms.manifest inbound) — convert at this boundary.
 // deviceKey / keyHash: the mesh's device keys (MeshState, MeshPending; mesh M7).
-const BYTES_KEYS = new Set(["fxb", "manifest", "deviceKey", "keyHash"]);
+// provisionerToken: MeshAdminResult's token (D-324): left a base64 string, the app's
+// 16-byte check threw it away, so leaving a mesh always needed the admin's grant.
+const BYTES_KEYS = new Set(["fxb", "manifest", "deviceKey", "keyHash", "provisionerToken"]);
 // `data` is a bytes field on both SetTexture (outbound, a Uint8Array we send)
 // and StoredMapChunk (inbound, kept as a base64 string the map decoder unpacks
 // itself). So convert it on ENCODE only, leaving the inbound StoredMapChunk.data
