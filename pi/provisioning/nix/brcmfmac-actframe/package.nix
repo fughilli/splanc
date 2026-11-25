@@ -40,6 +40,8 @@ kernel.stdenv.mkDerivation {
     ./0003-wifi-brcmfmac-do-not-wait-for-an-ACK-of-group-addres.patch
     ./0004-wifi-brcmfmac-send-action-frames-that-are-not-P2P-GA.patch
     ./0005-wifi-brcmfmac-mgmt_tx-channel-number-6.12-backport.patch
+    # Not mesh: silences the FORTIFY false positive every boot logs (bridge too).
+    ./0007-wifi-brcmfmac-make-eventmsgs_ext-mask-a-flexible-array.patch
   ];
 
   nativeBuildInputs = (kernel.moduleBuildDependencies or [ ]) ++ [
