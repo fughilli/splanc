@@ -94,6 +94,28 @@
   '';
   hardware.i2c.enable = true;
 
+  # A small initrd: the firmware reads it at ~17 MB/s before the kernel can
+  # start (12.3 MB = 0.73 s on a Pi 3A+), so every MB is ~60 ms before the
+  # splash. NixOS's defaults + the generic installer profile list ~150 modules
+  # (SATA, PATA, RAID, VMware, Allwinner, Rockchip...) and LVM's tools; a Pi
+  # bridge roots on the SD card (or USB storage) with ext4.
+  boot.initrd.includeDefaultModules = false;
+  boot.initrd.availableKernelModules = lib.mkForce [
+    "mmc_block"
+    "ext4"
+    "usb_storage"
+    "uas"
+    "sd_mod"
+    "usbhid"
+    "hid_generic"
+    "vc4" # KMS early: the splash's HDMI output
+    "pcie_brcmstb" # Pi 4/5: PCIe (USB on the Pi 4, NVMe on the Pi 5)
+    "reset-raspberrypi"
+    "xhci_pci"
+    "nvme"
+  ];
+  services.lvm.enable = false;
+
   services.udev.extraRules = ''
     SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
   '';
