@@ -637,7 +637,11 @@ Live sensor values reach effects as **uniforms bound by name** (the uniform
 pool, docs/design/sensor-core.md §6): declare `uniform vec3 imu_gravity = 0.0,
 -1.0, 0.0;` (or `imu_quat`, `imu_euler`, `imu_shake`, `imu_tap`, ...) and the
 firmware writes it every frame while a sensor runs; otherwise it is an ordinary
-knob. Sensor **drivers** (FUG-107) are `.fxb` programs too: `void poll()`
+knob. The wall clock lands in the same pool (docs/design/wall-clock.md):
+`clock` (vec4 hour, minute, second, weekday), `clock_day` (0..1 over the local
+day), `clock_date` (vec3 year, month, day) and `clock_valid`, in the lamp's
+local time, written only while its clock is set. Sensor **drivers** (FUG-107)
+are `.fxb` programs too: `void poll()`
 instead of `shade()`, `export` declarations instead of uniforms, the
 `i2c_write` / `i2c_read8` / `i2c_read16` / `i2c_read16s` intrinsics, and
 `FLAG_DRIVER` (0x10) in the header with `poll()` in the shade-entry slot and

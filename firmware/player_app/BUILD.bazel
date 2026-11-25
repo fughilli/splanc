@@ -289,6 +289,21 @@ rust_test(
     ],
 )
 
+# The wall clock's effect uniforms (uniform_pool.rs CLOCK_ENTRIES): clock / clock_day /
+# clock_date / clock_valid, local time, per-frame extrapolation. Own binary.
+rust_test(
+    name = "clock_pool_test",
+    srcs = ["tests/clock_pool.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # Kiosk mode (kiosk_ffi.rs): the lock gate's arm table, the persisted record, the
 # owner config / unlock / idle revert / pushes through the C ABI. Own binary.
 rust_test(

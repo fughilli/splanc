@@ -176,6 +176,12 @@ SENSORS (motion-reactive effects): a fixture with an IMU writes these uniforms e
 - \`uniform float imu_tap : 0.0 .. 1000.0 = 0.0;\` and \`imu_shake_count\` — COUNTERS: keep a \`state float\` copy and fire an event in update() when the uniform exceeds it (e.g. a flash on each tap).
 Use them only when the user asks for motion/tilt/shake/tap reactions.
 
+CLOCK (time-of-day effects): the lamp writes these LOCAL-time uniforms every frame when you declare them BY EXACT NAME (the preview feeds the phone's clock):
+- \`uniform float clock_day : 0.0 .. 1.0 = 0.5;\` — seconds since local midnight / 86400 (0.25 = 06:00, 0.5 = noon, 0.75 = 18:00). Use it for anything that follows the day: \`float sun = smoothstep(0.25, 0.35, clock_day) * (1.0 - smoothstep(0.8, 0.9, clock_day));\`.
+- \`uniform vec4 clock = 12.0, 0.0, 0.0, 1.0;\` — (hour 0-23, minute 0-59, second 0-59.999, weekday 0-6 with Sunday = 0). \`uniform vec3 clock_date = 2026.0, 1.0, 1.0;\` — (year, month 1-12, day 1-31).
+- \`uniform float clock_valid : 0.0 .. 1.0 = 1.0;\` — 0 while the lamp's clock is not set (the others then keep their defaults): fall back to a neutral look.
+Never derive time of day from \`time\` (that is seconds since the effect started); keep \`time\`/\`dt\` for motion. Use these only when the user asks for time-of-day, daylight, sunrise/sunset or calendar looks.
+
 ${EXAMPLES}
 
 REPAIR: If you are given a previous script and compiler diagnostics, return a corrected script that fixes every error; change as little else as possible.`;
@@ -220,6 +226,8 @@ STATE & DATA:
 - \`texture vec3 img(64,64);\` — read \`sample(img, led.uv)\` (bilinear, uv in 0..1), write \`paint(img, uv, color);\`.
 
 SENSORS: for motion reactions declare by exact name (a knob when no IMU): \`uniform vec3 imu_gravity = 0.0, -1.0, 0.0;\` (unit down, map frame), \`uniform float imu_shake : 0.0 .. 1.0 = 0.0;\`, \`uniform float imu_tap : 0.0 .. 1000.0 = 0.0;\` (a counter: compare with a state copy), also imu_quat (vec4 w,x,y,z), imu_euler, imu_accel, imu_gyro.
+
+CLOCK: time-of-day looks declare by exact name (lamp's local time): \`uniform float clock_day : 0.0 .. 1.0 = 0.5;\` (0..1 over the day, 0.25 = 06:00), \`uniform vec4 clock\` (hour, minute, second, weekday), \`uniform float clock_valid\` (0 = unset). Never time of day from \`time\`.
 
 ${PERF_GUIDE_COMPACT}
 
