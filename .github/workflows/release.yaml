@@ -655,6 +655,16 @@ jobs:
           make_latest: false
           target_commitish: ${{ github.sha }}
 
+      # The draft's "Feature previews" link the draft's own asset URLs
+      # (/releases/download/untagged-<id>/), which stop working on publish: point
+      # them at /releases/download/<tag>/. Doesn't block the deploy; if it fails,
+      # run `release_clips relink --tag <tag>` by hand (docs/release-clips.md).
+      - name: Point the notes at the published assets
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release_clips/release_clips.py relink --tag "$GITHUB_REF_NAME"
+
       - name: Deploy to GitHub Pages (main site)
         uses: JamesIves/github-pages-deploy-action@v4
         with:

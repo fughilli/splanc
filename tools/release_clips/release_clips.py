@@ -11,6 +11,8 @@
              artifact or any static host
     publish  upload the clips + preview-clips.json to the tag's (draft)
              release and write the "Feature previews" section of its notes
+    relink   once the draft is published, point its notes' asset links at the
+             final tag URLs (a draft's notes link the draft's own URLs)
 
 Run through Bazel (``bazel run //tools/release_clips -- record ...``) so
 Playwright and ffmpeg come from the lockfile, or with any python that has
@@ -360,6 +362,16 @@ def cmd_publish(args) -> int:
     return 0
 
 
+def cmd_relink(args) -> int:
+    import github_release
+
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        sys.exit("release_clips: relink needs GH_TOKEN")
+    github_release.relink(github_release.GitHub(args.github_repo, token), args.tag, log=_log)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--repo", help="checkout (default: $BUILD_WORKSPACE_DIRECTORY or cwd)")
@@ -409,6 +421,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tag", required=True)
     p.add_argument("--clips", required=True)
     p.set_defaults(fn=cmd_publish)
+
+    p = sub.add_parser("relink", help="point a published release's notes at its final asset URLs")
+    p.add_argument("--tag", required=True)
+    p.set_defaults(fn=cmd_relink)
 
     args = ap.parse_args(argv)
     for name in ("out", "clips", "dist"):

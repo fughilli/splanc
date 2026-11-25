@@ -209,6 +209,24 @@ class ReleaseBodyTest(unittest.TestCase):
         self.assertIn("(#558)", sec)
         self.assertEqual(github_release.section_markdown({"tag": "x", "clips": []}, "r"), "")
 
+    def test_a_draft_links_its_own_urls_and_relink_moves_them_to_the_tag(self):
+        m = github_release.build_manifest(ENTRIES, "app-v1.16.0")
+        draft = {"draft": True, "html_url": "https://github.com/fughilli/splanc/releases/tag/untagged-de0f20b6e5"}
+        base = github_release.release_download_base(draft, "fughilli/splanc", "app-v1.16.0")
+        self.assertEqual(base, "https://github.com/fughilli/splanc/releases/download/untagged-de0f20b6e5/")
+        sec = github_release.section_markdown(m, "fughilli/splanc", base)
+        self.assertIn(f'<img src="{base}ai-tab-phone.gif"', sec)
+        self.assertNotIn("/download/app-v1.16.0/", sec)
+        body = github_release.splice_body("## What's Changed\n", sec)
+        final = github_release.relink_body(body, "fughilli/splanc", "app-v1.16.0")
+        self.assertNotIn("untagged-", final)
+        self.assertEqual(final, github_release.splice_body("## What's Changed\n", github_release.section_markdown(m, "fughilli/splanc")))
+        # Published (or a draft without a placeholder): the tag's URLs.
+        self.assertEqual(
+            github_release.release_download_base({"draft": False}, "fughilli/splanc", "app-v1.16.0"),
+            "https://github.com/fughilli/splanc/releases/download/app-v1.16.0/",
+        )
+
     def test_splice_is_idempotent_and_keeps_notes(self):
         m = github_release.build_manifest(ENTRIES, "app-v1.16.0")
         sec = github_release.section_markdown(m, "fughilli/splanc")
@@ -247,6 +265,7 @@ class PublishTest(unittest.TestCase):
             for k in ("mp4", "webm", "gif", "poster"):
                 open(os.path.join(d, v[k]), "wb").close()
         rel = {"tag_name": "app-v1.16.0", "draft": True, "body": "## What's Changed\n",
+               "html_url": "https://github.com/fughilli/splanc/releases/tag/untagged-abc123",
                "assets": [{"name": "ai-tab-phone.mp4", "id": 7}], "upload_url": "https://u{?name}"}  # fmt: skip
         gh = FakeGitHub(rel)
         man = github_release.publish(gh, "app-v1.16.0", d, ENTRIES, log=lambda m: None)
@@ -258,6 +277,16 @@ class PublishTest(unittest.TestCase):
         body = [b for k, b in gh.calls if k == "body"][0]
         self.assertIn("## Feature previews", body)
         self.assertTrue(body.endswith("## What's Changed\n"))
+        self.assertIn("/releases/download/untagged-abc123/ai-tab-phone.gif", body)
+
+        # Published: relink rewrites the notes to the tag's URLs, once.
+        rel.update(draft=False, body=body)
+        self.assertTrue(github_release.relink(gh, "app-v1.16.0", log=lambda m: None))
+        final = [b for k, b in gh.calls if k == "body"][-1]
+        self.assertIn("/releases/download/app-v1.16.0/ai-tab-phone.gif", final)
+        self.assertNotIn("untagged-", final)
+        rel["body"] = final
+        self.assertFalse(github_release.relink(gh, "app-v1.16.0", log=lambda m: None))
         with open(os.path.join(d, "preview-clips.json")) as f:
             self.assertEqual(json.load(f)["tag"], "app-v1.16.0")
 

@@ -10,6 +10,12 @@ MP4 inline (tools/whatsnew/whatsnew_mirror.py).
 
 The section sits between HTML comment markers, so re-running replaces it and
 leaves hand-written notes alone.
+
+While the release is a draft, its assets are served only under the draft's
+placeholder tag (``/releases/download/untagged-<id>/``, for people who can see the
+draft), and the final ``/releases/download/<tag>/`` URLs don't exist yet. So a
+draft's section links the placeholder URLs, which work during review, and
+``relink`` rewrites them to the final ones once the Release workflow publishes it.
 """
 
 from __future__ import annotations
@@ -36,10 +42,22 @@ CONTENT_TYPES = {
     ".json": "application/json",
 }
 SECTION_RE = re.compile(re.escape(START) + r".*?" + re.escape(END) + r"\n*", re.S)
+# A draft's placeholder tag, as GitHub puts it in the draft's html_url and asset URLs.
+UNTAGGED_RE = re.compile(r"untagged-[0-9a-f]+")
 
 
-def asset_url(repo: str, tag: str, name: str) -> str:
-    return f"https://github.com/{repo}/releases/download/{tag}/{urllib.parse.quote(name)}"
+def download_base(repo: str, tag: str) -> str:
+    return f"https://github.com/{repo}/releases/download/{tag}/"
+
+
+def release_download_base(release: dict, repo: str, tag: str) -> str:
+    """Where `release`'s assets download from now: a draft's placeholder tag
+    (from its html_url, ``.../releases/tag/untagged-<id>``), else `tag`."""
+    if release.get("draft"):
+        m = UNTAGGED_RE.search(release.get("html_url") or "")
+        if m:
+            return download_base(repo, m.group(0))
+    return download_base(repo, tag)
 
 
 def clip_assets(entries: list[dict]) -> list[str]:
@@ -85,11 +103,17 @@ def build_manifest(entries: list[dict], tag: str) -> dict:
     return {"schema": MANIFEST_SCHEMA, "tag": tag, "clips": clips}
 
 
-def section_markdown(manifest: dict, repo: str) -> str:
-    """The body section: one GIF (phone framing first) per clip, linking the MP4."""
+def section_markdown(manifest: dict, repo: str, base: Optional[str] = None) -> str:
+    """The body section: one GIF (phone framing first) per clip, linking the MP4.
+    `base` is where the assets download from (default: the final tag URL)."""
     tag = manifest["tag"]
     if not manifest["clips"]:
         return ""
+    base = base or download_base(repo, tag)
+
+    def url(name: str) -> str:
+        return base + urllib.parse.quote(name)
+
     out = [START, f"## {HEADING}", ""]
     for c in manifest["clips"]:
         vs = sorted(c["variants"], key=lambda v: v["framing"] != "phone")
@@ -99,12 +123,12 @@ def section_markdown(manifest: dict, repo: str) -> str:
         out.append(f"### {c['title']}")
         out.append("")
         out.append(
-            f'<a href="{asset_url(repo, tag, main["mp4"])}">'
-            f'<img src="{asset_url(repo, tag, main["gif"])}" alt="{_attr(c["title"])}" width="{width}"></a>'
+            f'<a href="{url(main["mp4"])}">'
+            f'<img src="{url(main["gif"])}" alt="{_attr(c["title"])}" width="{width}"></a>'
         )
         out.append("")
         links = " · ".join(
-            f"[{v['framing']} video (MP4)]({asset_url(repo, tag, v['mp4'])})" for v in vs
+            f"[{v['framing']} video (MP4)]({url(v['mp4'])})" for v in vs
         )
         out.append(f"{c['summary']}{' (' + prs + ')' if prs else ''} · {links}")
         out.append("")
@@ -196,9 +220,35 @@ def publish(gh: GitHub, tag: str, clips_dir: str, entries: list[dict], log=print
             gh.delete_asset(existing[name]["id"])
         gh.upload_asset(release, os.path.join(clips_dir, name), name)
         log(f"release_clips: uploaded {name}")
-    body = splice_body(release.get("body") or "", section_markdown(manifest, gh.repo))
+    base = release_download_base(release, gh.repo, tag)
+    body = splice_body(release.get("body") or "", section_markdown(manifest, gh.repo, base))
     gh.update_body(release, body)
     log(
         f"release_clips: {len(manifest['clips'])} clip(s) on {tag} ({'draft' if release.get('draft') else 'published'})"
     )
     return manifest
+
+
+def relink_body(body: str, repo: str, tag: str) -> str:
+    """`body` with every draft placeholder download URL pointed at `tag`'s."""
+    pat = re.compile(re.escape(f"https://github.com/{repo}/releases/download/") + UNTAGGED_RE.pattern + "/")
+    return pat.sub(download_base(repo, tag), body or "")
+
+
+def relink(gh: GitHub, tag: str, log=print) -> bool:
+    """After the draft is published: point its notes' asset links at the final
+    tag URLs (the placeholder ones stop working). Returns whether it changed."""
+    release = gh.release_for_tag(tag)
+    if release is None:
+        raise SystemExit(f"release_clips: no release for {tag}")
+    if release.get("draft"):
+        log(f"release_clips: {tag} is still a draft; its links stay on the draft's URLs")
+        return False
+    body = release.get("body") or ""
+    new = relink_body(body, gh.repo, tag)
+    if new == body:
+        log(f"release_clips: {tag}'s notes already link the final URLs")
+        return False
+    gh.update_body(release, new)
+    log(f"release_clips: {tag}'s notes now link /releases/download/{tag}/")
+    return True
