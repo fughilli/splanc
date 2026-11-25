@@ -61,6 +61,10 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   // the wall clock (time of day): set_clock is undone by setting it again.
   get_clock: read("Read lamp clocks"),
   set_clock: write("Set lamp clocks", false, true),
+  // wall-clock schedules: set_schedule may overwrite (asks first), delete_schedule removes.
+  list_schedules: read("List lamp schedules"),
+  set_schedule: write("Set lamp schedule rules", true, false),
+  delete_schedule: write("Delete lamp schedule rules", true, true),
   // device control
   set_brightness: write("Set brightness", false, true),
   update_firmware: write("Update firmware over Wi-Fi", true, true),
@@ -136,7 +140,8 @@ export const SERVER_INSTRUCTIONS =
   "keypoints are saved looks. New scene or mood: search_effects first (past effects), " +
   "else compile_effect, preview_effect, deploy_effect; rollback_effect undoes it.\n\n" +
   "Rules: ask the user before deleting or overwriting their keypoints, renaming a player " +
-  "(set_device_name), re-trusting a certificate (trust_player), updating firmware (update_firmware) or forgetting a player. Ask where fixtures " +
+  "(set_device_name), re-trusting a certificate (trust_player), updating firmware (update_firmware), forgetting a player, " +
+  "or changing or deleting their schedule rules (set_schedule overwrite/replace, delete_schedule). Ask where fixtures " +
   "are rather than guessing poses. Use commit=true sparingly (flash wear). If a player is unreachable, " +
   "say so; refresh_players looks again. Nothing here rewires or re-maps a fixture: that is done in the " +
   "Splanc app. set_power switches a lamp on or off (off: dark, still connected; a lid touch sensor set up with " +

@@ -37,6 +37,8 @@ import { firmwareCardFields, type FirmwareCardFields } from "../../buildInfo";
 import { ActionGrid, Button, IconButton, Sheet, icon, toast } from "../kit";
 import { ClockSection } from "./clockSection";
 import { deviceHasWallClock } from "../../net/wallClock";
+import { ScheduleSection } from "./scheduleSection";
+import { deviceHasSchedule } from "../../net/schedule";
 import { appState } from "../app/state";
 import { deviceProber } from "../../net/deviceProber";
 import {
@@ -780,10 +782,23 @@ function openDeviceDetail(dev: KnownDevice): void {
   // zone and where the time came from; the app pushes it on every connect.
   const clockCard = isActive && client && deviceHasWallClock(client.welcome) ? ClockSection(client) : null;
 
+  // -- Schedule (firmware advertising "schedule"): a summary + the way into the
+  // dedicated #/device/schedule flow (docs/design/schedule.md).
+  const scheduleCard =
+    isActive && client && deviceHasSchedule(client.welcome)
+      ? ScheduleSection(client, {
+          onOpen: () => {
+            sheet.close();
+            location.hash = "#/device/schedule";
+          },
+        })
+      : null;
+
   sheet.body.append(
     nameField,
     ...(powerCard ? [powerCard] : []),
     ...(clockCard ? [clockCard] : []),
+    ...(scheduleCard ? [scheduleCard] : []),
     actionGrid,
     divider,
     rowFor("LAN address", deviceHost(cur)),

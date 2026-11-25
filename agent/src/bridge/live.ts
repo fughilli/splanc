@@ -434,20 +434,26 @@ export class LiveMux {
 
   // -- locks -----------------------------------------------------------------------------
 
-  /** Mirror the locks onto the sessions (a re-dialed session starts unlocked). */
+  /** Mirror the locks onto the sessions (a re-dialed session starts unlocked). A held
+   * lock also holds the lamp's own schedule (D-567): the session renews a
+   * set_schedule{hold_s} lease while it is held, so no rule fires mid-show. */
   private syncLocks(): void {
     for (const p of this.hub.registry.list()) {
       const s = this.hub.openSession(p.id);
       if (!s) continue;
       const l = this.locks.get(p.id);
       s.liveLock = l ? { by: l.by, key: l.key } : null;
+      s.syncScheduleHold(l !== undefined);
     }
   }
 
   private unlock(pid: string): void {
     this.locks.delete(pid);
     const s = this.hub.openSession(pid);
-    if (s) s.liveLock = null;
+    if (s) {
+      s.liveLock = null;
+      s.syncScheduleHold(false);
+    }
   }
 
   private keyFor(pid: string, cs: ConnState): object {

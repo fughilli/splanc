@@ -159,6 +159,13 @@ effect:
   `uniform vec3 clock_date` (year, month, day) and `uniform float clock_valid`
   (0 while the clock is unset; the others then keep their defaults).
 - Never compute time of day from `time` (seconds since the effect started).
+- Schedules (feature `schedule`): the lamp runs its own rules ("07:00 weekdays:
+  turn on", "30 min before sunset: crossfade to a stored effect").
+  `list_schedules` reads them; `set_schedule` adds rules (omit `id`); changing a
+  rule (its `id`), `replace`, or `delete_schedule` needs the user's OK first
+  (`overwrite: true` / `confirmed: true`). An effect rule needs an effect STORED
+  on the lamp. Sunrise/sunset rules need the lamp's location, set once from the
+  Splanc app.
 - The in-app editor previews them from the phone's clock (with a "Preview
   time" slider). `preview_effect` does not: pass them explicitly, e.g.
   `uniforms: {"clock_day": 0.27}` for a 06:30 frame. See

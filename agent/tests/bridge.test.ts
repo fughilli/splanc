@@ -390,6 +390,7 @@ describe("mcp", () => {
       "list_decks",
       "list_keypoints",
       "list_players",
+      "list_schedules",
       "list_textures",
       "list_uniforms",
       "plot_fixture",
@@ -402,7 +403,7 @@ describe("mcp", () => {
       "time_sync_status",
     ]);
     const destructive = tools.filter((t) => t.annotations!.destructiveHint).map((t) => t.name);
-    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "set_device_name", "trust_player", "delete_effect", "update_effect", "set_wifi_policy"]) {
+    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "set_device_name", "trust_player", "delete_effect", "update_effect", "set_wifi_policy", "set_schedule", "delete_schedule"]) {
       assert.ok(destructive.includes(d), d);
     }
     // Scene changes on request are undone by rollback_effect: not destructive, so hosts

@@ -113,6 +113,11 @@ const CLIENT_ARMS: Record<string, string> = {
   // The wall clock (docs/design/wall-clock.md; net/wallClock.ts; the "wall_clock" feature).
   set_wall_clock: "setWallClock",
   get_clock: "getClock",
+  // Wall-clock schedules (docs/design/schedule.md; net/schedule.ts; the "schedule" feature).
+  set_clock_config: "setClockConfig",
+  set_schedule: "setSchedule",
+  delete_schedule: "deleteSchedule",
+  get_schedule: "getSchedule",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -156,6 +161,7 @@ const SERVER_ARMS: Record<string, string> = {
   stored_effect_list: "storedEffectList",
   power_state: "powerState",
   clock_state: "clockState",
+  schedule_state: "scheduleState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),

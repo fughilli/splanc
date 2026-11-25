@@ -190,5 +190,10 @@ set_str NSMicrophoneUsageDescription \
   "Splanc uses the microphone so you can control lights hands-free with your voice in Acid Mode."
 set_str NSSpeechRecognitionUsageDescription \
   "Splanc turns your spoken commands into lighting changes in Acid Mode."
+# Location: once, when the user creates a sunrise / sunset schedule rule and taps
+# "Use this phone's location" (ui/screens/scheduleScreen.ts); rounded to 0.1 degrees
+# and stored on the lamp only. When-in-use only; never in the background.
+set_str NSLocationWhenInUseUsageDescription \
+  "Splanc sends your rough location (about 10 km) to your light once, so it knows when the sun rises and sets for sunrise and sunset schedules."
 
 echo "ios-config applied."

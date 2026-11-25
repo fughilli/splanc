@@ -72,6 +72,15 @@ import { hostPosixTz } from "./hostTz";
 import { clockView, timeFromInput, zoneFromInput } from "./wallclock";
 import { applyAtOf, type Scheduled } from "./schedule";
 import {
+  readSchedule,
+  ruleToWire,
+  scheduleResultError,
+  RULES_PER_FRAME,
+  type ScheduleRule,
+  type ScheduleState,
+} from "../../web/src/net/schedule";
+import { assignIds, overwrites, ruleView, scheduleView } from "./wallSchedule";
+import {
   currentByName,
   describe,
   lerpValues,
@@ -138,6 +147,7 @@ export type Feature =
   | "power"
   | "apply_at"
   | "wall_clock"
+  | "schedule"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -891,6 +901,155 @@ export class DeviceSession {
       view["note"] = "a kiosk session may only set an unset clock";
     }
     return view;
+  }
+
+  // -- wall-clock schedules (docs/design/schedule.md; the "schedule" feature) -------------
+
+  private requireSchedule(): void {
+    if (!this.has("schedule")) {
+      throw new ToolError(
+        `the player's firmware (${this.fwVersion}) has no schedules; update it (update_firmware)`,
+      );
+    }
+    if (!SCHEDULE_IN_PROTO) throw new ToolError("this agent bundle predates schedules; update it");
+  }
+
+  private async readRules(): Promise<{ st: ScheduleState; clock: ClockState | null }> {
+    const st = await this.run(() => readSchedule(this.client));
+    const clock = this.has("wall_clock") ? await this.run(() => this.client.getClock()).catch(() => null) : null;
+    return { st, clock };
+  }
+
+  /** The lamp's rules, its next fire and its clock (list_schedules). */
+  async listSchedules(): Promise<Record<string, unknown>> {
+    this.requireSchedule();
+    const { st, clock } = await this.readRules();
+    const view = scheduleView(st, clock);
+    // What an effect rule can name (the lamp's effect store).
+    if (this.has("effect_store")) {
+      try {
+        const l = await this.run(() => this.client.listStoredEffects());
+        view["stored_effects"] = (l.effects ?? []).map((e) => ({ effect_id: e.effectId, name: e.name ?? "" }));
+      } catch {
+        // best effort
+      }
+    }
+    return view;
+  }
+
+  /**
+   * Add or replace rules (set_schedule). A rule without an id gets a free one. A rule
+   * whose id is already on the lamp, or `replace` (drop every rule first), changes the
+   * user's schedule: refused unless `overwrite` (the agent asks the user first).
+   */
+  async setSchedules(
+    rules: ScheduleRule[],
+    opts: {
+      replace?: boolean;
+      overwrite?: boolean;
+      /** Effects to compile and store on the lamp first (an effect rule's library_id / source). */
+      stores?: { effectId: string; name: string; source: string }[];
+    } = {},
+  ): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.requireSchedule();
+    const { st: before } = await this.readRules();
+    const hit = opts.replace ? before.rules : overwrites(before.rules, rules);
+    if (hit.length > 0 && !opts.overwrite) {
+      throw new ToolError(
+        `this would ${opts.replace ? "replace" : "overwrite"} ${hit.length} existing rule(s): ` +
+          hit.map((r) => `#${r.id} "${ruleView(r)["summary"] as string}"`).join("; ") +
+          ". Ask the user, then call again with overwrite: true (or leave id out to add a new rule).",
+      );
+    }
+    const all = assignIds(opts.replace ? [] : before.rules, rules);
+    if (!opts.replace && before.capacity > 0) {
+      const kept = before.rules.filter((r) => !all.some((n) => n.id === r.id)).length;
+      if (kept + all.length > before.capacity) {
+        throw new ToolError(`the lamp holds ${before.capacity} rules and has ${before.count}; delete some first`);
+      }
+    }
+    for (const e of opts.stores ?? []) {
+      if (!this.has("effect_store")) {
+        throw new ToolError(`the player's firmware (${this.fwVersion}) can't store effects; update it (update_firmware)`);
+      }
+      const c = await this.compile(e.source);
+      if (!c.ok) {
+        throw new ToolError(
+          `${e.effectId} doesn't compile:\n${c.diagnostics.map((x) => `${x.line}:${x.col}: ${x.msg}`).join("\n")}`,
+        );
+      }
+      await this.run(() => this.client.storeEffect(e.effectId, e.name, c.fxb));
+    }
+    // <= 4 rules per frame: a replace sends the first frame with replace_all, then upserts.
+    const frames: ScheduleRule[][] = [];
+    for (let i = 0; i < all.length; i += RULES_PER_FRAME) frames.push(all.slice(i, i + RULES_PER_FRAME));
+    if (frames.length === 0 && opts.replace) frames.push([]);
+    for (const [i, f] of frames.entries()) {
+      const r = await this.run(() =>
+        this.client.setSchedule({ rules: f.map(ruleToWire), ...(opts.replace && i === 0 ? { replaceAll: true } : {}) }),
+      );
+      const why = scheduleResultError(r.result);
+      if (why) throw new ToolError(why);
+    }
+    const { st, clock } = await this.readRules();
+    const view = scheduleView(st, clock);
+    view["saved"] = all.map((r) => r.id);
+    if (all.some((r) => r.when !== "time") && !st.hasLocation) {
+      view["warning"] =
+        "this lamp has no location, so its sunrise/sunset rules won't fire: open the Splanc app's Schedule screen " +
+        "once to send the phone's (rounded) location";
+    }
+    return view;
+  }
+
+  /** Delete one rule or all (delete_schedule); refused unless `confirmed` (ask the user first). */
+  async deleteSchedules(opts: { id?: number; all?: boolean; confirmed?: boolean }): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.requireSchedule();
+    if (!opts.all && !opts.id) throw new ToolError("give id (from list_schedules) or all: true");
+    if (!opts.confirmed) {
+      const { st } = await this.readRules();
+      const hit = opts.all ? st.rules : st.rules.filter((r) => r.id === opts.id);
+      if (hit.length === 0) throw new ToolError(opts.all ? "the lamp has no rules" : `no rule #${opts.id} on the lamp`);
+      throw new ToolError(
+        `this deletes ${hit.map((r) => `#${r.id} "${ruleView(r)["summary"] as string}"`).join("; ")}. ` +
+          "Ask the user, then call again with confirmed: true.",
+      );
+    }
+    const r = await this.run(() =>
+      this.client.deleteSchedule(opts.all ? { all: true } : { id: opts.id! }),
+    );
+    const why = scheduleResultError(r.result);
+    if (why) throw new ToolError(why);
+    const { st, clock } = await this.readRules();
+    return scheduleView(st, clock);
+  }
+
+  /** When the last schedule hold was sent (performance.now), or null when none is held. */
+  private scheduleHeldAt: number | null = null;
+
+  /**
+   * D-567: keep the lamp's rules from firing while a live show holds it (the bridge's
+   * Show Mode lock). Called on every lock sync (LiveMux poll, ~2 s): while `held`, a
+   * set_schedule{hold_s} lease of SCHEDULE_HOLD_S is renewed every SCHEDULE_RENEW_MS;
+   * when the lock goes, release_hold ends it at once. Quiet (not activity), best effort.
+   */
+  syncScheduleHold(held: boolean, now = performance.now()): void {
+    if (!this.has("schedule") || !SCHEDULE_IN_PROTO || !this.client.isConnected) {
+      if (!held) this.scheduleHeldAt = null;
+      return;
+    }
+    if (held) {
+      if (this.scheduleHeldAt !== null && now - this.scheduleHeldAt < SCHEDULE_RENEW_MS) return;
+      this.scheduleHeldAt = now;
+      void this.run(() => this.client.setSchedule({ holdS: SCHEDULE_HOLD_S }), true).catch(() => {
+        this.scheduleHeldAt = null;
+      });
+    } else if (this.scheduleHeldAt !== null) {
+      this.scheduleHeldAt = null;
+      void this.run(() => this.client.setSchedule({ releaseHold: true }), true).catch(() => undefined);
+    }
   }
 
   async getPower(): Promise<Record<string, unknown>> {
@@ -2400,6 +2559,11 @@ export const DRIVERS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name ==
 export const WIFI_POLICY_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_wifi_policy");
 export const POWER_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_power");
 export const CLOCK_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_wall_clock");
+export const SCHEDULE_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_schedule");
+/** The live-show schedule hold (D-567): the lease, and how often it is renewed. A
+ * bridge that dies mid-show lets the lamp's rules resume within SCHEDULE_HOLD_S. */
+export const SCHEDULE_HOLD_S = 120;
+export const SCHEDULE_RENEW_MS = 45_000;
 
 interface DriverStateReply {
   running?: boolean;

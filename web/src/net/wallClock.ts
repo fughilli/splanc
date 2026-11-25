@@ -57,6 +57,10 @@ export interface ClockStateMessage {
   steps?: number;
   monoJumps?: number;
   lastSet?: string | number;
+  /** The location for sunrise / sunset rules (set_clock_config), 1e-4 degrees. */
+  hasLocation?: boolean;
+  latE4?: number;
+  lonE4?: number;
 }
 
 export type ClockSource = "none" | "sntp" | "mesh" | "push" | "rtc" | "carry";
@@ -88,6 +92,10 @@ export interface ClockState {
   steps: number;
   monoJumps: number;
   lastSet: ClockSetResult;
+  /** The lamp's location for sun rules (1e-4 degrees), when it has one. */
+  hasLocation: boolean;
+  latE4: number;
+  lonE4: number;
 }
 
 const SOURCES: ClockSource[] = ["none", "sntp", "mesh", "push", "rtc", "carry"];
@@ -126,6 +134,9 @@ export function flatClockState(m: Partial<ClockStateMessage>): ClockState {
     steps: m.steps ?? 0,
     monoJumps: m.monoJumps ?? 0,
     lastSet: RESULTS[enumIndex(m.lastSet, RESULTS, "CLOCK_SET_RESULT_")] ?? "none",
+    hasLocation: m.hasLocation ?? false,
+    latE4: m.latE4 ?? 0,
+    lonE4: m.lonE4 ?? 0,
   };
 }
 
