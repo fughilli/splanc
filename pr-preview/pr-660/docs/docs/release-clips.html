@@ -594,6 +594,13 @@ the same tag (<code class="docutils literal notranslate"><span class="pre">recor
 <code class="docutils literal notranslate"><span class="pre">publish</span> <span class="pre">--tag</span> <span class="pre">…</span></code>, or re-tag).</p></li>
 </ul>
 <p>Then <strong>Re-run failed jobs</strong>. The review is asked again with a new desk item.</p>
+<p><strong>The draft.</strong> <code class="docutils literal notranslate"><span class="pre">app_previews</span></code> makes the draft with <code class="docutils literal notranslate"><span class="pre">release_clips</span> <span class="pre">ensure-draft</span></code>
+(or reuses the tag’s existing one, keeping its notes), and the webapp job
+publishes that same draft with <code class="docutils literal notranslate"><span class="pre">release_clips</span> <span class="pre">finalize</span></code>. Both match a draft by
+its name as well as its tag, because GitHub reports a draft’s tag as
+<code class="docutils literal notranslate"><span class="pre">untagged-&lt;id&gt;</span></code> once another release claims it. softprops/action-gh-release
+isn’t used for app releases: it looks releases up by tag, which never finds a
+draft, so app-v1.17.0 shipped as a new, empty release beside the reviewed draft.</p>
 <p><strong>Clip links in the draft.</strong> A draft’s files are served only under the draft’s
 placeholder tag (<code class="docutils literal notranslate"><span class="pre">/releases/download/untagged-&lt;id&gt;/</span></code>), so the draft’s “Feature
 previews” link those URLs, which play for anyone who can see the draft. The

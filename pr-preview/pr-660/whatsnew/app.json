@@ -9,8 +9,168 @@
    "date": "2026-11-25T06:14:14Z",
    "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.17.0",
    "prerelease": false,
-   "body": [],
-   "media": []
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "Release feature-preview clips: recorded per release, inline in What's new, gated on owner review by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/591"
+         },
+         "c": [
+          "#591"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Effect editor: uniform value fields 8 px apart; the uniforms pane in the layout guard by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/633"
+         },
+         "c": [
+          "#633"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/firmware-v1.16.0...app-v1.17.0"
+       },
+       "c": [
+        "firmware-v1.16.0...app-v1.17.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": [
+    "media/2f4104caf5fe506ce545.webm",
+    "media/318cf03896fde04eadbb.mp4",
+    "media/69e787fb3866f4756ab6.webm",
+    "media/6d8112c2d0ee1f2c9307.mp4",
+    "media/781f02ea922b1ab850fc.webm",
+    "media/7e879a83fc0ad4587a6c.mp4",
+    "media/8f44581df6f33aa626c5.webm",
+    "media/9dda21fc64a63bfa1f80.mp4",
+    "media/c7d88f2216de573ce787.jpg",
+    "media/cf3571022060ffdd7720.jpg",
+    "media/e006efcc0ee3dbd767f1.jpg",
+    "media/e5a6c11a4cd3ea86e8d7.jpg"
+   ],
+   "clips": [
+    {
+     "id": "ai-model-setup",
+     "title": "Set up AI in one place",
+     "summary": "Model setup compares the AI options side by side: free OpenRouter models, Splanc AI credits, or your own key. Each lists its cost, quality, limits and privacy.",
+     "prs": [
+      591
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/9dda21fc64a63bfa1f80.mp4",
+       "webm": "media/69e787fb3866f4756ab6.webm",
+       "poster": "media/e006efcc0ee3dbd767f1.jpg",
+       "width": 600,
+       "height": 1298
+      }
+     ]
+    },
+    {
+     "id": "ai-settings-tab",
+     "title": "AI settings have their own tab",
+     "summary": "Pick where effect generation runs (cloud, a local server, or in the browser) from Settings → AI, available from anywhere in the app.",
+     "prs": [
+      591
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/6d8112c2d0ee1f2c9307.mp4",
+       "webm": "media/8f44581df6f33aa626c5.webm",
+       "poster": "media/c7d88f2216de573ce787.jpg",
+       "width": 600,
+       "height": 1298
+      },
+      {
+       "framing": "desktop",
+       "mp4": "media/318cf03896fde04eadbb.mp4",
+       "webm": "media/781f02ea922b1ab850fc.webm",
+       "poster": "media/e5a6c11a4cd3ea86e8d7.jpg",
+       "width": 1120,
+       "height": 700
+      }
+     ]
+    },
+    {
+     "id": "whats-new",
+     "title": "What's new, after every update",
+     "summary": "After an update a sparkle appears in the corner. Tap it for the release notes since your last version, with a picker for the app, firmware and bridge.",
+     "prs": [
+      591
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/7e879a83fc0ad4587a6c.mp4",
+       "webm": "media/2f4104caf5fe506ce545.webm",
+       "poster": "media/cf3571022060ffdd7720.jpg",
+       "width": 600,
+       "height": 1298
+      }
+     ]
+    }
+   ]
   },
   {
    "version": "1.16.0",
