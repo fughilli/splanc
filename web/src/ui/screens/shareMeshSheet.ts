@@ -46,7 +46,7 @@ export function openShareMeshSheet(rec: MeshRecord, meshTimeS: () => Promise<num
   const choices = h("div", "share-choices");
   const details = h("div", "mesh-sheet");
   const who = h("input", "sheet-input");
-  who.placeholder = "Who is it for? (e.g. Sam)";
+  who.placeholder = "e.g. Sam";
   who.setAttribute("aria-label", "Who is it for");
   who.maxLength = 40;
   const term = h("select", "sheet-input");
