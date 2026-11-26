@@ -765,6 +765,24 @@ body.is-locked {
   gap: var(--sp-2);
   min-width: 0;
 }
+/* D-541 PR 10: the matrix grid sits behind an "Advanced" disclosure under the
+ * gizmo button, as its own full-width row. */
+.upanel-adv {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.upanel-adv > summary {
+  cursor: pointer;
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  padding: var(--sp-1) 0;
+}
+.upanel-adv[open] > summary {
+  margin-bottom: var(--sp-2);
+}
+.upanel-adv > .upanel-mat {
+  grid-column: auto;
+}
 .upanel-num::-webkit-outer-spin-button,
 .upanel-num::-webkit-inner-spin-button {
   appearance: none;

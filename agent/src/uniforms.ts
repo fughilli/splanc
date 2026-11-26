@@ -12,7 +12,9 @@
  * `: vector` / `: direction` vec2/vec3 uniforms are `ui.kind "vector"` (a pad,
  * ranged like a slider) / `"direction"` (unit length: set values are
  * normalised, ramps stay on the sphere).
- * mat3/mat4 are `ui.kind "matrix"`, width 9/16, column-major (GLSL). On the
+ * mat3/mat4 are `ui.kind "matrix"`, width 9/16, column-major (GLSL); a plain
+ * mat3 is a 3D rotation / linear transform and `: transform2d` marks one as a
+ * 2D affine (`ui.kind "transform2d"`, translation in column 2). On the
  * wire a UniformValue carries at most 4 floats, so {@link resolve} splits a
  * matrix into consecutive slot chunks (web/src/net/uniformWire.ts).
  */
@@ -27,7 +29,8 @@ export type UiKind =
   | { kind: "dropdown"; options: string[] }
   | { kind: "matrix"; min: number; max: number }
   | { kind: "vector"; min: number; max: number; step: number }
-  | { kind: "direction" };
+  | { kind: "direction" }
+  | { kind: "transform2d"; min: number; max: number };
 
 export interface ManifestUniform {
   name: string;
@@ -67,6 +70,7 @@ export function rangeOf(u: ManifestUniform): { min: number; max: number } | null
     case "dropdown":
       return { min: 0, max: Math.max(0, u.ui.options.length - 1) };
     case "matrix":
+    case "transform2d":
     case "vector":
       return { min: u.ui.min, max: u.ui.max };
     case "direction":
@@ -89,7 +93,7 @@ export function componentRanges(u: ManifestUniform): { min: number; max: number 
 
 /** N for an N×N matrix uniform (mat3 → 3, mat4 → 4), else null. */
 export function matrixDim(u: ManifestUniform): number | null {
-  if (u.ui.kind !== "matrix") return null;
+  if (u.ui.kind !== "matrix" && u.ui.kind !== "transform2d") return null;
   const n = Math.round(Math.sqrt(u.width));
   return n * n === u.width ? n : null;
 }

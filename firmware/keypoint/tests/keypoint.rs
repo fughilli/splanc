@@ -342,3 +342,25 @@ fn vector_lerps_and_direction_stays_unit_length() {
     let len: f32 = out[2..5].iter().map(|x| x * x).sum::<f32>().sqrt();
     assert!((len - 1.0).abs() < 1e-5, "len {len}");
 }
+
+// D-541 PR 10: a mat3 `: transform2d` (format 2) blends per component like a
+// plain matrix, clamped to its range.
+const XF: &[u8] = br#"[{"name":"xf","slot":0,"width":9,"ui":{"kind":"transform2d","min":-4,"max":4},"default":[1,0,0,0,1,0,0,0,1],"min":-4,"max":4}]"#;
+
+#[test]
+fn transform2d_parses_and_lerps_per_component() {
+    let r = Rules::parse(XF);
+    let rs = r.rules();
+    assert_eq!((rs[0].kind, rs[0].width, rs[0].min, rs[0].max), (Kind::Transform2d, 9, -4.0, 4.0));
+    let mut a = UNSET;
+    let mut b = UNSET;
+    a[..9].copy_from_slice(&[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+    b[..9].copy_from_slice(&[3.0, 0.0, 0.0, 0.0, 3.0, 0.0, 6.0, -2.0, 1.0]);
+    let mut out = UNSET;
+    blend(&r, &[&a, &b], &[0.5, 0.5], &UNSET, COLOR_RGB, &mut out);
+    assert_eq!(&out[..9], &[2.0, 0.0, 0.0, 0.0, 2.0, 0.0, 3.0, -1.0, 1.0]);
+    // Clamped to the declared range.
+    b[6] = 10.0;
+    blend(&r, &[&b], &[1.0], &UNSET, COLOR_RGB, &mut out);
+    assert_eq!(out[6], 4.0);
+}

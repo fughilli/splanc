@@ -53,7 +53,10 @@ export type LibUi =
   | { kind: "dropdown"; options: string[] }
   // `: vector` / `: direction` on a vec2/vec3 (D-541 PR 4).
   | { kind: "vector"; min: number; max: number; step: number }
-  | { kind: "direction" };
+  | { kind: "direction" }
+  // mat3 / mat4 (`matrix`) and a mat3 `: transform2d` (D-541 PR 10), column-major.
+  | { kind: "matrix"; min: number; max: number }
+  | { kind: "transform2d"; min: number; max: number };
 
 /** One uniform of an entry: the compiler's manifest minus the slot. */
 export interface LibUniform {
@@ -216,6 +219,12 @@ function normUi(v: unknown, i: number): LibUi {
     }
     case "direction":
       return { kind: "direction" };
+    case "matrix":
+    case "transform2d": {
+      const min = finite(o["min"]) ? o["min"] : -1000;
+      const max = finite(o["max"]) ? o["max"] : 1000;
+      return { kind: o["kind"] === "matrix" ? "matrix" : "transform2d", min, max };
+    }
     case "color":
       return { kind: "color" };
     case "toggle":
@@ -228,7 +237,9 @@ function normUi(v: unknown, i: number): LibUi {
       return { kind: "dropdown", options: (opts as string[]).slice(0, 32).map((s) => s.slice(0, 32)) };
     }
     default:
-      throw new LibraryError(`uniforms[${i}].ui.kind must be slider, color, toggle, dropdown, vector or direction`);
+      throw new LibraryError(
+        `uniforms[${i}].ui.kind must be slider, color, toggle, dropdown, vector, direction, matrix or transform2d`,
+      );
   }
 }
 
@@ -306,6 +317,8 @@ const WIDTHS: Record<string, number> = {
   vec2: 2,
   vec3: 3,
   vec4: 4,
+  mat3: 9,
+  mat4: 16,
 };
 
 /**
@@ -340,7 +353,16 @@ export function uniformsFromSource(source: string): LibUniform[] {
     }
     let ui: LibUi;
     const vecAnn = /^(vector|direction)\b\s*(.*)$/.exec(ann);
-    if (ann === "color") ui = { kind: "color" };
+    const matAnn = /^(transform2d\b)?\s*(?:(-?[0-9.]+(?:[eE][-+]?\d+)?)\s*\.\.\s*(-?[0-9.]+(?:[eE][-+]?\d+)?))?\s*$/.exec(ann);
+    if (width === 9 || width === 16) {
+      // A matrix: `: transform2d` (mat3 only) and/or a range; identity default.
+      if (!matAnn || (matAnn[1] && ty !== "mat3")) continue;
+      ui = {
+        kind: matAnn[1] ? "transform2d" : "matrix",
+        min: matAnn[2] !== undefined ? Number(matAnn[2]) : -1000,
+        max: matAnn[3] !== undefined ? Number(matAnn[3]) : 1000,
+      };
+    } else if (ann === "color") ui = { kind: "color" };
     else if (vecAnn && (ty === "vec2" || ty === "vec3")) {
       if (vecAnn[1] === "direction") ui = { kind: "direction" };
       else {
@@ -369,11 +391,25 @@ export function uniformsFromSource(source: string): LibUniform[] {
     let def: number[] = [];
     if (defText === "true" || defText === "false") def = [defText === "true" ? 1 : 0];
     else {
-      const nums = [...defText.matchAll(/-?\d*\.?\d+(?:[eE][-+]?\d+)?/g)].map((x) => Number(x[0]));
-      def = nums.length === 1 && width > 1 ? new Array<number>(width).fill(nums[0]!) : nums;
+      // Constructor names (`vec3(`, `mat3(`) carry digits that are not values.
+      const nums = [...defText.replace(/\b(?:vec|ivec|mat)[234]\b/g, " ").matchAll(/-?\d*\.?\d+(?:[eE][-+]?\d+)?/g)].map((x) => Number(x[0]));
+      const isMat = ui.kind === "matrix" || ui.kind === "transform2d";
+      def = nums.length === 1 && width > 1 && !isMat ? new Array<number>(width).fill(nums[0]!) : nums;
+    }
+    if (ui.kind === "matrix" || ui.kind === "transform2d") {
+      // GLSL: no default / one scalar is that scalar on the diagonal.
+      const n = width === 9 ? 3 : 4;
+      if (def.length <= 1) {
+        const d = def[0] ?? 1;
+        def = Array.from({ length: width }, (_, k) => (k % (n + 1) === 0 ? d : 0));
+      }
     }
     const [min, max] =
-      ui.kind === "slider" ? [ui.min, ui.max] : ui.kind === "dropdown" ? [0, Math.max(0, ui.options.length - 1)] : [0, 1];
+      ui.kind === "slider" || ui.kind === "matrix" || ui.kind === "transform2d"
+        ? [ui.min, ui.max]
+        : ui.kind === "dropdown"
+          ? [0, Math.max(0, ui.options.length - 1)]
+          : [0, 1];
     const u: LibUniform = { name, width, ui, default: def, min, max };
     if (unit) u.unit = unit;
     const doc = /\/\/\s*(.*)$/.exec(tail)?.[1]?.trim();

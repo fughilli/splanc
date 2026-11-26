@@ -60,7 +60,8 @@ function kindLabel(u: FxUniform): string {
   if (u.ui.kind === "color") return " (color)";
   if (u.ui.kind === "toggle") return " (toggle)";
   if (u.ui.kind === "dropdown") return ` (dropdown: ${u.ui.options.join("/")})`;
-  if (u.ui.kind === "matrix") return " (matrix)";
+  if (u.ui.kind === "matrix") return u.width === 9 ? " (mat3: 3D rotation/scale)" : " (mat4 transform)";
+  if (u.ui.kind === "transform2d") return " (mat3 2D affine transform)";
   if (u.ui.kind === "vector") return " (vector)";
   if (u.ui.kind === "direction") return " (direction, unit length)";
   return "";

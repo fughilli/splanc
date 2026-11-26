@@ -85,6 +85,7 @@ opcode):
   uniform mat4  pose;                          // matrix, identity default (`: lo .. hi` optional)
   uniform vec2  wind : vector -2 .. 2 = 0.5, 0;  // XY pad (vec3: + z slider)
   uniform vec3  sun  : direction = 0, 1, 0.3;    // unit vector: dial (vec2) / sphere (vec3)
+  uniform mat3  uvx  : transform2d;              // 2D affine (translation in column 2)
   ```
 
   A `vec3`/`vec4` without a range is a colour (`ui.kind: color`, 0..1); with a
@@ -101,8 +102,15 @@ opcode):
   format 1. The VM accepts formats 1..=2 and reports 2 (`welcome.fxb_format`),
   so firmware from before the bump refuses only the effects that use the new
   controls, and the app says "update the firmware" before uploading one. Later
-  widget kinds (the mat3 `: transform2d` gizmo, persisted textures) join
-  format 2 rather than bumping again.
+  widget kinds (persisted textures) join format 2 rather than bumping again.
+
+  Matrices get a Move / Rotate / Scale gizmo in the app (D-541 PR 10), with the
+  raw N×N grid behind "Advanced". A `mat4` is a full 3D transform; a plain
+  `mat3` is a 3D rotation / linear transform (Rotate and Scale only); and
+  `: transform2d [range]` marks a `mat3` as a 2D homogeneous affine
+  (`ui.kind: transform2d`, translation in column 2, Move x/y, Rotate about z,
+  Scale). `transform2d` is format 2, like `vector`; plain matrices stay
+  format 1.
 
 - **Matrices** — `mat3`/`mat4` (column-major, GLSL): `m[c]` column, `m[c][r]`
   element, constructors (diagonal scalar, N columns, N×N scalars, `mat3(m4)`,

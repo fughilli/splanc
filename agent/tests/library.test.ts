@@ -183,6 +183,24 @@ describe("validation + helpers", () => {
         ["sun", { kind: "direction" }],
       ],
     );
+    // D-541 PR 10: matrices (a mat3 `: transform2d` is a 2D affine); no
+    // default is the identity, and constructor names are not values.
+    const mats = uniformsFromSource(
+      "uniform mat4 pose;\nuniform mat3 xf : transform2d -4 .. 4 = mat3(2, 0, 0, 0, 2, 0, 0.5, -0.5, 1);\n" +
+        "uniform mat3 rot : -2 .. 2 = 0.5;\nuniform mat4 bad : transform2d;\n",
+    );
+    assert.deepEqual(
+      mats.map((u) => [u.name, u.ui, u.width, u.min, u.max]),
+      [
+        ["pose", { kind: "matrix", min: -1000, max: 1000 }, 16, -1000, 1000],
+        ["xf", { kind: "transform2d", min: -4, max: 4 }, 9, -4, 4],
+        ["rot", { kind: "matrix", min: -2, max: 2 }, 9, -2, 2],
+      ],
+      "a mat4 cannot be transform2d (skipped, as the compiler refuses it)",
+    );
+    assert.deepEqual(mats[0]!.default, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    assert.deepEqual(mats[1]!.default, [2, 0, 0, 0, 2, 0, 0.5, -0.5, 1]);
+    assert.deepEqual(mats[2]!.default, [0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.5]);
   });
 
   test("the seed effects are the skill's examples, verbatim", () => {
