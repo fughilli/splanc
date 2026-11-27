@@ -7,7 +7,9 @@ Progress (2026-10-29, Waveshare ESP32-P4-WIFI6, die v3.2): `//firmware/p4:esp32p
 `//firmware/player_app:esp32p4_player` (main.cpp with `LM_LINK`) speaks the §4.1 link frames
 (`//firmware/p4/link`) over UART0 at 2 Mbaud, and `tools/p4_link_bridge.py` serves `ws://`
 for it: `player_probe` passes and `fx_bench` runs end to end through the bridge, with the JIT
-off. The PARLIO driver initialises on GPIO20/21; it has not been checked on a logic analyzer
+off. (2026-11-25: that UART build and the bridge are gone, D-540. `:esp32p4_player_c6`, the
+link on SDIO to the board's C6, is the only P4 player; `//firmware/p4/link` and
+`tools/p4_link_test` stay. The Phase A steps below that name them are history.) The PARLIO driver initialises on GPIO20/21; it has not been checked on a logic analyzer
 yet. A Vive tracker on the HS OTG port feeds the uniform pool (`tracker_pos`, `tracker_quat`,
 `tracker_ok`).
 

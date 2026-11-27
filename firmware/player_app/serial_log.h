@@ -77,7 +77,7 @@ class RingLog : public Print {
       }
     }
 #if defined(LM_LINK)
-    // The P4 player: the console shares UART0 with the link, so lines go as LOG frames.
+    // The P4 player: link_transport.cpp owns the console (UART0; the link is on SDIO).
     pend_off_ += link_log_write(pend_ + pend_off_, pend_n_ - pend_off_);
 #else
     pend_off_ += Serial.write(pend_ + pend_off_, pend_n_ - pend_off_);

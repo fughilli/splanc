@@ -66,7 +66,7 @@ rust_static_library(
     ],
 )
 
-# The tracker inside the P4 player (//firmware/player_app:esp32p4_player): the task
+# The tracker inside the P4 player (//firmware/player_app:esp32p4_player_c6): the task
 # and the latest pose, for the uniform pool.
 cc_library(
     name = "tracker_service",

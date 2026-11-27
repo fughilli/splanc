@@ -1,25 +1,15 @@
-// The P4 player's transport (the LM_LINK build of main.cpp; docs/design/p4-c6-split.md §3.3):
-// the player protocol as link frames (firmware/p4/link) over UART0, the board's USB serial
-// bridge. tools/p4_link_bridge.py plays the C6's part on the host: it serves ws:// and
-// forwards each WebSocket message as a PLAYER frame, and each REPLY / PUSH back to the
-// client whose session it names. Phase B swaps the UART for the SDIO link to the C6; the
-// frames stay the same.
+// The P4 player's transport (the LM_LINK build of main.cpp; docs/design/p4-c6-split.md §3.3,
+// §4.1): the player protocol as link frames (firmware/p4/link), one per packet, over SDIO to
+// the board's C6 front end, the P4 being the host (ESSL). The C6 serves wss:// and forwards
+// each WebSocket message as a PLAYER frame, and each REPLY / PUSH back to the client whose
+// session it names.
 //
 // It implements netstack_transport.h, so main.cpp's LM_NETSTACK paths (dispatch, pushes,
 // the loop's service calls) run unchanged. The Wi-Fi half of that API reports "no
 // network": on the P4 the radio is the front end's business.
 //
-// The console shares the UART: serial_log.h's drain hands its bytes to link_log_write,
-// which sends them as LOG frames. Anything printed around the link (the ROM, the
-// bootloader, a panic) arrives as plain text between frames, and the bridge prints it.
-//
-// LM_LINK_SDIO (Phase B, §4.1): the same frames, one per packet, over SDIO to the board's
-// C6 front end, the P4 being the host (ESSL). The console then keeps the UART to itself.
 // At boot the P4 checks that the C6 runs the front-end image it carries, by the ELF
 // SHA-256 in the C6's HELLO, and flashes it over SDIO when it doesn't (//firmware/p4/c6flash).
-#include <driver/uart.h>
-#include <driver/uart_vfs.h>
-#if defined(LM_LINK_SDIO)
 #include <driver/sdmmc_host.h>
 #include <esp_serial_slave_link/essl.h>
 #include <esp_serial_slave_link/essl_sdio.h>
@@ -28,7 +18,6 @@
 
 #include "firmware/p4/c6flash/c6_bundle_frontend_res.h"
 #include "firmware/p4/c6flash/c6_flasher.h"
-#endif
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -50,12 +39,6 @@ extern "C" void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_
 
 namespace {
 
-constexpr uart_port_t kUart = UART_NUM_0;
-// The Waveshare P4 boards' CH343P bridge takes up to 6 Mbaud; 2 Mbaud is what the
-// tracker dump build proved on this cable.
-constexpr int kBaud = 2000000;
-constexpr size_t kUartRx = 16384;
-constexpr size_t kUartTx = 8192;
 // The largest message a client may send in one piece. Clients chunk uploads to a few KB
 // (the C6's WS buffer); a whole 1024-LED map is ~45 KB. PSRAM, so it costs no L2MEM.
 constexpr size_t kMsgCap = 64 * 1024;
@@ -65,13 +48,12 @@ constexpr int64_t kLinkTimeoutUs = 350 * 1000;
 // Silent this long and the SDIO link is reopened (netstack_loop).
 constexpr int64_t kLinkLostUs = 2 * 1000 * 1000;
 
-bool g_up = false;  // the UART driver is installed
+bool g_up = false;  // the SDIO link is open
 SemaphoreHandle_t g_tx_mux = nullptr;
-uint8_t *g_tx_wire = nullptr;  // lk_stream_max(LK_MTU)
+uint8_t *g_tx_wire = nullptr;  // LK_HEADER + LK_MTU
 uint16_t g_tx_seq[2] = {0, 0};
 
-uint8_t *g_rx_wire = nullptr;  // lk_stream_max(LK_MTU)
-lk_rx g_rx;
+uint8_t *g_rx_wire = nullptr;  // kStreamCap
 uint8_t *g_msg = nullptr;  // PLAYER / MESH reassembly (kMsgCap)
 size_t g_msg_len = 0;
 bool g_msg_overflow = false;
@@ -97,7 +79,6 @@ struct {
 
 bool host_alive(int64_t now) { return g_host_seen_us != 0 && now - g_host_seen_us < kLinkTimeoutUs; }
 
-#if defined(LM_LINK_SDIO)
 // The C6 front end over SDIO: the frontend_link.cpp receive buffer size (both sides must
 // agree), the card, and the stream the host reads (ESSL joins queued packets; frames carry
 // their own length, so they are split back out here).
@@ -206,7 +187,6 @@ void sdio_rx() {
     if (e != ESP_ERR_NOT_FINISHED || g_stream_len == kStreamCap) break;
   }
 }
-#endif
 
 // Send one message as frames (MORE-fragmented past the MTU). Callers may be on any task.
 void send_msg(uint8_t type, uint16_t session, const uint8_t *data, size_t len) {
@@ -222,7 +202,6 @@ void send_msg(uint8_t type, uint16_t session, const uint8_t *data, size_t len) {
     h.session = session;
     h.seq = g_tx_seq[0]++;
     h.len = (uint16_t)n;
-#if defined(LM_LINK_SDIO)
     lk_header_pack(&h, data + off, g_tx_wire);
     if (n) memcpy(g_tx_wire + LK_HEADER, data + off, n);
     const size_t w = LK_HEADER + n;
@@ -231,10 +210,6 @@ void send_msg(uint8_t type, uint16_t session, const uint8_t *data, size_t len) {
       g_stats.too_big++;
       g_stats.sdio_err++;
     }
-#else
-    const size_t w = lk_encode(&h, data + off, g_tx_wire);
-    uart_write_bytes(kUart, g_tx_wire, w);
-#endif
     g_stats.tx_frames++;
     g_stats.tx_bytes += w;
     off += n;
@@ -348,7 +323,6 @@ void on_frame(const lk_header &h, const uint8_t *p) {
     case LK_LINK:
       if (h.len == 0) return;
       if (p[0] == LK_OP_HELLO) {
-#if defined(LM_LINK_SDIO)
         // The front end's HELLO: version, MTU, then its image's ELF SHA-256.
         if (h.len >= LK_HELLO_FEATURES_AT) {
           memcpy(g_c6_sha, p + LK_HELLO_SHA_AT, 32);
@@ -360,9 +334,6 @@ void on_frame(const lk_header &h, const uint8_t *p) {
         // (frontend_p4_up, 350 ms), and answers player messages itself otherwise. A
         // quiet P4 had the C6 take an upload's first windows and the P4 the rest.
         send_hello();
-#else
-        send_hello();
-#endif
       } else if (p[0] == LK_OP_NAME && h.len >= 3 && h.len <= 1 + 18 + 33) {
         // "<mac>\0<name>" from the front end.
         char b[1 + 18 + 33 + 1];
@@ -390,18 +361,10 @@ NsRxStamps g_ns_rx_stamps;
 void (*g_ns_reply_hook)(int outcome) = nullptr;
 
 extern "C" size_t link_log_write(const uint8_t *data, size_t len) {
-#if defined(LM_LINK_SDIO)
   return fwrite(data, 1, len, stdout);  // the UART is the console's alone
-#endif
-  // Before the link is up nothing is taken: the lines wait in serial_log's ring and
-  // go out as LOG frames once it is (the boot banner is still on the UART at the ROM's
-  // 115200 baud, which the bridge can't read at the link rate).
-  if (!g_up) return 0;
-  send_msg(LK_LOG, 0, data, len);
-  return len;
 }
 
-// The P4 has no network of its own: OSC out goes to the front end (or the host bridge),
+// The P4 has no network of its own: OSC out goes to the front end,
 // which sends it to whoever last sent OSC in.
 bool netstack_osc_send(const uint8_t *data, size_t len) {
   if (!g_up || len > LK_MTU) return false;
@@ -411,7 +374,6 @@ bool netstack_osc_send(const uint8_t *data, size_t len) {
 
 void netstack_prepare_restart(void) {}
 
-#if defined(LM_LINK_SDIO)
 void netstack_setup(void) {
   g_tx_mux = xSemaphoreCreateMutex();
   g_tx_wire = static_cast<uint8_t *>(heap_caps_malloc(LK_HEADER + LK_MTU, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
@@ -528,64 +490,6 @@ void netstack_loop(void) {
   }
   sdio_rx();
 }
-#else
-void netstack_setup(void) {
-  g_tx_mux = xSemaphoreCreateMutex();
-  const size_t wire = lk_stream_max(LK_MTU);
-  g_tx_wire = static_cast<uint8_t *>(heap_caps_malloc(wire, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-  g_rx_wire = static_cast<uint8_t *>(heap_caps_malloc(wire, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-  g_msg = static_cast<uint8_t *>(heap_caps_malloc(kMsgCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!g_tx_wire || !g_rx_wire || !g_msg) {
-    printf("[link] out of memory\n");
-    return;
-  }
-  lk_rx_init(&g_rx, g_rx_wire, wire);
-  printf("[link] P4 player link: frames on UART0 at %d baud from here on\n", kBaud);
-  fflush(stdout);
-  if (uart_driver_install(kUart, kUartRx, kUartTx, 0, nullptr, 0) != ESP_OK) {
-    printf("[link] uart_driver_install failed\n");
-    return;
-  }
-  uart_vfs_dev_use_driver(kUart);  // stdout through the driver: whole writes, never mid-frame
-  uart_wait_tx_done(kUart, pdMS_TO_TICKS(50));
-  uart_set_baudrate(kUart, kBaud);
-  g_up = true;
-  send_hello();
-}
-
-bool netstack_service_due(void) {
-  if (!g_up) return false;
-  size_t n = 0;
-  uart_get_buffered_data_len(kUart, &n);
-  return n > 0 || esp_timer_get_time() - g_hb_sent_us >= kHeartbeatUs;
-}
-
-void netstack_loop(void) {
-  if (!g_up) return;
-  const int64_t now = esp_timer_get_time();
-  if (now - g_hb_sent_us >= kHeartbeatUs) {
-    g_hb_sent_us = now;
-    send_heartbeat();
-  }
-  if (!host_alive(now)) g_session = 0;
-  uint8_t buf[512];
-  for (int rounds = 0; rounds < 64; rounds++) {
-    const int n = uart_read_bytes(kUart, buf, sizeof buf, 0);
-    if (n <= 0) break;
-    g_stats.rx_bytes += (uint32_t)n;
-    for (int i = 0; i < n; i++) {
-      lk_header h;
-      const uint8_t *p;
-      const int r = lk_rx_push(&g_rx, buf[i], &h, &p);
-      if (r == LK_RX_FRAME) {
-        on_frame(h, p);
-      } else if (r == LK_RX_NOISE) {
-        g_stats.rx_noise++;
-      }
-    }
-  }
-}
-#endif
 
 bool netstack_ws_send(uint8_t *data, size_t len) {
   if (!netstack_ws_open()) return false;
@@ -596,15 +500,10 @@ bool netstack_ws_send(uint8_t *data, size_t len) {
 bool netstack_ws_open(void) { return g_up && g_session != 0 && host_alive(esp_timer_get_time()); }
 
 // The OTA health check (ota_p4.cpp): the link is up to a front end running the image this
-// P4 carries (SDIO: the ELF SHA-256 in the C6's HELLO). Over the UART the host bridge
-// plays the front end, so being up is enough.
+// P4 carries: the ELF SHA-256 in the C6's HELLO.
 bool link_c6_current() {
-#if defined(LM_LINK_SDIO)
   const uint8_t *want = c6_bundle_app_sha({reinterpret_cast<const uint8_t *>(c6_bundle_bin), c6_bundle_bin_len});
   return g_up && g_c6_sha_valid && want && memcmp(g_c6_sha, want, 32) == 0;
-#else
-  return g_up;
-#endif
 }
 
 // The link is this player's network: "leased" while the host side is there.

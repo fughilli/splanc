@@ -124,8 +124,8 @@ py_binary(
     ],
 )
 
-# The P4 player's link frames, host side (docs/design/p4-c6-split.md §4.1), and the bridge
-# that plays the C6's part in Phase A: ws://127.0.0.1:8081/ws <-> the board's USB serial.
+# The P4 player's link frames, host side (docs/design/p4-c6-split.md §4.1): the codec's
+# reference, which p4_link_test checks against the firmware's frames.
 py_library(
     name = "p4_link",
     srcs = ["p4_link.py"],
@@ -136,16 +136,6 @@ py_test(
     name = "p4_link_test",
     srcs = ["p4_link_test.py"],
     deps = [":p4_link"],
-)
-
-py_binary(
-    name = "p4_link_bridge",
-    srcs = ["p4_link_bridge.py"],
-    deps = [
-        ":p4_link",
-        requirement("pyserial"),
-        requirement("websockets"),
-    ],
 )
 
 # The debug server's diagnostics intake (capture bundles, manifests, acks) —
