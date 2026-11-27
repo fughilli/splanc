@@ -83,6 +83,8 @@ test("the firmware's hand-encoded result decodes (mesh_gw.rs golden)", () => {
 test("gateway errors and the card's summary", () => {
   assert.equal(meshResultError({ error: "MESH_SEND_NOT_ALLOWED" }), "that change cannot be sent over the mesh");
   assert.equal(meshResultError({ error: 3 }), "too big to send over the mesh");
+  assert.equal(meshResultError({ error: 7 }), "no other fixture in the mesh is online");
+  assert.equal(meshResultError({ error: "MESH_SEND_NO_MEMBERS" }), "no other fixture in the mesh is online");
   assert.equal(meshResultError({ error: "MESH_SEND_OK" }), null);
   const s = { on: true, member: true, node: 1, sync: 2, members: [{ node: 2 }, { node: 3 }] };
   assert.equal(meshPeers(s).length, 2);

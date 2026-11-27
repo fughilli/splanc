@@ -320,8 +320,18 @@ const SEND_ERRORS: Record<string, string> = {
   MESH_SEND_BUSY: "the mesh is busy, try again",
   MESH_SEND_LOCKED: "this connection cannot control the mesh",
   MESH_SEND_BAD_REQUEST: "the fixture did not understand the request",
+  MESH_SEND_NO_MEMBERS: "no other fixture in the mesh is online",
 };
-const SEND_ERROR_NUM = ["", "MESH_SEND_NO_MESH", "MESH_SEND_NOT_ALLOWED", "MESH_SEND_TOO_BIG", "MESH_SEND_BUSY", "MESH_SEND_LOCKED", "MESH_SEND_BAD_REQUEST"];
+const SEND_ERROR_NUM = [
+  "",
+  "MESH_SEND_NO_MESH",
+  "MESH_SEND_NOT_ALLOWED",
+  "MESH_SEND_TOO_BIG",
+  "MESH_SEND_BUSY",
+  "MESH_SEND_LOCKED",
+  "MESH_SEND_BAD_REQUEST",
+  "MESH_SEND_NO_MEMBERS",
+];
 
 /** A result's gateway-level error as a sentence, or null when it went out. */
 export function meshResultError(r: MeshResultInfo | undefined): string | null {

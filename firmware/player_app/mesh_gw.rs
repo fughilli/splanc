@@ -367,12 +367,15 @@ pub mod err {
     pub const BUSY: u32 = 4;
     pub const LOCKED: u32 = 5;
     pub const BAD_REQUEST: u32 = 6;
+    pub const NO_MEMBERS: u32 = 7;
 }
 
 pub(crate) fn send_err(e: SendError) -> u32 {
     match e {
         SendError::Locked => err::LOCKED,
-        SendError::NotMember | SendError::NoRecipients => err::NO_MESH,
+        SendError::NotMember => err::NO_MESH,
+        // In the mesh, alone: not "not in a mesh" (D-519 bench).
+        SendError::NoRecipients => err::NO_MEMBERS,
         SendError::TooBig => err::TOO_BIG,
         SendError::QueueFull | SendError::Counter => err::BUSY,
         SendError::BadOrder => err::BAD_REQUEST,
@@ -1571,6 +1574,14 @@ mod tests {
         // ServerMessage{mesh{admin{op 2, error BAD_GRANT}}}.
         let n = encode_admin(&mut out, op::UNLOCK, aerr::BAD_GRANT, 0, None);
         assert_eq!(hex(&out[..n]), "ba03061a0408021004");
+    }
+
+    #[test]
+    fn a_lone_gateway_is_not_reported_out_of_the_mesh() {
+        // D-519: in the mesh with no other member online, a send has no recipients; the app
+        // must hear that, not "this fixture is not in a mesh".
+        assert_eq!(send_err(SendError::NoRecipients), err::NO_MEMBERS);
+        assert_eq!(send_err(SendError::NotMember), err::NO_MESH);
     }
 
     #[test]
