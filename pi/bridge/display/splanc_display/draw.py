@@ -71,13 +71,21 @@ def ellipsize(draw: ImageDraw.ImageDraw, text: str, f, max_w: int) -> str:
     return text + "…"
 
 
-def qr_matrix(data: str):
-    """QR modules as rows of bools (True = dark), no quiet zone; None if no data."""
+def qr_matrix(data: str, fit: Optional[int] = None):
+    """QR modules as rows of bools (True = dark), no quiet zone; None if no data.
+
+    Error correction M (raised as far as the version allows). With ``fit``, a code
+    that would be wider than ``fit`` modules at M is made at L instead when that
+    one fits: a smaller version, so a small screen can draw it at a larger scale."""
     if not data:
         return None
     import segno
 
     q = segno.make(data, error="m", micro=False)
+    if fit is not None and len(q.matrix) > fit:
+        lo = segno.make(data, error="l", micro=False)
+        if len(lo.matrix) < len(q.matrix):
+            q = lo
     return [[bool(v) for v in row] for row in q.matrix]
 
 

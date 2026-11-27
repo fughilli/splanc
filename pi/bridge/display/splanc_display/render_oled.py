@@ -252,7 +252,9 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
 
 def _qr(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
     code = s.active_code(now)
-    matrix = d.qr_matrix(code.url) if code and code.url else None
+    # 2 px modules when the code fits them (n * 2 + 4 <= H): a relay pairing URL
+    # needs level L for that, which a crisp OLED scans fine at twice the size.
+    matrix = d.qr_matrix(code.url, fit=(H - 4) // 2) if code and code.url else None
     small = F("small")
     if not matrix:
         _header(dr, "Scan to pair")
@@ -337,14 +339,29 @@ def _scrollbar(
 
 # A row hint drawn as a spinner (Check now while a check runs), not as text.
 SPIN = "\0spin"
-SPIN_SIZE = 7
 SPIN_PERIOD = 0.9  # seconds per turn
+_DIGIT_BOX: dict = {}  # font -> (top, height) of a digit's ink in its text box
 
 
-def _spinner(dr: ImageDraw.ImageDraw, x: int, y: int, t: float) -> None:
-    """A 7x7 three-quarter ring turning once per SPIN_PERIOD, top-left at (x, y)."""
+def digit_box(f) -> tuple:
+    """Where a digit's ink sits in text drawn at y = 0 in font ``f``: (top, height).
+    The spinner takes that size and place, so it is as tall as the row's text and
+    sits on its baseline."""
+    key = id(f)
+    if key not in _DIGIT_BOX:
+        probe = Image.new("1", (32, 32), OFF)
+        pd = ImageDraw.Draw(probe)
+        pd.fontmode = "1"
+        d.text(pd, (0, 0), "0", f, ON)
+        box = probe.getbbox() or (0, 0, 0, 7)
+        _DIGIT_BOX[key] = (box[1], max(5, box[3] - box[1]))
+    return _DIGIT_BOX[key]
+
+
+def _spinner(dr: ImageDraw.ImageDraw, x: int, y: int, size: int, t: float) -> None:
+    """A ``size`` px three-quarter ring turning once per SPIN_PERIOD, top-left at (x, y)."""
     a = (t % SPIN_PERIOD) / SPIN_PERIOD * 360.0
-    dr.arc([x, y, x + SPIN_SIZE - 1, y + SPIN_SIZE - 1], start=a, end=a + 270, fill=ON, width=1)
+    dr.arc([x, y, x + size - 1, y + size - 1], start=a, end=a + 270, fill=ON, width=1)
 
 
 def _list(
@@ -369,8 +386,8 @@ def _list(
         y = round((i - top) * ROW_H)
         _glyph(bd, M + 1, y + 3, cond)
         if hint == SPIN:
-            hw = SPIN_SIZE
-            _spinner(bd, right - 2 - hw, y + (ROW_H - SPIN_SIZE) // 2, now)
+            top_ink, hw = digit_box(small)
+            _spinner(bd, right - 2 - hw, y + dy + top_ink, hw, now)
         else:
             hw = d.text_size(bd, hint, small)[0] if hint else 0
             if hint:

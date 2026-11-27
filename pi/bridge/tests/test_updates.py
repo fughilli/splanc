@@ -497,3 +497,26 @@ def test_a_toast_has_a_black_row_above_it_over_a_highlighted_row():
     assert any(plain[x, top - 1] for x in range(w)), "the bar is lit right above the toast"
     assert not any(toast[x, top - 1] for x in range(w)), "the toast keeps one black row above it"
     assert all(toast[x, top] for x in (0, w - 1)), "the toast's band starts at its top row"
+
+
+def test_check_now_spinner_is_as_tall_as_the_text_and_on_its_baseline():
+    s = Status(
+        state="paired",
+        updates=updates.Updates(system=updates.Track("system", state="idle", checked_at=NOW - 60)),
+    )
+    v = View(page="updates", key="", update_sel=0, update_pos=0.0)
+    w = render_oled.W
+    spin = render_oled.render(s, replace(v, update_checking=True), now=NOW)
+    age = render_oled.render(s, v, now=NOW)  # "1m" in the same place
+
+    def ink_rows(img):  # the hint's rows (right-hand 14 px) in the Check now row
+        px = img.load()
+        return [y for y in range(img.size[1]) if any(px[x, y] for x in range(w - 14, w - 2))]
+
+    rows_spin, rows_age = ink_rows(spin), ink_rows(age)
+    y0 = render_oled._body_y() + render_oled.ROW_H  # the Check now row (below System)
+    span = range(y0, y0 + render_oled.ROW_H)
+    check_rows = [y for y in rows_age if y in span]
+    spin_rows = [y for y in rows_spin if y in span]
+    assert check_rows and spin_rows
+    assert (min(spin_rows), max(spin_rows)) == (min(check_rows), max(check_rows))
