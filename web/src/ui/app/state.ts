@@ -46,7 +46,7 @@ import { toast, type PillState } from "../kit";
 import type { FpsStateMessage } from "../../net/proto";
 import { inLoader } from "../../net/otaUpdate";
 import { pushPendingOnConnect } from "../../capture/imuCalReconnect";
-import { deviceHasMesh } from "../../net/mesh";
+import { deviceHasMesh, meshFallbackNotice } from "../../net/mesh";
 import { meshMemberName, onMeshResults, unlockMeshOnConnect } from "../../store/meshSession";
 import { meshResultSummary, nodeLabel } from "../screens/meshModel";
 
@@ -192,6 +192,16 @@ class AppState {
     // FUG-82: an effect too heavy for its target keeps playing, slower; the
     // player pushes fps_state when it starts/stops lagging. Mention it once per
     // lagging spell (not an error). Older firmware parked it instead (aborted).
+    // A whole-mesh change the gateway refused (alone in its mesh, or this phone's access
+    // isn't active there) went to this fixture alone: say so, once a minute at most, so
+    // "the effect did nothing on the others" has a reason on screen.
+    let fallbackToastAt = -Infinity;
+    client.onMeshFallback((code) => {
+      const now = Date.now();
+      if (now - fallbackToastAt < 60_000) return;
+      fallbackToastAt = now;
+      toast(meshFallbackNotice(code));
+    });
     let wasLagging = false;
     client.onFpsState((s) => {
       if (s.aborted) toast(fpsAbortMessage(s), { error: true });
@@ -251,7 +261,15 @@ class AppState {
         // reconnect, and a device back in its updater wasn't called out.
         if (this.client === client) this.watchReconnect(dev.id);
       },
-      onServerError: (code, msg) => this.setStatus({ state: "error", text: "error", error: `server ${code}: ${msg}` }),
+      onServerError: (code, msg) => {
+        this.setStatus({ state: "error", text: "error", error: `server ${code}: ${msg}` });
+        // A refused whole-mesh change (a slider or brightness: nothing awaits its reply) did
+        // nothing anywhere: a toast, not only the pill.
+        if (code === "mesh" && Date.now() - meshErrorToastAt > 5000) {
+          meshErrorToastAt = Date.now();
+          toast(`That change didn't go through: ${msg}`, { error: true });
+        }
+      },
       // The client gave up auto-retrying because the cert isn't trusted — show
       // the trust affordance and STOP hammering; the user's "Trust & connect"
       // does a fresh connect() once the cert is accepted.
@@ -578,6 +596,9 @@ export function fpsLagMessage(s: FpsStateMessage): string {
 export function fpsAbortMessage(s: FpsStateMessage): string {
   return `Effect stopped by the device's older firmware: it couldn't hold ${s.auto ? `${s.minFps || 25}` : `the pinned ${s.targetFps}`} fps. Update the firmware (slow effects then keep playing) or simplify the effect.`;
 }
+
+/** When a refused whole-mesh change was last toasted (a drag can be refused 30 times a second). */
+let meshErrorToastAt = 0;
 
 export const appState = new AppState();
 

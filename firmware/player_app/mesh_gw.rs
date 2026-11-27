@@ -679,6 +679,16 @@ pub unsafe extern "C" fn ns_mesh_app(m: *mut Mesh, conn: u32, frame: *const u8, 
                         m.gw.note_local(op, 0, None);
                         n as i32
                     }
+                    // Alone in the session: load it here, as the app asked (see gateway_send).
+                    Err(err::NO_MEMBERS) if !s.skip_gateway => {
+                        m.gw.stats.sends += 1;
+                        m.gw.note_local(op, 0, None);
+                        m.stack.scene_changed();
+                        *inner = s.inner.as_ptr();
+                        *inner_len = s.inner.len() as u32;
+                        m.gw_local_op = op;
+                        -3
+                    }
                     Err(e) => {
                         m.gw.stats.send_failed += 1;
                         m.log(format_args!("[mesh] gw share op={op} refused err={e}"));
@@ -1147,7 +1157,17 @@ fn gateway_send(m: &mut Mesh, conn: usize, op: u32, s: &Send<'_>, now_us: i64) -
     } else {
         m.stack.send_control(now_us, conn, op, targets, body).map(|_| ())
     };
-    r.map_err(send_err)?;
+    match r {
+        // Nobody else in the session (every other member is off, or none has joined it yet):
+        // the gateway is still a fixture of the mesh, so it applies the change itself, as the
+        // app asked. Refusing here meant a lone fixture ignored every effect, brightness and
+        // uniform the app sent with "Control the whole mesh" on (power, never relayed, still
+        // worked). Members that come back catch up (below).
+        Err(SendError::NoRecipients) => {}
+        r => {
+            r.map_err(send_err)?;
+        }
+    }
     // The look changed through this session: members that sync from now on catch up (M6).
     m.stack.scene_changed();
     Ok((resched, apply_at))

@@ -333,11 +333,34 @@ const SEND_ERROR_NUM = [
   "MESH_SEND_NO_MEMBERS",
 ];
 
+/** A result's gateway-level error as its `MeshSendError` name, or null when it went out. */
+export function meshResultCode(r: MeshResultInfo | undefined): string | null {
+  if (!r || r.error === undefined || r.error === 0 || r.error === "MESH_SEND_OK") return null;
+  return typeof r.error === "number" ? SEND_ERROR_NUM[r.error] ?? String(r.error) : r.error;
+}
+
 /** A result's gateway-level error as a sentence, or null when it went out. */
 export function meshResultError(r: MeshResultInfo | undefined): string | null {
-  if (!r || r.error === undefined || r.error === 0 || r.error === "MESH_SEND_OK") return null;
-  const name = typeof r.error === "number" ? SEND_ERROR_NUM[r.error] ?? String(r.error) : r.error;
-  return SEND_ERRORS[name] ?? name;
+  const name = meshResultCode(r);
+  return name === null ? null : SEND_ERRORS[name] ?? name;
+}
+
+/** Gateway refusals after which the app sends the change to the connected fixture alone.
+ * The gateway applied nothing (not even on itself), and the change can't reach the mesh
+ * through this connection anyway:
+ *  - NO_MEMBERS: nobody else is in the session (every other member is off, or none has
+ *    joined it yet). Firmware before the fix applied nothing then, not even locally.
+ *  - NO_MESH: what 1.17.0 firmware said in the same case (a member alone in its mesh).
+ *  - LOCKED: this connection's admin session is gone (its grant ran out or was refused).
+ * BUSY, TOO_BIG and NOT_ALLOWED stay errors: the mesh is there, and a local-only change
+ * would leave the fixtures out of step without saying so. */
+export const MESH_DIRECT_FALLBACK: ReadonlySet<string> = new Set(["MESH_SEND_NO_MEMBERS", "MESH_SEND_NO_MESH", "MESH_SEND_LOCKED"]);
+
+/** What the app tells the user when a whole-mesh change went to the connected fixture only. */
+export function meshFallbackNotice(code: string): string {
+  return code === "MESH_SEND_LOCKED"
+    ? "This phone can't control the whole mesh on this connection, so changes go to this fixture only. Reconnect, or ask the mesh's owner for access again."
+    : "No other fixture in this mesh is online, so changes go to this fixture only.";
 }
 
 /** Whether the player runs the mesh firmware variant: it advertises "mesh" in
