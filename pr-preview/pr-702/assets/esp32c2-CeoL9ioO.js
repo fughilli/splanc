@@ -1,0 +1,1 @@
+import{c as e}from"./espFlasher-BKvvegrx.js";export{e as ESP32C2ROM};
