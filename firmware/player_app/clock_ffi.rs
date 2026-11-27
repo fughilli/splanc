@@ -130,6 +130,8 @@ pub unsafe extern "C" fn lm_clock_test_reset() {
     PUSHED_BY = PUSHER_NONE;
     LAST_CARRY_US = i64::MIN;
     LAST_STATUS_US = i64::MIN;
+    POOL_AT = i64::MIN;
+    (*addr_of_mut!(POOL)).valid = false;
 }
 
 /// Reads esp_timer through the step guard: a step back moves the clock's anchors
@@ -342,6 +344,112 @@ pub(crate) unsafe fn handle_set_wall_clock(
     reply_state(out, cap, now, recv_ms, result)
 }
 
+// -- the effect clock uniforms (uniform_pool.rs) -------------------------------------
+//
+// Render never reads the clock statics above. The loop task (this module, under the
+// player mutex) keeps a small cache: the local time of day at a raw esp_timer anchor
+// plus the local date. Render extrapolates from the anchor with one esp_timer read,
+// only while an effect binds a `clock*` uniform (docs/design/wall-clock.md).
+
+/// The cached local time for the pool, refreshed by the loop task.
+#[derive(Clone, Copy)]
+struct PoolClock {
+    valid: bool,
+    /// Raw esp_timer µs of the reading (the step guard's input, not its output).
+    anchor_raw_us: i64,
+    /// Local µs since local midnight at the anchor.
+    tod_us: i64,
+    /// 0 = Sunday.
+    weekday: u8,
+    year: i32,
+    month: u8,
+    day: u8,
+}
+
+static mut POOL: PoolClock = PoolClock {
+    valid: false,
+    anchor_raw_us: 0,
+    tod_us: 0,
+    weekday: 0,
+    year: 0,
+    month: 0,
+    day: 0,
+};
+static mut POOL_AT: i64 = i64::MIN;
+static mut POOL_SEEN: (u32, u32) = (0, 0);
+/// How often the loop task re-reads the wall clock for the pool, µs.
+const POOL_REFRESH_US: i64 = 250_000;
+/// Render extrapolates at most this far past the last refresh (a loop task busy
+/// for longer, e.g. an OTA write, freezes the uniforms rather than guessing), µs.
+const POOL_MAX_EXTRAP_US: i64 = 60 * US_PER_SEC;
+
+/// Re-read the wall clock into the pool cache now (loop task, under the mutex).
+pub(crate) unsafe fn pool_refresh() {
+    let now = mono_now();
+    let p = &mut *addr_of_mut!(POOL);
+    POOL_AT = now;
+    POOL_SEEN = (EVENT_GEN, TZ_GEN);
+    let Some(utc) = clock().now_us(now) else {
+        p.valid = false;
+        return;
+    };
+    let lt = ledmapper_clock::local::to_local(utc, &*addr_of!(TZ));
+    *p = PoolClock {
+        valid: true,
+        anchor_raw_us: now,
+        tod_us: lt.seconds_of_day() as i64 * US_PER_SEC + lt.micros as i64,
+        weekday: lt.weekday().days_from_sunday(),
+        year: lt.year as i32,
+        month: lt.month,
+        day: lt.day,
+    };
+}
+
+/// Refresh the pool cache when it is due: every 250 ms, on any accepted time or
+/// zone change, and after an esp_timer step back.
+unsafe fn pool_tick(now: i64) {
+    if !super::uniform_pool::clock_bound() {
+        return;
+    }
+    let stale = POOL_AT == i64::MIN
+        || now.saturating_sub(POOL_AT) >= POOL_REFRESH_US
+        || POOL_AT > now
+        || POOL_SEEN != (EVENT_GEN, TZ_GEN);
+    if stale {
+        pool_refresh();
+    }
+}
+
+/// This frame's clock uniform values (render task, under the player mutex):
+/// `clock` (hour, minute, second, weekday), `clock_day` (0..1), `clock_date`
+/// (year, month, day). None while the clock is invalid.
+pub(crate) unsafe fn pool_frame() -> Option<([f32; 4], f32, [f32; 3])> {
+    let p = *addr_of!(POOL);
+    if !p.valid {
+        return None;
+    }
+    let dt = raw_mono_us()
+        .saturating_sub(p.anchor_raw_us)
+        .clamp(0, POOL_MAX_EXTRAP_US);
+    let mut tod = p.tod_us + dt;
+    let mut wd = p.weekday;
+    let day_us = ledmapper_clock::civil::US_PER_DAY;
+    if tod >= day_us {
+        // Midnight passed since the refresh (the date catches up at the next one).
+        tod -= day_us;
+        wd = (wd + 1) % 7;
+    }
+    let secs = tod / US_PER_SEC;
+    let clock = [
+        (secs / 3600) as f32,
+        ((secs / 60) % 60) as f32,
+        (secs % 60) as f32 + (tod % US_PER_SEC) as f32 * 1e-6,
+        wd as f32,
+    ];
+    let day = (tod as f64 / day_us as f64) as f32;
+    Some((clock, day, [p.year as f32, p.month as f32, p.day as f32]))
+}
+
 // -- C ABI for main.cpp -------------------------------------------------------------
 
 /// Boot: restore the zone record (`tz_rec`, from NVS; may be null) and, after a
@@ -424,6 +532,7 @@ pub unsafe extern "C" fn lm_clock_tick(carry: *mut u8) -> u32 {
             }
         }
     }
+    pool_tick(now);
     if TZ_GEN != SEEN_TZ_GEN {
         bits |= 1;
     }

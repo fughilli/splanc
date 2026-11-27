@@ -38,6 +38,8 @@ import {
   type FxUniform,
   type LedTopology,
 } from "../../fx/preview";
+import { applyClockUniforms, clockBindings } from "../../fx/clockUniforms";
+import { ClockScrubber } from "../../effects/editor/clockScrubber";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
@@ -835,6 +837,13 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
 
   const diagsEl = document.createElement("ul");
   diagsEl.className = "fxedit-diags";
+
+  // Wall-clock uniforms (clock, clock_day, ...): the preview feeds the phone's
+  // clock, or a picked time of day; the block shows only for an effect using them.
+  const clockScrubber = new ClockScrubber();
+  let clockBound: FxUniform[] = [];
+  const uniformsPane = document.createElement("div");
+  uniformsPane.append(clockScrubber.el, uniformsHost);
 
   const panel = new UniformPanel(
     uniformsHost,
@@ -1644,6 +1653,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       sceneUniformsApplied = true;
     }
     lastUniforms = r.uniforms;
+    clockBound = clockBindings(r.uniforms);
+    clockScrubber.setVisible(clockBound.length > 0);
     // Auto-push: a clean compile goes straight to the connected device — but only
     // when the .fxb actually changed, so a whitespace-only edit doesn't re-flash.
     if (!appState.client?.isConnected) {
@@ -1712,8 +1723,14 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
     if (preview === null || mapView === null || currentMap === null || positions === null) return;
     const time = (t - startT) / 1000;
+    feedClock(preview);
     preview.tick(time, dt / 1000, frame++, currentMap.leds.length);
     mapView.setLedColors(preview.shadeAll(positions));
+  }
+
+  /** The clock uniforms the lamp's firmware writes, from the preview time. */
+  function feedClock(p: FxPreview): void {
+    if (clockBound.length > 0) applyClockUniforms(clockBound, clockScrubber.current(), (slot, v) => p.setUniform(slot, v));
   }
 
   // -- AI chat: run one user turn through the tool-use loop ------------------
@@ -2157,6 +2174,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   async function capturePreviewImage(): Promise<string> {
     if (preview !== null && mapView !== null && currentMap !== null && positions !== null) {
       const time = (performance.now() - startT) / 1000;
+      feedClock(preview);
       preview.tick(time, 1 / 60, frame++, currentMap.leds.length);
       // MapView runs its own rAF loop, so pushing fresh colors updates the
       // canvas on the next frame; the capture reflects the current effect.
@@ -2436,7 +2454,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     ...(screenOpts.demo ? { preset: "effects-demo" as const, storageKey: null } : {}),
     panes: [
       { id: "code", title: "Code", primary: true, node: editorWrap },
-      { id: "uniforms", title: "Uniforms", primary: true, node: uniformsHost },
+      { id: "uniforms", title: "Uniforms", primary: true, node: uniformsPane },
       { id: "preview", title: "Preview", node: previewBody },
       { id: "diagnostics", title: "Device", node: diagBody },
       { id: "disasm", title: "Disassembly", node: disasmBody },
@@ -2668,6 +2686,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       midiRouter.detach();
       midiPanel.dispose();
       videoPanel.dispose();
+      clockScrubber.dispose();
       fxDebugPanel?.dispose();
       selectionActions.dispose();
       docsSheet?.close();
