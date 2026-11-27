@@ -87,9 +87,12 @@ pub fn classify(arm: u32, frame: &[u8]) -> Class {
         // get_hardware_config, get_color_correction, list_effects, set_time_base
         // (a shared clock, runtime only), list/get_keypoint, get_tls_info,
         // get_sensors, get_driver_state, get_capture_profile, get_ota_status,
-        // get_wifi_policy, get_kiosk_status, kiosk_unlock.
+        // get_wifi_policy, get_kiosk_status, kiosk_unlock, get_clock, and
+        // set_wall_clock (D-569: a visitor's push only fills in an UNSET clock,
+        // enforced by clock_ffi.rs; the owner's time is never moved by it).
         1 | 2 | 9 | 10 | 11 | 12 | 18 | 19 | 20 | 24 | 25 | 26 | 34 | 35 | 36 | 38 | 42 | 43 | 45 | 48 | 53
         | 56 | 74 | 91 | ARM_GET_KIOSK_STATUS | ARM_KIOSK_UNLOCK => Class::Read,
+        super::clock_ffi::ARM_SET_WALL_CLOCK | super::clock_ffi::ARM_GET_CLOCK => Class::Read,
         // list_stored_effects (the effect store).
         super::effect_store::ARM_LIST_STORED_EFFECTS => Class::Read,
         // submit_effect{store} writes the effect store: the owner's.
@@ -234,6 +237,12 @@ static mut CUR_SRC: u8 = SRC_INTERNAL;
 /// The message being handled came in on a LOCKED connection (no persistence).
 static mut MSG_LOCKED: bool = false;
 static mut LOCKOUT_UNTIL_MS: Option<u32> = None;
+
+/// Whether the message being handled came in on a locked kiosk connection (a
+/// visitor): set_wall_clock then only fills in an unset clock (clock_ffi.rs).
+pub(crate) unsafe fn msg_locked() -> bool {
+    MSG_LOCKED
+}
 
 /// The connection the message being handled came in on (SRC_*).
 pub(crate) unsafe fn current_src() -> u8 {

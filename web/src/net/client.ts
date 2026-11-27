@@ -82,6 +82,12 @@ import {
   type PowerStateMessage,
   type SetPowerConfigMessage,
 } from "./proto";
+import {
+  flatClockState,
+  type ClockState,
+  type ClockStateMessage,
+  type SetWallClockMessage,
+} from "./wallClock";
 import { LiveControl, applyAt } from "./liveControl";
 import {
   meshAdminMessage,
@@ -1477,6 +1483,20 @@ export class LedMapperClient {
   ): Promise<PowerState> {
     const msg = { type: "set_power", ...req } as unknown as ClientMessage;
     return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** Set the lamp's wall clock (UTC at a device-clock instant) and/or its zone
+   * (a POSIX TZ rule): firmware feature "wall_clock". Usually through
+   * net/wallClock.ts pushWallClock, which syncs first. Reply: clock_state. */
+  async setWallClock(req: Omit<SetWallClockMessage, "type">, timeoutMs = 5000): Promise<ClockState> {
+    const msg = { type: "set_wall_clock", ...req } as unknown as ClientMessage;
+    return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
+  }
+
+  /** The lamp's wall clock (feature "wall_clock"). */
+  async getClock(timeoutMs = 5000): Promise<ClockState> {
+    const msg = { type: "get_clock" } as unknown as ClientMessage;
+    return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
   }
 
   /** The lamp's power state + config. */

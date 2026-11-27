@@ -3283,6 +3283,9 @@ void netstack_loop() {
         } else if (plen >= 5 && strncasecmp(pbuf, "kiosk", 5) == 0) {
           // Kiosk mode (kiosk_ffi.rs): "kiosk off" (the recovery path) / "kiosk status".
           netstack_console_hook(pbuf, plen);
+        } else if (plen >= 6 && strncasecmp(pbuf, "CLOCK ", 6) == 0) {
+          // The wall clock (clock_ffi.rs): CLOCK STATUS / CLOCK RESTART, main.cpp's hook.
+          netstack_console_hook(pbuf, plen);
         } else if (plen >= 5 && strncmp(pbuf, "WIFI ", 5) == 0) {
           // Link diagnostics on the console (the HITL wifi_cadence gate drives each
           // recovery path on demand to time the LED output across it):

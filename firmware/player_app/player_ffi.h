@@ -629,6 +629,25 @@ int32_t lm_power_build_push(uint32_t src, uint32_t now_ms, uint8_t *out, size_t 
 void lm_power_push_done(void);
 int32_t lm_power_console(const uint8_t *line, size_t len, uint32_t now_ms, uint8_t *out, size_t cap);
 
+// -- Wall clock (clock_ffi.rs, docs/design/wall-clock.md) ----------------------
+// Loop task only. The carry buffer is LM_CLOCK_CARRY_BYTES of RTC no-init RAM.
+#define LM_CLOCK_CARRY_BYTES 28
+#define LM_CLOCK_TZ_RECORD_MAX 130
+#define LM_CLOCK_TICK_TZ_CHANGED 1u
+#define LM_CLOCK_TICK_STATUS 2u
+// Boot: the NVS zone record (null = none) and, after a SOFT reset, the carried time.
+// True = the time was restored.
+bool lm_clock_boot(const uint8_t *carry, bool soft, const uint8_t *tz_rec, size_t tz_len);
+// Every loop pass: feeds the esp_timer step guard, rewrites the carry record (20 Hz).
+// Returns LM_CLOCK_TICK_* bits.
+uint32_t lm_clock_tick(uint8_t *carry);
+// Rewrite the carry record now (before a deliberate restart).
+void lm_clock_save(uint8_t *carry);
+// The zone record to persist ("clk_tz"); out holds LM_CLOCK_TZ_RECORD_MAX. Returns its length.
+size_t lm_clock_tz_record(uint8_t *out);
+// The "[clock] ..." status line, NUL-terminated. Returns its length.
+size_t lm_clock_status_line(uint8_t *out, size_t cap);
+
 // -- Kiosk mode (kiosk_ffi.rs, docs/design/kiosk-mode.md) ----------------------
 // Loop task only (the gate + handler run under the player mutex, the pollers after).
 #define LM_KIOSK_SRC_INTERNAL 0

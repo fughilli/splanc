@@ -382,6 +382,7 @@ describe("mcp", () => {
       "driver_state",
       "estimate_effect",
       "export_map",
+      "get_clock",
       "get_effect",
       "get_keypoint",
       "get_power",

@@ -5,6 +5,7 @@
  * status pill and every "needs a device" action routes through here.
  */
 
+import { pushWallClock } from "../../net/wallClock";
 import type { WelcomeMessage } from "@ledmapper/protocol";
 import {
   certApprovalUrl,
@@ -235,6 +236,12 @@ class AppState {
           isCurrent: () => this.client === client,
           notify: (t) => toast(t),
         }).catch(() => undefined);
+        // The lamp's wall clock: this phone's UTC + zone on every (re)connection, after
+        // the connect chain's own clock sync has had the link (best effort, silent).
+        setTimeout(() => {
+          if (this.client !== client || !client.isConnected) return;
+          void pushWallClock(client).catch(() => undefined);
+        }, 2500);
       },
       onDisconnected: () => {
         this.setStatus({ state: "connecting", text: "reconnecting…" });

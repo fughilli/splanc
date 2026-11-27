@@ -1296,6 +1296,10 @@ message ClientMessage {
     SetPower set_power = 130;
     GetPower get_power = 131;
     SetPowerConfig set_power_config = 132;
+    // The wall clock (docs/design/wall-clock.md): set the lamp's UTC time and its
+    // time zone (a POSIX TZ rule), read it back. Reply: clock_state.
+    SetWallClock set_wall_clock = 111;
+    GetClock get_clock = 112;
   }
 }
 
@@ -2819,6 +2823,113 @@ message PowerState {
   uint32 transition_left_ms = 13;
 }
 
+// -- Wall clock (docs/design/wall-clock.md) -------------------------------------
+//
+// The lamp keeps UTC on a software RTC (esp_timer plus an offset, disciplined by
+// source offers: SNTP, the mesh, an app or bridge push, a hardware RTC, the
+// soft-reset carry-over) and a time zone as a POSIX TZ rule, so DST stays right
+// offline. Effect time (`time`, `dt`) never moves with it. After a power loss
+// with no hardware RTC the clock is invalid until a source returns; a soft reset
+// (OTA, panic, watchdog, restart) keeps it.
+// Player profile: ESP32 players with feature "wall_clock"; others answer
+// error{unsupported}.
+
+// Who pushed a set_wall_clock.
+enum WallClockPusher {
+  WALL_CLOCK_PUSHER_UNSPECIFIED = 0;
+  // The phone app on connect.
+  WALL_CLOCK_PUSHER_APP = 1;
+  // The bridge (splanc-agent) from its Linux/macOS clock.
+  WALL_CLOCK_PUSHER_BRIDGE = 2;
+  // An explicit set (MCP set_clock with a time, the app's "Set from this phone"):
+  // replaces the current time even when it is less certain.
+  WALL_CLOCK_PUSHER_MANUAL = 3;
+  // The P4's C6 front end (SNTP on the C6, forwarded).
+  WALL_CLOCK_PUSHER_FRONTEND = 4;
+}
+
+// Where the lamp's current time came from (the discipline's sources).
+enum ClockSource {
+  CLOCK_SOURCE_NONE = 0;
+  CLOCK_SOURCE_SNTP = 1;
+  CLOCK_SOURCE_MESH = 2;
+  // set_wall_clock (app, bridge, manual, front end: see ClockState.pushed_by).
+  CLOCK_SOURCE_PUSH = 3;
+  CLOCK_SOURCE_HW_RTC = 4;
+  // Restored from RTC no-init RAM after a soft reset.
+  CLOCK_SOURCE_CARRY = 5;
+}
+
+// What the last set_wall_clock did.
+enum ClockSetResult {
+  CLOCK_SET_RESULT_NONE = 0;
+  // Taken: the clock was set, stepped or is slewing to it.
+  CLOCK_SET_RESULT_ACCEPTED = 1;
+  // Not more certain than the time the lamp already has (only the tz, if any, was applied).
+  CLOCK_SET_RESULT_NOT_BETTER = 2;
+  // Off by more than 60 s from a fresh, better source (e.g. SNTP).
+  CLOCK_SET_RESULT_DISAGREES = 3;
+  // Before the firmware's earliest plausible date, or malformed.
+  CLOCK_SET_RESULT_IMPLAUSIBLE = 4;
+  // A locked kiosk session may set the clock only while it is not set.
+  CLOCK_SET_RESULT_LOCKED = 5;
+  // `tz` is not a valid POSIX TZ rule (the time, if any, was still considered).
+  CLOCK_SET_RESULT_BAD_TZ = 6;
+}
+
+// Set the wall clock (and/or the zone). Reply: clock_state.
+// Sync first (time_sync_ping rounds), then send the UTC time that was true at a
+// device-clock instant, exactly as set_time_base does; the min-RTT/2 is its error.
+message SetWallClock {
+  // UTC ms since the Unix epoch, true at `at_device_ms`. 0 = leave the time alone
+  // (only `tz`).
+  int64 unix_ms = 1;
+  // The device clock (ms, the TimeSyncPong t1/t2 domain) at which `unix_ms` was
+  // true. Unset = "now", on receipt.
+  optional int64 at_device_ms = 2;
+  // The error bound of `unix_ms`, ms (0 = unknown: taken as 1000).
+  uint32 err_ms = 3;
+  WallClockPusher pushed_by = 4;
+  // The zone as a POSIX TZ rule, e.g. "CET-1CEST,M3.5.0,M10.5.0/3" (<= 64 bytes).
+  // Unset = unchanged. Persisted.
+  optional string tz = 5;
+  // The IANA name the rule came from, for display ("Europe/Berlin"). Persisted with tz.
+  optional string tz_name = 6;
+}
+
+// Read the wall clock. Reply: clock_state.
+message GetClock {}
+
+message ClockState {
+  // The clock is set (a source has offered a time since the last power-on).
+  bool valid = 1;
+  // The reading: UTC ms at device-clock ms `device_ms` (0 while invalid).
+  int64 unix_ms = 2;
+  int64 device_ms = 3;
+  ClockSource source = 4;
+  // Who pushed it, when `source` is PUSH.
+  WallClockPusher pushed_by = 5;
+  // The error bound now, ms (grows with the sample's age at the crystal's rate).
+  uint32 err_ms = 6;
+  // Seconds since the current sample was taken.
+  uint32 age_s = 7;
+  // The fitted crystal rate, ppb (positive: the device clock runs slow).
+  sint64 drift_ppb = 8;
+  // The zone: the POSIX rule ("" = UTC), its IANA name, the offset in force now and
+  // its abbreviation.
+  string tz = 9;
+  string tz_name = 10;
+  sint32 utc_offset_s = 11;
+  string tz_abbrev = 12;
+  // Accepted samples and steps since boot (a client watching for jumps).
+  uint32 gen = 13;
+  uint32 steps = 14;
+  // The device clock stepped back and the wall clock absorbed it (since boot).
+  uint32 mono_jumps = 15;
+  // The outcome of the set_wall_clock this replies to (RESULT_NONE for get_clock).
+  ClockSetResult last_set = 16;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -2882,5 +2993,7 @@ message ServerMessage {
     // Reply to set_power / get_power / set_power_config, and pushed unsolicited to every open session on each change
     // (a lid tap, another client, a transition settling, a brightness change).
     PowerState power_state = 70;
+    // Reply to set_wall_clock / get_clock.
+    ClockState clock_state = 61;
   }
 }

@@ -76,6 +76,9 @@ pub use power_ffi::*;
 pub mod kiosk_ffi;
 // The on-device effect store (effect_store.rs, docs/design/effect-store.md).
 pub mod effect_store;
+// The wall clock (docs/design/wall-clock.md): the software RTC on esp_timer, the
+// POSIX TZ zone, set_wall_clock / get_clock, the soft-reset carry-over.
+pub mod clock_ffi;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -2031,6 +2034,11 @@ pub unsafe extern "C" fn lm_player_handle(
             return kiosk_ffi::handle_set_config(frame, recv_ms as u32, out, out_cap)
         }
         Some(kiosk_ffi::ARM_KIOSK_UNLOCK) => return kiosk_ffi::handle_unlock(frame, recv_ms as u32, out, out_cap),
+        // The wall clock (clock_ffi.rs): zero-copy clock_state replies into `out`.
+        Some(clock_ffi::ARM_SET_WALL_CLOCK) => {
+            return clock_ffi::handle_set_wall_clock(frame, recv_ms, out, out_cap)
+        }
+        Some(clock_ffi::ARM_GET_CLOCK) => return clock_ffi::handle_get_clock(recv_ms, out, out_cap),
         // FX debugger: pause / step, and snapshots streamed zero-copy into `out`.
         Some(fxdbg::ARM_FX_DEBUG_CONTROL) => return fxdbg::handle_control(frame, recv_ms, out, out_cap),
         Some(fxdbg::ARM_GET_FX_SNAPSHOT) => return fxdbg::handle_snapshot(frame, recv_ms, out, out_cap),
@@ -3169,6 +3177,9 @@ macro_rules! features {
         // set_power_config, power_state pushes, submit_effect power_slot, the
         // driver GPIO intrinsics and trigger uniforms.
         "power",
+        // The wall clock (docs/design/wall-clock.md): set_wall_clock / get_clock ->
+        // clock_state, a POSIX TZ zone, kept across soft resets.
+        "wall_clock",
         $($extra),*
     ] };
 }

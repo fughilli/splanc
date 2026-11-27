@@ -136,9 +136,11 @@ copy_to_bin(
         "src/net/mesh.ts",  # the mesh gateway (net/client.ts mesh_send / get_mesh)
         "src/net/meshEffect.ts",  # effect sharing over the mesh (client.meshShareEffect, M6)
         "src/net/otaUpdate.ts",  # update_firmware (the over-the-air driver)
+        "src/net/posixTz.ts",  # the host's zone as a POSIX TZ rule (net/wallClock.ts)
         "src/net/proto.ts",
         "src/net/textureCodec.ts",
         "src/net/uniformWire.ts",  # wide (mat3/mat4) uniforms: wire chunking + reassembly
+        "src/net/wallClock.ts",  # set_wall_clock / get_clock (the bridge pushes its clock)
         "src/net/wifiPolicy.ts",  # Wi-Fi rejoin policy (get/set_wifi_policy)
         "src/power/touchDriver.ts",  # the touch-sensor driver template (setup_touch_sensor)
         "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)

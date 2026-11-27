@@ -3628,6 +3628,45 @@ static void power_push_all(int32_t n) {
   }
 }
 
+// -- Wall clock (clock_ffi.rs, docs/design/wall-clock.md) -------------------------------
+// The carried time survives a soft reset (OTA, panic, watchdog, restart) in RTC no-init
+// RAM (D-568); a power loss clears it (the CRC never matches random RAM).
+RTC_NOINIT_ATTR static uint8_t g_clock_carry[LM_CLOCK_CARRY_BYTES];
+
+static void clock_log_status() {
+  char line[240];
+  if (lm_clock_status_line(reinterpret_cast<uint8_t *>(line), sizeof line) > 0) Log().printf("%s\n", line);
+}
+
+static void clock_begin() {
+  esp_reset_reason_t rr = esp_reset_reason();
+  const bool soft = rr == ESP_RST_SW || rr == ESP_RST_PANIC || rr == ESP_RST_INT_WDT ||
+                    rr == ESP_RST_TASK_WDT || rr == ESP_RST_WDT || rr == ESP_RST_DEEPSLEEP;
+  uint8_t rec[LM_CLOCK_TZ_RECORD_MAX];
+  size_t n = prefs.getBytesLength("clk_tz");
+  n = n > 0 && n <= sizeof rec ? prefs.getBytes("clk_tz", rec, n) : 0;
+  const bool restored = lm_clock_boot(g_clock_carry, soft, n ? rec : nullptr, n);
+  Log().printf("[clock] boot %s reset: time %s\n", soft ? "soft" : "cold",
+               restored ? "carried over" : "not set");
+  clock_log_status();
+}
+
+// Every loop pass (try-lock: the handlers touch the same state under the mutex; a busy
+// render frame just defers this to a later pass).
+static void poll_clock() {
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
+  uint32_t bits = lm_clock_tick(g_clock_carry);
+  uint8_t rec[LM_CLOCK_TZ_RECORD_MAX];
+  size_t n = (bits & LM_CLOCK_TICK_TZ_CHANGED) ? lm_clock_tz_record(rec) : 0;
+  char line[240];
+  size_t ln = (bits & LM_CLOCK_TICK_STATUS)
+                  ? lm_clock_status_line(reinterpret_cast<uint8_t *>(line), sizeof line)
+                  : 0;
+  xSemaphoreGive(player_mutex);
+  if (n > 0) prefs.putBytes("clk_tz", rec, n);  // only on a zone change (NVS wear levels it)
+  if (ln > 0) Log().printf("%s\n", line);
+}
+
 static void poll_power() {
   uint32_t now = millis();
 #if defined(LM_NETSTACK)
@@ -4461,6 +4500,24 @@ void netstack_console_hook(const char *line, size_t len) {
     poll_kiosk_config();  // persist an "off" now
     return;
   }
+  // "CLOCK STATUS" / "CLOCK RESTART" (clock_ffi.rs): the HITL / USB path. RESTART is a
+  // soft reset (esp_restart) with a fresh carry record: the clock must survive it.
+  if (len >= 6 && strncasecmp(line, "CLOCK ", 6) == 0) {
+    if (len >= 13 && strncasecmp(line + 6, "RESTART", 7) == 0) {
+      xSemaphoreTake(player_mutex, portMAX_DELAY);
+      lm_clock_save(g_clock_carry);
+      xSemaphoreGive(player_mutex);
+      Serial.printf("[clock] restarting (soft reset)\n");
+      Serial.flush();
+      esp_restart();
+    }
+    char cl[240];
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    size_t k = lm_clock_status_line(reinterpret_cast<uint8_t *>(cl), sizeof cl);
+    xSemaphoreGive(player_mutex);
+    Serial.printf("%s\n", k > 0 ? cl : "[clock] console: CLOCK STATUS | CLOCK RESTART");
+    return;
+  }
   // "POWER ON|OFF|TOGGLE|STATUS [INSTANT]" (power_ffi.rs): the HITL / USB path.
   if (len >= 6 && strncasecmp(line, "POWER ", 6) == 0) {
     char pr[64];
@@ -4620,6 +4677,7 @@ void setup() {
   color_correction_begin();
 
   prefs.begin("ledmapper");
+  clock_begin();  // the wall clock: the zone from NVS, the time across a soft reset
 
   // Device identity: factory MAC (the same address the BLE advertisement uses)
   // + a display/BLE name. The default name "Led Widget <6-hex>" comes from an
@@ -5093,6 +5151,7 @@ void loop() {
   upload_ram_gc();
 #endif
   poll_power();
+  poll_clock();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {
