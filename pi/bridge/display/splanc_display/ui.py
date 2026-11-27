@@ -245,12 +245,12 @@ class OledUI:
             new = keys.index(m.sel_key)
             if new != old_sel:  # something was inserted/removed above it: stay on it
                 m.pos.shift(new - old_sel)
-                m.top.snap(self._top_for(new, m.top.target + (new - old_sel)))
+                m.top.snap(self._top_for(new, m.top.target + (new - old_sel), len(keys)))
         elif keys:
             idx = min(old_sel, len(keys) - 1)
             m.sel_key = keys[idx]
             m.pos.snap(idx)
-            m.top.snap(self._top_for(idx, m.top.target))
+            m.top.snap(self._top_for(idx, m.top.target, len(keys)))
         else:
             m.sel_key = None
             m.pos.snap(0)
@@ -486,14 +486,16 @@ class OledUI:
         self._change(before, now, "right")
 
     @staticmethod
-    def _top_for(sel: int, top: float) -> float:
-        """The list's scroll offset that keeps row ``sel`` on screen, moving least."""
+    def _top_for(sel: int, top: float, count: int) -> float:
+        """The list's scroll offset that keeps row ``sel`` on screen, moving least,
+        and never scrolls past the end: a list that fits starts at its first row
+        (rows added above the selection used to leave them scrolled off the top)."""
         top = int(round(top))
         if sel < top:
-            return sel
-        if sel >= top + LIST_ROWS:
-            return sel - LIST_ROWS + 1
-        return top
+            top = sel
+        elif sel >= top + LIST_ROWS:
+            top = sel - LIST_ROWS + 1
+        return max(0, min(top, count - LIST_ROWS))
 
     def _list_key(self, m: _Menu, key: str, now: float) -> None:
         self._manual_until = now + MANUAL_HOLD_SECONDS
@@ -515,7 +517,7 @@ class OledUI:
             return
         m.sel_key = m.keys[new]
         m.pos.set(new, now)
-        m.top.set(self._top_for(new, m.top.target), now)
+        m.top.set(self._top_for(new, m.top.target, len(m.keys)), now)
 
     def _detail_key(self, m: _Menu, key: str, now: float) -> None:
         m.since = now
