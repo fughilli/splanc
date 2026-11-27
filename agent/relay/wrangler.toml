@@ -37,6 +37,13 @@ new_sqlite_classes = ["BridgeObject", "Directory"]
 tag = "v2"
 new_sqlite_classes = ["BillingAccount"]
 
+# Plain vars (deploy.sh ships them with the code; secrets stay in `wrangler secret`).
+[vars]
+# Web checkout is open only where the seller is set up for sales tax / VAT: the
+# United States first (owner decision, D-608). Comma-separated ISO codes; remove
+# the line (or leave it empty) to open checkout everywhere.
+BILLING_WEB_COUNTRIES = "US"
+
 [observability]
 enabled = true
 head_sampling_rate = 0.05
