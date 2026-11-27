@@ -82,6 +82,7 @@ class Player:
     fw: str = ""
     room: str = ""
     seen: Optional[float] = None
+    used: Optional[float] = None  # unix s someone last used it (tool call / app controls)
     session: str = ""  # live | reconnecting | none | "" (an older bridge: unknown)
     error: Optional[str] = None
     leds: Optional[int] = None
@@ -203,7 +204,8 @@ class Status:
             self.clients,
             self.lan_ip,
             self.error,
-            tuple((p.key, p.name, p.ok, p.condition) for p in self.players),
+            # Order-free: the list re-sorting when another fixture gets used isn't news.
+            tuple(sorted((p.key, p.name, p.ok, p.condition) for p in self.players)),
             self.clients_state,
             tuple((c.id, c.label, c.live) for c in self.paired),
             self.updates.salient() if self.updates is not None else None,
@@ -239,6 +241,13 @@ def _perf(v) -> Optional[Perf]:
     )
 
 
+def fixture_order(p: Player) -> tuple:
+    """How the screens list fixtures: the ones that answer first, then the most
+    recently used (a tool call or the app's controls; never used = last), then by
+    name. The menu keeps its selection on the same fixture as the order changes."""
+    return (not p.ok, -(p.used or 0.0), p.name.casefold(), p.key)
+
+
 def _player(item: dict) -> Player:
     err = item.get("error")
     return Player(
@@ -249,6 +258,7 @@ def _player(item: dict) -> Player:
         fw=_str(item.get("fw")),
         room=_str(item.get("room")),
         seen=_num(item.get("seen")),
+        used=_num(item.get("used")),
         session=_str(item.get("session")),
         error=err if isinstance(err, str) and err else None,
         leds=_int(item.get("leds")),
@@ -305,7 +315,7 @@ def parse(doc) -> Status:
             if isinstance(clients, int) and not isinstance(clients, bool) and clients >= 0
             else 0
         ),
-        players=tuple(players),
+        players=tuple(sorted(players, key=fixture_order)),
         lan_ip=_str(doc.get("lan_ip")),
         error=err if isinstance(err, str) and err else None,
         updated_at=_num(doc.get("updated_at")),

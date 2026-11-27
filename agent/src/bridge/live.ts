@@ -532,6 +532,7 @@ export class LiveMux {
           continue;
         }
         const key = owner ? this.keyFor(p.id, owner) : NO_LOCK;
+        this.hub.markUsed(p.id);
         try {
           for (const [deck, vals] of pend.u) {
             const m = await this.manifest(s, p.id, deck);

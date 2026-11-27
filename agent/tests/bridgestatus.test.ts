@@ -133,3 +133,42 @@ test("a player that drops off: no session, unreachable with the reason", async (
   // What it last knew stays (the display shows the last LED count).
   assert.equal(p.leds, 30);
 });
+
+test("used: a tool call marks the fixtures it reached; never-used ones have none", async () => {
+  assert.equal(entry(PORCH).used, undefined, "nothing has used it yet");
+  const t0 = Date.now();
+  await hub.each(PORCH, async () => undefined);
+  const used = entry(PORCH).used;
+  assert.ok(used !== undefined && used >= Math.floor(t0 / 1000) && used <= Date.now() / 1000 + 1, `used ${used}`);
+  // A call that couldn't reach the player (Arch dropped off above) doesn't count.
+  const [r] = await hub.each(ARCH, async () => undefined);
+  assert.equal(r?.ok, false);
+  assert.equal(entry(ARCH).used, undefined);
+});
+
+test("used: saved to the config, at most every 10 minutes per fixture", () => {
+  let saves = 0;
+  const cfg = { players: { [PORCH]: { host: porch.host } }, groups: {}, poses: {} } as const;
+  const h = new Hub({
+    root: "",
+    mdns: false,
+    config: structuredClone(cfg) as never,
+    persist: () => void saves++,
+    registryDeps: { sweepHosts: () => [] },
+  });
+  try {
+    const t = 1_800_000_000_000;
+    h.markUsed(PORCH, t);
+    assert.equal(saves, 1);
+    h.markUsed(PORCH, t + 60_000); // a minute later: memory only
+    assert.equal(saves, 1);
+    assert.equal(h.lastUsed(PORCH), t + 60_000);
+    h.markUsed(PORCH, t + 11 * 60_000);
+    assert.equal(saves, 2);
+    h.markUsed("CC:FD:49:00:00:FF", t); // not remembered: memory only
+    assert.equal(saves, 2);
+    assert.equal(h.lastUsed("CC:FD:49:00:00:FF"), t);
+  } finally {
+    h.close();
+  }
+});
