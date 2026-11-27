@@ -150,6 +150,14 @@ mesh's time base is set:
 So every member changes on the same frame index (24/24 rounds in r1), and what remains is
 mesh-time disagreement plus each member's 1 ms tick phase.
 
+`period` is the mesh's, 12.5 ms (80 fps) on every member (`mesh_grid.h`), not the member's
+autoscaler rung (2026-11-26, D-519). A rung follows the effect's cost, resets to its 30 fps
+default while nothing renders (power off, a new effect) and goes past 80 fps on the P4's
+tracker build, so a grid taken from it differed between members: the D-519 bench had a P4,
+dark, at 30 fps report `k=12614` against a C6's `k=33637`. A rung whose period is a whole
+number of grid periods (40, 20 fps) or divides one (160 fps) is still steered onto grid
+points; any other rung (75, 60, 30 fps) stays off the grid and applies on plain time.
+
 ## Cost
 
 - **RAM, default image** (`:esp32c6_netstack` vs M3): `.dram0.data` and `.dram0.bss`
