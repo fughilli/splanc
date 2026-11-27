@@ -7,7 +7,8 @@
       "tls": true
     },
     "dev": 5173,
-    "waveforms": 8091
+    "waveforms": 8091,
+    "bridge-sim": 8737
   },
   "capabilities": ["NET_ADMIN"],
   "devices": ["/dev/net/tun"],
