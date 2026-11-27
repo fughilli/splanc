@@ -21,9 +21,12 @@ Targets:
                     and web/public/icons/splanc.svg by tools/gen_boot_frames.py with
                     only Pillow: generated here (and in the NixOS image's
                     splancPy), never committed
-  :bundle_files     what //agent:bundle packs as pi-bridge/
+  :bundle_files     what //agent:bundle packs as pi-bridge/, including mesh/pimesh
+                    (//pi/mesh_radio:pimesh_musl, static aarch64): the bridge's mesh
+                    member, which the SD image runs as splanc-mesh.service (issue #697)
 """
 
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@pypi//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
@@ -111,12 +114,24 @@ py_binary(
     deps = [":splanc_display"],
 )
 
+# The mesh member (pimesh serve, pi/mesh_radio/src/bridge.rs) at pi-bridge/mesh/pimesh in
+# the bundle: a static aarch64-linux-musl binary, so it runs on the NixOS image and on
+# Raspberry Pi OS alike with no loader. The image runs the copy in its pinned bundle (a
+# read-only store path), never one an update dropped in /var.
+copy_file(
+    name = "pimesh",
+    src = "//pi/mesh_radio:pimesh_musl",
+    out = "mesh/pimesh",
+    is_executable = True,
+)
+
 filegroup(
     name = "bundle_files",
     srcs = [
         "display/requirements.lock",
         "install.sh",
         ":boot_frames",
+        ":pimesh",
     ] + glob(
         [
             "bin/*",

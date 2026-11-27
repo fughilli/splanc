@@ -10,9 +10,12 @@
 //! - [`udp`]: the IP backhaul (M10) with the same frames in UDP datagrams.
 //! - [`serial`]: a USB-attached ESP32-C6 as the radio coprocessor.
 //! - [`WifiBackhaul`]: the mesh's `Backhaul` over any of them.
+//! - [`bridge`]: the Pi bridge as a mesh member (`pimesh serve`, the image's `splanc-mesh`
+//!   service): the full mesh stack, its device key and state on disk, a control socket.
 //!
 //! std, Linux. No dependencies beyond the mesh crates (libc calls are declared in [`sys`]).
 
+pub mod bridge;
 pub mod frame;
 pub mod ktap;
 pub mod nl80211;

@@ -7,11 +7,15 @@
 //!   pimesh pong   <if> [opts]               echo probes back (unicast to the sender)
 //!   pimesh ping   <if> [opts]               send probes, measure round trips and loss
 //!   pimesh node   <if> --id N [opts]        run a mesh node; --app-ms M broadcasts app data
+//!   pimesh serve  <if> [opts]               the Pi bridge's mesh member (src/bridge.rs): the
+//!                                           full mesh stack, a device key and the mesh state
+//!                                           in --state-dir, a control socket at --socket
 //!
 //! opts: --via auto|brcm|nl80211|monitor|udp (auto: nl80211 on a patched brcmfmac or a
 //!       mac80211 driver, else brcm)  --cat vendor|public  --count N  --interval-ms M
 //!       --len L  --da MAC  --channel C  --dwell MS  --freq MHz  --rate KBPS  --secs S
 //!       --mac MAC (monitor: our A2)
+//!       serve: --state-dir DIR (/var/lib/splanc-mesh)  --socket PATH (/run/splanc-mesh/mesh.sock)
 
 use std::collections::HashMap;
 use std::io;
@@ -44,6 +48,8 @@ struct Opts {
     app_ms: u64,
     rx: BrcmRx,
     csv: bool,
+    state_dir: String,
+    socket: String,
 }
 
 fn opts() -> Opts {
@@ -71,6 +77,8 @@ fn opts() -> Opts {
         app_ms: 0,
         rx: BrcmRx::Tap,
         csv: false,
+        state_dir: "/var/lib/splanc-mesh".into(),
+        socket: "/run/splanc-mesh/mesh.sock".into(),
     };
     let mut i = 2;
     while i + 1 < a.len() + 1 && i < a.len() {
@@ -92,6 +100,8 @@ fn opts() -> Opts {
             "--id" => o.id = num() as u16,
             "--app-ms" => o.app_ms = num(),
             "--rx" => o.rx = if v == "nl" { BrcmRx::Nl80211 } else { BrcmRx::Tap },
+            "--state-dir" => o.state_dir = v.clone(),
+            "--socket" => o.socket = v.clone(),
             "--csv" => {
                 o.csv = true;
                 i -= 1; // a flag
@@ -411,6 +421,105 @@ fn node(o: &Opts) -> io::Result<()> {
     Ok(())
 }
 
+/// The Pi bridge's mesh member (issue #697): `splanc_mesh_linux::bridge::Bridge` over the
+/// interface's radio on its own thread, driven every 2 ms; one JSON line per command on the
+/// control socket (the agent's agent/src/bridge/mesh.ts).
+fn serve(o: &Opts) -> io::Result<()> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use splanc_mesh_linux::bridge::{self, Bridge, OsRng};
+    use splanc_mesh_linux::radio::ThreadedRadio;
+
+    let via = match o.via.as_str() {
+        "auto" => if radio::auto_via(&o.ifname) == Via::Nl80211 { "nl80211" } else { "brcm" }.to_string(),
+        v => v.to_string(),
+    };
+    eprintln!("pimesh serve: {} via {via}", o.ifname);
+    let (ifname, cat, channel, dwell, rx, freq, mac, rate) = (o.ifname.clone(), o.cat, o.channel, o.dwell, o.rx, o.freq, o.mac, o.rate);
+    let v2 = via.clone();
+    let radio = ThreadedRadio::spawn(move || -> io::Result<Box<dyn RawRadio>> {
+        Ok(match v2.as_str() {
+            "brcm" => Box::new(BrcmActframe::open(&ifname, cat, channel, dwell, rx)?),
+            "nl80211" => Box::new(Nl80211Mgmt::open(&ifname, cat, freq)?),
+            "monitor" => Box::new(Monitor::open(&ifname, mac.ok_or_else(|| io::Error::other("--mac required with --via monitor"))?, rate)?),
+            "udp" => Box::new(UdpRadio::multicast(mac.map_or_else(|| sys::mac_of(&ifname), Ok)?)?),
+            v => return Err(io::Error::other(format!("unknown --via {v}"))),
+        })
+    })?;
+    let mtu = if via == "udp" { 1400 } else { 250 };
+    // The Pi's firmware sends action frames at 1 Mb/s DSSS (design §4.4): budget for that.
+    let cfg = WifiConfig { cat: o.cat, mtu, rate_kbps: if via == "udp" { 54_000 } else { 1_000 }, max_duty: 0.3, ..WifiConfig::default() };
+    let mac = radio.mac();
+    let bh = WifiBackhaul::new(radio, cfg);
+    let dir = std::path::PathBuf::from(&o.state_dir);
+    std::fs::create_dir_all(&dir)?;
+    let key = bridge::load_or_create_key(&dir.join("device.key"), &mut OsRng)?;
+    let t0 = Instant::now();
+    let now = || t0.elapsed().as_micros() as i64;
+    let mut b = Bridge::new(mac, bh, key, Some(dir), now())?;
+    b.via = via;
+
+    let sock = std::path::Path::new(&o.socket);
+    if let Some(d) = sock.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let _ = std::fs::remove_file(sock);
+    let listener = UnixListener::bind(sock)?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(sock, std::fs::Permissions::from_mode(0o660))?;
+    }
+    listener.set_nonblocking(true)?;
+    let mut clients: Vec<(UnixStream, Vec<u8>)> = Vec::new();
+    let (mut host_at, mut mem_min) = (i64::MIN / 2, u32::MAX);
+    eprintln!("pimesh serve: node {:04x} ({}), socket {}", b.stack.me(), sys::fmt_mac(&mac), o.socket);
+    loop {
+        let t = now();
+        b.stack.node.backhaul.set_now(t);
+        if t - host_at >= 5_000_000 {
+            host_at = t;
+            b.host.channel = radio::iface_channel(&o.ifname).and_then(|c| u8::try_from(c).ok());
+            let free = bridge::mem_available();
+            mem_min = mem_min.min(free);
+            b.host.mem_free = free;
+            b.host.mem_min = mem_min;
+        }
+        b.step(t);
+        while let Ok((c, _)) = listener.accept() {
+            if c.set_nonblocking(true).is_ok() && clients.len() < 8 {
+                clients.push((c, Vec::new()));
+            }
+        }
+        clients.retain_mut(|(c, buf)| {
+            let mut tmp = [0u8; 1024];
+            match c.read(&mut tmp) {
+                Ok(0) => return false,
+                Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(_) => return false,
+            }
+            if buf.len() > 4096 {
+                return false;
+            }
+            while let Some(i) = buf.iter().position(|&x| x == b'\n') {
+                let line: Vec<u8> = buf.drain(..=i).collect();
+                let reply = b.command(t, String::from_utf8_lossy(&line).trim());
+                // A reply is a few KB at most: write it whole, giving up on a client that
+                // stops reading (the loop never waits on it for long).
+                let _ = c.set_nonblocking(false);
+                let _ = c.set_write_timeout(Some(Duration::from_millis(200)));
+                let ok = c.write_all(reply.as_bytes()).and_then(|_| c.write_all(b"\n")).is_ok();
+                let _ = c.set_nonblocking(true);
+                if !ok {
+                    return false;
+                }
+            }
+            true
+        });
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 fn main() {
     let o = opts();
     let r = match o.cmd.as_str() {
@@ -420,6 +529,7 @@ fn main() {
         "pong" => listen(&o, true),
         "ping" => ping(&o),
         "node" => node(&o),
+        "serve" => serve(&o),
         "iovar" => {
             let name = std::env::var("IOVAR").unwrap_or_else(|_| "ver".into());
             iovar(&o, &name)

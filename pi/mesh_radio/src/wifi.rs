@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::io;
 
+use splanc_mesh::topo::{Link, TX_UNKNOWN};
 use splanc_mesh::{Backhaul, BackhaulId, Busy, NodeId, RxMeta};
 
 use crate::frame::{self, Category, BROADCAST};
@@ -67,7 +68,23 @@ pub struct WifiStats {
 struct Peer {
     mac: [u8; 6],
     seen_us: i64,
+    /// Running-average RSSI (dBm) of the frames that carried one (the C6's α = 1/8).
+    rssi: Option<f32>,
+    /// Unicasts to it the radio reported delivered / reported at all (halved past 64, so it
+    /// follows the link).
+    tx_ok: u32,
+    tx_n: u32,
 }
+
+impl Peer {
+    fn new(mac: [u8; 6], now_us: i64) -> Peer {
+        Peer { mac, seen_us: now_us, rssi: None, tx_ok: 0, tx_n: 0 }
+    }
+}
+
+/// A neighbour counts in the topology this long after its last frame (the C6's
+/// `wifi_p2p::LIVE_US`).
+pub const LINK_LIVE_US: i64 = 5_000_000;
 
 pub struct WifiBackhaul<R: RawRadio> {
     pub radio: R,
@@ -83,6 +100,7 @@ pub struct WifiBackhaul<R: RawRadio> {
     refill_at_us: i64,
     now_us: i64,
     buf: Vec<u8>,
+    results: Vec<([u8; 6], bool)>,
 }
 
 /// The source node of a mesh frame: the envelope's (M2, design §5.1: "SM", v1, source at
@@ -110,6 +128,7 @@ impl<R: RawRadio> WifiBackhaul<R> {
             refill_at_us: 0,
             now_us: 0,
             buf: vec![0; 2400],
+            results: Vec::new(),
         }
     }
 
@@ -131,6 +150,21 @@ impl<R: RawRadio> WifiBackhaul<R> {
     /// The learned link address of a node.
     pub fn peer_mac(&self, id: NodeId) -> Option<[u8; 6]> {
         self.peers.get(&id).map(|p| p.mac)
+    }
+
+    /// Fold the radio's per-destination TX results into the peers' delivery rates.
+    fn take_results(&mut self) {
+        self.radio.take_tx_results(&mut self.results);
+        for (mac, ok) in self.results.drain(..) {
+            if let Some(p) = self.peers.values_mut().find(|p| p.mac == mac) {
+                if p.tx_n >= 64 {
+                    p.tx_ok /= 2;
+                    p.tx_n /= 2;
+                }
+                p.tx_n += 1;
+                p.tx_ok += ok as u32;
+            }
+        }
     }
 
     fn airtime(&self, mesh_len: usize) -> u32 {
@@ -188,10 +222,29 @@ impl<R: RawRadio> Backhaul for WifiBackhaul<R> {
         }
     }
 
+    fn links(&self, now_us: i64, out: &mut [Link]) -> usize {
+        let mut v: Vec<(&NodeId, &Peer)> = self.peers.iter().filter(|(_, p)| now_us - p.seen_us < LINK_LIVE_US).collect();
+        // Strongest first; peers whose radio gave no RSSI last.
+        v.sort_by(|a, b| b.1.rssi.unwrap_or(-200.0).total_cmp(&a.1.rssi.unwrap_or(-200.0)).then(a.0.cmp(b.0)));
+        let mut n = 0;
+        for ((&id, p), o) in v.into_iter().zip(out.iter_mut()) {
+            *o = Link {
+                node: id,
+                // 0 = not measured (the app's "signal not measured").
+                rssi: p.rssi.map_or(0, |r| r.round().clamp(-127.0, -1.0) as i8),
+                tx_pct: if p.tx_n == 0 { TX_UNKNOWN } else { (p.tx_ok * 100 / p.tx_n) as u8 },
+                range: None,
+            };
+            n += 1;
+        }
+        n
+    }
+
     fn recv(&mut self, out: &mut [u8]) -> Option<RxMeta> {
         let (a, u) = self.radio.take_tx_status();
         self.stats.acked += a;
         self.stats.unacked += u;
+        self.take_results();
         let mut f = std::mem::take(&mut self.buf);
         let r = loop {
             let raw = match self.radio.recv(&mut f) {
@@ -221,7 +274,16 @@ impl<R: RawRadio> Backhaul for WifiBackhaul<R> {
             }
             self.last_seq.insert(p.sa, p.seq);
             if let Some(id) = source_node(p.mesh) {
-                self.peers.insert(id, Peer { mac: p.sa, seen_us: self.now_us });
+                let now = self.now_us;
+                let peer = self.peers.entry(id).or_insert_with(|| Peer::new(p.sa, now));
+                if peer.mac != p.sa {
+                    *peer = Peer::new(p.sa, now);
+                }
+                peer.seen_us = now;
+                if let Some(r) = raw.rssi_dbm {
+                    let r = r as f32;
+                    peer.rssi = Some(peer.rssi.map_or(r, |a| a + (r - a) / 8.0));
+                }
             }
             self.stats.rx += 1;
             out[..p.mesh.len()].copy_from_slice(p.mesh);

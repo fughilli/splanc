@@ -60,6 +60,7 @@
         ./nix/flash-config.nix
         ./nix/improv.nix
         ./nix/lean.nix
+        ./nix/mesh.nix
         ./nix/splash.nix
         ./nix/system-update.nix
         { splancBridge.imageRev = rev; }
