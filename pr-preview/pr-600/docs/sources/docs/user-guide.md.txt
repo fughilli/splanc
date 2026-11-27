@@ -41,6 +41,8 @@ static site at `/user-guide/` on the deployed app.
     or start offline.
   - [Managing devices](#managing-devices) — Connect, rename, re-discover, and forget the controllers
     you know.
+  - [Meshing fixtures](#meshing-fixtures) — Link fixtures with mesh firmware so they change
+    together, on the same frame.
   - [Flashing firmware](#flashing-firmware) — Commission a blank board over USB, right from the
     browser.
   - [Color correction](#color-correction) — Tune per-device gamma and white balance so colors read
@@ -397,6 +399,37 @@ app uses.
   **Offline** for a unit that will never see its network again. To save airtime when an Auto board's
   network may be gone for a long time, set **Slow down after unseen for** (hours) to opt in to one
   scan per **Slowed scan interval** (15 min by default). It is off (0) unless you set it.
+
+### Meshing fixtures
+
+_Link fixtures with mesh firmware so they change together, on the same frame._
+
+Fixtures with the mesh firmware (their device settings show a **Mesh** section) can talk to each
+other directly, with no extra hardware. Control one, and every fixture in its mesh changes on the
+same frame.
+
+#### Create a mesh
+
+- Open a fixture's ⋮ device settings and tap **Create a mesh**.
+- Pick the fixtures to link (any you have added to the app), then name the mesh.
+- The app makes the mesh's admin key and keeps it on this phone or browser, sets each fixture up in
+  turn over its Wi-Fi or Bluetooth connection, and shows them joining and syncing their clocks.
+
+#### Managing a mesh
+
+- When the app connects to a fixture in a mesh it created, it unlocks it with the stored key by
+  itself.
+- **Control the whole mesh** sends effects, sliders, brightness and crossfades through that fixture
+  to all of them. Each change lands on every fixture on the same frame; a slider being dragged
+  follows within a few milliseconds and settles on the same frame when you let go.
+- **Add a fixture to this mesh** runs the same set-up for more fixtures.
+- A fixture asking to join shows up with **Admit**. Admit only your own.
+- Tap a member to **Remove** it (it leaves and can be added again) or, for a lost or given-away
+  fixture, **Block it for good** (the mesh changes its keys).
+- **Back up this mesh** gives you one text with the mesh's admin key. Keep it like a password. On
+  another phone, **Use a mesh from another phone** adds the mesh there, so both can manage it.
+- Without that backup only the phone or browser that created a mesh can manage it. If its data is
+  cleared, reset each fixture's mesh from its USB console (`MESH LEAVE`) and create a new one.
 
 ### Flashing firmware
 
