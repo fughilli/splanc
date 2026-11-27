@@ -189,5 +189,9 @@ void netstack_wifi_status(NetstackWifiStatus *out);
 // A console line starting "WIFI " that the transport's own link diagnostics (WIFI SCAN /
 // DHCP / GIVEUP) don't handle — the player parses its Wi-Fi policy commands here.
 void netstack_console_hook(const char *line, size_t len);
+// Queue one console line (no newline) to be read as if typed on this chip's console, ahead
+// of the next serial bytes (a P4 lamp's front end: the P4 forwards MESH / WIFI lines). One
+// line at a time: false while the previous one is unread.
+bool netstack_console_inject(const char *line, size_t len);
 
 #endif  // FIRMWARE_PLAYER_APP_NETSTACK_TRANSPORT_H_
