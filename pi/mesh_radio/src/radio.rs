@@ -46,6 +46,13 @@ pub trait RawRadio {
     fn take_tx_log(&mut self) -> Vec<TxRecord> {
         Vec::new()
     }
+    /// The unicast sends whose outcome the radio learned since the last call, as
+    /// (destination MAC, acked): what a backhaul's per-neighbour delivery rate is made of.
+    /// Radios that cannot tell add nothing.
+    fn take_tx_results(&mut self, _out: &mut Vec<([u8; 6], bool)>) {}
+    /// Re-read the interface's channel (the AP may have moved). Called now and then by a
+    /// long-running node; radios with nothing to re-read ignore it.
+    fn retune(&mut self) {}
 }
 
 fn now_us(t0: Instant) -> i64 {
@@ -168,6 +175,9 @@ pub struct Nl80211Mgmt {
     t0: Instant,
     acked: u32,
     unacked: u32,
+    /// Unicast sends awaiting their TX status: (cookie, destination), oldest first.
+    cookies: std::collections::VecDeque<(u64, [u8; 6])>,
+    results: Vec<([u8; 6], bool)>,
 }
 
 impl Nl80211Mgmt {
@@ -177,7 +187,17 @@ impl Nl80211Mgmt {
         let ifindex = sys::ifindex(ifname)?;
         let mut nl = Nl80211::open()?;
         nl.register_action(ifindex, cat.prefix())?;
-        Ok(Nl80211Mgmt { nl, ifindex, mac: sys::mac_of(ifname)?, freq, t0: Instant::now(), acked: 0, unacked: 0 })
+        Ok(Nl80211Mgmt {
+            nl,
+            ifindex,
+            mac: sys::mac_of(ifname)?,
+            freq,
+            t0: Instant::now(),
+            acked: 0,
+            unacked: 0,
+            cookies: Default::default(),
+            results: Vec::new(),
+        })
     }
 }
 
@@ -187,12 +207,25 @@ impl RawRadio for Nl80211Mgmt {
     }
     fn send(&mut self, f: &[u8]) -> io::Result<()> {
         let broadcast = f.len() > 4 && f[4] & 1 == 1;
-        self.nl.tx_frame(self.ifindex, self.freq, f, broadcast).map(|_| ())
+        let cookie = self.nl.tx_frame(self.ifindex, self.freq, f, broadcast)?;
+        if let (Some(c), false) = (cookie, broadcast) {
+            let mut da = [0u8; 6];
+            da.copy_from_slice(&f[4..10]);
+            if self.cookies.len() >= 64 {
+                self.cookies.pop_front();
+            }
+            self.cookies.push_back((c, da));
+        }
+        Ok(())
     }
     fn recv(&mut self, buf: &mut [u8]) -> io::Result<Option<RawRx>> {
         while let Some(e) = self.nl.poll_event()? {
-            if let Some((_, ack)) = e.tx_status() {
+            if let Some((cookie, ack)) = e.tx_status() {
                 if ack { self.acked += 1 } else { self.unacked += 1 }
+                if let Some(i) = self.cookies.iter().position(|&(c, _)| c == cookie) {
+                    let (_, da) = self.cookies.remove(i).unwrap();
+                    self.results.push((da, ack));
+                }
                 continue;
             }
             let Some(r) = e.rx_frame() else { continue };
@@ -209,6 +242,9 @@ impl RawRadio for Nl80211Mgmt {
         let r = (self.acked, self.unacked);
         (self.acked, self.unacked) = (0, 0);
         r
+    }
+    fn take_tx_results(&mut self, out: &mut Vec<([u8; 6], bool)>) {
+        out.append(&mut self.results);
     }
 }
 
@@ -243,6 +279,7 @@ pub struct BrcmActframe {
     acked: u32,
     unacked: u32,
     recs: Vec<Rec>,
+    results: Vec<([u8; 6], bool)>,
 }
 
 /// How [`BrcmActframe`] learns RSSI and TX status.
@@ -268,6 +305,8 @@ pub struct TxRecord {
     pub complete_us: u32,
     /// Event status: 0 = sent (unicast: ACKed), 5 = no ACK; u32::MAX = no event.
     pub status: u32,
+    /// The frame's destination (A1).
+    pub da: [u8; 6],
 }
 
 pub const BROADCOM_OUI: u32 = 0x001018;
@@ -374,6 +413,7 @@ impl BrcmActframe {
             acked: 0,
             unacked: 0,
             recs: Vec::new(),
+            results: Vec::new(),
         })
     }
 
@@ -409,6 +449,9 @@ impl BrcmActframe {
         if let Some(mut r) = self.in_flight.pop_front() {
             r.complete_us = (ts_us - r.start_us).max(0) as u32;
             r.status = status;
+            if r.da[0] & 1 == 0 && self.results.len() < 1024 {
+                self.results.push((r.da, status == 0));
+            }
             if self.tx_log.len() < 100_000 {
                 self.tx_log.push(r);
             }
@@ -492,6 +535,7 @@ impl RawRadio for BrcmActframe {
             cpu_us: (sys::thread_cpu_us() - cpu0) as u32,
             complete_us: 0,
             status: u32::MAX,
+            da,
         };
         match r {
             Ok(_) => {
@@ -554,6 +598,16 @@ impl RawRadio for BrcmActframe {
         self.expire();
         std::mem::take(&mut self.tx_log)
     }
+    fn take_tx_results(&mut self, out: &mut Vec<([u8; 6], bool)>) {
+        out.append(&mut self.results);
+    }
+    fn retune(&mut self) {
+        if let Ok((_, _, Some(f))) = self.tx.interface(self.ifindex) {
+            if let Some(c) = freq_to_channel(f) {
+                self.channel = c;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -602,5 +656,146 @@ impl RawRadio for Box<dyn RawRadio> {
     }
     fn take_tx_log(&mut self) -> Vec<TxRecord> {
         (**self).take_tx_log()
+    }
+    fn take_tx_results(&mut self, out: &mut Vec<([u8; 6], bool)>) {
+        (**self).take_tx_results(out)
+    }
+    fn retune(&mut self) {
+        (**self).retune()
+    }
+}
+
+/// The interface's current channel (from its frequency), if it is on one.
+pub fn iface_channel(ifname: &str) -> Option<u32> {
+    let ifindex = sys::ifindex(ifname).ok()?;
+    let mut nl = Nl80211::open().ok()?;
+    nl.interface(ifindex).ok()?.2.and_then(freq_to_channel)
+}
+
+/// A radio on its own thread, so a node's loop never waits on it: the brcmfmac passthrough
+/// is a 1-5 ms SDIO round trip per send, and the patched driver's plain nl80211 path sleeps
+/// ~40 ms in the driver before each action frame (docs/design/mesh-pi-transport.md §2.1, §7).
+/// `send` only queues (a full queue is `WouldBlock`, which the backhaul reports as
+/// back-pressure); received frames, TX counters and per-destination results come back over
+/// channels. The radio is opened on the thread (`open`), so it need not be `Send`.
+pub struct ThreadedRadio {
+    mac: [u8; 6],
+    tx: std::sync::mpsc::SyncSender<Vec<u8>>,
+    rx: std::sync::mpsc::Receiver<Up>,
+    acked: u32,
+    unacked: u32,
+    results: Vec<([u8; 6], bool)>,
+    /// Sends the thread refused or failed (after they were queued).
+    pub tx_failed: std::sync::Arc<std::sync::atomic::AtomicU32>,
+}
+
+enum Up {
+    Frame(Vec<u8>, RawRx),
+    Status(u32, u32, Vec<([u8; 6], bool)>),
+}
+
+/// Frames a [`ThreadedRadio`] queues for the thread.
+pub const THREAD_TXQ: usize = 8;
+/// How often the thread re-reads the channel ([`RawRadio::retune`]).
+pub const RETUNE_US: i64 = 10_000_000;
+
+impl ThreadedRadio {
+    pub fn spawn<R: RawRadio, F: FnOnce() -> io::Result<R> + Send + 'static>(open: F) -> io::Result<ThreadedRadio> {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{mpsc, Arc};
+        let (tx, txr) = mpsc::sync_channel::<Vec<u8>>(THREAD_TXQ);
+        let (upt, rx) = mpsc::sync_channel::<Up>(256);
+        let (mact, macr) = mpsc::channel::<io::Result<[u8; 6]>>();
+        let failed = Arc::new(AtomicU32::new(0));
+        let failed_t = failed.clone();
+        std::thread::Builder::new().name("mesh-radio".into()).spawn(move || {
+            let mut r = match open() {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = mact.send(Err(e));
+                    return;
+                }
+            };
+            let _ = mact.send(Ok(r.mac()));
+            let mut buf = vec![0u8; 2400];
+            let mut results = Vec::new();
+            let mut retune_at = mono_us() + RETUNE_US;
+            loop {
+                let mut busy = false;
+                loop {
+                    match txr.try_recv() {
+                        Ok(f) => {
+                            busy = true;
+                            if r.send(&f).is_err() {
+                                failed_t.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => return,
+                    }
+                }
+                while let Ok(Some(m)) = r.recv(&mut buf) {
+                    busy = true;
+                    if upt.try_send(Up::Frame(buf[..m.len].to_vec(), m)).is_err() {
+                        break; // the node is behind: drop, as a radio queue would
+                    }
+                }
+                let (a, u) = r.take_tx_status();
+                r.take_tx_results(&mut results);
+                if a + u > 0 || !results.is_empty() {
+                    let _ = upt.try_send(Up::Status(a, u, std::mem::take(&mut results)));
+                }
+                if mono_us() >= retune_at {
+                    r.retune();
+                    retune_at = mono_us() + RETUNE_US;
+                }
+                if !busy {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        })?;
+        let mac = macr.recv().map_err(|_| io::Error::other("radio thread died"))??;
+        Ok(ThreadedRadio { mac, tx, rx, acked: 0, unacked: 0, results: Vec::new(), tx_failed: failed })
+    }
+}
+
+impl RawRadio for ThreadedRadio {
+    fn mac(&self) -> [u8; 6] {
+        self.mac
+    }
+    fn send(&mut self, f: &[u8]) -> io::Result<()> {
+        match self.tx.try_send(f.to_vec()) {
+            Ok(()) => Ok(()),
+            Err(std::sync::mpsc::TrySendError::Full(_)) => Err(io::Error::from(io::ErrorKind::WouldBlock)),
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => Err(io::Error::other("radio thread stopped")),
+        }
+    }
+    fn recv(&mut self, buf: &mut [u8]) -> io::Result<Option<RawRx>> {
+        loop {
+            match self.rx.try_recv() {
+                Ok(Up::Frame(f, m)) => {
+                    if f.len() > buf.len() {
+                        continue;
+                    }
+                    buf[..f.len()].copy_from_slice(&f);
+                    return Ok(Some(RawRx { len: f.len(), ..m }));
+                }
+                Ok(Up::Status(a, u, mut r)) => {
+                    self.acked += a;
+                    self.unacked += u;
+                    self.results.append(&mut r);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(None),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return Err(io::Error::other("radio thread stopped")),
+            }
+        }
+    }
+    fn take_tx_status(&mut self) -> (u32, u32) {
+        let r = (self.acked, self.unacked);
+        (self.acked, self.unacked) = (0, 0);
+        r
+    }
+    fn take_tx_results(&mut self, out: &mut Vec<([u8; 6], bool)>) {
+        out.append(&mut self.results);
     }
 }

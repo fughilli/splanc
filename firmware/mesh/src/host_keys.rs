@@ -32,6 +32,24 @@ impl HostKey {
     }
 }
 
+impl HostKey {
+    /// The key for a stored 32-byte secret scalar (a Linux node's own key file, e.g. the
+    /// Pi bridge's `pimesh serve`); None if it is not a valid P-256 scalar.
+    pub fn from_secret(d: &[u8; 32]) -> Option<HostKey> {
+        let sk = p256::SecretKey::from_slice(d).ok()?;
+        let mut pk = [0u8; 65];
+        pk.copy_from_slice(sk.public_key().to_encoded_point(false).as_bytes());
+        Some(HostKey { sk, pk })
+    }
+
+    /// The secret scalar (to store it; never sent anywhere).
+    pub fn secret(&self) -> [u8; 32] {
+        let mut d = [0u8; 32];
+        d.copy_from_slice(&self.sk.to_bytes());
+        d
+    }
+}
+
 impl DeviceKey for HostKey {
     fn public_key(&self) -> PublicKey {
         self.pk
@@ -132,5 +150,14 @@ mod tests {
         assert_ne!(Some(ab), a.ecdh(&HostKey::from_seed(3).public_key()));
         assert_eq!(a.ecdh(&[4; 65]), None);
         assert_eq!(a.public_key(), HostKey::from_seed(1).public_key());
+    }
+
+    #[test]
+    fn a_stored_secret_round_trips() {
+        let a = HostKey::from_seed(7);
+        let b = HostKey::from_secret(&a.secret()).expect("valid scalar");
+        assert_eq!(a.public_key(), b.public_key());
+        assert!(HostKey::from_secret(&[0; 32]).is_none(), "zero is not a scalar");
+        assert!(HostKey::from_secret(&[0xff; 32]).is_none(), "above the group order");
     }
 }

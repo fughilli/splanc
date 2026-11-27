@@ -8,6 +8,9 @@ new crates.
 
   bazel test //pi/mesh_radio:mesh_radio_test
   bazel build //pi/mesh_radio:pimesh_musl     # static aarch64 probe tool for a Pi
+
+`pimesh serve` is the Pi bridge's mesh member (src/bridge.rs, issue #697): the bridge image
+runs it as the splanc-mesh service, from the agent bundle (//pi/bridge:bundle_files).
 """
 
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
@@ -19,6 +22,8 @@ _MUSL_FLAGS = select({
     "//pi/player_rs/musl:is_musl": [
         "-Ctarget-feature=+crt-static",
         "-Clink-self-contained=yes",
+        # Shipped in the agent bundle (//pi/bridge:pimesh): no symbols or debug info.
+        "-Cstrip=symbols",
     ],
     "//conditions:default": [],
 })
@@ -33,7 +38,10 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     target_compatible_with = ["@platforms//os:linux"],
-    deps = ["//firmware/mesh"],
+    deps = [
+        "//firmware/mesh",
+        "//firmware/mesh/swarm:swarm_net",
+    ],
 )
 
 rust_test(

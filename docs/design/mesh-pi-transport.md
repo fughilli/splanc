@@ -372,6 +372,38 @@ TX thread so the loop never waits on SDIO (or, on the patched driver, its ~50 ms
 Needs root (or `CAP_NET_ADMIN` for the registration and the vendor command, plus tracefs access
 for the tap on a stock kernel). The patched driver comes with the image (§2.1).
 
+### 7.1 The Pi bridge as a member (issue #697)
+
+`pimesh serve` (`pi/mesh_radio/src/bridge.rs`) is that node for the bridge: the full
+`MeshStack` with `Class::Pi`, over `WifiBackhaul<ThreadedRadio>` (the radio on its own thread,
+so a 1-5 ms passthrough send or the patched driver's ~40 ms sleep never stalls the loop), a
+P-256 device key in `/var/lib/splanc-mesh/device.key` and the mesh state beside it (written
+atomically). The bridge image runs it as `splanc-mesh.service` (`pi/bridge/image/nix/mesh.nix`,
+user `splanc-mesh` with `CAP_NET_ADMIN` only), from the agent bundle pinned in the image
+(`pi-bridge/mesh/pimesh`, a static aarch64 musl build).
+
+- **Membership.** The agent provisions it with the mesh id and the admin's public key only, so
+  it joins by approval: a gateway lists it as pending and the admin admits it in the app. With
+  an admin key it re-provisions or leaves only with the provisioner token it issued (D-324).
+  It never holds the admin secret, signs nothing and starts no epoch.
+- **Kind.** Its status and join carry `firmware` = FNV-1a("splanc-bridge") (`0x18d4bfec`;
+  fixtures send the FNV-1a of their version), `fps` 0 and the Pi's free memory. Every gateway
+  passes the value through unchanged, so the app draws it as a bridge on the mesh map with no
+  firmware change.
+- **Links.** `WifiBackhaul::links` reports each neighbour's running RSSI and its unicast
+  delivery from the radio's per-destination TX status (nl80211 cookies on the patched driver,
+  ACTION_FRAME_COMPLETE on the passthrough); no ranges (the Pi has no fine timestamps).
+- **Control.** Relayed control on the allow-list is answered OK (nothing to apply); anything
+  else is refused, as on a C6. Scene blobs are fetched into RAM (16 at most), so it can serve them.
+- **Channel.** AP-anchored, like the C6s: it stays associated to its Wi-Fi and announces that
+  channel. When the mesh's adverts say another one, its status says so and the screens ask
+  the user to move the bridge to the lamps' 2.4 GHz network; it never hops off its own AP.
+- **Agent** (`agent/src/bridge/mesh.ts`): reads it over `/run/splanc-mesh/mesh.sock`, carries
+  the app's join/leave (live `mesh` query), and relays mesh traffic for its tools through a
+  meshed fixture on the LAN (`get_mesh`, `mesh_send`). On a mesh with an admin key it unlocks
+  that gateway only as a **delegate**: the app certifies the bridge's own delegate key, and
+  members enforce the delegate rules (`admin.rs`).
+
 ## 8. Decisions for the owner
 
 1. **Kernel patch**: decided (carry it in our Pi kernels now; the tap and passthrough stay
