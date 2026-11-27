@@ -8,14 +8,14 @@
       "label": "empty",
       "fxbBase64": "RlhCMQEAAAACAAEADQD//wAAW10AAAAAAAAAAAAAAAAAIQMhAw==",
       "ledCount": 128,
-      "measuredFrameCycles": 133909,
+      "measuredFrameCycles": 146537,
       "measuredShowCycles": 599840
     },
     {
       "label": "sweep16",
       "fxbBase64": "RlhCMQEAAAACAAEAEAD//wAAW10AAAAABgMXAwEAAAAAAAAAIQMhAw==",
       "ledCount": 16,
-      "measuredFrameCycles": 30697,
+      "measuredFrameCycles": 37403,
       "measuredShowCycles": 84230
     },
     {
