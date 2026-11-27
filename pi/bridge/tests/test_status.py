@@ -104,3 +104,37 @@ def test_short_url_and_countdown():
     assert st.fmt_remaining(3725) == "1:02:05"
     assert st.fmt_remaining(-3) == "0:00"
     assert st.fmt_remaining(None) == ""
+
+
+def test_fixtures_answering_first_then_most_recently_used():
+    def fx(name, ok, used=None):
+        d = {"name": name, "host": name.lower() + ".local", "ok": ok}
+        if used is not None:
+            d["used"] = used
+        return d
+
+    s = st.parse(
+        {
+            "state": "paired",
+            "players": [
+                fx("Attic", False, used=900),  # used last, but not answering
+                fx("Porch", True),  # answering, never used
+                fx("Arch", True, used=100),
+                fx("Desk", True, used=500),
+                fx("Barn", False),
+                fx("Annex", True),  # never used: by name, before Porch
+            ],
+        }
+    )
+    assert [p.name for p in s.players] == ["Desk", "Arch", "Annex", "Porch", "Attic", "Barn"]
+    assert s.player("desk.local").used == 500
+
+
+def test_reordering_alone_does_not_wake_the_screen():
+    a = {"name": "A", "host": "a", "ok": True, "used": 1}
+    b = {"name": "B", "host": "b", "ok": True, "used": 2}
+    s1 = st.parse({"state": "paired", "players": [a, b]})
+    s2 = st.parse({"state": "paired", "players": [dict(a, used=3), b]})
+    assert [p.name for p in s1.players] == ["B", "A"]
+    assert [p.name for p in s2.players] == ["A", "B"]
+    assert s1.salient() == s2.salient()

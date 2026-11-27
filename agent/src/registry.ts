@@ -648,6 +648,7 @@ export class Registry {
         ...(pin ? { pin } : {}),
         lastSeen: new Date(p.lastSeen || Date.now()).toISOString(),
         ...(manifest ? { manifest } : {}),
+        ...(old?.used ? { used: old.used } : {}),
       };
       if (
         !old ||
