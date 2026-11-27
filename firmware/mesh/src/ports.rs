@@ -4,7 +4,7 @@
 //! [`Router::route`] decides what a packet is allowed to be before anything acts on it:
 //!
 //! - unknown and reserved ports (22..=31) are dropped and counted;
-//! - **admin-class** ports (`CONTROL`, `MEMBERSHIP`, `SCENE`, `TIME_BASE`, §7.9) must carry a
+//! - **admin-class** ports (`CONTROL`, `MEMBERSHIP`, `SCENE`, `TIME_BASE`, `CLOCK`, §7.9) must carry a
 //!   valid admin tag from an unlocked gateway ([`crate::admin`]), once per (origin, seq);
 //!   a member without `K_admin` cannot verify them and drops them;
 //! - guests (open mode, §7.4) only ever get the follow ports (`SCENE`, `TIME_BASE`), and the
@@ -50,9 +50,12 @@ pub enum Port {
     Freshness = 22,
     /// Bulk transfers (effect blobs and catch-up, M6): lowest relay priority.
     Bulk = 23,
+    /// The wall clock on mesh time ([`crate::wallclock::WallRecord`], RTC PR-8). Admin-class.
+    /// (24 is taken by the live-update authenticator in the mesh-tesla stack, #551.)
+    Clock = 25,
 }
 
-/// Ports reserved for Splanc (dropped until assigned).
+/// Ports reserved for Splanc (dropped until assigned; the assigned ones above match first).
 pub const RESERVED: core::ops::RangeInclusive<u8> = 24..=31;
 
 impl Port {
@@ -66,13 +69,14 @@ impl Port {
             21 => Port::TimeBase,
             22 => Port::Freshness,
             23 => Port::Bulk,
+            25 => Port::Clock,
             _ => return None,
         })
     }
 
     /// Needs the admin session's per-receiver MAC (§7.9).
     pub const fn admin_class(self) -> bool {
-        matches!(self, Port::Control | Port::Membership | Port::Scene | Port::TimeBase)
+        matches!(self, Port::Control | Port::Membership | Port::Scene | Port::TimeBase | Port::Clock)
     }
 
     /// A guest may follow it (§7.4).
@@ -82,7 +86,7 @@ impl Port {
 
     /// `swarm_net`'s relay priority bitmap for these ports: control, membership, time and
     /// freshness are never starved by bulk (the drop policy evicts bulk first).
-    pub const HIGH_PRIORITY: u32 = (1 << 16) | (1 << 19) | (1 << 20) | (1 << 21) | (1 << 22);
+    pub const HIGH_PRIORITY: u32 = (1 << 16) | (1 << 19) | (1 << 20) | (1 << 21) | (1 << 22) | (1 << 25);
 }
 
 /// Who a `CONTROL` packet is for (§3.3, §7.7): everyone, a group, or up to 8 nodes.
@@ -481,8 +485,12 @@ mod tests {
         let c = ctx(5, &[]);
         assert_eq!(r.route(&c, &mut s, 1, 17, b"reply").unwrap(), Inbound { origin: 1, port: Port::Reply, body: b"reply", admin: false });
         assert!(r.route(&c, &mut s, 1, 22, b"fresh").is_ok());
-        assert_eq!(r.route(&c, &mut s, 1, 25, b"x"), Err(RouteReject::Reserved));
+        assert_eq!(r.route(&c, &mut s, 1, 26, b"x"), Err(RouteReject::Reserved));
         assert_eq!(r.route(&c, &mut s, 1, 40, b"x"), Err(RouteReject::UnknownPort));
+        // The wall clock (RTC PR-8) is admin-class: a bare body is not a command.
+        assert!(Port::Clock.admin_class() && !Port::Clock.guest_follows());
+        assert_eq!(Port::from_u8(25), Some(Port::Clock));
+        assert_eq!(r.route(&c, &mut s, 1, 25, b"x"), Err(RouteReject::Malformed));
     }
 
     #[test]

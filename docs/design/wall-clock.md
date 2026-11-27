@@ -24,6 +24,7 @@ a hardware RTC and schedules come in later PRs.
 | Bridge push | `set_wall_clock{pushed_by: BRIDGE}` on every session connect, from the host's clock and `/etc/localtime` | the same |
 | Manual | the app's "Set from this phone", MCP `set_clock{time}`: replaces even a more certain time | as given |
 | Soft-reset carry-over | the `CarryRecord` in RTC no-init RAM, rewritten at 20 Hz, restored after SW / panic / watchdog resets | the carried error + 1 s |
+| Mesh (PR-8) | the gateway's `CLOCK` record on mesh time, mapped through this lamp's mesh-time fit and offered every 10 s (`schedule.md` "On a mesh"); the lamp also adopts the record's zone | the gateway's error + mesh-time error, +40 ppm of the record's age |
 
 `set_wall_clock` carries `unix_ms` that was true at `at_device_ms` (the
 `TimeSyncPong` device-ms domain), exactly like `set_time_base`, so the push is as

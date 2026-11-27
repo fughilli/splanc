@@ -59,6 +59,7 @@ pub mod replay;
 pub mod security;
 pub mod stack;
 pub mod timesync;
+pub mod wallclock;
 pub mod topo;
 pub mod wifi_p2p;
 

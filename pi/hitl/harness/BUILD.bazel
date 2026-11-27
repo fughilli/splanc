@@ -170,6 +170,7 @@ py_library(
         "mapping_trigger_core.py",
         "mesh_app_e2e_core.py",
         "mesh_apply_at_skew_core.py",
+        "mesh_clock_schedule_core.py",
         "mesh_effect_core.py",
         "mesh_gateway_core.py",
         "mesh_join_admin_core.py",
@@ -2001,6 +2002,46 @@ py_binary(
     },
     imports = ["."],
     main = "hitl_mesh_apply_at_skew.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# RTC PR-8 (docs/design/schedule.md "On a mesh"): the gateway's wall clock reaches a member
+# with none of its own over the mesh, and a group's schedule written once through the
+# gateway fires on the same grid frame on both DUTs (2 DUTs on one rig, dev mesh image).
+# Pure logic: mesh_clock_schedule_core.
+#   bazel run -c opt //pi/hitl/harness:mesh_clock_schedule -- --server http://hitl-rig-2:8087
+py_binary(
+    name = "mesh_clock_schedule",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_apply_at_skew.py",
+        "hitl_mesh_clock_schedule.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "hitl_improv.py",
+        "improv.py",
+        "mesh_ble_hold.py",
+        "mesh_serial_bridge.py",
+        ":plasma_hue_fixed_fxb",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+    ],
+    env = {
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+    },
+    imports = ["."],
+    main = "hitl_mesh_clock_schedule.py",
     tags = ["manual"],
     deps = [
         ":harness",

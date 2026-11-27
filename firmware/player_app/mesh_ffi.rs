@@ -35,6 +35,13 @@
 //! every member hears the same beacon at the same instant, which is how the HITL measures
 //! mesh time and `apply_at` skew without trusting mesh time itself.
 //!
+//! **Wall clock** (RTC PR-8, `splanc_mesh::wallclock`, D-564): every 50 ms this crate hands
+//! the player's wall clock and zone to the stack (`lm_clock_wall_get`, clock_ffi.rs), which
+//! sends it as the gateway session's `CLOCK` record when due; the record in force (received,
+//! or this gateway's own) goes back mapped onto esp_timer (`lm_clock_mesh`): a member's clock
+//! takes it as source Mesh, and every node converts schedule instants through it, so a
+//! group's rules fire on the same grid frame. A member adopts the record's zone.
+//!
 //! Reports are text lines this crate formats (no_std `core::fmt`) and the transport prints.
 
 #![cfg_attr(not(test), no_std)]
@@ -48,6 +55,7 @@ use splanc_mesh::ports::Port;
 use splanc_mesh::meshtime::{ShowEpoch, SyncState};
 use splanc_mesh::stack::{EpochSource, Event, MeshStack, StackConfig};
 use splanc_mesh::timesync::Adjust;
+use splanc_mesh::wallclock::{LocalWall, Zone};
 use splanc_mesh::wifi_p2p::{self, ChannelAction, ChannelRule, GroupPolicy, P2pConfig, Radio, RxVerdict, TxResult, WifiP2p};
 use splanc_mesh::NodeId;
 use swarm_net::update::Flash;
@@ -96,6 +104,12 @@ extern "C" {
     // main.cpp: loopTask strictly below the render task for a span (PR-40), and back.
     fn lm_prio_below_render() -> u32;
     fn lm_prio_restore(prio: u32);
+    // clock_ffi.rs (the player's wall clock, RTC PR-8; loopTask like this crate).
+    fn lm_clock_wall_get(unix_us: *mut i64, at_us: *mut i64, err_us: *mut i64, source: *mut u8) -> u32;
+    fn lm_clock_zone_get(rule: *mut *const u8, rule_len: *mut u32, name: *mut *const u8, name_len: *mut u32) -> u32;
+    fn lm_clock_mesh(wall_minus_local_us: i64, wall_minus_mesh_us: i64, epoch_mesh_us: i64, err_us: i64, gen: u32, origin: u16, own: bool) -> u32;
+    fn lm_clock_mesh_zone(rule: *const u8, rule_len: u32, name: *const u8, name_len: u32) -> u32;
+    fn lm_clock_mesh_clear();
 }
 
 /// Runs `f` below the render task's priority (PR-40: crypto never blocks render). loopTask
@@ -290,6 +304,13 @@ pub struct Mesh {
     tb_align: bool,
     tstat_next_us: i64,
     last_state: SyncState,
+    // ---- the wall clock (RTC PR-8) ----
+    /// The player's clock was handed the mesh's record (cleared when it no longer is), the
+    /// record generation last logged / zone adopted, and records sent as last logged.
+    wall_linked: bool,
+    wall_seen: (u32, NodeId),
+    wall_sent_seen: u32,
+    wall_offers: u32,
     // ---- the gateway and relayed control (M5, mesh_gw.rs) ----
     gw: mesh_gw::Gw,
     /// The op whose inner the transport is dispatching locally (`ns_mesh_gw_local_done`).
@@ -430,6 +451,10 @@ pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8
     put(f!((*p).tb_align), || false);
     put(f!((*p).tstat_next_us), || 0);
     put(f!((*p).last_state), || SyncState::Unsynced);
+    put(f!((*p).wall_linked), || false);
+    put(f!((*p).wall_seen), || (0, 0));
+    put(f!((*p).wall_sent_seen), || 0);
+    put(f!((*p).wall_offers), || 0);
     mesh_gw::Gw::init_in(f!((*p).gw));
     put(f!((*p).gw_local_op), || 0);
     put(f!((*p).tb_app), || None);
@@ -610,6 +635,9 @@ pub unsafe extern "C" fn ns_mesh_destroy(m: *mut Mesh) -> *mut u8 {
         return core::ptr::null_mut();
     }
     let b = (*m).block;
+    if (*m).wall_linked {
+        lm_clock_mesh_clear();
+    }
     // The transport took back any staged frame first (lm_fx_stage_cancel).
     (*m).blobs.free_all();
     range_enable(&mut *m, false);
@@ -792,6 +820,60 @@ unsafe fn time_base(m: &mut Mesh, now_us: i64) {
         let mut a = align as i64;
         if lm_mesh_tb(3, &mut a, 0) >= 0 {
             m.tb_align = align;
+        }
+    }
+}
+
+/// The wall clock on mesh time (RTC PR-8), with the time base's cadence: the player's clock
+/// to the stack (a gateway originates the record from it), the record in force back to the
+/// player (members offer it; schedules map through it), and a log line per new record.
+unsafe fn wall_clock(m: &mut Mesh, now_us: i64) {
+    let (mut unix, mut at, mut err, mut src) = (0i64, 0i64, 0i64, 0u8);
+    let valid = lm_clock_wall_get(&mut unix, &mut at, &mut err, &mut src) != 0;
+    let (mut rp, mut rl, mut np, mut nl) = (core::ptr::null(), 0u32, core::ptr::null(), 0u32);
+    lm_clock_zone_get(&mut rp, &mut rl, &mut np, &mut nl);
+    let zone = if rp.is_null() || np.is_null() {
+        None
+    } else {
+        Zone::new(core::slice::from_raw_parts(rp, rl as usize), core::slice::from_raw_parts(np, nl as usize))
+    };
+    let local = valid.then_some(LocalWall { unix_us: unix, at_us: at, err_us: err, source: src });
+    m.stack.set_local_wall(local, zone.unwrap_or(Zone::UTC));
+    let sent = m.stack.wall.stats.sent;
+    if sent != m.wall_sent_seen {
+        m.wall_sent_seen = sent;
+        if let Some(r) = m.stack.wall.rec {
+            let (g, wmm, e, so) = (r.gen, r.wall_minus_mesh_us, r.err_us, r.source);
+            m.log(format_args!("[mt] clock sent gen={g} wmm={wmm} err_us={e} src={so} n={sent}"));
+        }
+    }
+    let Some((wml, wmm, err)) = m.stack.wall_map(now_us) else {
+        if m.wall_linked {
+            m.wall_linked = false;
+            lm_clock_mesh_clear();
+        }
+        return;
+    };
+    let Some(r) = m.stack.wall.rec else { return };
+    let own = m.stack.wall.own;
+    let epoch = match (m.tb_align, m.stack.time.epoch) {
+        (true, Some(e)) => e.epoch_mesh_us.unwrap_or(i64::MIN),
+        _ => i64::MIN,
+    };
+    m.wall_linked = true;
+    if lm_clock_mesh(wml, wmm, epoch, err, r.gen, r.origin, own) != 0 {
+        m.wall_offers += 1;
+    }
+    if !own && m.wall_seen != (r.gen, r.origin) {
+        let first = m.wall_seen.1 != r.origin || m.wall_seen.0.wrapping_add(1) != r.gen;
+        m.wall_seen = (r.gen, r.origin);
+        let z = r.zone;
+        let changed = lm_clock_mesh_zone(z.rule().as_ptr(), z.rule().len() as u32, z.name().as_ptr(), z.name().len() as u32) != 0;
+        // Every record would be a line every 30 s per member: the first from a sender, and
+        // any that moved the zone, are logged (`MESH TIME` reports the rest).
+        if first || changed {
+            let (g, o, e, so) = (r.gen, r.origin, r.err_us, r.source);
+            m.log(format_args!("[mt] clock taken gen={g} origin={o:04x} wmm={wmm} err_us={e} src={so} zone_changed={}", changed as u8));
         }
     }
 }
@@ -1030,7 +1112,15 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
         }
     }
     // Mesh time (M4): the player's time base follows the mesh's show epoch.
+    let tb_due = now_us >= m.tb_next_us;
     time_base(m, now_us);
+    // The wall clock on mesh time (RTC PR-8), at the time base's cadence.
+    if tb_due && m.stack.time.synced() {
+        wall_clock(m, now_us);
+    } else if m.wall_linked && !m.stack.time.synced() {
+        m.wall_linked = false;
+        lm_clock_mesh_clear();
+    }
     time_log(m, now_us, adj_before);
     // TX: a few frames per pass (one in flight at a time; the transport spins on
     // `ns_mesh_pump` only when the STA path needs the queue).
@@ -1436,6 +1526,28 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
                 t.epoch.map_or(-1, |e| e.gen as i64),
             )
         }
+        (5, 1) => {
+            // The wall clock on mesh time (RTC PR-8).
+            let wl = &s.wall;
+            let st = wl.stats;
+            let (gen, origin, wmm, err, src) = wl.rec.map_or((0, 0, 0, 0, 0), |r| (r.gen, r.origin, r.wall_minus_mesh_us, r.err_us, r.source));
+            let map = s.wall_map(now);
+            write!(
+                w,
+                "[mt] wall gen={gen} origin={origin:04x} own={} wmm={wmm} rec_err_us={err} rec_src={src} age_ms={} map_err_us={} local_src={} local_err_us={} sent={} taken={} ignored={} bad={} linked={} offers={}",
+                wl.own as u8,
+                if wl.rec.is_some() { (now - wl.rec_us) / 1000 } else { -1 },
+                map.map_or(-1, |x| x.2),
+                wl.local.map_or(0, |l| l.source),
+                wl.local.map_or(-1, |l| l.err_us),
+                st.sent,
+                st.taken,
+                st.ignored,
+                st.bad,
+                m.wall_linked as u8,
+                m.wall_offers,
+            )
+        }
         (6, i) => {
             let Some(p) = s.time.peers.iter().flatten().nth(i as usize) else { return false };
             let q = p.fit.predict(now);
@@ -1513,6 +1625,36 @@ mod stubs {
     }
     #[no_mangle]
     extern "C" fn lm_prio_restore(_: u32) {}
+    #[no_mangle]
+    extern "C" fn lm_clock_wall_get(unix_us: *mut i64, at_us: *mut i64, err_us: *mut i64, source: *mut u8) -> u32 {
+        unsafe {
+            *unix_us = 0;
+            *at_us = 0;
+            *err_us = 0;
+            *source = 0;
+        }
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_clock_zone_get(rule: *mut *const u8, rule_len: *mut u32, name: *mut *const u8, name_len: *mut u32) -> u32 {
+        unsafe {
+            *rule = b"".as_ptr();
+            *rule_len = 0;
+            *name = b"".as_ptr();
+            *name_len = 0;
+        }
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_clock_mesh(_: i64, _: i64, _: i64, _: i64, _: u32, _: u16, _: bool) -> u32 {
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_clock_mesh_zone(_: *const u8, _: u32, _: *const u8, _: u32) -> u32 {
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_clock_mesh_clear() {}
     #[no_mangle]
     extern "C" fn ns_mac_send_p2p(_: *const u8, _: u32, _: u32, _: u32, _: u32, _: u32) -> u32 {
         1

@@ -554,6 +554,11 @@ fn encode_state_page(m: &Mesh, conn: usize, now_us: i64, out: &mut [u8], topo: O
                         e.u(12, x.last_error.into());
                         e.u(13, x.last_error_op.into());
                     }
+                    // Its wall clock (RTC PR-8; absent from older firmware).
+                    if let Some((c, _)) = mb.clock {
+                        e.u(19, c.source.into());
+                        e.u(20, c.err_ms.into());
+                    }
                     if with_topo {
                         write_member_topo(e, &mb.topo, now_us);
                     }
@@ -588,6 +593,17 @@ fn encode_state_page(m: &Mesh, conn: usize, now_us: i64, out: &mut [u8], topo: O
             }
             st.u(24, s.sessions.synced() as u64);
             st.u(25, s.mesh_s(now_us).into());
+            // The wall clock (RTC PR-8): this fixture's source and error, and the mesh record
+            // it maps schedules through.
+            let c = s.wall.status();
+            if c.source != 0 {
+                st.u(30, c.source.into());
+                st.u(31, c.err_ms.into());
+            }
+            if c.gen != 0 {
+                st.u(32, c.gen.into());
+                st.u(33, c.origin.into());
+            }
             // The topology (GetMesh.topology): this fixture's own, and the next page.
             if topo.is_some() {
                 write_pose_known(st, 26, 29, &s.topo.pose);

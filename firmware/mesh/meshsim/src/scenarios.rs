@@ -975,3 +975,160 @@ fn effect_share_and_late_joiner() {
     assert_eq!(w.nodes[GW].stack.scenes_failed + w.nodes[1].stack.scenes_failed + w.nodes[3].stack.scenes_failed, 0);
     eprintln!("effect_share: {}; late joiner caught up {ms} ms after joining; rebooted member {rb} ms after its reboot (effect kept)", summary.join("; "));
 }
+
+/// Node `i`'s local instant `local_us` in global time (inverts `local = g + off + g·ppm`).
+fn to_global(w: &World, i: usize, local_us: i64) -> i64 {
+    let p = w.air.0.borrow().st[w.nodes[i].index].place;
+    ((local_us - p.clock_offset_us) as f64 / (1.0 + p.clock_ppm / 1e6)) as i64
+}
+
+/// The gateway's wall clock (from the app: true UTC + 3 ms, ±5 ms) to the stack, as the
+/// firmware does every 50 ms; members report the clock they took from the mesh.
+fn feed_wall(w: &mut World, gw: usize, members: &[usize], utc0_us: i64) {
+    use splanc_mesh::wallclock::{LocalWall, Zone, SOURCE_MESH};
+    let zone = Zone::new(b"CET-1CEST,M3.5.0,M10.5.0/3", b"Europe/Berlin").unwrap();
+    let t = w.local(gw);
+    let unix = utc0_us + w.now() + 3_000;
+    w.nodes[gw].stack.set_local_wall(Some(LocalWall { unix_us: unix, at_us: t, err_us: 5_000, source: 3 }), zone);
+    for &i in members {
+        let t = w.local(i);
+        let l = w.nodes[i].stack.wall_map(t).map(|(wml, _, err)| LocalWall { unix_us: t + wml, at_us: t, err_us: err, source: SOURCE_MESH });
+        w.nodes[i].stack.set_local_wall(l, Zone::UTC);
+    }
+}
+
+/// RTC PR-8 (plan §3, D-564): the gateway's admin session sends its wall clock on mesh time
+/// (`CLOCK`, signed per receiver); members with no clock of their own map it through their
+/// mesh-time fits and agree on wall time to mesh-time accuracy; a rule's instant lands on
+/// the same show-epoch grid frame on every member; a late joiner gets it at the next
+/// refresh; a member never re-originates the mesh's time; members' clock status reaches the
+/// gateway. Then the same on a dev mesh (envelope trust), with a group's schedule fanned out
+/// through the relay allow-list.
+#[test]
+fn wall_clock_on_mesh_time() {
+    use splanc_mesh::gateway::{self, ReplyMsg, Status};
+    use splanc_mesh::stack::EpochSource;
+    use splanc_mesh::wallclock::{REFRESH_US, SOURCE_MESH};
+    const UTC0: i64 = 1_795_600_000_000_000;
+    let mut w = room(6, 47);
+    let first: Vec<usize> = (0..5).collect();
+    let members: Vec<usize> = (1..6).collect();
+    let c = creds(&w);
+    form(&mut w, &first, &c, 150, 20_000);
+    w.run_ms(15_000);
+    w.unlock_and_sync(GW, SESSION, &first, 15_000).expect("session");
+    // The show epoch, so frames run on its grid (the members' time base).
+    let epoch_mesh = w.nodes[GW].stack.time.mesh_us(w.local(GW)) + 1_000_000;
+    w.nodes[GW].stack.originate_epoch(EpochSource::Console, Some(epoch_mesh)).expect("epoch");
+    for _ in 0..50 {
+        feed_wall(&mut w, GW, &members, UTC0);
+        w.run_ms(200);
+    }
+    let gw_rec = w.nodes[GW].stack.wall.rec.expect("the gateway's own record");
+    assert!(w.nodes[GW].stack.wall.own && gw_rec.origin == id(GW));
+    for &i in &first[1..] {
+        let s = &w.nodes[i].stack.wall;
+        let r = s.rec.unwrap_or_else(|| panic!("node {i} has no record: {:?}", s.stats));
+        assert_eq!(r.origin, id(GW));
+        assert_eq!(r.zone.rule(), b"CET-1CEST,M3.5.0,M10.5.0/3");
+        assert_eq!(s.stats.sent, 0, "a member never re-originates the mesh's time");
+    }
+    // Agreement: every node's wall clock at one global instant (sampled for 20 s).
+    let mut worst = 0;
+    let mut abs_worst = 0;
+    for _ in 0..40 {
+        feed_wall(&mut w, GW, &members, UTC0);
+        w.run_ms(500);
+        let walls: Vec<i64> = first.iter().map(|&i| w.local(i) + w.nodes[i].stack.wall_map(w.local(i)).expect("mapped").0).collect();
+        worst = worst.max(walls.iter().max().unwrap() - walls.iter().min().unwrap());
+        abs_worst = abs_worst.max(walls.iter().map(|x| (x - (UTC0 + w.now() + 3_000)).abs()).max().unwrap());
+    }
+    // A rule's instant, mapped as the firmware does when it hands the rule out (2 s ahead):
+    // through each node's record onto the epoch's grid.
+    let period = 16_667;
+    let fire_unix = UTC0 + w.now() + 2_000_000;
+    let mut ks = Vec::new();
+    let mut global = Vec::new();
+    for &i in &first {
+        let n = &w.nodes[i].stack;
+        let r = n.wall.rec.unwrap();
+        let e = n.time.epoch.and_then(|e| e.epoch_mesh_us).expect("epoch");
+        let m = r.mesh_at(fire_unix);
+        let rel = m - e;
+        let k = rel.div_euclid(period) + i64::from(rel.rem_euclid(period) != 0);
+        ks.push(k);
+        global.push(to_global(&w, i, n.time.local_us(m)));
+    }
+    let skew = global.iter().max().unwrap() - global.iter().min().unwrap();
+    // A late joiner (no clock of its own) gets the record within a refresh.
+    w.power_on(5, Some((&c, ProvisionSource::Factory)));
+    let t0 = w.now();
+    let mut joined_after = None;
+    for _ in 0..(2 * REFRESH_US / 200_000) {
+        feed_wall(&mut w, GW, &members, UTC0);
+        w.run_ms(200);
+        if w.nodes[5].stack.wall.rec.is_some() && w.nodes[5].stack.time.synced() {
+            joined_after = Some((w.now() - t0) / 1000);
+            break;
+        }
+    }
+    // Members' clock status (source Mesh) reaches the gateway.
+    for _ in 0..20 {
+        feed_wall(&mut w, GW, &members, UTC0);
+        w.run_ms(500);
+    }
+    let listed: Vec<(NodeId, u8)> = w.nodes[GW].stack.fanout.members.iter().flatten().filter_map(|m| m.clock.map(|(c, _)| (m.node, c.source))).collect();
+    let sent = w.nodes[GW].stack.wall.stats.sent;
+    println!(
+        "wall clock on mesh time (6 nodes): agreement worst {worst} µs, vs the gateway's clock worst {abs_worst} µs; rule instant skew {skew} µs, grid frames {ks:?}; late joiner had it after {joined_after:?} ms; {sent} records sent in {} s",
+        w.now() / 1_000_000
+    );
+    assert!(worst < 200, "wall-clock agreement {worst} µs");
+    assert!(abs_worst < 1_000, "vs the gateway's clock {abs_worst} µs");
+    assert!(skew < 200, "rule skew {skew} µs");
+    assert!(ks.windows(2).all(|p| p[0] == p[1]), "one grid frame: {ks:?}");
+    assert!(joined_after.is_some_and(|ms| ms <= REFRESH_US / 1000 + 5_000), "late joiner {joined_after:?}");
+    assert!(members[..4].iter().all(|&i| listed.contains(&(id(i), SOURCE_MESH))), "{listed:?}");
+
+    // -- a dev mesh (no admin key): the gateway's envelope session sends it; a group's
+    // schedule is fanned out through the allow-list.
+    let mut w = room(3, 48);
+    let all: Vec<usize> = (0..3).collect();
+    let c = Credentials { mesh_id: w.mesh_id, site_secret: Some(SITE), ..Credentials::default() };
+    form(&mut w, &all, &c, 300, 15_000);
+    w.run_ms(15_000);
+    for _ in 0..20 {
+        feed_wall(&mut w, GW, &all[1..], UTC0);
+        w.run_ms(200);
+    }
+    assert!(w.nodes[1].stack.wall.rec.is_none(), "no session: nothing sent");
+    w.nodes[GW].stack.open_gateway(CONN).expect("envelope trust");
+    for _ in 0..20 {
+        feed_wall(&mut w, GW, &all[1..], UTC0);
+        w.run_ms(200);
+    }
+    assert!(all[1..].iter().all(|&i| w.nodes[i].stack.wall.rec.is_some_and(|r| r.origin == id(GW))));
+    let set_schedule: &[u8] = &[0x92, 0x07, 0];
+    let t = w.local(GW);
+    w.nodes[GW].stack.send_control_collect(t, CONN, 90, Targets::All, set_schedule, 114, 2_000_000).expect("send");
+    let mut done = None;
+    let mut answered = [false; 3];
+    for _ in 0..300 {
+        w.run_ms(10);
+        for i in 1..3 {
+            for (_, origin, op, inner) in w.nodes[i].controls() {
+                if op == 90 && !answered[i] {
+                    answered[i] = true;
+                    let status = if gateway::relay_arm(&inner).is_ok() { Status::Ok } else { Status::Refused };
+                    w.nodes[i].stack.reply(origin, &ReplyMsg { op_id: op, status, arm: 114, code: 0 }).expect("reply");
+                }
+            }
+        }
+        if let Some(r) = w.nodes[GW].stack.fanout.take_done() {
+            done = Some(r);
+            break;
+        }
+    }
+    let r = done.expect("a result");
+    assert!(r.status[..r.n].iter().all(|s| *s == Status::Ok), "{r:?}");
+}

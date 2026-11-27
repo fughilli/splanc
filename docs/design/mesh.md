@@ -553,7 +553,9 @@ Messages larger than the payload are fragmented at the port layer (like the swar
 | 21    | `TIME_BASE`  | broadcast                                               | the show epoch in mesh time (§6.3)                                  |
 | 22    | `FRESHNESS`  | unicast or broadcast                                    | session grants, acks, confirms, rekeys (§7.6, §7.9); own auth       |
 | 23    | `BULK`       | broadcast                                               | bulk transfers (blob catch-up, M6); lowest relay priority (§10.6)   |
-| 24–31 | reserved     |                                                         |                                                                     |
+| 24    | reserved     |                                                         | claimed by the live-update authenticator (mesh-tesla, #551)         |
+| 25    | `CLOCK`      | broadcast                                               | the wall clock on mesh time (`schedule.md` "On a mesh"); admin-class |
+| 26–31 | reserved     |                                                         |                                                                     |
 
 Link frame types beyond the swarm's (new `FrameType` values in the ported proto):
 

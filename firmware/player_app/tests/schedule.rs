@@ -11,7 +11,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
-use ledmapper_player_ffi::clock_ffi::{lm_clock_test_set_mono_us, lm_clock_tick};
+use ledmapper_player_ffi::clock_ffi::{
+    lm_clock_mesh, lm_clock_mesh_clear, lm_clock_mesh_zone, lm_clock_test_set_mono_us,
+    lm_clock_tick,
+};
 use ledmapper_player_ffi::effect_store::lm_fxs_set_store;
 use ledmapper_player_ffi::sched_ffi::{
     lm_sched_boot, lm_sched_effect_slot, lm_sched_handle, lm_sched_load, lm_sched_loc_record,
@@ -469,11 +472,123 @@ fn schedules_end_to_end() {
         "edits replace in the file's order: kept first, then the new"
     );
 
+    // -- on a mesh (RTC PR-8): rules fire at the mesh record's instant -------------------
+    // The lamp is a member: the gateway's record maps wall time 7 ms ahead of its own clock.
+    // Mesh = local + 5.000123 s.
+    let own_wml: i64 = T0_MS * 1000 - 1_000_000;
+    let mml: i64 = 5_000_123;
+    let wml = own_wml + 7_000;
+    let wmm = wml - mml;
+    let link = |t: i64, epoch: i64| unsafe {
+        lm_clock_test_set_mono_us(t * 1000);
+        lm_clock_mesh(wml, wmm, epoch, 2_000, 1, 0x1001, false)
+    };
+    assert_eq!(link(242_000, i64::MIN), 1, "a member offers the mesh's time to its clock");
+    match handle_frame(&encode(CMsg::GetClock(pb::GetClock::default())), 242_000) {
+        Some(SMsg::ClockState(c)) => assert_eq!(c.r#source, pb::ClockSource::Mesh),
+        other => panic!("clock_state expected, got {other:?}"),
+    }
+    assert_eq!(link(242_100, i64::MIN), 0, "the same record is not offered again at once");
+    set_rules(
+        vec![local_rule(
+            5,
+            425,
+            A::Brightness(pb::ScheduleBrightness {
+                level: 0.25,
+                ramp_ms: 0,
+            }),
+        )],
+        242_000,
+    );
+    // 07:05:00 is device ms 361_000 on the lamp's own clock, 360_993 through the record.
+    let mut fired = Vec::new();
+    for t in (242_250..=360_000).step_by(250) {
+        link(t, i64::MIN);
+        fired.extend(poll(t));
+        frame(t);
+    }
+    assert!(
+        fired.iter().any(|l| l == "[sched] fire id=5 in_ms=1993"),
+        "{fired:?}"
+    );
+    assert!(
+        fired.iter().any(|l| l == "[sched] mesh id=5 k=-1"),
+        "{fired:?}"
+    );
+    frame(360_992);
+    assert!(lines(360_992).is_empty(), "not before the mesh instant");
+    frame(360_993);
+    let log = lines(360_993);
+    assert!(
+        log.iter().any(|l| l.contains("applied id=5 at_ms=360993 due_ms=360993")),
+        "{log:?}"
+    );
+    assert!((63..=64).contains(&unsafe { lm_brightness_u8() }));
+    // With frames on the show epoch's grid: the rule goes half a frame ahead of grid frame
+    // k = ceil((M - epoch) / period), so every member's queue releases it on that frame.
+    // Epoch = the rule's mesh instant: k = 0.
+    let fire6_unix = (T0_MS + 420_000) * 1000; // 07:06
+    let epoch = fire6_unix - wmm;
+    set_rules(
+        vec![local_rule(
+            6,
+            426,
+            A::Brightness(pb::ScheduleBrightness {
+                level: 0.5,
+                ramp_ms: 0,
+            }),
+        )],
+        361_000,
+    );
+    let mut fired = Vec::new();
+    for t in (361_250..=420_000).step_by(250) {
+        link(t, epoch);
+        fired.extend(poll(t));
+        frame(t);
+    }
+    assert!(
+        fired.iter().any(|l| l == "[sched] mesh id=6 k=0"),
+        "{fired:?}"
+    );
+    let in_ms: i64 = fired
+        .iter()
+        .find_map(|l| l.strip_prefix("[sched] fire id=6 in_ms="))
+        .expect("fired")
+        .parse()
+        .unwrap();
+    // Half a frame (8-25 ms at 20-60 fps) before 420_993.
+    assert!((1993 - 30..1993).contains(&in_ms), "{in_ms}");
+    let due = 419_000 + in_ms;
+    frame(due - 1);
+    assert!(lines(due - 1).is_empty());
+    frame(due);
+    assert!(
+        lines(due).iter().any(|l| l.contains("applied id=6 ")),
+        "applied at its due"
+    );
+    // Off the mesh: back to the lamp's own clock. A member adopts the record's zone.
+    unsafe { lm_clock_mesh_clear() };
+    let rule = b"CET-1CEST,M3.5.0,M10.5.0/3";
+    let name = b"Europe/Berlin";
+    assert_eq!(
+        unsafe { lm_clock_mesh_zone(rule.as_ptr(), rule.len() as u32, name.as_ptr(), name.len() as u32) },
+        1
+    );
+    assert_eq!(
+        unsafe { lm_clock_mesh_zone(rule.as_ptr(), rule.len() as u32, name.as_ptr(), name.len() as u32) },
+        0,
+        "unchanged"
+    );
+    match handle_frame(&encode(CMsg::GetClock(pb::GetClock::default())), 420_000) {
+        Some(SMsg::ClockState(c)) => assert_eq!(c.r#tz.as_str(), "CET-1CEST,M3.5.0,M10.5.0/3"),
+        other => panic!("clock_state expected, got {other:?}"),
+    }
+
     // -- the location (set_clock_config) -------------------------------------------------
     let mut cc = pb::SetClockConfig::default();
     cc.set_lat_e4(515_000);
     cc.set_lon_e4(-1_000);
-    match handle_frame(&encode(CMsg::SetClockConfig(cc)), 242_000) {
+    match handle_frame(&encode(CMsg::SetClockConfig(cc)), 420_000) {
         Some(SMsg::ClockState(c)) => {
             assert!(c.r#has_location && c.r#lat_e4 == 515_000 && c.r#lon_e4 == -1_000)
         }
@@ -481,7 +596,7 @@ fn schedules_end_to_end() {
     }
     let mut rec = [0u8; 8];
     assert_eq!(unsafe { lm_sched_loc_record(rec.as_mut_ptr()) }, 8);
-    assert!(sched(CMsg::GetSchedule(pb::GetSchedule::default()), 242_000).r#has_location);
+    assert!(sched(CMsg::GetSchedule(pb::GetSchedule::default()), 420_000).r#has_location);
 
     // Without main.cpp (no filesystem), changes are refused.
     match handle_frame(
@@ -489,7 +604,7 @@ fn schedules_end_to_end() {
             id: 0,
             all: true,
         })),
-        242_000,
+        420_000,
     ) {
         Some(SMsg::ScheduleState(s)) => assert_eq!(s.r#result, pb::ScheduleResult::Storage),
         other => panic!("{other:?}"),
