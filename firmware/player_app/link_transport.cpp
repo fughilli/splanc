@@ -559,9 +559,18 @@ void on_frame(const lk_header &h, const uint8_t *p) {
     case LK_OSC:
       lm_netstack_osc_rx(p, h.len);  // as if it had arrived on udp/9000 here
       return;
-    case LK_LOG:
-      printf("[c6] %.*s", (int)h.len, (const char *)p);  // the front end's own lines
+    case LK_LOG: {
+      // The front end's own lines, batched (frontend_link.cpp log_queue): "[c6] " on each.
+      const char *s = reinterpret_cast<const char *>(p);
+      size_t at = 0;
+      while (at < h.len) {
+        const char *nl = static_cast<const char *>(memchr(s + at, '\n', h.len - at));
+        const size_t n = nl ? (size_t)(nl - (s + at)) + 1 : h.len - at;
+        printf("[c6] %.*s", (int)n, s + at);
+        at += n;
+      }
       return;
+    }
     case LK_LINK:
       if (h.len == 0) return;
       if (p[0] == LK_OP_HELLO) {

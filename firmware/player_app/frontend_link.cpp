@@ -18,6 +18,7 @@
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -64,8 +65,18 @@ uint8_t g_push[kWsSendHeadroom + 2048];
 size_t g_push_len = 0;
 
 struct {
-  uint32_t rx, tx, bad, tx_full, pushes, forwarded, timeouts, fwd_down, fwd_unsent;
+  uint32_t rx, tx, bad, tx_full, pushes, forwarded, timeouts, fwd_down, fwd_unsent, log_dropped;
 } g_stats;
+
+// Lines for the P4's console, batched: one LOG frame carries every line queued since the
+// last one went out. Sent line by line, a report burst (MESH INFO's lines, then [relay] and
+// [link] mt) outran the kTxBufs send slots and its tail was dropped every time.
+constexpr size_t kLogBatch = 1536;
+char g_log[kLogBatch];
+size_t g_log_len = 0;
+// Lines come from loopTask and from the mesh's task (lm_mesh_console_tee).
+StaticSemaphore_t g_log_mux_mem;
+SemaphoreHandle_t g_log_mux = nullptr;
 int64_t g_stats_sent_us = 0;
 
 // LK_OP_NAME payload: op, then "<mac>\0<name>".
@@ -137,6 +148,33 @@ bool send_frame(uint8_t type, uint8_t flags, uint16_t session, const uint8_t *p,
 
 // A line for the P4's console (it prints LOG frames from here as "[c6] ..."): this
 // side's own UART is on a header nobody watches.
+// Lines queue in g_log and go out as one frame from the poll (log_flush), when a send slot
+// is free: one slot per burst, which leaves the others to replies, pings and TIMEBASE. A
+// line that doesn't fit even after a flush attempt is dropped (log_drop=).
+void log_flush_locked() {
+  if (g_log_len && send_frame(LK_LOG, 0, 0, reinterpret_cast<const uint8_t *>(g_log), g_log_len)) g_log_len = 0;
+}
+
+void log_flush() {
+  if (!g_log_mux || xSemaphoreTake(g_log_mux, 0) != pdTRUE) return;
+  log_flush_locked();
+  xSemaphoreGive(g_log_mux);
+}
+
+void log_queue(const char *line, size_t n) {
+  if (!g_up || !g_log_mux || n == 0) return;
+  if (n > kLogBatch) n = kLogBatch;
+  xSemaphoreTake(g_log_mux, portMAX_DELAY);
+  if (g_log_len + n > kLogBatch) log_flush_locked();
+  if (g_log_len + n > kLogBatch) {
+    g_stats.log_dropped++;
+  } else {
+    memcpy(g_log + g_log_len, line, n);
+    g_log_len += n;
+  }
+  xSemaphoreGive(g_log_mux);
+}
+
 void p4_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void p4_log(const char *fmt, ...) {
   char b[160];
@@ -144,7 +182,7 @@ void p4_log(const char *fmt, ...) {
   va_start(ap, fmt);
   const int n = vsnprintf(b, sizeof b, fmt, ap);
   va_end(ap);
-  if (n > 0) send_frame(LK_LOG, 0, 0, reinterpret_cast<const uint8_t *>(b), n < (int)sizeof b ? n : sizeof b - 1);
+  if (n > 0) log_queue(b, n < (int)sizeof b ? (size_t)n : sizeof b - 1);
 }
 
 void send_hello() {
@@ -292,6 +330,7 @@ bool frontend_link_begin() {
     if (!g_tx_bufs[i]) return false;
   }
   if (sdio_slave_start() != ESP_OK) return false;
+  g_log_mux = xSemaphoreCreateMutexStatic(&g_log_mux_mem);
   g_up = true;
   // A session that had a client ended: the P4 stops pushing there (and frees its upload).
   netstack_session_closed = [](uint16_t session) { frontend_link_session_closed(session); };
@@ -305,6 +344,7 @@ void frontend_link_poll() {
   if (!g_up) return;
   pump(0);
   reclaim();
+  log_flush();
   flush_resets();
   const int64_t now = esp_timer_get_time();
   // The P4 came up / went down: mesh time starts over (a restarted P4 lost its time base and
@@ -538,13 +578,13 @@ void frontend_link_osc(const uint8_t *data, size_t len) {
 
 void frontend_link_log(const char *line) {
   // 700: the mesh's MESH INFO line (mesh_glue.h report) is the longest.
-  const size_t n = strnlen(line, 700);
-  if (n) send_frame(LK_LOG, 0, 0, reinterpret_cast<const uint8_t *>(line), n);
+  log_queue(line, strnlen(line, 700));
 }
 
 int frontend_link_stats(char *buf, size_t cap) {
-  return snprintf(buf, cap, "p4=%s v%u.%u rx=%u tx=%u bad=%u full=%u fwd=%u to=%u push=%u",
+  return snprintf(buf, cap, "p4=%s v%u.%u rx=%u tx=%u bad=%u full=%u log_drop=%u fwd=%u to=%u push=%u",
                   frontend_p4_up() ? "up" : "down", g_p4_ver[0], g_p4_ver[1], (unsigned)g_stats.rx,
                   (unsigned)g_stats.tx, (unsigned)g_stats.bad, (unsigned)g_stats.tx_full,
-                  (unsigned)g_stats.forwarded, (unsigned)g_stats.timeouts, (unsigned)g_stats.pushes);
+                  (unsigned)g_stats.log_dropped, (unsigned)g_stats.forwarded, (unsigned)g_stats.timeouts,
+                  (unsigned)g_stats.pushes);
 }
