@@ -35,6 +35,11 @@ enum {
   LK_BULK = 5,    // reserved: chunked streams
   LK_LOG = 6,     // P4 console text
   LK_OSC = 7,     // one OSC datagram (udp/9000), front end -> P4
+  // A ClientMessage the mesh relayed to this fixture (front end -> P4; docs/design/mesh.md
+  // §8.2): dispatched as the member's relayed control, never as an app session's message
+  // (no kiosk gate, no push target, no sharded upload). Answered by a REPLY on the same
+  // session carrying an lk_mesh_result.
+  LK_MESH = 8,
 };
 
 // Header `flags`.
@@ -51,6 +56,72 @@ enum {
   LK_OP_NAME = 4,
   LK_OP_STATS = 5,
 };
+
+// The front end's HELLO (front end -> P4): op, version, 0, MTU (LE), its image's ELF
+// SHA-256, then one byte of LK_FE_* feature bits (absent from older front ends: none).
+enum {
+  LK_HELLO_SHA_AT = 5,
+  LK_HELLO_FEATURES_AT = 5 + 32,
+};
+enum {
+  LK_FE_MESH = 1 << 0,  // the front end runs the mesh layer (mesh_ffi): the P4's Welcome says "mesh"
+};
+
+// The P4's HEARTBEAT body (P4 -> front end; empty from older P4 images): the player status a
+// mesh member broadcasts (mesh_glue.h lm_mesh_status_fill) and the P4's own state the front
+// end acts on (LK_ST_*), u32 LE each.
+typedef struct {
+  uint32_t fps;
+  uint32_t brightness;
+  uint32_t firmware;  // FNV-1a of the P4's version string
+  uint32_t flags;     // LK_ST_*
+} lk_status;
+enum { LK_STATUS_LEN = 16 };
+enum {
+  // Kiosk mode is on (docs/design/kiosk-mode.md): the front end refuses the mesh arms it
+  // answers itself, as a locked C6 player's kiosk gate does.
+  LK_ST_KIOSK = 1 << 0,
+};
+
+static inline void lk_put32(uint8_t *o, uint32_t v) {
+  o[0] = (uint8_t)v;
+  o[1] = (uint8_t)(v >> 8);
+  o[2] = (uint8_t)(v >> 16);
+  o[3] = (uint8_t)(v >> 24);
+}
+static inline uint32_t lk_get32(const uint8_t *p) {
+  return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+static inline void lk_status_pack(const lk_status *s, uint8_t out[LK_STATUS_LEN]) {
+  lk_put32(out, s->fps);
+  lk_put32(out + 4, s->brightness);
+  lk_put32(out + 8, s->firmware);
+  lk_put32(out + 12, s->flags);
+}
+// `p`/`n`: the HEARTBEAT body after its op byte. False when it carries no status.
+static inline bool lk_status_parse(const uint8_t *p, size_t n, lk_status *s) {
+  if (n < LK_STATUS_LEN) return false;
+  s->fps = lk_get32(p);
+  s->brightness = lk_get32(p + 4);
+  s->firmware = lk_get32(p + 8);
+  s->flags = lk_get32(p + 12);
+  return true;
+}
+
+// The REPLY to an LK_MESH frame: status (0 = ok, 1 = failed), then the error code (u32 LE),
+// as mesh_glue.h's lm_mesh_member_dispatch returns them.
+enum { LK_MESH_RESULT_LEN = 5 };
+static inline void lk_mesh_result_pack(uint8_t status, uint32_t code, uint8_t out[LK_MESH_RESULT_LEN]) {
+  out[0] = status;
+  lk_put32(out + 1, code);
+}
+static inline bool lk_mesh_result_parse(const uint8_t *p, size_t n, uint8_t *status, uint32_t *code) {
+  if (n != LK_MESH_RESULT_LEN || p[0] > 1) return false;
+  *status = p[0];
+  *code = lk_get32(p + 1);
+  return true;
+}
 
 typedef struct {
   uint8_t ver;

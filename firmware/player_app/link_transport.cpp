@@ -41,6 +41,12 @@
 #include "player_ffi.h"
 
 extern "C" void lm_link_identity(const char *mac, const char *name);  // main.cpp
+// main.cpp: the front end's LK_FE_* features (its HELLO), for the Welcome's features.
+extern "C" void lm_link_frontend_features(uint32_t bits);
+// main.cpp (mesh_glue.h's contract): a control the mesh relayed to this fixture, dispatched
+// as the member's (0 ok, else *code), and the status a member broadcasts.
+extern "C" int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint32_t *code);
+extern "C" void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_t *firmware);
 
 namespace {
 
@@ -66,9 +72,10 @@ uint16_t g_tx_seq[2] = {0, 0};
 
 uint8_t *g_rx_wire = nullptr;  // lk_stream_max(LK_MTU)
 lk_rx g_rx;
-uint8_t *g_msg = nullptr;  // PLAYER reassembly (kMsgCap)
+uint8_t *g_msg = nullptr;  // PLAYER / MESH reassembly (kMsgCap)
 size_t g_msg_len = 0;
 bool g_msg_overflow = false;
+uint8_t g_msg_type = 0;  // the frame type being reassembled
 
 uint16_t g_session = 0;  // the session the newest PLAYER message came from (0 = none)
 // The C6 front end can hold several sessions (docs/design/p4-c6-split.md §4.3.1), but the
@@ -278,11 +285,41 @@ void on_player_message(uint16_t session, const uint8_t *msg, size_t len) {
   }
 }
 
+// A control the mesh relayed to this fixture (LK_MESH, from the front end's mesh layer):
+// dispatched as main.cpp dispatches a member's relayed control on a C6 player, then the
+// result goes back on the same session. Not an app session: no push target, no upload owner.
+void on_mesh_message(uint16_t session, const uint8_t *msg, size_t len) {
+  uint32_t code = 0;
+  const int32_t st = lm_mesh_member_dispatch(msg, (uint32_t)len, &code);
+  g_stats.dispatched++;
+  uint8_t r[LK_MESH_RESULT_LEN];
+  lk_mesh_result_pack(st == 0 ? 0 : 1, code, r);
+  send_msg(LK_REPLY, session, r, sizeof r);
+}
+
+void send_heartbeat() {
+  // The player status the front end's mesh layer broadcasts for this fixture.
+  lk_status s = {};
+  lm_mesh_status_fill(&s.fps, &s.brightness, &s.firmware);
+  if (lm_kiosk_enabled()) s.flags |= LK_ST_KIOSK;
+  uint8_t b[LK_STATUS_LEN];
+  lk_status_pack(&s, b);
+  send_link(LK_OP_HEARTBEAT, b, sizeof b);
+}
+
 void on_frame(const lk_header &h, const uint8_t *p) {
   g_stats.rx_frames++;
   g_host_seen_us = esp_timer_get_time();
   switch (h.type) {
     case LK_PLAYER:
+    case LK_MESH:
+      // A message's fragments arrive back to back (the front end sends one at a time); a
+      // different type mid-message starts over.
+      if (g_msg_len && h.type != g_msg_type) {
+        g_msg_len = 0;
+        g_msg_overflow = false;
+      }
+      g_msg_type = h.type;
       if (g_msg_len + h.len > kMsgCap) {
         g_msg_overflow = true;
       } else {
@@ -294,6 +331,8 @@ void on_frame(const lk_header &h, const uint8_t *p) {
         g_stats.too_big++;
         const uint8_t b[] = {(uint8_t)h.session, (uint8_t)(h.session >> 8)};
         send_link(LK_OP_RESET, b, sizeof b);
+      } else if (h.type == LK_MESH) {
+        on_mesh_message(h.session, g_msg, g_msg_len);
       } else {
         on_player_message(h.session, g_msg, g_msg_len);
       }
@@ -311,9 +350,11 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       if (p[0] == LK_OP_HELLO) {
 #if defined(LM_LINK_SDIO)
         // The front end's HELLO: version, MTU, then its image's ELF SHA-256.
-        if (h.len >= 1 + 4 + 32) {
-          memcpy(g_c6_sha, p + 5, 32);
+        if (h.len >= LK_HELLO_FEATURES_AT) {
+          memcpy(g_c6_sha, p + LK_HELLO_SHA_AT, 32);
           g_c6_sha_valid = true;
+          // Its features (older front ends send none): the Welcome names them.
+          lm_link_frontend_features(h.len > LK_HELLO_FEATURES_AT ? p[LK_HELLO_FEATURES_AT] : 0);
         }
         // Answer it: the front end counts the P4 as up only while it hears from it
         // (frontend_p4_up, 350 ms), and answers player messages itself otherwise. A
@@ -466,7 +507,7 @@ void netstack_loop(void) {
   g_polled_us = now;
   if (now - g_hb_sent_us >= kHeartbeatUs) {
     g_hb_sent_us = now;
-    send_link(LK_OP_HEARTBEAT, nullptr, 0);
+    send_heartbeat();
   }
   if (!host_alive(now)) g_session = 0;
   // The front end heartbeats every 100 ms. Silent this long, the link is gone (the C6
@@ -524,7 +565,7 @@ void netstack_loop(void) {
   const int64_t now = esp_timer_get_time();
   if (now - g_hb_sent_us >= kHeartbeatUs) {
     g_hb_sent_us = now;
-    send_link(LK_OP_HEARTBEAT, nullptr, 0);
+    send_heartbeat();
   }
   if (!host_alive(now)) g_session = 0;
   uint8_t buf[512];

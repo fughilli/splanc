@@ -1,0 +1,34 @@
+{
+  "_doc": "The P4's C6 front end's roots for //firmware/player_app:frontend_stack_bound_test: relay_main.cpp's loopTask, the log drain and the mesh's (mesh_glue.h: the tick and the session crypto on the 14 KB tick stack, and the mesh's creation, built in place on the same stack). Everything else (edges, allowances, ROM frames, margin) is stack_bound.json's: the same transport, mbedtls and mesh.",
+  "roots": [
+    {
+      "name": "loopTask",
+      "symbol": "loopTask(void*)",
+      "reserved_from": [
+        "firmware/player_app/relay_main.cpp",
+        "SET_LOOP_TASK_STACK_SIZE\\((\\d+) \\* 1024\\)",
+        1024
+      ]
+    },
+    {
+      "name": "logdrain",
+      "symbol": "log_drain_task(void*)",
+      "reserved_from": ["firmware/player_app/serial_log.h", "StackType_t stack\\[(\\d+) /", 1]
+    },
+    {
+      "name": "meshtick",
+      "symbol": "(anonymous namespace)::lm_mesh::tick_on_stack()",
+      "reserved_from": ["firmware/player_app/mesh_glue.h", "kTickStack = (\\d+) \\* 1024", 1024]
+    },
+    {
+      "name": "meshcrypto",
+      "symbol": "(anonymous namespace)::lm_mesh::crypto_on_stack()",
+      "reserved_from": ["firmware/player_app/mesh_glue.h", "kTickStack = (\\d+) \\* 1024", 1024]
+    },
+    {
+      "name": "meshcreate",
+      "symbol": "(anonymous namespace)::lm_mesh::create_on_stack()",
+      "reserved_from": ["firmware/player_app/mesh_glue.h", "kTickStack = (\\d+) \\* 1024", 1024]
+    }
+  ]
+}

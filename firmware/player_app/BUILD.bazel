@@ -1074,7 +1074,7 @@ cc_library(
         ":heap_census_on": [":heap_census"],
         "//conditions:default": [],
     }) + select({
-        # The mesh (C6 only for now: the backhaul is the C6 MAC's).
+        # The mesh (the C6 players and the P4's C6 front end: the backhaul is the C6 MAC's).
         "@embedded//platforms:is_esp32c6": [
             ":flash_suspend",  # the SPI1 lock (flash auto-suspend, D-459)
             ":mesh_ffi",
@@ -1164,21 +1164,27 @@ cc_binary(
         ":build_info_h",
     ],
     copts = ["-fno-rtti"],
-    # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + relay_ffi) each carry the
-    # panic handler / compiler-builtins; take the first (as the player does).
-    linkopts = ["-Wl,--allow-multiple-definition"],
+    # Three no_std Rust staticlibs (the netstack's wifi_sta_ffi, relay_ffi, mesh_ffi) each
+    # carry the panic handler / compiler-builtins; take the first (as the player does). The
+    # transport reaches the mesh through weak symbols: pull mesh_ffi's in, as the player does.
+    linkopts = ["-Wl,--allow-multiple-definition"] + ["-Wl,-u," + s for s in _MESH_FFI_SYMS],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
         ":device_cert",
+        ":flash_suspend",  # the SPI1 lock (flash auto-suspend, D-459): littlefs writes never stall
         ":identify_blink",
         ":improv_ble_netstack",
         ":improv_codec",
+        # The mesh node (docs/design/mesh.md §8.2): the C6 front end runs the mesh layer
+        # and forwards control for its own P4 over the link (relay_main.cpp).
+        ":mesh_ffi",
         ":netstack_transport_sessions%d" % _FRONTEND_SESSIONS,
         ":ota_app",
         ":relay_ffi",
+        "//firmware/mesh/swarm:swarm_crypto",  # SHA-256/HMAC under the envelope's HKDF
         "//firmware/p4/link:link_codec",
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:preferences",
@@ -2287,6 +2293,49 @@ py_test(
     # Builds the firmware image, like stack_bound_test (Linux CI).
     target_compatible_with = ["@platforms//os:linux"],
     deps = ["@rules_python//python/runfiles"],
+)
+
+filegroup(
+    name = "esp32c6_frontend_elf",
+    srcs = [":esp32c6_frontend"],
+    output_group = "elf",
+)
+
+# The front end's statics and stacks, as the player's (the P4 image carries it): its .data,
+# and relay_main.cpp's loopTask, the log drain and the mesh's tasks over the same edges.
+py_test(
+    name = "frontend_data_bss_test",
+    srcs = ["tests/test_data_bss.py"],
+    data = [":esp32c6_frontend_elf"],
+    env = {"ELF": "$(rlocationpath :esp32c6_frontend_elf)"},
+    main = "tests/test_data_bss.py",
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["@rules_python//python/runfiles"],
+)
+
+py_test(
+    name = "frontend_stack_bound_test",
+    srcs = ["tests/test_stack_bound.py"],
+    data = [
+        "mesh_glue.h",
+        "relay_main.cpp",
+        "serial_log.h",
+        "stack_bound.json",
+        "stack_bound_frontend.json",
+        ":esp32c6_frontend_elf",
+        "@embedded//tools:riscv_objdump",
+    ],
+    env = {
+        "ELF": "$(rlocationpath :esp32c6_frontend_elf)",
+        "OBJDUMP": "$(rlocationpath @embedded//tools:riscv_objdump)",
+        "ROOTS": "$(rlocationpath stack_bound_frontend.json)",
+    },
+    main = "tests/test_stack_bound.py",
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//tools/stack_bound:stack_bound_lib",
+        "@rules_python//python/runfiles",
+    ],
 )
 
 py_test(
