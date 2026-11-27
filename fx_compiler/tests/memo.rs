@@ -506,3 +506,84 @@ void poll() {
     assert_ne!(p.flags & ledmapper_fx_vm::FLAG_DRIVER, 0);
     assert_eq!(p.prep_entry(), 0xFFFF);
 }
+
+// -- matrix multiplies of different widths in one function ---------------------
+//
+// `mat4 * vec4` followed by `mat3 * vec3` used to panic the pass (`an.defs[&base]`
+// in the prep builder): the two products' scratch locals share a base slot with
+// different widths, so the base slot had two defs while the tail of the wider
+// one had one. Every combination of widths and order, in shade() and update(),
+// LED-varying and per-frame, must compile and render identically.
+
+const MAT_UNIFORMS: &str = "uniform mat4 pose : -2..2 = mat4(0.7);\n\
+uniform mat4 pose2 : -2..2 = mat4(-0.4);\n\
+uniform mat3 spin : -2..2 = mat3(1.3);\n\
+uniform mat3 spin2 : -2..2 = mat3(0.6);\n";
+
+/// (name, first statement, second statement) — each defines `p` / `q` as vec3.
+const MAT_PAIRS: &[(&str, &str, &str)] = &[
+    (
+        "mat4_then_mat3",
+        "vec3 p = (pose * vec4(POS, 1.0)).xyz;",
+        "vec3 q = spin * POS;",
+    ),
+    (
+        "mat3_then_mat4",
+        "vec3 p = spin * POS;",
+        "vec3 q = (pose * vec4(POS, 1.0)).xyz;",
+    ),
+    (
+        "mat4_twice",
+        "vec3 p = (pose * vec4(POS, 1.0)).xyz;",
+        "vec3 q = (pose2 * vec4(POS, 0.5)).xyz;",
+    ),
+    (
+        "mat3_twice",
+        "vec3 p = spin * POS;",
+        "vec3 q = spin2 * POS;",
+    ),
+];
+
+fn mat_shade(first: &str, second: &str, pos: &str) -> String {
+    format!(
+        "{MAT_UNIFORMS}vec3 shade(Led led) {{\n  {}\n  {}\n  return fract(p + q);\n}}\n",
+        first.replace("POS", pos),
+        second.replace("POS", pos)
+    )
+}
+
+#[test]
+fn mat4_then_mat3_in_shade_compiles_the_reported_case() {
+    // The editor's repro, verbatim (vec4 local + swizzle at the end).
+    let src = format!(
+        "{MAT_UNIFORMS}vec3 shade(Led led) {{\n  vec4 p = pose * vec4(led.pos, 1.0);\n  \
+         vec3 q = spin * led.pos;\n  return fract(p.xyz + q);\n}}\n"
+    );
+    assert_equivalent("reported", &src);
+}
+
+#[test]
+fn mixed_width_matrix_products_in_shade_are_bit_identical() {
+    // LED-varying (memo), per-frame (hoist), and mixed operands.
+    for pos in ["led.pos", "vec3(time, 0.5, 1.0 - time)", "led.pos * time"] {
+        for (name, a, b) in MAT_PAIRS {
+            assert_equivalent(&format!("{name} / {pos}"), &mat_shade(a, b, pos));
+        }
+    }
+}
+
+#[test]
+fn mixed_width_matrix_products_in_update_are_bit_identical() {
+    for (name, a, b) in MAT_PAIRS {
+        let src = format!(
+            "{MAT_UNIFORMS}state vec3 acc;\nvoid update() {{\n  {}\n  {}\n  \
+             acc = fract(acc + (p + q) * dt);\n}}\n\
+             vec3 shade(Led led) {{\n  {}\n  {}\n  return fract(acc + p + q);\n}}\n",
+            a.replace("POS", "vec3(time, 0.25, 1.0)"),
+            b.replace("POS", "vec3(time, 0.25, 1.0)"),
+            a.replace("POS", "led.pos"),
+            b.replace("POS", "led.pos"),
+        );
+        assert_equivalent(name, &src);
+    }
+}
