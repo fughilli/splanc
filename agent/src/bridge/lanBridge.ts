@@ -35,6 +35,7 @@ import { createServer } from "../server";
 import { loadLanCert } from "./lanCert";
 import { LiveMux, type LiveConn } from "./live";
 import { DEFAULT_LIVE_PORT, LanTickets, LiveLan } from "./liveLan";
+import type { BridgeMesh, MeshSummary } from "./mesh";
 import { RelayLink } from "./relayLink";
 
 export const DEFAULT_STATUS_PATH = "/run/splanc-bridge/status.json";
@@ -104,6 +105,8 @@ export interface BridgeStatus {
   lan_ip: string;
   error: string | null;
   updated_at: number;
+  /** The bridge in the mesh (optional in contract v1: only on a bridge running pimesh). */
+  mesh?: MeshSummary;
 }
 
 export interface LanBridgeOptions {
@@ -134,6 +137,8 @@ export interface LanBridgeOptions {
   bugs?: BugFilingOptions;
   /** Read each connected player's LED count once for the display (default true). */
   details?: boolean;
+  /** The bridge's own mesh membership (pimesh on the Pi image; bridge/mesh.ts). */
+  mesh?: BridgeMesh | null;
 }
 
 interface Session {
@@ -200,6 +205,7 @@ export class LanBridge {
       bridgeId: () => this.link.bridgeId ?? "",
       lan: () => this.lan?.info() ?? null,
       ...(this.tickets ? { tickets: this.tickets } : {}),
+      ...(opts.mesh ? { mesh: opts.mesh } : {}),
       log: this.log,
     });
     this.statusPath = writablePath(opts.statusPath ?? process.env["SPLANC_BRIDGE_STATUS"], DEFAULT_STATUS_PATH, "status.json", this.log);
@@ -210,6 +216,10 @@ export class LanBridge {
    * the status file and control socket still work, and say why). */
   async start(opts: { connect?: boolean } = {}): Promise<void> {
     this.stopping = false;
+    if (this.opts.mesh) {
+      this.opts.mesh.onChange = () => this.writeStatus();
+      this.opts.mesh.start();
+    }
     this.writeStatus(true);
     await this.listenControl();
     await this.listenLive();
@@ -259,6 +269,7 @@ export class LanBridge {
   }
 
   async stop(): Promise<void> {
+    this.opts.mesh?.stop();
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
     if (this.pairTimer) clearTimeout(this.pairTimer);
@@ -307,6 +318,7 @@ export class LanBridge {
       lan_ip: lanIp(),
       error: this.fatal ?? (this.stopping ? "bridge stopped" : state === "offline" ? l.lastError : null),
       updated_at: Math.floor(nowMs / 1000),
+      ...(this.opts.mesh ? { mesh: this.opts.mesh.summary() } : {}),
     };
   }
 
@@ -533,6 +545,24 @@ export class LanBridge {
     return { ok: true, players: r.length, results: r.map((x) => ({ name: x.player.name, ok: x.ok, ...(x.error ? { error: x.error } : {}) })) };
   }
 
+  /** The bridge's own mesh membership from the console (`splanc-bridge mesh [join|leave]`):
+   * join asks to join the mesh the fixtures on this network are in; the owner then admits
+   * the bridge in the app. */
+  private async meshCommand(cmd: "mesh" | "mesh_join" | "mesh_leave"): Promise<Record<string, unknown>> {
+    const mesh = this.opts.mesh;
+    if (!mesh) return { ok: false, error: "this bridge runs no mesh member (pimesh)" };
+    try {
+      if (cmd === "mesh_join") await mesh.joinLan(this.opts.hub);
+      else if (cmd === "mesh_leave") await mesh.leave();
+      else await mesh.poll();
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    this.writeStatus(true);
+    const s = mesh.member;
+    return { ok: true, mesh: mesh.summary(), ...(s ? { key_hash: s.key_hash, neighbours: s.neighbours, log: s.log.slice(-8) } : {}) };
+  }
+
   // -- control socket -------------------------------------------------------------------
 
   async command(line: string): Promise<Record<string, unknown>> {
@@ -558,10 +588,14 @@ export class LanBridge {
         return this.clients();
       case "revoke":
         return this.revokeClient(cmd.grant);
+      case "mesh":
+      case "mesh_join":
+      case "mesh_leave":
+        return this.meshCommand(cmd.cmd);
       default:
         return {
           ok: false,
-          error: `unknown cmd ${JSON.stringify(cmd.cmd)} (new_pairing_code, revoke_all, identify, status, live, clients, revoke)`,
+          error: `unknown cmd ${JSON.stringify(cmd.cmd)} (new_pairing_code, revoke_all, identify, status, live, clients, revoke, mesh, mesh_join, mesh_leave)`,
         };
     }
   }
@@ -802,6 +836,7 @@ export class LanBridge {
       ...(this.opts.root !== undefined ? { root: this.opts.root } : {}),
       ...(this.opts.echo ? { echo: this.opts.echo } : {}),
       ...(this.opts.bugs ? { bugs: this.opts.bugs } : {}),
+      ...(this.opts.mesh ? { mesh: this.opts.mesh } : {}),
     });
     await server.connect(session.transport);
     return session;

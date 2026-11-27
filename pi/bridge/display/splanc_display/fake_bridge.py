@@ -324,6 +324,24 @@ class FakeBridge:
             return {"ok": True, "revoked": grant}
         if cmd == "identify":
             return {"ok": True, "players": len(self.doc.get("players") or [])}
+        if cmd in ("mesh", "mesh_join", "mesh_leave"):
+            # The agent's answer (agent/src/bridge/lanBridge.ts meshCommand).
+            phase = {"mesh": "member", "mesh_join": "joining", "mesh_leave": "off"}[cmd]
+            text = {
+                "member": "Mesh: member, 2 radio neighbours",
+                "joining": "Mesh: waiting for approval in the app",
+                "off": "Mesh: not joined (add the bridge from the app)",
+            }[phase]
+            m = {
+                "available": True,
+                "node": 0x2E5A,
+                "phase": phase,
+                "mesh_id": 0x5E1F00D1,
+                "channel": 6,
+                "text": text,
+            }
+            nb = [{"node": 0x3A41, "rssi": -52, "tx_ok_pct": 100}, {"node": 0x7C02, "rssi": -64}]
+            return {"ok": True, "mesh": m, "neighbours": nb if phase == "member" else []}
         return {"ok": False, "error": f"unknown command {cmd!r}"}
 
 

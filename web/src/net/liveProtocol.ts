@@ -73,7 +73,10 @@ export type QueryOp =
   | "identify"
   // Multi-fixture localization (docs/design/multi-fixture-localization.md §4):
   // {action: "prepare"|"start"|"stop"|"set_pose", ...} — see web/src/net/groupCapture.ts.
-  | "group_capture";
+  | "group_capture"
+  // The bridge's own mesh membership (issue #697; agent/src/bridge/mesh.ts):
+  // {action: "status"|"join"|"leave"|"delegate", mesh_id?, admin_key?, channel?, cert?}.
+  | "mesh";
 
 export interface QueryMsg {
   t: "q";

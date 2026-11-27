@@ -24,6 +24,16 @@ export const MESH_RELAY_TYPES: ReadonlySet<string> = new Set([
   "submit_effect",
 ]);
 
+/** What a Splanc bridge (a Pi running pimesh, pi/mesh_radio/src/bridge.rs) sends as its
+ * status and join `firmware`: the FNV-1a of "splanc-bridge". Fixtures send the FNV-1a of
+ * their version string, so the value only says "this member is a bridge, not a fixture". */
+export const BRIDGE_FIRMWARE = 0x18d4bfec;
+
+/** A mesh member (or a pending joiner) that is a Splanc bridge, not a fixture. */
+export function isBridgeFirmware(firmware: number | undefined): boolean {
+  return firmware !== undefined && firmware >>> 0 === BRIDGE_FIRMWARE;
+}
+
 /** How far ahead a discrete change is scheduled (≥ 150 ms per mesh hop, design §6.3). */
 export const MESH_LEAD_MS = 150;
 

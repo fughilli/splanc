@@ -22,6 +22,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { BridgeIdentity, defaultStateDir } from "./bridge/identity";
 import { bridgeSigner } from "./bugs";
 import { DEFAULT_CONTROL_PATH, LanBridge, controlSocketCandidates } from "./bridge/lanBridge";
+import { BridgeMesh } from "./bridge/mesh";
 import { RelayLink, relayUrl } from "./bridge/relayLink";
 import { browse } from "./discovery";
 import { setFxHostRoot } from "./fxhost";
@@ -173,15 +174,20 @@ async function runBridge(p: Parsed, root: string): Promise<void> {
   const status = flag(p, "status");
   const control = flag(p, "control");
   const livePort = flag(p, "live-port");
+  // The bridge's own mesh member (pimesh, the Pi image's splanc-mesh service): only where
+  // it runs (the image sets SPLANC_MESH_SOCKET; a manual install may have the socket).
+  const stateDir = flag(p, "state-dir") ?? defaultStateDir();
+  const mesh = process.env["SPLANC_MESH_SOCKET"] || BridgeMesh.present() ? new BridgeMesh({ stateDir, log }) : null;
   const bridge = new LanBridge({
     link,
     hub,
     root,
     log,
     echo: log,
+    mesh,
     ...(status ? { statusPath: status } : {}),
     ...(control ? { controlPath: control } : {}),
-    live: { stateDir: flag(p, "state-dir") ?? defaultStateDir(), ...(livePort !== undefined ? { port: Number(livePort) } : {}) },
+    live: { stateDir, ...(livePort !== undefined ? { port: Number(livePort) } : {}) },
     // file_bug files directly through this bridge's relay, signed as this bridge.
     bugs: { surface: "bridge", relay, signer: bridgeSigner(identity, relay) },
   });

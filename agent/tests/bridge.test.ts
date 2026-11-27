@@ -385,6 +385,7 @@ describe("mcp", () => {
       "get_clock",
       "get_effect",
       "get_keypoint",
+      "get_mesh",
       "get_power",
       "get_wifi_policy",
       "list_decks",
