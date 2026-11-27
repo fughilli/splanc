@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -215,11 +216,11 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
             ]
             f = fits[0] if fits else f  # the largest that fits across and between
             _center(dr, top + max(0, (url_y - top - f.height) // 2), code.code, f)
-            _center(dr, url_y, short_url(code.url, 24), small)
+            _center(dr, url_y, _pair_url(dr, code.url, small), small)
         else:
             foot = 52
             _center(dr, 15, code.code, f)
-            _center(dr, 39, short_url(code.url, 24), small)
+            _center(dr, 39, _pair_url(dr, code.url, small), small)
         left = "exp " + fmt_remaining(code.remaining(now)) if code.expires_at else ""
         d.text(dr, (M, foot), left, small, ON)
         right = f"{s.clients} client" + ("" if s.clients == 1 else "s")
@@ -248,6 +249,21 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         _center(dr, 16, "Code expired" if expired else "No code", big)
         _center(dr, 38, "Press KEY1 for a", small)
         _center(dr, 50, "pairing code", small)
+
+
+def _pair_url(dr: ImageDraw.ImageDraw, url: str, f) -> str:
+    """Where to type the code, as wide as the screen allows: host + path (no query or
+    fragment: the code is right above it), else the host alone, else the host cut
+    with "…". Measured in pixels (a relay's ``<origin>/pair?code=...`` overflowed a
+    character limit)."""
+    parts = urlsplit(url)
+    if not parts.netloc:
+        return d.ellipsize(dr, short_url(url, 40), f, W)
+    path = parts.path.rstrip("/")
+    for cand in (parts.netloc + path, parts.netloc):
+        if d.text_size(dr, cand, f)[0] <= W:
+            return cand
+    return d.ellipsize(dr, parts.netloc, f, W)
 
 
 def _qr(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:

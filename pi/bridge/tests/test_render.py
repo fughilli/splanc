@@ -93,7 +93,9 @@ def test_oled_home_shows_the_code_big():
 
 def test_oled_qr_page_is_scannable_size():
     s = status("pairing")
-    matrix = draw.qr_matrix(s.pairing.url)
+    # The fake bridge's URL is the relay's real form; the page picks the level that
+    # fits 2 px modules (render_oled._qr), so check that matrix.
+    matrix = draw.qr_matrix(s.pairing.url, fit=(64 - 4) // 2)
     assert len(matrix) * 2 <= 64 - 4  # 2 px modules fit the 64 px panel
     img = render_oled.render(s, View(page="qr"), now=NOW)
     # light quiet zone on the left edge, dark finder-pattern gap inside it
