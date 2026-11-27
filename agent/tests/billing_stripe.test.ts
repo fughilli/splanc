@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { BillingAccount } from "../relay/src/billing/account";
-import { billingEndpoint, billingReady, safeReturnUrl, type BillingContext } from "../relay/src/billing/endpoint";
+import { billingEndpoint, billingReady, safeReturnUrl, webCheckoutRegion, type BillingContext } from "../relay/src/billing/endpoint";
 import { Ledger, lotConsumption } from "../relay/src/billing/ledger";
 import { DEFAULT_PRICING, MICRO, validatePricing, type PricingConfig } from "../relay/src/billing/pricing";
 import { accountRefFor } from "../relay/src/billing/purchases";
@@ -208,6 +208,35 @@ describe("checkout + webhook", () => {
     const env = await stripeEnv({ STRIPE_SECRET_KEY: "sk_live_51realrealrealreal" });
     assert.deepEqual(billingReady(env), { off: "live_stripe_key_in_sandbox" });
     assert.equal((await call(env, ctxFor([]), "/billing/pricing")).status, 503);
+  });
+
+  test("POST /billing/checkout: refused outside BILLING_WEB_COUNTRIES (cf-ipcountry)", async () => {
+    const env = await stripeEnv({ BILLING_WEB_COUNTRIES: "US" });
+    const logs: string[] = [];
+    const stripe = fakeStripe();
+    const ctx = ctxFor(logs, stripe.fn);
+    const made = await call(env, ctx, "/billing/account", { method: "POST" });
+    const auth = { authorization: `Bearer ${String(made.body["token"])}` };
+    await call(env, ctx, "/billing/age", { method: "POST", headers: auth, body: JSON.stringify({ confirm: true }) });
+    const buy = (country: string | null) =>
+      call(env, ctx, "/billing/checkout", {
+        method: "POST",
+        headers: { ...auth, ...(country ? { "cf-ipcountry": country } : {}) },
+        body: JSON.stringify({ sku: "web.credits.10" }),
+      });
+    for (const c of ["DE", "GB", "XX", "T1", null]) {
+      const r = await buy(c);
+      assert.equal(r.status, 403, String(c));
+      assert.equal(r.body["error"], "region_unavailable");
+      assert.equal(r.body["message"], "Splanc AI credits can only be bought in the United States for now.");
+    }
+    assert.equal(stripe.calls.length, 0, "no Checkout session outside the allow-list");
+    assert.ok(logs.some((l) => l.includes('"ai_checkout_region_refused"') && l.includes('"DE"')));
+    assert.equal((await buy("us")).status, 201, "the header's case doesn't matter");
+    // Unset: open everywhere (self-hosted relays, tests).
+    const { BILLING_WEB_COUNTRIES: _unset, ...open } = env;
+    assert.equal(webCheckoutRegion(new Request("https://x/"), open as Env).ok, true);
+    assert.equal(webCheckoutRegion(new Request("https://x/", { headers: { "cf-ipcountry": "CA" } }), { ...env, BILLING_WEB_COUNTRIES: "US, ca" } as Env).ok, true);
   });
 
   test("POST /billing/checkout: 18+, packs, the Stripe request", async () => {

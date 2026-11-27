@@ -353,6 +353,21 @@ async function stripeWebhook(
   }
 }
 
+/** Web checkout's country gate (BILLING_WEB_COUNTRIES). Cloudflare's
+ * `cf-ipcountry` names the caller's country ("XX" unknown, "T1" Tor): with an
+ * allow-list set, anything not on it, or no country at all, is refused. */
+export function webCheckoutRegion(req: Request, env: Env): { ok: true } | { ok: false; country: string; message: string } {
+  const allow = (env.BILLING_WEB_COUNTRIES ?? "")
+    .split(",")
+    .map((c) => c.trim().toUpperCase())
+    .filter((c) => /^[A-Z]{2}$/.test(c));
+  if (allow.length === 0) return { ok: true };
+  const country = (req.headers.get("cf-ipcountry") ?? "").toUpperCase();
+  if (allow.includes(country)) return { ok: true };
+  const where = allow.length === 1 && allow[0] === "US" ? "the United States" : allow.join(", ");
+  return { ok: false, country: country || "unknown", message: `Splanc AI credits can only be bought in ${where} for now.` };
+}
+
 export const BILLING_PATHS = [
   "/ai/v1/messages",
   "/billing/account",
@@ -737,6 +752,11 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       // Web checkout (Stripe). Never offered inside the iOS app (the app hides
       // it; App Store rules): this route serves the PWA in a browser / Android.
       if (!ready.stripe) return ctx.json({ error: "not_configured", message: "Web checkout isn't enabled on this relay." }, 503);
+      const region = webCheckoutRegion(req, env);
+      if (!region.ok) {
+        log({ ev: "ai_checkout_region_refused", country: region.country });
+        return ctx.json({ error: "region_unavailable", message: region.message }, 403);
+      }
       const a = (await ledger.account()).account;
       if (!a || a.status !== "active") return ctx.json({ error: "inactive", message: "Splanc AI credits are not available on this account." }, 403);
       if (a.adult_confirmed_at === undefined) return ctx.json({ error: "age_required", message: "Buying Splanc AI credits is for adults (18+). Please confirm your age first." }, 403);

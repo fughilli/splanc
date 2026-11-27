@@ -126,6 +126,7 @@ export const OPS_SCHEMA: Record<string, { component: OpsComponent; service?: str
   ai_metrics_push_failed: { component: "ai-billing", fields: { status: "num" } },
   ai_checkout_created: { component: "ai-billing", fields: { sku: "token" } },
   ai_checkout_failed: { component: "ai-billing", fields: { sku: "token" } },
+  ai_checkout_region_refused: { component: "ai-billing", fields: { country: "token" } },
   ai_webhook_rejected: { component: "ai-billing", fields: { channel: CHANNELS, reason: "token" } },
   ai_purchase_rejected: { component: "ai-billing", fields: { channel: CHANNELS, code: "token" } },
   // Verified email + account recovery (billing/email.ts). Never the address,

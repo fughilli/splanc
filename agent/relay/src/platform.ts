@@ -105,6 +105,10 @@ export interface Env {
   APPLE_APP_ID?: string;
   /** Where Checkout sends the user back (default https://splanc.io/app/). */
   BILLING_APP_URL?: string;
+  /** Comma-separated ISO country codes web checkout is open to (e.g. "US"), by
+   * Cloudflare's `cf-ipcountry`; unset = everywhere. Sales stay closed where the
+   * seller has no tax registration yet (owner decision, US-only launch). */
+  BILLING_WEB_COUNTRIES?: string;
   /** Sign in with Apple (billing/signin.ts). Apple is offered when the team,
    * key id, key, token key and at least one client (app or web) are set.
    * Vars: the team id, the key id, the app's bundle id (native audience), the
