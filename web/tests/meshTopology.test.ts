@@ -9,6 +9,9 @@ import { test } from "node:test";
 
 import { decodeServer, encodeClient } from "../src/net/proto";
 import {
+  BRIDGE_FIRMWARE,
+  isBridgeFirmware,
+  meshSummary,
   mergeTopologyPages,
   meshPoseState,
   meshTopologyRequest,
@@ -17,7 +20,7 @@ import {
   type MeshMemberInfo,
   type MeshStateInfo,
 } from "../src/net/mesh";
-import { layoutTopology, meshTopoModel, nodeDetails, restLength, signalBand, type TopoNode } from "../src/ui/screens/meshTopoModel";
+import { BRIDGE_NAME, layoutTopology, meshTopoModel, nodeDetails, restLength, signalBand, topoKind, type TopoNode } from "../src/ui/screens/meshTopoModel";
 
 const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const unhex = (h: string): Uint8Array => new Uint8Array(h.match(/../g)!.map((x) => parseInt(x, 16)));
@@ -222,4 +225,85 @@ test("the layout places unplaced fixtures from their links, posed ones stay put"
     [0, 1, 0],
     [3, 1, 0],
   ]);
+});
+
+// -- the Pi bridge as a mesh node (issue #697) -------------------------------------------
+
+function bridgeMesh(): MeshStateInfo {
+  return {
+    on: true,
+    member: true,
+    node: 0x3a41,
+    sync: 2,
+    poseState: "MESH_POSE_SET",
+    pose: { room: "Living Room", translation: [0, 0.9, 0] },
+    neighbours: [
+      { node: 0x7c02, rssi: -38, txOkPct: 100 },
+      { node: 0x2e5a, rssi: -51, txOkPct: 100 },
+    ],
+    members: [
+      { node: 0x7c02, rssi: -38, fps: 80, sync: 2, firmware: 0x5e1f, hops: 1, poseState: "MESH_POSE_SET", pose: { room: "Living Room", translation: [2, 1, 0] }, topologyMsAgo: 900, neighbours: [{ node: 0x3a41, rssi: -39 }, { node: 0x2e5a, rssi: -63, txOkPct: 97 }] },
+      // pimesh's status: the bridge marker, fps 0, a Pi's memory, no pose.
+      { node: 0x2e5a, rssi: -51, fps: 0, sync: 2, firmware: BRIDGE_FIRMWARE, heapFree: 312_000_000, hops: 1, poseState: "MESH_POSE_NONE", topologyMsAgo: 1800, neighbours: [{ node: 0x3a41, rssi: -52, txOkPct: 100 }, { node: 0x7c02, rssi: -64, txOkPct: 96 }] },
+    ],
+  };
+}
+
+test("the bridge is its own kind of node, recognised by its status marker", () => {
+  assert.equal(BRIDGE_FIRMWARE, 0x18d4bfec, "pi/mesh_radio/src/bridge.rs BRIDGE_FIRMWARE");
+  assert.ok(isBridgeFirmware(BRIDGE_FIRMWARE));
+  assert.ok(!isBridgeFirmware(0x5e1f) && !isBridgeFirmware(undefined));
+  assert.equal(topoKind({ node: 9, firmware: BRIDGE_FIRMWARE }), "bridge");
+  assert.equal(topoKind({ node: 9, firmware: 1 }), "fixture");
+  assert.equal(topoKind({ node: 9 }, new Set([9])), "bridge", "a node the app knows is a bridge");
+
+  const m = meshTopoModel(bridgeMesh(), () => undefined, "Living Room");
+  assert.equal(m.bridges, 1);
+  const b = m.nodes.find((n) => n.node === 0x2e5a)!;
+  assert.equal(b.kind, "bridge");
+  assert.equal(b.name, BRIDGE_NAME);
+  assert.equal(b.fps, null);
+  // Not "not rendering" (it has no lights): healthy when synced and heard.
+  assert.equal(b.health, "ok");
+  assert.equal(b.healthText, "Bridge · Time synced");
+  assert.equal(m.nodes.find((n) => n.node === 0x7c02)!.kind, "fixture");
+  assert.equal(m.nodes[0]!.kind, "fixture", "the connected one is a fixture");
+  // Its links, both directions merged, like a player's.
+  const gw = m.links.find((l) => l.a === 0x2e5a && l.b === 0x3a41)!;
+  assert.deepEqual([gw.rssiAB, gw.rssiBA, gw.rssi, gw.txOkPct], [-52, -51, -52, 100]);
+  const kit = m.links.find((l) => l.a === 0x2e5a && l.b === 0x7c02)!;
+  assert.deepEqual([kit.rssiAB, kit.rssiBA, kit.txOkPct], [-64, -63, 96]);
+  assert.equal(m.links.length, 3);
+  // The layout places it (no room pose) near its neighbours.
+  assert.equal(b.placed, "layout");
+  assert.ok(Number.isFinite(b.pos[0]) && Number.isFinite(b.pos[2]));
+});
+
+test("the bridge's sheet says what it is, and names its memory in MB", () => {
+  const m = meshTopoModel(bridgeMesh(), () => undefined, "Living Room");
+  const b = m.nodes.find((n) => n.node === 0x2e5a)!;
+  const rows = new Map(nodeDetails(b, m, (n) => (n === 0x3a41 ? "Living Room" : "Kitchen")));
+  assert.match(rows.get("Kind")!, /Splanc bridge.*no lights/);
+  assert.match(rows.get("Room position")!, /a bridge has no lights to localize/);
+  assert.equal(rows.get("Frame rate"), undefined);
+  assert.equal(rows.get("Free memory"), "298 MB");
+  assert.equal(rows.get("Link to Living Room"), "Strong · -52 dBm · 100% delivered");
+  // A fixture's sheet has no Kind row.
+  const f = m.nodes.find((n) => n.node === 0x7c02)!;
+  assert.equal(new Map(nodeDetails(f, m, String)).get("Kind"), undefined);
+});
+
+test("a quiet bridge warns", () => {
+  const s = bridgeMesh();
+  s.members![1]!.seenMsAgo = 40_000;
+  const b = meshTopoModel(s, () => undefined, "x").nodes.find((n) => n.kind === "bridge")!;
+  assert.equal(b.health, "warn");
+  assert.match(b.healthText, /not heard for 40 s/);
+});
+
+test("the device card counts the bridge apart from fixtures", () => {
+  assert.equal(meshSummary(bridgeMesh()), "Meshed with 1 other fixture and the bridge · time synced");
+  const s = bridgeMesh();
+  s.members = s.members!.filter((m) => m.firmware === BRIDGE_FIRMWARE);
+  assert.equal(meshSummary(s), "Meshed with the bridge · time synced");
 });

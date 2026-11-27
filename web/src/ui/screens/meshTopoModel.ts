@@ -6,15 +6,22 @@
  */
 
 import type { Vec3 } from "@ledmapper/protocol";
-import { meshPeers, meshPoseState, type MeshMemberInfo, type MeshNeighbourInfo, type MeshStateInfo } from "../../net/mesh";
-import { nodeLabel } from "./meshModel";
+import { isBridgeFirmware, meshPeers, meshPoseState, type MeshMemberInfo, type MeshNeighbourInfo, type MeshStateInfo } from "../../net/mesh";
+import { BRIDGE_LABEL, nodeLabel } from "./meshModel";
 
 export type TopoHealth = "ok" | "warn" | "bad";
 export type TopoPlacement = "room" | "layout";
+/** A fixture (it has lights), or a Splanc bridge meshing on its own radio (issue #697:
+ * pimesh on a Pi; no lights, no frame rate, never localized). */
+export type TopoKind = "fixture" | "bridge";
+
+/** What a bridge is called when the app has no name for it. */
+export const BRIDGE_NAME = BRIDGE_LABEL;
 
 export interface TopoNode {
   node: number;
   name: string;
+  kind: TopoKind;
   /** The fixture this phone is connected to (the gateway). */
   self: boolean;
   /** Its room pose's position (m, room frame, +Y up), or null when it has none. */
@@ -64,6 +71,8 @@ export interface TopoModel {
   anyPosed: boolean;
   /** Fixtures whose firmware sent no topology at all. */
   noTopology: number;
+  /** Bridges among the nodes. */
+  bridges: number;
 }
 
 /** RSSI bands: ≥ −60 dBm strong, ≥ −75 fair, below that weak. */
@@ -95,8 +104,8 @@ export function hopText(hops: number): string {
 /** Since a member was last heard, it counts as quiet after this long. */
 const QUIET_MS = 15_000;
 
-function health(m: MeshMemberInfo, self: boolean): { health: TopoHealth; text: string } {
-  const parts: string[] = [];
+function health(m: MeshMemberInfo, self: boolean, kind: TopoKind): { health: TopoHealth; text: string } {
+  const parts: string[] = kind === "bridge" ? ["Bridge"] : [];
   let hl: TopoHealth = "ok";
   const sync = m.sync ?? 0;
   if (sync >= 2) parts.push("Time synced");
@@ -104,7 +113,10 @@ function health(m: MeshMemberInfo, self: boolean): { health: TopoHealth; text: s
     parts.push(sync === 1 ? "Syncing time" : "Not synced yet");
     hl = "warn";
   }
-  if (m.fps) parts.push(`${m.fps} fps`);
+  // A bridge renders nothing: no frame rate, and none is missing.
+  if (kind === "bridge") {
+    // nothing
+  } else if (m.fps) parts.push(`${m.fps} fps`);
   else if (!self && m.firmware !== undefined) {
     parts.push("not rendering");
     hl = "warn";
@@ -125,10 +137,21 @@ function vec3(v: number[] | undefined): Vec3 | null {
   return [v[0]!, v[1]!, v[2]!];
 }
 
+/** A member's kind: its status says it is a bridge (net/mesh.ts BRIDGE_FIRMWARE), or the
+ * app knows the node as one (a paired bridge's own report, `bridges`). */
+export function topoKind(m: MeshMemberInfo, bridges?: ReadonlySet<number>): TopoKind {
+  return isBridgeFirmware(m.firmware) || bridges?.has(m.node) ? "bridge" : "fixture";
+}
+
 /** The map's model from the connected fixture's state `s`; `name` names a node (the app's
- * records), `selfName` the connected fixture. */
-export function meshTopoModel(s: MeshStateInfo | null, name: (node: number) => string | undefined, selfName: string): TopoModel {
-  if (!s || !s.on || !s.member) return { nodes: [], links: [], anyPosed: false, noTopology: 0 };
+ * records), `selfName` the connected fixture; `bridges`: nodes the app knows are bridges. */
+export function meshTopoModel(
+  s: MeshStateInfo | null,
+  name: (node: number) => string | undefined,
+  selfName: string,
+  bridges?: ReadonlySet<number>,
+): TopoModel {
+  if (!s || !s.on || !s.member) return { nodes: [], links: [], anyPosed: false, noTopology: 0, bridges: 0 };
   const selfNode = s.node ?? 0;
   const selfInfo: MeshMemberInfo = {
     node: selfNode,
@@ -141,12 +164,15 @@ export function meshTopoModel(s: MeshStateInfo | null, name: (node: number) => s
   const hasSelfTopo = meshPoseState(s.poseState) !== "MESH_POSE_UNKNOWN" || s.pose !== undefined || (s.neighbours?.length ?? 0) > 0;
   const nodes: TopoNode[] = members.map((m, i) => {
     const self = i === 0;
+    // The connected one is a fixture (the app talks to fixtures).
+    const kind: TopoKind = self ? "fixture" : topoKind(m, bridges);
     const ps = meshPoseState(m.poseState);
     const roomPos = ps === "MESH_POSE_SET" ? vec3(m.pose?.translation) : null;
-    const { health: hl, text } = health(m, self);
+    const { health: hl, text } = health(m, self, kind);
     return {
       node: m.node,
-      name: self ? selfName : name(m.node) || nodeLabel(m.node),
+      name: self ? selfName : name(m.node) || (kind === "bridge" ? BRIDGE_NAME : nodeLabel(m.node)),
+      kind,
       self,
       roomPos,
       room: roomPos ? m.pose?.room ?? "" : "",
@@ -155,7 +181,7 @@ export function meshTopoModel(s: MeshStateInfo | null, name: (node: number) => s
       placed: roomPos ? "room" : "layout",
       hops: self ? 0 : m.hops ?? 0,
       sync: m.sync ?? 0,
-      fps: m.fps ?? null,
+      fps: kind === "bridge" ? null : m.fps ?? null,
       lastError: m.lastError ?? 0,
       lastErrorOp: m.lastErrorOp ?? 0,
       seenMsAgo: self ? null : m.seenMsAgo ?? 0,
@@ -217,7 +243,13 @@ export function meshTopoModel(s: MeshStateInfo | null, name: (node: number) => s
   });
   links.sort((x, y) => x.a - y.a || x.b - y.b);
   layoutTopology(nodes, links);
-  return { nodes, links, anyPosed: nodes.some((n) => n.placed === "room"), noTopology: nodes.filter((n) => n.noTopology).length };
+  return {
+    nodes,
+    links,
+    anyPosed: nodes.some((n) => n.placed === "room"),
+    noTopology: nodes.filter((n) => n.noTopology).length,
+    bridges: nodes.filter((n) => n.kind === "bridge").length,
+  };
 }
 
 function backfill(byKey: Map<string, TopoLink>, self: number, member: number, rssi: number): void {
@@ -341,9 +373,12 @@ export function layoutTopology(nodes: TopoNode[], links: TopoLink[], iterations 
 /** The details a node's sheet lists, as label/value rows. */
 export function nodeDetails(n: TopoNode, m: TopoModel, name: (node: number) => string): [string, string][] {
   const rows: [string, string][] = [];
+  if (n.kind === "bridge") rows.push(["Kind", "Splanc bridge: it carries the mesh to the app and AI tools, and has no lights"]);
   rows.push(["Health", n.healthText || "No report yet"]);
   rows.push(["Route", hopText(n.hops)]);
-  if (n.pose === "set" && n.roomPos) {
+  if (n.kind === "bridge") {
+    rows.push(["Room position", "Not placed (a bridge has no lights to localize; drawn from its links)"]);
+  } else if (n.pose === "set" && n.roomPos) {
     const [x, y, z] = n.roomPos.map((v) => v.toFixed(2));
     rows.push(["Room position", `${n.room ? n.room + " · " : ""}x ${x} m, y ${y} m, z ${z} m`]);
   } else {
@@ -353,7 +388,7 @@ export function nodeDetails(n: TopoNode, m: TopoModel, name: (node: number) => s
   if (n.lastError) rows.push(["Last error", `code ${n.lastError}${n.lastErrorOp ? ` (change ${n.lastErrorOp})` : ""}`]);
   if (n.seenMsAgo !== null) rows.push(["Last heard", n.seenMsAgo < 1500 ? "just now" : `${Math.round(n.seenMsAgo / 1000)} s ago`]);
   if (n.uptimeS !== null) rows.push(["Up for", uptime(n.uptimeS)]);
-  if (n.heapFree !== null) rows.push(["Free memory", `${Math.round(n.heapFree / 1024)} KB`]);
+  if (n.heapFree !== null) rows.push(["Free memory", n.heapFree >= 16 * 1024 * 1024 ? `${Math.round(n.heapFree / (1024 * 1024))} MB` : `${Math.round(n.heapFree / 1024)} KB`]);
   rows.push(["Mesh node", n.node.toString(16).toUpperCase().padStart(4, "0")]);
   for (const l of m.links.filter((l) => l.a === n.node || l.b === n.node)) {
     const other = l.a === n.node ? l.b : l.a;

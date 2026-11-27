@@ -365,10 +365,15 @@ export function meshPeers(s: MeshStateInfo | null | undefined): MeshMemberInfo[]
 
 const SYNC_TEXT = ["time not synced yet", "syncing time", "time synced"];
 
-/** One line for the device card: "Meshed with 2 fixtures · time synced", or null. */
+/** One line for the device card: "Meshed with 2 fixtures · time synced", or null. A bridge
+ * in the mesh is named apart ("and the bridge"): it has no lights. */
 export function meshSummary(s: MeshStateInfo | null | undefined): string | null {
   const peers = meshPeers(s);
   if (!s || !s.member || peers.length === 0) return null;
-  const n = peers.length;
-  return `Meshed with ${n} other fixture${n === 1 ? "" : "s"} · ${SYNC_TEXT[s.sync ?? 0] ?? SYNC_TEXT[0]}`;
+  const b = peers.filter((m) => isBridgeFirmware(m.firmware)).length;
+  const n = peers.length - b;
+  const sync = SYNC_TEXT[s.sync ?? 0] ?? SYNC_TEXT[0];
+  const bridges = b === 0 ? "" : b === 1 ? "the bridge" : `${b} bridges`;
+  if (n === 0) return `Meshed with ${bridges} · ${sync}`;
+  return `Meshed with ${n} other fixture${n === 1 ? "" : "s"}${bridges ? ` and ${bridges}` : ""} · ${sync}`;
 }
