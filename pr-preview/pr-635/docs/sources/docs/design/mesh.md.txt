@@ -587,6 +587,18 @@ content id per deck, brightness, scene generation per group, free and min heap, 
 parent it hears best (id + RSSI), time-sync error estimate, Wi-Fi state (associated / mesh-only),
 the hash of its certificate (8 B prefix; full pin on request).
 
+`MeshTopology` (`splanc_mesh::topo`, tag `0x24` on `STATUS`, its own packet so an older member
+ignores it and keeps the 27-byte status): the member's room pose (translation in cm as 3 × i16,
+the rotation as the quaternion's x, y, z × 32767 with w ≥ 0, the room name cut to 16 bytes) and
+its radio neighbours (at most 8: id, average RSSI, unicast delivery %). 36 B with no pose, 65 B
+at most. The neighbours go out every 10 s; the pose when it changes and at least once a minute
+(a generation byte tells a peer its copy is stale). It is flooded like the status, so every
+member keeps every live peer's latest pose and neighbours (`MeshStack::peer_topo`): effects can
+read peers' positions locally later. The app reads it from the gateway with
+`get_mesh{topology}` (paged: a 16-member mesh does not fit one 2 KB reply) for the mesh map.
+The pose comes from the player at the 1 Hz status point (`lm_mesh_pose_fill`, no render lock);
+a front end that runs the mesh for another processor (the P4's C6) fills the same hook.
+
 ### 5.5 Effect programs: content-addressed blobs
 
 1. The app sends `SubmitEffect` to the gateway as today (BLE uses `UploadChunk` reassembly).
