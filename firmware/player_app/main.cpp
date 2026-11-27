@@ -4880,6 +4880,8 @@ void setup() {
     uint8_t cal[96];
     size_t cal_len = 0;
     if (prefs.isKey("sens_cal")) cal_len = prefs.getBytes("sens_cal", cal, sizeof cal);
+    // The hardware RTC's config and last write-back (rtc_ffi.rs), probed in sensor_begin.
+    lm_rtc_configure(prefs.getUShort("rtc_cfg", 0), prefs.getLong64("rtc_wb", 0));
     sensor_begin(prefs.getInt("sens_en", LM_SENSOR_ENABLED) != 0,
                  prefs.getInt("sens_sda", LM_SENSOR_SDA), prefs.getInt("sens_scl", LM_SENSOR_SCL),
                  prefs.getInt("sens_int", LM_SENSOR_INT), g_hw_gpio0, g_hw_gpio1,
@@ -5268,6 +5270,18 @@ void loop() {
   upload_ram_gc();
 #endif
   poll_power();
+#if defined(LM_SENSORS)
+  // The hardware RTC: I2C without the mutex, before the clock tick that consumes its
+  // reading and decides a write-back (the write happens on a later pass).
+  sensor_rtc_poll();
+  {
+    uint16_t rtc_cfg = 0;
+    int64_t rtc_wb = 0;
+    const uint32_t p = lm_rtc_persist(&rtc_cfg, &rtc_wb);
+    if (p & LM_RTC_PERSIST_CFG) prefs.putUShort("rtc_cfg", rtc_cfg);
+    if (p & LM_RTC_PERSIST_WB) prefs.putLong64("rtc_wb", rtc_wb);  // <= every 10 min, normally daily
+  }
+#endif
   poll_clock();
 #if defined(LM_P4_SNTP)
   poll_p4_sntp();

@@ -124,6 +124,7 @@ copy_to_bin(
         "src/fx/preview.ts",
         "src/fx/wasmLoad.ts",  # preview.ts's retrying wasm loader
         "src/gen/ledmapper_pb.ts",
+        "src/hardware/sensorDb.ts",  # scan_i2c's labels (known parts per address)
         "src/geom/mapExport.ts",  # export_map (TouchDesigner CSV / Chromatik .lxf)
         "src/net/bridgeLive.ts",  # the app's live-VJ client (the bridge's live e2e test drives it)
         "src/net/client.ts",

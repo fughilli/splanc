@@ -15,16 +15,27 @@
 //!   hardware RTC always; a LOCKED kiosk session only while the clock is unset
 //!   (and its tz only while none is set). The gate passes both arms as Read
 //!   (kiosk_ffi.rs); this handler enforces the rest.
+//! - **Hardware RTC** (rtc_ffi.rs, feature "rtc"): a chip on the sensor bus is
+//!   a source (read at boot and hourly) and is written back when a better source
+//!   sets the time; [`lm_clock_tick`] runs the exchange. set_clock_config (C 113,
+//!   owner only) picks the chip; clock_state.rtc reports it.
+//! - **Module time sources** ([`lm_clock_offer`] / [`lm_clock_now`],
+//!   player_module.h): any LmPlayerModule (GNSS, DCF77, a P4-side RTC) offers
+//!   time through a lock-free mailbox and reads the clock from any task.
 //! - **Render never touches any of this.** Every entry point here runs on the
 //!   loop task (the message handlers and the 20 Hz tick), so plain statics, like
 //!   wifi_ffi.rs. Effects keep their own `time` / `dt` on the show epoch.
 
 use core::ptr::{addr_of, addr_of_mut};
+use core::sync::atomic::{fence, AtomicU32, AtomicU8, Ordering};
 
 use ledmapper_clock::civil::US_PER_SEC;
 use ledmapper_clock::{
     CarryRecord, Config, LocalOffset, Offer, PosixTz, Reject, Source, StepGuard, WallClock,
 };
+use ledmapper_rtc::{ChipKind, RtcConfig};
+
+use super::rtc_ffi;
 
 use super::{client_arm, write_arm, CArm, PbOut};
 
@@ -83,6 +94,12 @@ static mut TZ_GEN: u32 = 0;
 static mut EVENT_GEN: u32 = 0;
 static mut LAST_CARRY_US: i64 = i64::MIN;
 static mut LAST_STATUS_US: i64 = i64::MIN;
+/// set_wall_clock.write_rtc was accepted: write the chip at the next tick.
+static mut FORCE_WB: bool = false;
+/// A set_clock_config RTC change for the next tick (rtc_ffi is loop-task state).
+static mut RTC_CFG_REQ: Option<RtcConfig> = None;
+/// The loop task's RTC info, copied under the mutex for clock_state.
+static mut RTC_SHOWN: rtc_ffi::Info = rtc_ffi::Info::INIT;
 
 // -- the monotonic base ---------------------------------------------------------
 
@@ -134,6 +151,12 @@ pub unsafe extern "C" fn lm_clock_test_reset() {
     LAST_STATUS_US = i64::MIN;
     POOL_AT = i64::MIN;
     (*addr_of_mut!(POOL)).valid = false;
+    FORCE_WB = false;
+    RTC_CFG_REQ = None;
+    RTC_SHOWN = rtc_ffi::Info::INIT;
+    SNAP_SEQ.store(0, Ordering::Relaxed);
+    SNAP = Snap::INVALID;
+    MODULE_SLOT_STATE.store(0, Ordering::Relaxed);
 }
 
 /// Reads esp_timer through the step guard: a step back moves the clock's anchors
@@ -250,6 +273,70 @@ unsafe fn write_state(w: &mut PbOut, now_us: i64, device_ms: i64, last_set: u8) 
     nz(w, 15, JUMPS as u64);
     nz(w, 16, last_set as u64);
     super::sntp_ffi::write_ntp(w, now_us);
+    // The hardware RTC, as a nested RtcState (length counted first).
+    let i = *addr_of!(RTC_SHOWN);
+    let rtc = |w: &mut PbOut| write_rtc_state(w, &i, now_us, st.unix_us);
+    let mut count = PbOut {
+        buf: None,
+        n: 0,
+        ok: true,
+    };
+    rtc(&mut count);
+    w.key(20, 2);
+    w.varint(count.n as u64);
+    rtc(w);
+}
+
+fn chip_code(c: RtcConfig) -> (u64, u64) {
+    match c {
+        RtcConfig::Auto => (0, 0),
+        RtcConfig::Off => (15, 0),
+        RtcConfig::Chip(k, a) => (k as u64, a as u64),
+    }
+}
+
+fn write_rtc_state(w: &mut PbOut, i: &rtc_ffi::Info, now_us: i64, clock_unix_us: Option<i64>) {
+    let nz = |w: &mut PbOut, f: u32, v: u64| {
+        if v != 0 {
+            w.uint(f, v)
+        }
+    };
+    let (cfg, cfg_addr) = chip_code(i.configured);
+    nz(w, 1, cfg);
+    nz(w, 2, cfg_addr);
+    if let Some((k, a)) = i.chip {
+        w.uint(3, k as u64);
+        w.uint(4, a as u64);
+        w.uint(5, 1);
+        nz(w, 6, i.time_valid as u64);
+        nz(w, 7, i.battery_low as u64);
+        if let Some(t) = i.temp_cc {
+            w.uint(8, 1);
+            nz(w, 9, zigzag(t as i64));
+        }
+        if let Some(ms) = i.offset_ms {
+            nz(w, 10, zigzag(ms));
+        }
+        if let Some((_, at)) = i.read {
+            nz(
+                w,
+                11,
+                (now_us.saturating_sub(at) / US_PER_SEC).clamp(0, u32::MAX as i64) as u64,
+            );
+        }
+        if let (Some(u), wb) = (clock_unix_us, i.last_wb_unix_s) {
+            if wb > 0 {
+                nz(
+                    w,
+                    12,
+                    (u.div_euclid(US_PER_SEC) - wb).clamp(1, u32::MAX as i64) as u64,
+                );
+            }
+        }
+        nz(w, 13, i.reads as u64);
+        nz(w, 14, i.writes as u64);
+        nz(w, 15, i.errors as u64);
+    }
 }
 
 unsafe fn reply_state(out: *mut u8, cap: usize, now_us: i64, device_ms: i64, last_set: u8) -> i32 {
@@ -263,8 +350,9 @@ pub(crate) unsafe fn handle_get_clock(recv_ms: i64, out: *mut u8, cap: usize) ->
     reply_state(out, cap, now, recv_ms, SET_NONE)
 }
 
-/// set_clock_config (the owner's network-time settings): applies what is set, replies
-/// clock_state. An invalid server name changes nothing (BAD_SERVER).
+/// set_clock_config (owner only: the kiosk gate refuses it on a locked session): the
+/// network-time settings and the RTC chip; applies what is set, replies clock_state.
+/// An invalid server name changes nothing (BAD_SERVER).
 pub(crate) unsafe fn handle_set_clock_config(
     frame: &[u8],
     recv_ms: i64,
@@ -305,6 +393,27 @@ pub(crate) unsafe fn handle_set_clock_config(
             super::sntp_ffi::set_config(cfg, now);
             if m.sync_now() {
                 super::sntp_ffi::sync_now(now);
+            }
+            // `rtc_chip` / `rtc_addr`: the RTC chip, re-detected at the next tick.
+            let cur = RTC_CFG_REQ.unwrap_or((*addr_of!(RTC_SHOWN)).configured);
+            let chip = m.rtc_chip().map(|c| c as i32);
+            let addr = m.rtc_addr().filter(|&a| a < 0x80).map(|a| a as u8);
+            let next = match (chip, addr) {
+                (Some(0), _) => Some(RtcConfig::Auto),
+                (Some(15), _) => Some(RtcConfig::Off),
+                (Some(c), a) => {
+                    ChipKind::from_u8(c.clamp(0, 255) as u8).map(|k| RtcConfig::Chip(k, a.unwrap_or(0)))
+                }
+                (None, Some(a)) => match cur {
+                    RtcConfig::Chip(k, _) => Some(RtcConfig::Chip(k, a)),
+                    other => Some(other),
+                },
+                (None, None) => None,
+            };
+            if let Some(c) = next {
+                RTC_CFG_REQ = Some(c);
+                // Shown at once; the chip follows at the next tick.
+                (*addr_of_mut!(RTC_SHOWN)).configured = c;
             }
         }
     }
@@ -350,6 +459,8 @@ pub struct SetRequest<'a> {
     pub pushed_by: u8,
     pub tz: Option<&'a str>,
     pub tz_name: Option<&'a str>,
+    /// Write the hardware RTC once accepted (owners only).
+    pub write_rtc: bool,
 }
 
 /// Applies a set_wall_clock at monotonic `now_us` (received at device ms
@@ -395,6 +506,9 @@ pub(crate) unsafe fn apply_set(req: &SetRequest, now_us: i64, recv_ms: i64, lock
         Ok(_) => {
             PUSHED_BY = req.pushed_by;
             EVENT_GEN = EVENT_GEN.wrapping_add(1);
+            if req.write_rtc && !locked {
+                FORCE_WB = true;
+            }
             SET_ACCEPTED
         }
         Err(Reject::NotBetter { .. }) => SET_NOT_BETTER,
@@ -425,6 +539,7 @@ pub(crate) unsafe fn handle_set_wall_clock(
             pushed_by: (m.pushed_by() as i32).clamp(0, 255) as u8,
             tz: m.tz(),
             tz_name: m.tz_name(),
+            write_rtc: m.write_rtc(),
         };
         result = apply_set(&req, now, recv_ms, locked);
     }
@@ -537,6 +652,170 @@ pub(crate) unsafe fn pool_frame() -> Option<([f32; 4], f32, [f32; 3])> {
     Some((clock, day, [p.year as f32, p.month as f32, p.day as f32]))
 }
 
+// -- module time sources and readers (player_module.h) ---------------------------------
+
+/// The clock as last published by the loop task: `unix_us` (± `err_us`, growing
+/// at `ppm`) at monotonic `mono_us`. Lock-free for any task (a seqlock).
+#[derive(Clone, Copy)]
+struct Snap {
+    valid: bool,
+    mono_us: i64,
+    unix_us: i64,
+    err_us: i64,
+    ppm: u32,
+}
+
+impl Snap {
+    const INVALID: Snap = Snap {
+        valid: false,
+        mono_us: 0,
+        unix_us: 0,
+        err_us: 0,
+        ppm: 0,
+    };
+}
+
+static SNAP_SEQ: AtomicU32 = AtomicU32::new(0);
+static mut SNAP: Snap = Snap::INVALID;
+
+unsafe fn publish_snapshot(now_us: i64) {
+    let st = (*addr_of!(CLOCK)).status(now_us);
+    let s = match st.unix_us {
+        Some(u) => Snap {
+            valid: true,
+            mono_us: now_us,
+            unix_us: u,
+            err_us: st.uncertainty_us,
+            ppm: st.source.map(|s| s.default_drift_ppm()).unwrap_or(40),
+        },
+        None => Snap::INVALID,
+    };
+    let seq = SNAP_SEQ.load(Ordering::Relaxed);
+    SNAP_SEQ.store(seq.wrapping_add(1), Ordering::Relaxed);
+    fence(Ordering::Release);
+    core::ptr::write_volatile(addr_of_mut!(SNAP), s);
+    fence(Ordering::Release);
+    SNAP_SEQ.store(seq.wrapping_add(2), Ordering::Release);
+}
+
+unsafe fn read_snapshot() -> Option<Snap> {
+    // Bounded: a reader that preempted the writer mid-publish must not spin.
+    for _ in 0..4 {
+        let s1 = SNAP_SEQ.load(Ordering::Acquire);
+        if s1 & 1 == 0 {
+            let s = core::ptr::read_volatile(addr_of!(SNAP));
+            fence(Ordering::Acquire);
+            if SNAP_SEQ.load(Ordering::Relaxed) == s1 {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// The wall clock at raw monotonic `mono_us` from the published snapshot:
+/// `(unix_us, err_us)`, or `None` while invalid. Any task.
+pub(crate) unsafe fn snapshot_now(mono_us: i64) -> Option<(i64, i64)> {
+    let s = read_snapshot()?;
+    if !s.valid {
+        return None;
+    }
+    let age = mono_us.saturating_sub(s.mono_us).max(0);
+    let grow = (age as i128 * s.ppm as i128 / 1_000_000) as i64;
+    Some((s.unix_us.saturating_add(age), s.err_us.saturating_add(grow)))
+}
+
+/// lm_clock_offer source codes (player_module.h LM_CLOCK_SRC_*).
+pub const MODULE_SRC_REFERENCE: u8 = 1;
+pub const MODULE_SRC_PUSH: u8 = 3;
+pub const MODULE_SRC_RTC: u8 = 4;
+
+/// The module-offer mailbox: 0 empty, 1 being written, 2 full.
+static MODULE_SLOT_STATE: AtomicU8 = AtomicU8::new(0);
+static mut MODULE_SLOT: Offer = Offer::new(Source::App, 0, 0, 0);
+
+/// A player module offers the time: `unix_ms` (UTC) was true at esp_timer µs
+/// `at_us`, ± `err_ms`, from `source` (LM_CLOCK_SRC_*). The discipline takes it
+/// at the next loop pass if it is more certain than the current time (the same
+/// ranking, sanity window and build-date floor as every source). Any task; never
+/// blocks. Returns 0 queued, 1 busy (an earlier offer is not taken yet: retry),
+/// -1 refused (bad source, time or error).
+///
+/// # Safety
+/// None beyond the C ABI.
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_offer(unix_ms: i64, at_us: i64, err_ms: u32, source: u8) -> i32 {
+    let src = match source {
+        MODULE_SRC_REFERENCE => Source::Sntp,
+        MODULE_SRC_PUSH => Source::App,
+        MODULE_SRC_RTC => Source::HwRtc,
+        _ => return -1,
+    };
+    if unix_ms <= 0 || err_ms == 0 {
+        return -1;
+    }
+    if MODULE_SLOT_STATE
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        return 1;
+    }
+    core::ptr::write_volatile(
+        addr_of_mut!(MODULE_SLOT),
+        Offer::new(
+            src,
+            unix_ms.saturating_mul(1000),
+            at_us,
+            err_ms as i64 * 1000,
+        ),
+    );
+    MODULE_SLOT_STATE.store(2, Ordering::Release);
+    0
+}
+
+/// The wall clock now: UTC ms into `*unix_ms` and its error bound into
+/// `*err_ms` (either may be null). False (outputs untouched) while the clock is
+/// not set. Any task, including render (frame hook): a few integer ops on the
+/// snapshot the loop task publishes every pass.
+///
+/// # Safety
+/// The pointers, when not null, are writable.
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_now(unix_ms: *mut i64, err_ms: *mut u32) -> bool {
+    let Some((u, e)) = snapshot_now(raw_mono_us()) else {
+        return false;
+    };
+    if !unix_ms.is_null() {
+        *unix_ms = u.div_euclid(1000);
+    }
+    if !err_ms.is_null() {
+        *err_ms = (e / 1000).clamp(0, u32::MAX as i64) as u32;
+    }
+    true
+}
+
+/// The tick's share: a module offer, the RTC exchange, the published snapshot.
+unsafe fn tick_sources(now: i64) {
+    if MODULE_SLOT_STATE.load(Ordering::Acquire) == 2 {
+        let o = core::ptr::read_volatile(addr_of!(MODULE_SLOT));
+        MODULE_SLOT_STATE.store(0, Ordering::Release);
+        if clock().offer(o, now).is_ok() {
+            PUSHED_BY = PUSHER_NONE;
+            EVENT_GEN = EVENT_GEN.wrapping_add(1);
+        }
+    }
+    if let Some(c) = (*addr_of_mut!(RTC_CFG_REQ)).take() {
+        rtc_ffi::set_config(c);
+    }
+    let force = core::mem::take(&mut *addr_of_mut!(FORCE_WB));
+    if let Some(Ok(_)) = rtc_ffi::exchange(clock(), now, force) {
+        PUSHED_BY = PUSHER_NONE;
+        EVENT_GEN = EVENT_GEN.wrapping_add(1);
+    }
+    RTC_SHOWN = rtc_ffi::snapshot();
+    publish_snapshot(now);
+}
+
 // -- C ABI for main.cpp -------------------------------------------------------------
 
 /// Boot: restore the zone record (`tz_rec`, from NVS; may be null) and, after a
@@ -607,6 +886,7 @@ pub unsafe extern "C" fn lm_clock_tick(carry: *mut u8) -> u32 {
     static mut SEEN_EVENT_GEN: u32 = 0;
     static mut SEEN_NTP_GEN: u32 = 0;
     let now = mono_now();
+    tick_sources(now);
     let mut bits = 0;
     // A network-time round finished: offer it, unless esp_timer stepped since.
     if let Some((s, at_jumps)) = super::sntp_ffi::take_pending() {
@@ -676,9 +956,9 @@ pub unsafe extern "C" fn lm_clock_tz_record(out: *mut u8) -> usize {
 }
 
 /// Small no_std formatter into a byte buffer.
-struct Line<'a> {
-    buf: &'a mut [u8],
-    n: usize,
+pub(crate) struct Line<'a> {
+    pub(crate) buf: &'a mut [u8],
+    pub(crate) n: usize,
 }
 
 impl core::fmt::Write for Line<'_> {
@@ -747,6 +1027,9 @@ pub unsafe extern "C" fn lm_clock_status_line(out: *mut u8, cap: usize) -> usize
             st.uncertainty_us / 1000,
             st.age_us / US_PER_SEC,
         );
+    }
+    if let Some((k, _)) = (*addr_of!(RTC_SHOWN)).chip {
+        let _ = write!(l, " rtc={}", k.name());
     }
     let _ = write!(
         l,

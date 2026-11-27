@@ -67,7 +67,8 @@ import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { cancellation, progress } from "./progress";
 import type { ClockSync } from "./timesync";
-import { pushWallClock, type ClockState } from "../../web/src/net/wallClock";
+import { pushWallClock, rtcChipName, type ClockState, type RtcChip } from "../../web/src/net/wallClock";
+import { scanLabel } from "../../web/src/hardware/sensorDb";
 import { hostPosixTz } from "./hostTz";
 import { clockView, timeFromInput, zoneFromInput } from "./wallclock";
 import { applyAtOf, type Scheduled } from "./schedule";
@@ -138,6 +139,7 @@ export type Feature =
   | "power"
   | "apply_at"
   | "wall_clock"
+  | "rtc"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -868,25 +870,38 @@ export class DeviceSession {
     tz?: string;
     networkTime?: boolean;
     ntpServers?: string[];
+    writeRtc?: boolean;
+    rtcChip?: RtcChip;
+    rtcAddr?: number;
   }): Promise<Record<string, unknown>> {
     this.assertUnlocked();
     this.requireClock();
-    if (opts.networkTime !== undefined || opts.ntpServers !== undefined) {
-      if (!this.has("sntp")) {
-        throw new ToolError(`the player's firmware (${this.fwVersion}) has no network time; update it (update_firmware)`);
-      }
+    const ntpAsked = opts.networkTime !== undefined || opts.ntpServers !== undefined;
+    const rtcCfgAsked = opts.rtcChip !== undefined || opts.rtcAddr !== undefined;
+    if (ntpAsked && !this.has("sntp")) {
+      throw new ToolError(`the player's firmware (${this.fwVersion}) has no network time; update it (update_firmware)`);
+    }
+    if ((opts.writeRtc || rtcCfgAsked) && !this.has("rtc")) {
+      throw new ToolError(`the player's firmware (${this.fwVersion}) has no hardware-clock support; update it`);
+    }
+    if (ntpAsked || rtcCfgAsked) {
+      // The configuration first (an RTC chip is re-detected at once), then the time, so a
+      // fresh chip can be written.
       const st = await this.run(() =>
         this.client.setClockConfig({
           ...(opts.networkTime !== undefined ? { ntpEnabled: opts.networkTime } : {}),
           ...(opts.ntpServers !== undefined ? { ntpServers: opts.ntpServers, replaceNtpServers: true } : {}),
-          syncNow: true,
+          ...(ntpAsked ? { syncNow: true } : {}),
+          ...(opts.rtcChip !== undefined ? { rtcChip: rtcChipName(opts.rtcChip) } : {}),
+          ...(opts.rtcAddr !== undefined ? { rtcAddr: opts.rtcAddr } : {}),
         }),
       );
       if (st.lastSet === "bad_server") {
         throw new ToolError("a time server must be a host name or an IPv4 address");
       }
       // Only the network-time settings were asked for: done.
-      if (opts.time === undefined && opts.tz === undefined) return clockView(st);
+      if (!rtcCfgAsked && !opts.writeRtc && opts.time === undefined && opts.tz === undefined) return clockView(st);
+      if (rtcCfgAsked) await new Promise((r) => setTimeout(r, 100));
     }
     let zone;
     let at: number | undefined;
@@ -901,6 +916,7 @@ export class DeviceSession {
       pushWallClock(this.client, {
         pushedBy: at !== undefined ? "manual" : "bridge",
         zone,
+        ...(opts.writeRtc ? { writeRtc: true } : {}),
         // An explicit time is "now is T": carried forward from when it was asked for.
         ...(at !== undefined ? { utcNow: () => at! + (Date.now() - t0) } : {}),
       }),
@@ -1156,7 +1172,13 @@ export class DeviceSession {
   async scanI2c(): Promise<Record<string, unknown>> {
     this.requireDrivers();
     const r = await this.rpc<{ addresses?: number[] }>({ type: "scan_i2c" }, "i2c_scan_result");
-    return { addresses: (r.addresses ?? []).map((a) => `0x${a.toString(16).padStart(2, "0")}`) };
+    const addrs = r.addresses ?? [];
+    return {
+      addresses: addrs.map((a) => `0x${a.toString(16).padStart(2, "0")}`),
+      // What usually answers there (web/src/hardware/sensorDb.ts): "(native)" parts are
+      // driven by the firmware itself (an IMU, a real-time clock), no driver needed.
+      labels: Object.fromEntries(addrs.map((a) => [`0x${a.toString(16).padStart(2, "0")}`, scanLabel(a)])),
+    };
   }
 
   /** Compile and load a sensor driver (`void poll()` + `export`s). */

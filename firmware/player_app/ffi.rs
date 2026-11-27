@@ -82,6 +82,9 @@ pub mod clock_ffi;
 // Network time (docs/design/wall-clock.md, D-561): the //firmware/sntp client the
 // netstack drives, set_clock_config, clock_state.ntp.
 pub mod sntp_ffi;
+// The hardware RTC (docs/design/wall-clock.md "Hardware RTC"): a //firmware/rtc chip
+// on the sensor bus as a clock source, written back by the loop task.
+pub mod rtc_ffi;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -3189,6 +3192,10 @@ macro_rules! features {
         // Network time (D-561): set_clock_config.ntp_*, clock_state.ntp. The netstack
         // C6 runs its own SNTP client; the P4 runs esp_sntp on Ethernet.
         "sntp",
+        // A hardware RTC on the sensor bus (DS3231 / PCF8563 / RV-3028, rtc_ffi.rs):
+        // set_clock_config.rtc_*, clock_state.rtc, set_wall_clock.write_rtc. The
+        // feature says the firmware drives one; clock_state.rtc.present says one is fitted.
+        "rtc",
         $($extra),*
     ] };
 }

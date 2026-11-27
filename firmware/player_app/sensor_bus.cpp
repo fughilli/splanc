@@ -34,12 +34,14 @@ constexpr UBaseType_t kSensorTaskPrio = 5;
 static const uint32_t kSensorTaskStack = 3328;
 
 i2c_master_bus_handle_t g_bus = nullptr;
-// Device handles per 7-bit address, created lazily (only 0x68/0x69 are used).
+// Device handles per 7-bit address, created lazily: the IMU (0x68/0x69), the RTC
+// (0x51/0x52/0x68) and a driver VM part. Created on the task that first talks to the
+// address (setup for the IMU and the RTC), looked up read-only after that.
 struct DevSlot {
   uint8_t addr;
   i2c_master_dev_handle_t dev;
 };
-DevSlot g_devs[2] = {{0, nullptr}, {0, nullptr}};
+DevSlot g_devs[4] = {{0, nullptr}, {0, nullptr}, {0, nullptr}, {0, nullptr}};
 TaskHandle_t g_task = nullptr;
 int g_sda = -1, g_scl = -1;
 // The pins passed the enable/conflict checks (the driver VM may bring the bus
@@ -287,6 +289,25 @@ void sensor_gpio_sim(int pin, int pull) {
   Log().printf("[drv] gpio %d sim pull %s\n", pin, pull == 1 ? "up" : pull == 2 ? "down" : "off");
 }
 
+static void log_rtc_line() {
+  char line[200];
+  if (lm_rtc_status_line(reinterpret_cast<uint8_t *>(line), sizeof line) > 0) Log().printf("%s\n", line);
+}
+
+void sensor_rtc_poll() {
+  // A set_clock_config re-detect with the bus down (nothing answered at boot): bring
+  // it up the way the driver VM does (only when the pins passed the boot checks), and
+  // release it again if no RTC answered, so a lamp without one stays as it was.
+  const bool brought = lm_rtc_wants_bus() && !g_bus && drv_bus_ensure();
+  if (lm_rtc_poll((int64_t)esp_timer_get_time(), g_bus != nullptr) & LM_RTC_POLL_LOG) log_rtc_line();
+  if (brought && !lm_rtc_present()) {  // (a driver VM program brings its own bus up later)
+    free_bus();
+    gpio_reset_pin((gpio_num_t)g_sda);
+    gpio_reset_pin((gpio_num_t)g_scl);
+    Log().printf("[sensor] i2c bus released (no RTC)\n");
+  }
+}
+
 void sensor_loop() {
   lm_drv_poll((uint64_t)esp_timer_get_time());
   // With the driver VM feeding the IMU there is no sensor task: persist a
@@ -325,14 +346,18 @@ void sensor_begin(bool enabled, int sda, int scl, int int_gpio, int led_gpio0, i
   }
   uint8_t st = lm_sensor_begin(&kOps, sda, scl, int_gpio, (uint64_t)esp_timer_get_time(), cal,
                                cal_len);
+  // The hardware RTC on the same bus (rtc_ffi.rs): detect + one read, nothing written.
+  // An absent RTC costs three address NACKs.
+  const uint8_t rtc = lm_rtc_begin((int64_t)esp_timer_get_time());
   uint32_t probe_us = micros() - t0;
+  log_rtc_line();
   if (st == 3) {
     // Recognized IMU, reset issued: the task configures it once the part's
     // 100 ms reset time has passed (never blocking setup()).
     if (xTaskCreate(sensor_task, "sensor", kSensorTaskStack, nullptr, kSensorTaskPrio, &g_task) !=
         pdPASS) {
       g_task = nullptr;
-      free_bus();
+      if (!rtc) free_bus();
       lm_sensor_set_disabled(sda, scl, int_gpio);
       Log().printf("[sensor] task create FAILED (heap)\n");
       return;
@@ -341,7 +366,14 @@ void sensor_begin(bool enabled, int sda, int scl, int int_gpio, int led_gpio0, i
                  (unsigned)probe_us, cal_len ? "loaded" : "none");
     return;
   }
-  // Absent / unknown device / fault at boot: release everything — zero
+  if (rtc) {
+    // No IMU, but an RTC answered: keep the bus for it (its hourly read runs on the
+    // loop task; no sensor task is started).
+    Log().printf("[sensor] %s on sda=%d scl=%d (probe %u us); bus kept for the RTC\n",
+                 state_name(st), sda, scl, (unsigned)probe_us);
+    return;
+  }
+  // Absent / unknown device / fault at boot and no RTC: release everything — zero
   // residual cost (no task, no bus objects). Hot-plug isn't supported.
   free_bus();
   gpio_reset_pin((gpio_num_t)sda);

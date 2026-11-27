@@ -202,9 +202,11 @@ fn main() -> std::io::Result<()> {
     if firmware {
         g.configure(".ledmapper.v1.Welcome.features", Config::new().skip(true));
     } else {
+        // Host only (the firmware profile skips it): room for the ~35 features a full
+        // netstack image advertises today, with headroom.
         g.configure(
             ".ledmapper.v1.Welcome.features",
-            Config::new().max_len(32).max_bytes(32),
+            Config::new().max_len(48).max_bytes(32),
         );
     }
 

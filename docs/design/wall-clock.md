@@ -1,8 +1,10 @@
 # Wall clock (software RTC, time zone, time from the app and the bridge)
 
 Status: PR-2 of the real-time effects plan (desk D-559), plus the `clock*` effect
-uniforms (PR-3). The clock is set from the app and the bridge; SNTP on the device,
-a hardware RTC and schedules come in later PRs.
+uniforms (PR-3), network time (SNTP, D-561) and PR-5: the hardware RTC and the
+module time-source surface (below). The clock is set from the app, the bridge, SNTP
+and an RTC chip; schedules come in a later PR. `set_clock_config` carries both
+settings: fields 1-15 network time, 16 on the RTC chip.
 
 ## What the lamp keeps
 
@@ -24,6 +26,8 @@ a hardware RTC and schedules come in later PRs.
 | Bridge push | `set_wall_clock{pushed_by: BRIDGE}` on every session connect, from the host's clock and `/etc/localtime` | the same |
 | Manual | the app's "Set from this phone", MCP `set_clock{time}`: replaces even a more certain time | as given |
 | Soft-reset carry-over | the `CarryRecord` in RTC no-init RAM, rewritten at 20 Hz, restored after SW / panic / watchdog resets | the carried error + 1 s |
+| Hardware RTC (PR-5) | a DS3231 / PCF8563 / RV-3028 on the sensor I2C bus, read at boot and hourly | ±0.5 s + the chip's spec × time since this lamp last wrote it |
+| A player module (PR-5) | `lm_clock_offer` (player_module.h): GNSS, a radio clock, ... | as the module says |
 
 `set_wall_clock` carries `unix_ms` that was true at `at_device_ms` (the
 `TimeSyncPong` device-ms domain), exactly like `set_time_base`, so the push is as
@@ -95,6 +99,106 @@ one it already had).
   daylight curves; never time of day from `time`); `agent/skill/examples/daylight.fx`
   is the library example.
 
+## Hardware RTC
+
+A real-time-clock chip on the **sensor I2C bus** (the IMU's SDA/SCL, default GPIO 6/7)
+keeps the time across a power loss. Native Rust drivers in `//firmware/rtc`, not
+driver-VM programs: the VM has one slot (the COIL lamp's touch sensor holds it), no
+boot-time load and no way to *set* anything, and polls under the player mutex.
+
+| Chip | Address | Accuracy | Extras |
+|---|---|---|---|
+| DS3231 (and -M, -SN) | 0x68 | ±2 ppm (TCXO) | temperature (`temp_cc`), two alarms, aging trim |
+| PCF8563 / BM8563 | 0x51 | ~±20 ppm + the crystal | minute alarm |
+| RV-3028-C7 | 0x52 | ±1 ppm (±3 over temperature), 45 nA | minute alarm, EEPROM trim |
+
+- **Detection** (`ledmapper_rtc::detect`, config `auto`): RV-3028 (ID register), then
+  PCF8563 (its fixed-zero control bits), then DS3231. Probes only read; nothing is
+  written to a device that did not identify itself.
+- **0x68: DS3231 or MPU-6050.** Both default to 0x68 (a GY-521 with AD0 low). The
+  DS3231 probe needs all 19 registers to look like one (BCD time, weekday 1..7, the
+  status and temperature zero bits, a temperature in -40..85 °C) **and** a WHO_AM_I
+  (0x75) that is not an MPU's; the sensor core refuses the DS3231 from its side (an
+  unknown WHO_AM_I). Each identifies only itself (`//firmware/rtc:rtc_test`). Two
+  parts at 0x68 on one bus can't work: strap the IMU to 0x69 (AD0 high) or use a
+  PCF8563 / RV-3028 on an IMU lamp.
+- **The chip holds UTC**, never local time, 2000–2099. A chip that lost time
+  (DS3231 OSF, PCF8563 VL or STOP, RV-3028 PORF) is not a source; it reads as
+  `time_valid = false` and `battery_low = true` (no coin cell, or a flat one).
+- **As a source:** a reading of whole seconds is offered as the middle of its second
+  (±0.5 s) plus the chip's drift spec times the time since this lamp last wrote it
+  (NVS `rtc_wb`; 30 days assumed for a chip it never wrote). After a cold boot the
+  chip is usually the only source, so the clock is valid within a second of boot;
+  any push or SNTP sample is far more certain and takes over.
+- **Write-back** (`ledmapper_rtc::policy::writeback_due`): when SNTP, the mesh or a
+  push holds the clock to ≤ 250 ms and the chip lost time, is off by more than 1 s,
+  was never written by this lamp, or was last written a day ago; never from the
+  chip's own reading or from the soft-reset carry-over onto a chip that kept time;
+  at most once per 10 min unless forced. `set_wall_clock{write_rtc}` forces it (an
+  owner's explicit set). The write waits for the chip's set phase so the chip
+  ticks on the wall clock's second (the start of a second; 492 ms into it for a
+  PCF8563, whose first tick comes ~0.508 s after STOP is released) and a read 2 s
+  later verifies it (`offset_ms`).
+- **RV-3028 backup switch-over.** The factory EEPROM leaves it off, so such a module
+  loses time at power-off even with a cell. The first write turns on level
+  switching (BSM = 11) and persists it with an EEPROM update; nothing waits for the
+  ~10–60 ms EEPROM write.
+- **ZS-042 DS3231 boards** charge their coin cell through a diode + 200 Ω resistor:
+  with a non-rechargeable CR2032 remove that resistor, or fit an LIR2032.
+- **Where it runs.** `rtc_ffi.rs`, all on the loop task: `lm_rtc_begin` in setup
+  (after the IMU probe; the bus is kept when an RTC answered even with no IMU),
+  `lm_rtc_poll` every pass **without** the player mutex (the I2C waits never hold a
+  render frame; ~0.5 ms per read, hourly), and the clock side in `lm_clock_tick`.
+  Render never reaches it. An absent RTC costs three address NACKs at boot and
+  nothing after (no bus, no task, no reads).
+- **Config:** `set_clock_config{rtc_chip, rtc_addr}` (C 113, owner only: refused on
+  a locked kiosk), NVS `rtc_cfg`: `AUTO` (default), `OFF`, or a chip taken at an
+  address without the signature check. Re-detected at once.
+- **State:** `clock_state.rtc` (`RtcState`): configured and found chip, address,
+  `time_valid`, `battery_low`, temperature, `offset_ms` (chip − clock at its last
+  read), read / write ages and counters. Feature `rtc`. MCP `get_clock` shows it as
+  `hardware_clock`; `set_clock{write_rtc, rtc_chip, rtc_addr}`; `scan_i2c` labels
+  0x51 / 0x52 / 0x68 with the RTC parts (`web/src/hardware/sensorDb.ts`, `native`).
+- **Status line:** `[rtc] RV-3028@0x52 (auto) time_valid=1 battery_low=0 off_ms=-120
+  reads=3 writes=1 errors=0 last_write=drifted` at detect, on a change and after a
+  write; the `[clock]` line gains `rtc=RV-3028`.
+- **P4:** the same `rtc_ffi.rs` is in the P4 image; its I2C (GPIO 7/8,
+  `board_caps_p4.textproto`) is a separate bring-up.
+
+## Time sources for module authors
+
+A player module (`LmPlayerModule`, `firmware/player_app/player_module.h`) can be a
+wall-clock source and read the clock without touching the core:
+
+```c
+#include "firmware/player_app/player_module.h"
+
+// A GNSS module: at each PPS edge it knows the UTC second exactly.
+static void gnss_poll(void) {
+  if (pps_edge_seen) {
+    lm_clock_offer(utc_second_ms, pps_edge_esp_timer_us, /*err_ms=*/1, LM_CLOCK_SRC_REFERENCE);
+  }
+  int64_t now_ms;
+  uint32_t err_ms;
+  if (lm_clock_now(&now_ms, &err_ms) && err_ms < 50) { /* act on the time */ }
+}
+```
+
+- `lm_clock_offer(unix_ms, at_us, err_ms, source)`: `unix_ms` (UTC) was true when
+  `esp_timer_get_time()` read `at_us`, ± `err_ms` (> 0; be honest: the clock keeps
+  the lowest current error). Sources: `LM_CLOCK_SRC_REFERENCE` (GNSS, DCF77 / MSF /
+  WWVB, a protocol of the module's own; ranks with SNTP and shows as SNTP),
+  `LM_CLOCK_SRC_PUSH` (ranks with the app), `LM_CLOCK_SRC_RTC` (a clock chip on the
+  module's own bus). Any task, never blocks: a one-slot mailbox the loop task takes
+  at its next pass (returns 0 queued, 1 busy: retry, -1 refused). The same rules as
+  every source apply: an offer > 60 s off a fresh, better-ranked source is refused,
+  and so is one before the firmware's floor (2026-01-01).
+- `lm_clock_now(&unix_ms, &err_ms)`: false while the clock is not set. Any task,
+  including the `frame()` hook on render: it reads a seqlocked snapshot the loop task
+  publishes every pass (a few integer ops; it can lag a correction by one pass).
+- Effect time (`time`, `dt`) never moves with the wall clock; schedule on the wall
+  clock, animate on the effect clock.
+
 ## Status line and console
 
 `[clock] valid=1 src=push/app unix_ms=… local=2026-11-25T09:00:00 CET off=3600
@@ -103,6 +207,19 @@ every accepted set and every 10 minutes. The USB console takes `CLOCK STATUS` an
 `CLOCK RESTART` (a soft reset with a fresh carry record, the HITL test's hook).
 
 ## Tests
+
+- `//firmware/rtc:rtc_test`: the three drivers on register-file fakes (BCD, 12/24 h,
+  the century bit, OSF / VL / STOP / PORF, exact set bytes, temperature, alarms, the
+  RV-3028 EEPROM switch-over), the registry (order, `OFF`, forced chips), the 0x68
+  DS3231 / MPU-6050 coexistence, the read-offer error and the write-back rules.
+- `//firmware/player_app:rtc_test`: `rtc_ffi.rs` through the C ABI on the fakes: no
+  chip changes nothing; a lost-time chip filled by the first push at a second's
+  start; a kept-time chip sets the clock at boot and is written back when a push
+  disagrees (verified, throttled, forced by `write_rtc`); `set_clock_config`; the
+  PCF8563's 492 ms set phase; `lm_clock_offer` / `lm_clock_now`.
+- HITL `//pi/hitl/harness:clock_rtc_absent_netstack`: on a rig DUT with no RTC (every
+  rig today), the RTC changes nothing: `clock_state.rtc` absent, the app push still
+  sets the clock, no `[rtc]` errors, render unaffected.
 
 - `//firmware/clock:tz_test`: the POSIX parser and evaluator against tzdata vectors.
 - `//firmware/player_app:clock_test`: the arms through the C ABI, the zone record,

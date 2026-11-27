@@ -126,6 +126,8 @@ export class FakePlayer {
   wallClock: { unixMs: number; atDeviceMs: number; tz: string; tzName: string; pushedBy: string } | null = null;
   /** Network time (the "sntp" feature): the owner's settings, as set_clock_config leaves them. */
   ntp = { enabled: true, useDhcp: true, servers: [] as string[] };
+  /** clock_state.rtc as proto3 JSON (the "rtc" feature); set_clock_config edits `configured`. */
+  rtc: Record<string, unknown> = {};
 
   /** Transition effects stored with submit_effect{powerSlot}: slot -> {id, fxb}. */
   powerEffects = new Map<number, { id: string; fxb: Uint8Array }>();
@@ -233,7 +235,7 @@ export class FakePlayer {
 
   private clockState(lastSet: string): Msg {
     const c = this.wallClock;
-    if (!c) return { type: "clock_state", valid: false, lastSet };
+    if (!c) return { type: "clock_state", valid: false, lastSet, rtc: this.rtc };
     const dev = performance.now() + this.clockOffsetMs;
     return {
       type: "clock_state",
@@ -247,6 +249,7 @@ export class FakePlayer {
       tzName: c.tzName,
       lastSet,
       ...(this.features.includes("sntp") ? { ntp: { ...this.ntp, network: true } } : {}),
+      rtc: this.rtc,
     };
   }
 
@@ -592,7 +595,10 @@ export class FakePlayer {
           if (list.some((x) => /\s/.test(x))) return this.reply(ws, this.clockState("CLOCK_SET_RESULT_BAD_SERVER"));
           this.ntp.servers = list;
         }
-        return this.reply(ws, this.clockState("CLOCK_SET_RESULT_ACCEPTED"));
+        if (m["rtcChip"] !== undefined) this.rtc = { ...this.rtc, configured: m["rtcChip"] };
+        if (m["rtcAddr"] !== undefined) this.rtc = { ...this.rtc, configuredAddr: m["rtcAddr"] };
+        const ntpAsked = m["ntpEnabled"] !== undefined || m["replaceNtpServers"] === true;
+        return this.reply(ws, this.clockState(ntpAsked ? "CLOCK_SET_RESULT_ACCEPTED" : "CLOCK_SET_RESULT_NONE"));
       }
       case "set_power": {
         const on = m["toggle"] === true ? !(this.power["on"] as boolean) : m["on"] === true;

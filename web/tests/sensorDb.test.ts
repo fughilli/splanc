@@ -5,6 +5,7 @@ import {
   formatAddress,
   identifyScan,
   KNOWN_SENSORS,
+  scanLabel,
   sensorByPart,
   sensorsAtAddress,
 } from "../src/hardware/sensorDb";
@@ -56,4 +57,23 @@ test("every known sensor is well-formed", () => {
       assert.ok(a >= 0x08 && a <= 0x77, `${s.part} addr ${a}`);
     }
   }
+});
+
+test("the three RTC chips are native, and 0x68 lists the DS3231 next to the IMUs", () => {
+  for (const [part, addr] of [
+    ["DS3231", 0x68],
+    ["PCF8563", 0x51],
+    ["RV-3028-C7", 0x52],
+  ] as const) {
+    const s = sensorByPart(part);
+    assert.ok(s, part);
+    assert.equal(s.native, true, part);
+    assert.deepEqual(s.addresses, [addr], part);
+    assert.ok(s.measures.includes("time"), part);
+  }
+  const at68 = sensorsAtAddress(0x68).map((s) => s.part);
+  assert.ok(at68.includes("DS3231") && at68.includes("MPU6050"), at68.join(","));
+  assert.match(scanLabel(0x52), /^RV-3028-C7 Real-time clock .* \(native\)$/);
+  assert.match(scanLabel(0x68), /DS3231 .*\(native\) \/ .*MPU6050/);
+  assert.equal(scanLabel(0x08), "unknown");
 });
