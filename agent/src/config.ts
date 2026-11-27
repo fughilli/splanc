@@ -25,6 +25,10 @@ export interface RememberedPlayer {
   fw?: string;
   pin?: string;
   lastSeen?: string;
+  /** Unix seconds someone last used it (a tool call or the app's live controls);
+   * saved at most every few minutes, so the screen's fixture list stays in
+   * most-recently-used order across restarts (Hub.markUsed). */
+  used?: number;
   /** The discovery manifest, when one was read (sweep, refresh, or a toolchain
    * lookup): not needed to connect, kept so it needn't be fetched again. */
   manifest?: Manifest;

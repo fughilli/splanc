@@ -136,6 +136,7 @@ Splanc lamps in Apple Home and other Matter apps <docs/guides/matter>
 Run your own relay with Tailscale <docs/guides/relay-tailscale>
 Build a Vive-tracked lamp <docs/guides/vive-tracker-lamp>
 docs/runbook
+Feature-preview clips <docs/release-clips>
 Roadmap <next_steps>
 ```
 

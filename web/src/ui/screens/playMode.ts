@@ -28,6 +28,7 @@ import { mapStore } from "../../store/mapStore";
 import { deviceMaps } from "./deviceMapCard";
 import { HALLOWEEN_PRESETS, presetUniforms, ropeStartFor, type HalloweenPreset } from "../../halloween/presets";
 import { attractDisplayName, presetEffectId, presetUniformValues, sliderSpecs } from "../../halloween/playLogic";
+import { stepAttr } from "../../effects/uniformValues";
 import type { LedMapperClient } from "../../net/client";
 import { kioskStore } from "../../halloween/kioskStore";
 import { countdownLine, formatCountdown } from "../../net/kiosk";
@@ -283,7 +284,7 @@ export function PlayModeScreen(router: Router, query: URLSearchParams): Screen {
       input.type = "range";
       input.min = String(spec.min);
       input.max = String(spec.max);
-      input.step = String(spec.step);
+      input.step = stepAttr(spec.step); // 0 = continuous
       input.value = String(spec.value);
       input.setAttribute("aria-label", spec.name);
       input.addEventListener("input", () => {

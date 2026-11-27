@@ -3,6 +3,12 @@
     python3 -m splanc_display.sim                  # then open http://127.0.0.1:8737/
     bazel run //pi/bridge:sim -- --port 8737
 
+In the claude-container it is the named service ``bridge-sim``
+(.claude-container-overlay/overlay.json), reachable from the host at
+http://bridge-sim.$CLAUDE_SERVICE_INSTANCE.claude.localhost/ once started with
+
+    bazel run //pi/bridge:sim -- --host 0.0.0.0 --port 8737
+
 It runs ``main.App`` unchanged (the menu state machine, animation pacing, boot
 logo, status watcher, control client) and swaps only the hardware at its seams:
 
@@ -572,7 +578,7 @@ class FakeModel(fake_bridge.FakeBridge):
             self.pairing = {
                 "code": code,
                 "expires_at": int(time.time()) + 300,
-                "url": f"https://splanc.io/pair#{code}",
+                "url": f"https://splanc.pages.dev/pair?code={code}",
             }
             self.publish()
             return {"ok": True, "code": code}
@@ -668,7 +674,7 @@ class FakeModel(fake_bridge.FakeBridge):
                 self.pairing = {
                     "code": code,
                     "expires_at": int(now) + secs,
-                    "url": f"https://splanc.io/pair#{code}",
+                    "url": f"https://splanc.pages.dev/pair?code={code}",
                 }
             else:
                 self.pairing = None

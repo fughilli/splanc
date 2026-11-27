@@ -93,7 +93,9 @@ def test_oled_home_shows_the_code_big():
 
 def test_oled_qr_page_is_scannable_size():
     s = status("pairing")
-    matrix = draw.qr_matrix(s.pairing.url)
+    # The fake bridge's URL is the relay's real form; the page picks the level that
+    # fits 2 px modules (render_oled._qr), so check that matrix.
+    matrix = draw.qr_matrix(s.pairing.url, fit=(64 - 4) // 2)
     assert len(matrix) * 2 <= 64 - 4  # 2 px modules fit the 64 px panel
     img = render_oled.render(s, View(page="qr"), now=NOW)
     # light quiet zone on the left edge, dark finder-pattern gap inside it
@@ -148,3 +150,15 @@ def test_screensaver_flies_one_glider_per_online_fixture():
     gen = int(1.0 * gliders.GENS_PER_SECOND)
     assert img.tobytes() == gliders.render(connected, gen).tobytes()
     assert img.histogram()[255] == connected * 5 * gliders.CELL**2
+
+
+def test_relay_pairing_qr_fits_two_px_modules():
+    # The relay's pairing URL (https://<origin>/pair?code=...) is version 4 at
+    # level M: 33 modules, 1 px each on the 64 px OLED. Level L is version 3.
+    from splanc_display import draw as d
+
+    url = "https://splanc.pages.dev/pair?code=ABCD-EFGH"
+    assert len(d.qr_matrix(url)) == 33
+    assert len(d.qr_matrix(url, fit=(64 - 4) // 2)) == 29
+    short = "https://splanc.io/pair#ABCD-EFGH"  # already fits at M: unchanged
+    assert d.qr_matrix(short, fit=30) == d.qr_matrix(short)

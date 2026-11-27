@@ -40,11 +40,13 @@ uniform vec3  tint  : color        = vec3(1,0,0); // color picker
 uniform bool  mirror              = false;        // toggle
 uniform int   palette : {"fire","ice","rainbow"} = 2; // dropdown
 
-// persistent state (written by update, read by shade)
-state float phase;
+// persistent state (written by update, read by shade). `shared`: a fixture that
+// rejoins a mesh takes it from the gateway, so the phase stays in step
+// (fx-mesh-state-and-agents.md); plain `state` is this fixture's own.
+shared state float phase;
 
 void update() {
-    phase = phase + speed * dt;         // advance a phase each frame
+    phase = fract(phase + speed * dt);  // advance a phase each frame
 }
 
 vec3 shade(Led led) {
@@ -216,7 +218,13 @@ uniforms manifest: [ {name, type, ui_kind, min, max, step, default|options} ]
 consts: [f32...]
 entry offsets: update, shade
 code: [u8 bytecode...]   (little-endian, 4-byte aligned)
+... (optional trailers: memo, then the `shared state` footer)
+shared footer (flag 0x40): [(slot u8, width u8) × n] | n u8   — at the very end
 ```
+
+The `shared state` footer names the state slots a mesh catch-up copies (a
+`set_fx_state` frame: the words plus `Program::layout_hash`, so a snapshot only
+restores into the same build). A reader that predates it ignores the flag.
 
 The manifest is what the app turns into controls and what the device echoes on
 request (`get_effect_uniforms`). Uniform values live in a separate small buffer

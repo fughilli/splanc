@@ -156,8 +156,9 @@ fn arm_table() {
     for arm in [17, 21, 22, 23, 28, 31, 39, 44] {
         assert_eq!(classify(arm, &[]), Class::Play, "arm {arm}");
     }
-    // Read-only queries (incl. the kiosk's own status + unlock, the OTA status).
-    for arm in [1, 2, 18, 19, 20, 24, 26, 34, 35, 36, 42, 43, 45, 74, 91, 92, 94] {
+    // Read-only queries (incl. the kiosk's own status + unlock, the OTA status, the
+    // wall clock: a visitor's set_wall_clock only fills in an unset clock).
+    for arm in [1, 2, 18, 19, 20, 24, 26, 34, 35, 36, 42, 43, 45, 74, 91, 92, 94, 111, 112] {
         assert_eq!(classify(arm, &[]), Class::Read, "arm {arm}");
     }
     // Refused: mapping, map/topology/led count, rename, colour, hw config, set_jit,

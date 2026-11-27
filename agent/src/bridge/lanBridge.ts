@@ -56,6 +56,9 @@ export interface BridgePlayer {
   room?: string;
   /** Unix seconds the bridge last heard from it (session traffic or a discovery answer). */
   seen?: number;
+  /** Unix seconds someone last used it (a tool call or the app's live controls):
+   * the screens list the most recently used first. */
+  used?: number;
   /** The bridge's /ws session: open, reconnecting by itself, or none. */
   session?: "live" | "reconnecting" | "none";
   /** Why it is unreachable / refused (absent while fine). */
@@ -348,7 +351,11 @@ export class LanBridge {
     const out: BridgePlayer = {
       name: p.name,
       host: p.host,
-      ok: hub.isConnected(p.id) || (p.lastSeen > 0 && nowMs - p.lastSeen < 15 * 60_000),
+      // Connected, or heard from lately and not since found unreachable (a failed
+      // connect/heartbeat marks it so: the screens list it as down, with the reason).
+      ok:
+        hub.isConnected(p.id) ||
+        (p.checked !== "unreachable" && p.lastSeen > 0 && nowMs - p.lastSeen < 15 * 60_000),
     };
     if (!p.id.startsWith("host:")) out.id = p.id;
     if (p.fw) out.fw = p.fw;
@@ -359,6 +366,8 @@ export class LanBridge {
     const heard = st.heard_s_ago !== undefined ? nowMs - st.heard_s_ago * 1000 : 0;
     const seen = Math.max(p.lastSeen, heard);
     if (seen > 0) out.seen = Math.floor(seen / 1000);
+    const used = hub.lastUsed(p.id);
+    if (used > 0) out.used = Math.floor(used / 1000);
     if (p.trust && !trusted(p.trust) && p.trust.kind !== "unverified") out.error = "its TLS certificate changed";
     else if (p.checked === "unreachable" && st.state !== "live") out.error = p.manifestError || "not answering";
     const s = hub.openSession(p.id);

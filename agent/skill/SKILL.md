@@ -148,6 +148,22 @@ effect:
   after the fixture has sat still a few seconds. Both need it held still: ask
   first.
 
+## Time of day (players with a wall clock; feature `wall_clock`)
+
+- `get_clock` says whether the player's clock is set and in which zone;
+  `set_clock` sets it (the bridge and the app also push it on connect).
+- Effects read the lamp's LOCAL time as uniforms bound BY NAME:
+  `uniform float clock_day : 0.0 .. 1.0 = 0.5;` (seconds since midnight / 86400:
+  0.25 = 06:00, 0.75 = 18:00; the one to use for daylight curves),
+  `uniform vec4 clock` (hour, minute, second, weekday with Sunday = 0),
+  `uniform vec3 clock_date` (year, month, day) and `uniform float clock_valid`
+  (0 while the clock is unset; the others then keep their defaults).
+- Never compute time of day from `time` (seconds since the effect started).
+- The in-app editor previews them from the phone's clock (with a "Preview
+  time" slider). `preview_effect` does not: pass them explicitly, e.g.
+  `uniforms: {"clock_day": 0.27}` for a 06:30 frame. See
+  `examples/daylight.fx`.
+
 ## Other I2C sensors: write a driver (feature `drivers`)
 
 - `scan_i2c` lists the addresses that answer on the player's sensor bus. Match
@@ -180,6 +196,19 @@ effect:
 - `offline` keeps the Wi-Fi credentials (switching back to `auto` rejoins), but
   this bridge loses the player: changing it back needs Bluetooth (the Splanc
   app) or the wired console. Confirm with the user before going offline.
+
+## Lamp power and ON/OFF transitions (feature `power`)
+
+- `set_power {on}` / `{toggle: true}` switches a lamp on or off. Off = LEDs dark
+  and the effect paused; the lamp stays connected, so `set_power {on: true}`
+  brings it back. Prefer it over `set_brightness 0`. The lid's touch sensor
+  toggles the same state; `get_power` shows what changed it last.
+- `set_transitions {on, off, boot}` picks how it turns on / off: `fade` (the safe
+  default), `cut`, or an effect (`library_id` from `search_effects`, or
+  `source`), optionally at a saved look (`keypoint`) or `uniforms`. Good
+  transition effects declare `uniform float power;` (0 -> 1 turning on, 1 -> 0
+  turning off: one effect serves both directions) and stay cheap. `boot`: `last`
+  (default), `on` or `off`.
 
 ## Writing a new effect
 

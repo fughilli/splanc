@@ -30,6 +30,7 @@ use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
+use ledmapper_bss::BssOption;
 use ledmapper_fps::{FpsController, MAX_FPS};
 use ledmapper_fx_jit::{plan_blocks_into_consts, PlanOut};
 use ledmapper_fx_vm::{
@@ -66,11 +67,18 @@ pub use wifi_ffi::*;
 // The FX debugger (docs/design/fx-debugger.md): pause / step / snapshot.
 mod fxdbg;
 pub use fxdbg::*;
+// Lamp power (docs/design/lamp-power.md): on/off, ON/OFF transitions, the
+// toggle trigger, power_state pushes.
+mod power_ffi;
+pub use power_ffi::*;
 // Kiosk mode (docs/design/kiosk-mode.md): the lock gate, idle revert, owner unlock.
 // A public module (not glob re-exported: its pure helpers share names with wifi_ffi's).
 pub mod kiosk_ffi;
 // The on-device effect store (effect_store.rs, docs/design/effect-store.md).
 pub mod effect_store;
+// The wall clock (docs/design/wall-clock.md): the software RTC on esp_timer, the
+// POSIX TZ zone, set_wall_clock / get_clock, the soft-reset carry-over.
+pub mod clock_ffi;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -99,7 +107,10 @@ static mut MAP_META: Option<(Str64, u32)> = None;
 /// The resident topology geometry (branch points + segments); the per-LED
 /// associations are folded into FX_LED_TOPO, not kept here. Borrows ARENA.
 static mut GEOM: Option<StoredTopoGeom<'static>> = None;
-static mut PLAYER: Option<Player> = None;
+// BssOption, not Option, for this and the other big Option statics/deck fields: its
+// empty state is all-zero bytes, so they live in .bss instead of .data (which the image
+// would also carry in flash; see //firmware/bss).
+static mut PLAYER: BssOption<Player> = BssOption::NONE;
 
 
 // -- effects VM (fx_vm) -------------------------------------------------------
@@ -142,7 +153,7 @@ struct DeckState {
     /// borrows `bytes` (static storage): fx_load clears it before rewriting the
     /// bytes and fx_clear drops it.
     prog: Option<Program<'static>>,
-    vm: Option<FxVm>,
+    vm: BssOption<FxVm>,
     /// ACTIVE = the render loop drives it. An upload with `activate=false` parks
     /// the effect (loaded, validated) without taking over rendering.
     active: bool,
@@ -159,6 +170,12 @@ struct DeckState {
     id_len: usize,
     /// Hash of the loaded `.fxb` (PerfReport identity, deck A).
     hash: u32,
+    /// The program's state layout (`Program::layout_hash`, before the JIT patch): a mesh
+    /// catch-up's `set_fx_state` restores `shared state` only into the same layout.
+    state_hash: u32,
+    /// Seconds a restored `shared state` snapshot is behind this fixture's clock: the
+    /// next update() runs with this much more `dt`, then it is 0.
+    catchup_dt: f32,
     /// This deck's slice of FX_ARENA (deck A from the front, B from the back).
     arena_off: usize,
     arena_len: usize,
@@ -169,7 +186,7 @@ struct DeckState {
     /// room mirrors when `uses_ctxfix` / `uses_room` say so), so it needn't
     /// re-zero the struct per LED. Reset on load so no previous effect's values
     /// leak.
-    shade_led: Option<FxLed>,
+    shade_led: BssOption<FxLed>,
 }
 
 impl DeckState {
@@ -177,7 +194,7 @@ impl DeckState {
         bytes: [0; FX_MAX_BYTES],
         len: 0,
         prog: None,
-        vm: None,
+        vm: BssOption::NONE,
         active: false,
         uses_ctxfix: false,
         uses_uv: false,
@@ -185,10 +202,12 @@ impl DeckState {
         id: [0; 64],
         id_len: 0,
         hash: 0,
+        state_hash: 0,
+        catchup_dt: 0.0,
         arena_off: 0,
         arena_len: 0,
         morph: Morph::new(),
-        shade_led: None,
+        shade_led: BssOption::NONE,
     };
 
     fn loaded(&self) -> bool {
@@ -583,9 +602,9 @@ unsafe fn deck_b_claim() -> *mut DeckState {
     let p = addr_of_mut!(FX_AUX.deck_b) as *mut DeckState;
     if FX_AUX_OWNER != AuxOwner::DeckB {
         core::ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<DeckState>());
-        addr_of_mut!((*p).vm).write(None);
+        addr_of_mut!((*p).vm).write(BssOption::NONE);
         addr_of_mut!((*p).prog).write(None);
-        addr_of_mut!((*p).shade_led).write(None);
+        addr_of_mut!((*p).shade_led).write(BssOption::NONE);
         (*p).morph.clear();
         FX_AUX_OWNER = AuxOwner::DeckB;
         tex_queue_reset();
@@ -736,7 +755,10 @@ fn texture_ack(seq: u32, queued: u32) -> pb::ServerMessage {
 }
 
 /// Device-clock discontinuity guard. On a c6 the millis() clock was seen to step
-/// BACK ~230 s mid-stream (root cause unknown; esp_timer/systimer). Every
+/// BACK ~230 s mid-stream (root cause unknown; esp_timer/systimer). The steps seen
+/// in CI are whole multiples of 2^24 systimer ticks (1048.576 ms) — 1 to 82 of them —
+/// so the smallest one, taken across a ~50 ms frame, reads as a dt of only ~-1000 ms:
+/// any step BACK counts (millis() never legitimately runs backwards). Every
 /// absolute device time held here — the shared time-base epoch and the queued
 /// video present times — would then sit minutes in the future: video freezes and
 /// effects lose step. The render task calls this every frame with millis(); a step
@@ -757,7 +779,7 @@ pub unsafe extern "C" fn lm_clock_observe(now_ms: i64) -> i64 {
         return 0;
     }
     let dt = now_ms - last;
-    if dt < -1000 {
+    if dt < 0 {
         let shift = dt - CLOCK_LAST_DT;
         player().shift_time_base(shift);
         (*addr_of_mut!(SCHED)).shift(shift);
@@ -847,7 +869,7 @@ static mut FX_F_DT_FIX: i32 = 0;
 /// LED (`FxFrame { .., ..Default::default() }`) costs a ROM memset of its ~70-byte
 /// tail on every LED once the struct outgrew LLVM's inline-zeroing threshold (the
 /// room fields did it: +~230 cycles/LED on fx_bench), so shade() borrows this.
-static mut FX_SHADE_FRAME: Option<FxFrame> = None;
+static mut FX_SHADE_FRAME: BssOption<FxFrame> = BssOption::NONE;
 // The per-LED shade() scratch is per deck (DeckState::shade_led).
 /// Last update() bounded-exec outcome (0=Ok, 1=Budget, 2=Timeout) — surfaced to
 /// C++ for the rate-limited `[fx]` diagnostic log.
@@ -1433,7 +1455,7 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
         p.set_channel_cap(FX_MAX_LEDS_PER_CHANNEL as u32);
         // Boot-time sizing (lm_set_led_limits) narrows these to the store.
         p.set_features(FEATURES, ledmapper_fx_vm::FORMAT_VERSION as u32);
-        *addr_of_mut!(PLAYER) = Some(p);
+        (*addr_of_mut!(PLAYER)).set(p);
     }
 }
 
@@ -1518,6 +1540,17 @@ pub unsafe extern "C" fn lm_player_set_build_info(
         core::str::from_utf8(core::slice::from_raw_parts(version, version_len)).unwrap_or("")
     };
     player().set_build_info(commit_s, dirty, version_s);
+}
+
+/// A feature only the firmware knows at run time, served after the static ones in
+/// welcome.features and the agent manifest (the flash: "flash_<jedec>_suspend_on|off", PR-41).
+///
+/// # Safety
+/// `f` must point to `len` readable bytes; after `lm_player_init`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_player_set_extra_feature(f: *const u8, len: usize) {
+    let s = core::str::from_utf8(core::slice::from_raw_parts(f, len)).unwrap_or("");
+    player().set_extra_feature(s);
 }
 
 /// The per-device TLS identity as the firmware last published it (lm_set_tls_info):
@@ -1990,11 +2023,22 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SET_WIFI_POLICY) => return wifi_ffi::handle_set_wifi_policy(frame, out, out_cap),
         Some(ARM_GET_WIFI_POLICY) => return wifi_ffi::handle_get_wifi_policy(out, out_cap),
         // Kiosk mode (kiosk_ffi.rs): zero-copy replies into `out`.
+        // Lamp power (power_ffi.rs): zero-copy power_state replies into `out`.
+        Some(power_ffi::ARM_SET_POWER) => return power_ffi::handle_set_power(frame, recv_ms as u32, out, out_cap),
+        Some(power_ffi::ARM_GET_POWER) => return power_ffi::handle_get_power(recv_ms as u32, out, out_cap),
+        Some(power_ffi::ARM_SET_POWER_CONFIG) => {
+            return power_ffi::handle_set_power_config(frame, recv_ms as u32, out, out_cap)
+        }
         Some(kiosk_ffi::ARM_GET_KIOSK_STATUS) => return kiosk_ffi::handle_get(recv_ms as u32, out, out_cap),
         Some(kiosk_ffi::ARM_SET_KIOSK_CONFIG) => {
             return kiosk_ffi::handle_set_config(frame, recv_ms as u32, out, out_cap)
         }
         Some(kiosk_ffi::ARM_KIOSK_UNLOCK) => return kiosk_ffi::handle_unlock(frame, recv_ms as u32, out, out_cap),
+        // The wall clock (clock_ffi.rs): zero-copy clock_state replies into `out`.
+        Some(clock_ffi::ARM_SET_WALL_CLOCK) => {
+            return clock_ffi::handle_set_wall_clock(frame, recv_ms, out, out_cap)
+        }
+        Some(clock_ffi::ARM_GET_CLOCK) => return clock_ffi::handle_get_clock(recv_ms, out, out_cap),
         // FX debugger: pause / step, and snapshots streamed zero-copy into `out`.
         Some(fxdbg::ARM_FX_DEBUG_CONTROL) => return fxdbg::handle_control(frame, recv_ms, out, out_cap),
         Some(fxdbg::ARM_GET_FX_SNAPSHOT) => return fxdbg::handle_snapshot(frame, recv_ms, out, out_cap),
@@ -2014,6 +2058,11 @@ pub unsafe extern "C" fn lm_player_handle(
         // effect on the next lm_fx_load, so the HITL fx_bench re-submits after.
         Some(ARM_SET_JIT) => {
             handle_set_jit(frame);
+            return 0;
+        }
+        // A mesh catch-up's `shared state` (no reply).
+        Some(ARM_SET_FX_STATE) => {
+            handle_set_fx_state(frame);
             return 0;
         }
         // Video-texture frame: decode into the active effect's texture arena.
@@ -2256,13 +2305,274 @@ unsafe fn sched_apply_frame(frame: &[u8]) -> u32 {
 /// Under the player lock.
 #[no_mangle]
 pub unsafe extern "C" fn lm_sched_apply(now_ms: i64) -> u32 {
+    let mut bits = staged_due(now_ms);
     let q = &mut *addr_of_mut!(SCHED);
     if q.next_due().map_or(true, |d| d > now_ms) {
-        return 0;
+        return bits;
     }
-    let mut bits = 0;
     q.pop_due(now_ms, |f| bits |= sched_apply_frame(f));
     bits
+}
+
+// -- a staged effect load (mesh M6, docs/design/mesh-m6.md) ------------------
+// A shared effect (a whole submit_effect frame, up to the effect buffer's 4 KiB of
+// .fxb) reaches every member before its show-clock time; each one hands the frame
+// here, and the render task loads it at the first frame boundary at/after that
+// time, so every fixture switches on the same frame (as a scheduled set_effect).
+// The frame stays the mesh's (a heap buffer in its block) until loopTask has taken
+// the outcome back (lm_fx_staged_take) and persisted it like a deck-A upload.
+
+/// lm_sched_apply bit: the staged effect loaded this frame (main.cpp logs it).
+pub const SCHED_LOADED: u32 = 4;
+/// lm_sched_apply bit: the staged effect is due on this frame: main.cpp loads it now
+/// (lm_fx_staged_apply) on a stack deep enough for a load (the render task's is not).
+pub const SCHED_STAGED_DUE: u32 = 8;
+
+#[derive(Clone, Copy)]
+struct StagedLoad {
+    due: i64,
+    frame: *const u8,
+    len: usize,
+}
+
+static mut STAGED: Option<StagedLoad> = None;
+/// The applied staged frame, its length, its outcome (1 loaded, 2 refused) and deck,
+/// until taken.
+static mut STAGED_DONE: Option<(*const u8, usize, u8, u8)> = None;
+
+unsafe fn staged_due(now_ms: i64) -> u32 {
+    match *addr_of!(STAGED) {
+        Some(s) if s.due <= now_ms && (*addr_of!(STAGED_DONE)).is_none() => SCHED_STAGED_DUE,
+        _ => 0,
+    }
+}
+
+/// Load the staged effect frame (it is due: [`SCHED_STAGED_DUE`]). The render task calls
+/// it at that frame's start, on the mesh's tick stack (a load's frames are deeper than the
+/// render task's stack). Returns SCHED_* bits.
+///
+/// # Safety
+/// Under the player lock.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_staged_apply() -> u32 {
+    let Some(s) = (*addr_of_mut!(STAGED)).take() else { return 0 };
+    // The loopTask's persist step reads these after its own dispatches: keep them.
+    let (deck_was, store_was) = (FX_LAST_DECK, effect_store::LAST_WAS_STORE);
+    let r = handle_submit_effect(core::slice::from_raw_parts(s.frame, s.len));
+    FX_LAST_DECK = deck_was;
+    effect_store::LAST_WAS_STORE = store_was;
+    let ok = matches!(r.r#msg, Some(pb::ServerMessage_::Msg::ResultReady(_)));
+    let d = match client_arm(core::slice::from_raw_parts(s.frame, s.len)) {
+        Some(CArm::SubmitEffect(m)) => deck_index(m.deck()) as u8,
+        _ => 0,
+    };
+    STAGED_DONE = Some((s.frame, s.len, if ok { 1 } else { 2 }, d));
+    SCHED_APPLIED | SCHED_LOADED
+}
+
+/// Stage `frame` (a submit_effect, `len` bytes, kept valid by the caller until it is
+/// taken back) to load at `apply_at_ms` on the shared time base. 1: staged (an earlier
+/// staged frame not yet applied is handed back in `*replaced`, refused); 0: its time
+/// has passed or there is no time base (dispatch it now instead); -1: refused.
+///
+/// # Safety
+/// Under the player mutex; `frame` valid for `len` bytes until taken back.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_stage(frame: *const u8, len: usize, apply_at_ms: u32, now_ms: i64, replaced: *mut *const u8) -> i32 {
+    if frame.is_null() || len == 0 {
+        return -1;
+    }
+    // A deck load only (never the effect store: no flash writes on the render task).
+    match client_arm(core::slice::from_raw_parts(frame, len)) {
+        Some(CArm::SubmitEffect(m)) if !m.store() => {}
+        _ => return -1,
+    }
+    let Some(due) = apply_due(Some(apply_at_ms), player().time_base_ms(), now_ms) else { return 0 };
+    if !replaced.is_null() {
+        *replaced = (*addr_of!(STAGED)).map_or(core::ptr::null(), |s| s.frame);
+    }
+    STAGED = Some(StagedLoad { due, frame, len });
+    1
+}
+
+/// The staged frame the render task applied: its pointer and length in `*frame` /
+/// `*len`, its deck in `*deck`, and 1 (loaded) or 2 (refused); 0 while none is done.
+/// Drop the frame (and persist a loaded deck-A one) after.
+///
+/// # Safety
+/// Under the player mutex; the out pointers valid.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_staged_take(frame: *mut *const u8, len: *mut usize, deck: *mut u32) -> u32 {
+    let Some((f, n, r, d)) = (*addr_of_mut!(STAGED_DONE)).take() else { return 0 };
+    *frame = f;
+    *len = n;
+    *deck = d as u32;
+    r as u32
+}
+
+/// Forget a staged frame (the mesh turns off and frees it): the pointer, or null.
+///
+/// # Safety
+/// Under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_stage_cancel() -> *const u8 {
+    (*addr_of_mut!(STAGED)).take().map_or(core::ptr::null(), |s| s.frame)
+}
+
+/// Check a submit_effect frame a mesh share is about to distribute, as the load would
+/// (its fxb parses, fits the effect buffer, is not a driver, not a store write), without
+/// loading it: 0 it would load, 1 bad_fxb, 2 effect_too_large.
+///
+/// # Safety
+/// `frame` valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_check_effect(frame: *const u8, len: usize) -> u32 {
+    let Some(CArm::SubmitEffect(m)) = client_arm(core::slice::from_raw_parts(frame, len)) else { return 1 };
+    if m.store() || !pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_FXB) {
+        return 1;
+    }
+    let fxb = m.fxb();
+    if fxb.len() > FX_MAX_BYTES {
+        return 2;
+    }
+    match Program::parse(fxb) {
+        Ok(p) if p.flags & ledmapper_fx_vm::FLAG_DRIVER == 0 => 0,
+        _ => 1,
+    }
+}
+
+/// The look a mesh catch-up carries besides the effect (mesh M6): `len (2) ‖ frame`
+/// entries, each an encoded ClientMessage: deck A's uniform values (committed), the
+/// output brightness, the crossfade. Into `out`; returns the length (-1: too small).
+///
+/// # Safety
+/// Under the player mutex; `out` valid for `cap` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_scene_frames(out: *mut u8, cap: usize) -> i32 {
+    let buf = core::slice::from_raw_parts_mut(out, cap);
+    let mut o = 0usize;
+    let mut put = |o: &mut usize, field: u32, body: &mut dyn FnMut(&mut PbOut)| -> bool {
+        if *o + 2 >= cap {
+            return false;
+        }
+        let n = write_arm(buf[*o + 2..].as_mut_ptr(), cap - *o - 2, field, |w| body(w));
+        if n <= 0 {
+            return false;
+        }
+        buf[*o..*o + 2].copy_from_slice(&(n as u16).to_be_bytes());
+        *o += 2 + n as usize;
+        true
+    };
+    // set_uniforms = 23 {values = 1, commit = 2 (true), deck = 3 (A)}.
+    let d = DECK_A_IDX;
+    if let Some(p) = deck(d).filter(|p| (**p).renders()) {
+        {
+            let ok = put(&mut o, 23, &mut |w: &mut PbOut| {
+                write_current(w, 1, d, p);
+                w.uint(2, 1);
+            });
+            if !ok {
+                return -1;
+            }
+        }
+    }
+    // Deck B's uniform values too (deck = 3: 1), when it renders (D-465: a catch-up carries
+    // deck B's effect).
+    if let Some(p) = deck(DECK_B_IDX).filter(|p| (**p).renders()) {
+        let ok = put(&mut o, 23, &mut |w: &mut PbOut| {
+            write_current(w, 1, DECK_B_IDX, p);
+            w.uint(2, 1);
+            w.uint(3, 1);
+        });
+        if !ok {
+            return -1;
+        }
+    }
+    // set_brightness = 31 {brightness = 1 (double)}; set_crossfade = 39 {position = 1}.
+    let b = player().output_brightness() as f64;
+    let x = player().crossfade() as f64;
+    for (field, v) in [(31u32, b), (39, x)] {
+        let ok = put(&mut o, field, &mut |w: &mut PbOut| {
+            w.key(1, 1);
+            for byte in v.to_le_bytes() {
+                w.byte(byte);
+            }
+        });
+        if !ok {
+            return -1;
+        }
+    }
+    // set_fx_state = 102 {deck = 1, layout_hash = 2, time = 3, words = 4}: each deck's
+    // `shared state`, taken here between frames, so it is one frame's consistent values.
+    // Last, and left out (not an error) when it does not fit: the look still catches up.
+    for (d, deck_no) in [(DECK_A_IDX, 0u64), (DECK_B_IDX, 1)] {
+        let Some(p) = deck(d).filter(|p| (**p).renders()) else { continue };
+        let (Some(prog), Some(vm)) = ((*p).prog.as_ref(), (*p).vm.as_ref()) else { continue };
+        let n = prog.shared_words();
+        if n == 0 {
+            continue;
+        }
+        let hash = (*p).state_hash;
+        let _ = put(&mut o, ARM_SET_FX_STATE, &mut |w: &mut PbOut| {
+            w.uint(1, deck_no);
+            w.fixed32(2, hash);
+            w.fixed32(3, FX_F_TIME.to_bits());
+            w.key(4, 2);
+            w.varint((n * 4) as u64);
+            vm.each_shared_word(prog, |x| {
+                for b in x.to_le_bytes() {
+                    w.byte(b);
+                }
+            });
+        });
+    }
+    o as i32
+}
+
+/// set_fx_state (a mesh catch-up, docs/design/fx-mesh-state-and-agents.md): restore a
+/// deck's `shared state` when its effect has the snapshot's layout, and have the next
+/// update() cover the time since the snapshot. No reply.
+///
+/// # Safety
+/// Under the player mutex (loopTask), like every handled frame.
+unsafe fn handle_set_fx_state(frame: &[u8]) {
+    let Some(CArm::SetFxState(m)) = client_arm(frame) else { return };
+    let d = if m.deck() == 1 { DECK_B_IDX } else { DECK_A_IDX };
+    let Some(p) = deck(d) else { return };
+    FX_STATE_RESTORE = 2;
+    if !(*p).loaded() || (*p).state_hash != m.layout_hash() {
+        return;
+    }
+    let (Some(prog), Some(vm)) = ((*p).prog.as_ref(), (*p).vm.as_mut()) else { return };
+    if !vm.restore_shared_le(prog, m.words()) {
+        return;
+    }
+    // Both clocks are the mesh's show clock: the gap is transit + load time. A gap
+    // outside 0..10 s means the time bases differ; restore the values, add nothing.
+    let lag = FX_F_TIME - m.time();
+    (*p).catchup_dt = if lag > 0.0 && lag < 10.0 { lag } else { 0.0 };
+    FX_STATE_RESTORE = 1;
+    FX_STATE_LAG_MS = ((*p).catchup_dt * 1000.0) as u32;
+}
+
+/// The last set_fx_state: 0 none, 1 restored, 2 refused (another layout, or no effect).
+/// Read and cleared by main.cpp's mesh dispatch log ([`lm_fx_state_restored`]).
+static mut FX_STATE_RESTORE: u32 = 0;
+static mut FX_STATE_LAG_MS: u32 = 0;
+
+/// The last set_fx_state's outcome (see `FX_STATE_RESTORE`), cleared; `*lag_ms` the
+/// time the next update() adds.
+///
+/// # Safety
+/// Under the player mutex; `lag_ms` valid.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_state_restored(lag_ms: *mut u32) -> u32 {
+    let r = FX_STATE_RESTORE;
+    FX_STATE_RESTORE = 0;
+    if !lag_ms.is_null() {
+        *lag_ms = FX_STATE_LAG_MS;
+    }
+    r
 }
 
 /// Scheduled changes waiting (diagnostics / tests).
@@ -2793,6 +3103,7 @@ const ARM_SET_PERF: u32 = 25;
 const ARM_GET_PERF_REPORT: u32 = 26;
 const ARM_SET_TEXTURE: u32 = 28;
 const ARM_SET_JIT: u32 = 32;
+const ARM_SET_FX_STATE: u32 = 102;
 const ARM_LIST_EFFECTS: u32 = 36;
 const ARM_SAVE_KEYPOINT: u32 = 40;
 const ARM_DELETE_KEYPOINT: u32 = 41;
@@ -2858,6 +3169,17 @@ macro_rules! features {
         // The effect store (submit_effect{store}, list / load / delete_stored_effect):
         // docs/design/effect-store.md.
         "effect_store",
+        // Rolling stride (docs/design/rolling-stride.md): start_mapping
+        // strideMode "rolling" masks with stride_lit_rolling at the ABSOLUTE
+        // pattern frame, which main.cpp passes to lm_pattern_color.
+        "stride_rolling",
+        // Lamp power (docs/design/lamp-power.md): set_power / get_power /
+        // set_power_config, power_state pushes, submit_effect power_slot, the
+        // driver GPIO intrinsics and trigger uniforms.
+        "power",
+        // The wall clock (docs/design/wall-clock.md): set_wall_clock / get_clock ->
+        // clock_state, a POSIX TZ zone, kept across soft resets.
+        "wall_clock",
         $($extra),*
     ] };
 }
@@ -2908,7 +3230,26 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     if m.store() {
         return effect_store::handle_store(&m);
     }
-    submit_effect_view(&m, deck_index(m.deck()), m.activate())
+    let fxb = pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_FXB).then(|| m.fxb());
+    let id0 = if pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_EFFECT_ID) { m.effect_id() } else { "" };
+    // A transition effect (power_slot): stored, not loaded (power_ffi.rs).
+    if let Some(r) = power_ffi::intercept_submit(m.power_slot(), id0, fxb) {
+        FX_LAST_DECK = DECK_B_IDX as u32; // never persisted as the show
+        return match r {
+            Ok(()) => {
+                let mut rr = pb::ResultReady::default();
+                let _ = rr.r#map_id.push_str(id0);
+                pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ResultReady(rr)) }
+            }
+            Err("bad_fxb") => fx_error("bad_fxb", "fxb failed to parse"),
+            Err("effect_too_large") => fx_error("effect_too_large", "fxb exceeds this player's effect buffer"),
+            Err(why) => fx_error("bad_fxb", why),
+        };
+    }
+    // The replay of a stored transition frame: onto deck B, playing.
+    let loading = power_ffi::loading();
+    let d = if loading { DECK_B_IDX } else { deck_index(m.deck()) };
+    submit_effect_view(&m, d, m.activate() || loading)
 }
 
 /// The submit_effect load: `m`'s fxb onto deck `d`, activated or parked. Also how
@@ -2932,6 +3273,9 @@ unsafe fn submit_effect_view(m: &pv::SubmitEffectView<'_>, d: usize, activate: b
     // activate=true takes over rendering now; false parks it (loaded + valid,
     // set_effect can activate later).
     fx_set_active(d, activate);
+    if power_ffi::loading() {
+        power_ffi::note_load(true);
+    }
     let mut r = pb::ResultReady::default();
     // effect_id echoes back so the app can correlate the ack; also latch it (the
     // deck's keypoints live under it; deck A's pins the PerfReport identity).
@@ -3609,24 +3953,7 @@ unsafe fn write_effect_uniforms(w: &mut PbOut, d: usize, p: *mut DeckState, prog
     }
     w.bytes(2, prog.manifest);
     // current = 3: each manifest uniform's live value, read back from the VM.
-    // The deck OSC drives walks its table (every uniform it can drive); the other
-    // deck its blend rules (the same uniforms, within the keypoint bounds).
-    if let Some(vm) = (*p).vm.as_ref() {
-        let mut put = |slot: usize, width: usize| {
-            if let Some(vals) = vm.uniforms.get(slot..slot + width) {
-                w.value_msgs(3, slot as u32, vals);
-            }
-        };
-        if d == OSC_TABLE_DECK && !OSC_TABLE_STALE {
-            for port in (*addr_of!(OSC_TABLE)).ports() {
-                put(port.slot as usize, port.width as usize);
-            }
-        } else {
-            for r in (*p).morph.rules.rules() {
-                put(r.slot as usize, r.width as usize);
-            }
-        }
-    }
+    write_current(w, 3, d, p);
     // textures = 4: the declared 2D textures (buffer kind=1), so a texture source
     // learns the exact dimensions set_texture requires (a mismatch is dropped).
     for i in 0..prog.n_buffers as usize {
@@ -3644,6 +3971,28 @@ unsafe fn write_effect_uniforms(w: &mut PbOut, d: usize, p: *mut DeckState, prog
     }
     if d != DECK_A_IDX {
         w.uint(5, d as u64);
+    }
+}
+
+/// Deck `d`'s live uniform values as UniformValue messages at `field`. The deck OSC
+/// drives walks its table (every uniform it can drive); the other deck its blend rules
+/// (the same uniforms, within the keypoint bounds).
+#[inline(never)]
+unsafe fn write_current(w: &mut PbOut, field: u32, d: usize, p: *mut DeckState) {
+    let Some(vm) = (*p).vm.as_ref() else { return };
+    let mut put = |slot: usize, width: usize| {
+        if let Some(vals) = vm.uniforms.get(slot..slot + width) {
+            w.value_msgs(field, slot as u32, vals);
+        }
+    };
+    if d == OSC_TABLE_DECK && !OSC_TABLE_STALE {
+        for port in (*addr_of!(OSC_TABLE)).ports() {
+            put(port.slot as usize, port.width as usize);
+        }
+    } else {
+        for r in (*p).morph.rules.rules() {
+            put(r.slot as usize, r.width as usize);
+        }
     }
 }
 
@@ -3780,6 +4129,27 @@ fn kp_file(key: u32, n: usize) -> ([u8; 16], usize) {
     }
     b[len] = b'0' + (n % 10) as u8;
     (b, len + 1)
+}
+
+/// The keypoint file key the keypoint arm in `frame` addresses (0: not a keypoint arm, or
+/// nothing to address). main.cpp reads that effect's `kp_<key>.<n>` files BEFORE it takes the
+/// player mutex, so the handler reads nothing from flash while the render task waits on the
+/// lock (PR-41). Needs the mutex (the deck's effect), not the flash.
+///
+/// # Safety
+/// `frame` valid for `len` bytes; player mutex held.
+#[no_mangle]
+pub unsafe extern "C" fn lm_kp_key(frame: *const u8, len: usize) -> u32 {
+    let f = core::slice::from_raw_parts(frame, len);
+    let (d, id) = match client_arm(f) {
+        Some(CArm::SaveKeypoint(m)) => (deck_index(m.deck()), None),
+        Some(CArm::BlendKeypoints(m)) => (deck_index(m.deck()), None),
+        Some(CArm::DeleteKeypoint(m)) => (deck_index(m.deck()), m.effect_id()),
+        Some(CArm::ListKeypoints(m)) => (deck_index(m.deck()), m.effect_id()),
+        Some(CArm::GetKeypoint(m)) => (deck_index(m.deck()), m.effect_id()),
+        _ => return 0,
+    };
+    kp_target(d, id).map_or(0, |(k, _)| k)
 }
 
 /// Read record `n` of effect `key` into KP_IO; its length, if it exists.
@@ -4308,16 +4678,17 @@ pub unsafe extern "C" fn lm_pattern_frame_shown(seq: u32, t_mono_us: u32) {
     player().record_frame_shown(seq, t_mono_us);
 }
 
-/// The color LED `led` shows in mapping cycle frame `frame_index`
-/// (caller reduces modulo cycle_frames). False when no capture is active.
+/// The color LED `led` shows at mapping-pattern frame `seq` — the ABSOLUTE
+/// frame since the pattern epoch (the rolling stride needs it; the code is
+/// reduced modulo cycle_frames inside). False when no capture is active.
 ///
 /// # Safety
 /// The pointer arguments must be null or point to writable/readable memory
 /// of the documented size, and the global player must have been initialized
 /// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
-pub unsafe extern "C" fn lm_pattern_color(led: u32, frame_index: u32, rgb: *mut u8) -> bool {
-    match player().pattern_color(led, frame_index) {
+pub unsafe extern "C" fn lm_pattern_color(led: u32, seq: u32, rgb: *mut u8) -> bool {
+    match player().pattern_color(led, seq) {
         Some((r, g, b)) => {
             *rgb = r;
             *rgb.add(1) = g;
@@ -4531,6 +4902,35 @@ pub unsafe extern "C" fn lm_fixture_pose_gen() -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn lm_fixture_pose_commit() -> bool {
     player().fixture_pose_commit()
+}
+
+/// The room pose for the mesh topology (main.cpp `lm_mesh_pose_fill`): 0 = unposed, 1 =
+/// posed with `t` (3 floats, m), `q` (4 floats, x y z w) and the room name's bytes (cut to
+/// `room_cap`) in `room`, its length in `*room_len`. Scale and the room box are not reported.
+/// A copy of a few floats: called on loopTask only when [`lm_fixture_pose_gen`] moved.
+///
+/// # Safety
+/// Single firmware thread (the task that handles messages, which is the only writer of the
+/// pose); `t` and `q` point at 3 and 4 floats, `room` at `room_cap` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fixture_pose_get(t: *mut f32, q: *mut f32, room: *mut u8, room_cap: u32, room_len: *mut u32) -> i32 {
+    *room_len = 0;
+    let Some(p) = player().fixture_pose() else { return 0 };
+    let tt = core::slice::from_raw_parts_mut(t, 3);
+    let qq = core::slice::from_raw_parts_mut(q, 4);
+    tt.copy_from_slice(&[0.0; 3]);
+    qq.copy_from_slice(&[0.0, 0.0, 0.0, 1.0]);
+    if p.r#translation.len() == 3 {
+        tt.copy_from_slice(&p.r#translation);
+    }
+    if p.r#rotation.len() == 4 {
+        qq.copy_from_slice(&p.r#rotation);
+    }
+    let name = p.r#room.as_bytes();
+    let n = name.len().min(room_cap as usize);
+    core::slice::from_raw_parts_mut(room, n).copy_from_slice(&name[..n]);
+    *room_len = n as u32;
+    1
 }
 
 /// The shared effect-time epoch (set_time_base, device-clock ms): writes it to
@@ -5061,15 +5461,17 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     (*p).uses_ctxfix = prog.uses_ctxfix();
     (*p).uses_uv = prog.uses_uv();
     (*p).uses_room = prog.uses_room();
+    (*p).state_hash = prog.layout_hash();
+    (*p).catchup_dt = 0.0;
     (*p).morph.reset(prog.manifest);
     // Bind uniforms named like a pool entry (imu_quat, ...) to the live pool.
     uniform_pool::bind(d, prog.manifest);
-    (*p).shade_led = None;
-    *addr_of_mut!(FX_SHADE_FRAME) = None;
+    (*p).shade_led.clear();
+    (*addr_of_mut!(FX_SHADE_FRAME)).clear();
     (*p).prog = None;
     (*p).bytes[..src.len()].copy_from_slice(src);
     (*p).len = src.len();
-    (*p).vm = Some(FxVm::new());
+    (*p).vm.set(FxVm::new());
     // Start every uniform at its manifest default (fx-perf-study R7). Clients
     // that send set_uniforms after a deploy still override it; before this, an
     // effect nobody configured ran with every uniform at 0 (fx_bench's
@@ -5087,6 +5489,22 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     (*p).arena_len = alen;
     (&mut (*addr_of_mut!(FX_ARENA)))[off..off + alen].fill(0);
     bind_arena(p);
+    // D-500: state initial values + init() run here, at load (fresh state, uniforms
+    // at their defaults), not lazily in the first update(): anything that writes the
+    // state after the load (a mesh catch-up's `shared state` restore) then wins, and
+    // the first frame's guard skips init. Before the JIT patch, on the parsed bytes.
+    if let Some(vm) = (*p).vm.as_mut() {
+        let f = FxFrame {
+            time: FX_F_TIME,
+            dt: 0.0,
+            frame: FX_F_FRAME,
+            led_count: FX_F_LEDS,
+            time_fix: FX_F_TIME_FIX,
+            ..Default::default()
+        };
+        FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
+        vm.run_init(&prog, &f, &fx_budget());
+    }
     if d == DECK_A_IDX {
         // FUG-125: build the on-device JIT (patches JitCall into the resident
         // bytes + installs the segment table). Re-parse from the resident copy so
@@ -5155,7 +5573,7 @@ unsafe fn fx_clear(d: usize) {
         DECK_A.prog = None;
         DECK_A.len = 0;
         DECK_A.active = false;
-        *addr_of_mut!(DECK_A.vm) = None;
+        (*addr_of_mut!(DECK_A.vm)).clear();
         DECK_A.hash = 0;
         DECK_A.id_len = 0;
         (*addr_of_mut!(DECK_A)).morph.clear();
@@ -5165,7 +5583,7 @@ unsafe fn fx_clear(d: usize) {
         FX_JIT_N = 0;
         perf_reset_ring();
     } else if let Some(p) = deck(DECK_B_IDX) {
-        (*p).vm = None;
+        (*p).vm.clear();
         (*p).prog = None;
         (*p).len = 0;
         FX_AUX_OWNER = AuxOwner::Free;
@@ -5511,7 +5929,7 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     // an all-float shader pays nothing at all (FUG-122).
     FX_F_TIME_FIX = q16_16(time_s);
     FX_F_DT_FIX = q16_16(dt_s);
-    *addr_of_mut!(FX_SHADE_FRAME) = Some(f);
+    (*addr_of_mut!(FX_SHADE_FRAME)).set(f);
     // Refresh the per-LED topology cache if a map/topology upload invalidated it,
     // so the coming shade() sweep sees current led.seg / led.s / led.branch.
     if !FX_TOPO_READY {
@@ -5549,7 +5967,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
 #[inline(never)]
 unsafe fn fx_latch_crossfade() {
     let pl = player();
-    FX_XF_POS = pl.crossfade();
+    // A power transition playing its effect drives the mix (power_ffi.rs).
+    FX_XF_POS = match power_ffi::xf_override() {
+        Some(x) => x,
+        None => pl.crossfade(),
+    };
     FX_XF_MODE = pl.crossfade_mode();
 }
 
@@ -5567,6 +5989,9 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     if (*p).morph.running() {
         fx_advance_morph(p, dt_s);
     }
+    if (*p).catchup_dt != 0.0 {
+        return Some(fx_update_catchup(p, f));
+    }
     Some(if PERF_MODE == PERF_FULL {
         // FULL: pay the counted VM path so instr_update / stack_max are real.
         let (oc, c) = vm.run_update_counted(prog, f, &fx_budget());
@@ -5577,6 +6002,19 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
         // BASIC/OFF: the plain path — no per-opcode counting overhead.
         vm.run_update_bounded(prog, f, &fx_budget())
     })
+}
+
+/// The first update() after a restored `shared state` snapshot: this frame's `dt` plus
+/// the time since the snapshot, once (an integrator lands where the gateway's is).
+#[cold]
+#[inline(never)]
+unsafe fn fx_update_catchup(p: *mut DeckState, f: &FxFrame) -> Outcome {
+    let mut g = *f;
+    g.dt += (*p).catchup_dt;
+    g.dt_fix = q16_16(g.dt);
+    (*p).catchup_dt = 0.0;
+    let (Some(prog), Some(vm)) = ((*p).prog.as_ref(), (*p).vm.as_mut()) else { return Outcome::Ok };
+    vm.run_update_bounded(prog, &g, &fx_budget())
 }
 
 #[cold]

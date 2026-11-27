@@ -1,0 +1,30 @@
+diff --git a/toolchains/cc/esp32c3/BUILD.bazel b/toolchains/cc/esp32c3/BUILD.bazel
+--- a/toolchains/cc/esp32c3/BUILD.bazel
++++ b/toolchains/cc/esp32c3/BUILD.bazel
+@@ -25,6 +25,11 @@
+     ar = "@riscv_gcc//:ar",
+     strip = "@riscv_gcc//:strip",
+     compile_flags = _ARCH_FLAGS + [
++        # Optimize for size, as ESP-IDF does by default (CONFIG_COMPILER_OPTIMIZATION_SIZE)
++        # and Arduino's platform.txt does: without an -O here every C/C++ target built
++        # with this toolchain compiled -O0 (no compilation mode adds one). A target's
++        # own copts come later on the command line, so one can still ask for -O2.
++        "-Os",
+         "-ffunction-sections",
+         "-fdata-sections",
+         "-no-canonical-prefixes",
+diff --git a/toolchains/cc/esp32c6/BUILD.bazel b/toolchains/cc/esp32c6/BUILD.bazel
+--- a/toolchains/cc/esp32c6/BUILD.bazel
++++ b/toolchains/cc/esp32c6/BUILD.bazel
+@@ -23,6 +23,11 @@
+     ar = "@riscv_gcc//:ar",
+     strip = "@riscv_gcc//:strip",
+     compile_flags = _ARCH_FLAGS + [
++        # Optimize for size, as ESP-IDF does by default (CONFIG_COMPILER_OPTIMIZATION_SIZE)
++        # and Arduino's platform.txt does: without an -O here every C/C++ target built
++        # with this toolchain compiled -O0 (no compilation mode adds one). A target's
++        # own copts come later on the command line, so one can still ask for -O2.
++        "-Os",
+         "-ffunction-sections",
+         "-fdata-sections",
+         "-no-canonical-prefixes",

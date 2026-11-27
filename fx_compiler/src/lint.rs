@@ -202,7 +202,8 @@ impl Lint {
             msg: format!(
                 "warning: `time` scaled by {what} is used as a phase (in {used}): moving the `{u}` slider \
                  rescales ALL elapsed time, so the effect jumps (by Δ{x} × time). Integrate the rate in \
-                 update() instead — `state float {ph};` and `{ph} = fract({ph} + dt * {x});` — then use \
+                 update() instead — `shared state float {ph};` (shared: a fixture that rejoins a mesh keeps \
+                 it in step) and `{ph} = fract({ph} + dt * {x});` — then use \
                  `{ph}` where `time * {x}` was (one phase per rate; keep constant factors inside: \
                  `dt * {x} * 0.5`).{epoch}"
             ),

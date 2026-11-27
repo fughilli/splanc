@@ -212,6 +212,7 @@ export function Slider(opts: {
   label: string;
   min: number;
   max: number;
+  /** The grid; 0 = continuous (`step="any"`). */
   step: number;
   value: number;
   format?: (v: number) => string;
@@ -237,7 +238,9 @@ export function Slider(opts: {
   input.type = "range";
   input.min = String(opts.min);
   input.max = String(opts.max);
-  input.step = String(opts.step);
+  // step 0 = continuous (a float uniform's native precision); the HTML
+  // default for a missing/zero step would be 1.
+  input.step = opts.step > 0 ? String(opts.step) : "any";
   input.value = String(opts.value);
   input.addEventListener("input", () => {
     const v = parseFloat(input.value);

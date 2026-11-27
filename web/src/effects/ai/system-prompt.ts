@@ -11,8 +11,13 @@
 
 import { BUILTINS, CONTEXTS, TYPES } from "../editor/lang-spec";
 
-const builtinTable = BUILTINS.map((b) => `  ${b.sig}  — ${b.doc}`).join("\n");
-const typeTable = TYPES.filter((t) => t.name !== "void" && t.name !== "Led")
+// The effect prompt lists only what an effect can use: the sensor-driver
+// intrinsics (i2c_*, gpio_*, fire) are inert outside a driver's poll().
+const EFFECT_BUILTINS = BUILTINS.filter((b) => b.scope !== "driver");
+const builtinTable = EFFECT_BUILTINS.map((b) => `  ${b.sig}  — ${b.doc}`).join("\n");
+// Value types only: not void/Led (program structure) or the buffer-only int8/int16.
+const PROMPT_TYPES = TYPES.filter((t) => !["void", "Led", "int8", "int16"].includes(t.name));
+const typeTable = PROMPT_TYPES
   .map((t) => `  ${t.name} — ${t.doc}`)
   .join("\n");
 const contextTable = CONTEXTS.map(
@@ -98,19 +103,17 @@ void update() {
 }
 vec3 shade(Led led) { return base * glow; }
 
-EXAMPLE 4 — agents simulated in update() with a struct array (a per-LED loop multiplies its body by the trip count, so keep it short and in fixed point):
+EXAMPLE 4 — agents seeded once in init() and simulated in update() with a struct array (a per-LED loop multiplies its body by the trip count, so keep it short and in fixed point):
 struct Agent { fixed pos; fixed vel; vec3 col; };
 state Agent agents[4];
-state bool inited;
-void update() {
-  if (!inited) {
-    for (int i = 0; i < 4; i = i + 1) {
-      agents[i].pos = fixed(hash(float(i)));
-      agents[i].vel = fixed(0.1 + hash(float(i) * 3.0) * 0.3);
-      agents[i].col = hsv2rgb(hash(float(i) * 7.0), 0.9, 1.0);
-    }
-    inited = true;
+void init() {
+  for (int i = 0; i < 4; i = i + 1) {
+    agents[i].pos = fixed(hash(float(i)));
+    agents[i].vel = fixed(0.1 + hash(float(i) * 3.0) * 0.3);
+    agents[i].col = hsv2rgb(hash(float(i) * 7.0), 0.9, 1.0);
   }
+}
+void update() {
   for (int i = 0; i < 4; i = i + 1) {
     agents[i].pos = fract(agents[i].pos + agents[i].vel * fixed(dt));
   }
@@ -150,14 +153,14 @@ UNIFORM SYNTAX (expose the interesting parameters as uniforms with sensible rang
 - dropdown: uniform int mode : {"fire","ice"} = 0;
 - toggle:   uniform bool invert = false;
 
-STATE: \`state\` variables persist across frames — written by update(), read-only in shade(). Use them for phases/integrators.
+STATE: \`state\` variables persist across frames — written by update(), read-only in shade(). Use them for phases/integrators. They start at zero, or at an initial value that is a compile-time constant (\`state float level = 0.5;\`, \`state vec3 c = vec3(0.1, 0.2, 0.3);\`; never a uniform, time or another state). Optional \`void init() { ... }\` runs once when the effect loads — seed arrays/structs and anything computed from uniforms there.
 
 RATE CONTROLS — A COMMON BUG, NEVER DO IT: a uniform that sets a speed/rate/frequency must NOT multiply \`time\` inside a phase (\`fract(led.s - time * speed)\`, \`sin(time * rate)\`). \`time * speed\` rescales ALL the elapsed time, so moving the slider jumps the phase by Δspeed × time — after minutes of uptime the effect stutters wildly while the knob moves. Integrate each rate in update() as its OWN \`state\` phase, wrapped with fract so float precision stays bounded:
   state float ph;                                  // one phase per rate uniform
   void update() { ph = fract(ph + dt * speed); }   // dt = seconds since the last frame
 then use ph in shade(): \`fract(led.s - ph)\` (scrolling), \`sin(ph * 6.2832)\` (oscillator; float sin is radians), \`hsv2rgb(fract(led.dist + ph), 0.9, 1.0)\`. Constant factors go inside (\`dt * speed * 0.5\`). A non-periodic offset (scrolling noise) integrates without fract: \`drift = drift + dt * speed;\`. Fixed point: \`state fixed ph;\` + \`ph = fract(ph + fixed(dt) * fixed(speed));\`, then \`sin(fixed16(ph))\` (LUT, angle in turns). Plain \`time\` with no knob scaling it is fine (\`fract(led.s - time)\`, \`sin(time * 0.7)\`). The compiler reports rate × time as a "warning:" — fix it like an error.
 
-STRUCTS & ARRAYS: declare composite types with \`struct Name { float a; vec3 b; };\` (scalar/vec fields) and fixed-size arrays with \`Type name[N];\`. Arrays index with \`a[i]\` (a runtime int index is fine, one per access) and struct fields with \`.field\`. Put an array of structs in \`state\` to simulate agents/particles across frames (seed them once behind a \`state bool\` flag, then advance them in a \`for\` loop). Keep totals modest — state and locals are each capped near 128 slots.
+STRUCTS & ARRAYS: declare composite types with \`struct Name { float a; vec3 b; };\` (scalar/vec fields) and fixed-size arrays with \`Type name[N];\`. Arrays index with \`a[i]\` (a runtime int index is fine, one per access) and struct fields with \`.field\`. Put an array of structs in \`state\` to simulate agents/particles across frames (seed them once in \`void init()\`, then advance them in update() with a \`for\` loop). Keep totals modest — state and locals are each capped near 128 slots.
 
 BUFFERS: \`buffer vec3 trail;\` declares a hidden per-LED buffer (one element per LED, numeric scalar/vec) that persists across frames — like \`state\`, but sized to the whole LED raster instead of a single slot. Read/write with \`trail[i]\`, i an int LED index (0..led.count-1). Ideal for feedback effects: in shade() do \`vec3 p = trail[led.idx]; vec3 v = p * 0.9 + spark; trail[led.idx] = v; return v;\` for decaying trails/persistence-of-vision. Unlike \`state\`, a buffer MAY be written from shade() (each LED owns its slot). Always index it — a bare \`trail\` is an error.
 
@@ -173,6 +176,12 @@ SENSORS (motion-reactive effects): a fixture with an IMU writes these uniforms e
 - \`uniform float imu_tap : 0.0 .. 1000.0 = 0.0;\` and \`imu_shake_count\` — COUNTERS: keep a \`state float\` copy and fire an event in update() when the uniform exceeds it (e.g. a flash on each tap).
 Use them only when the user asks for motion/tilt/shake/tap reactions.
 
+CLOCK (time-of-day effects): the lamp writes these LOCAL-time uniforms every frame when you declare them BY EXACT NAME (the preview feeds the phone's clock):
+- \`uniform float clock_day : 0.0 .. 1.0 = 0.5;\` — seconds since local midnight / 86400 (0.25 = 06:00, 0.5 = noon, 0.75 = 18:00). Use it for anything that follows the day: \`float sun = smoothstep(0.25, 0.35, clock_day) * (1.0 - smoothstep(0.8, 0.9, clock_day));\`.
+- \`uniform vec4 clock = 12.0, 0.0, 0.0, 1.0;\` — (hour 0-23, minute 0-59, second 0-59.999, weekday 0-6 with Sunday = 0). \`uniform vec3 clock_date = 2026.0, 1.0, 1.0;\` — (year, month 1-12, day 1-31).
+- \`uniform float clock_valid : 0.0 .. 1.0 = 1.0;\` — 0 while the lamp's clock is not set (the others then keep their defaults): fall back to a neutral look.
+Never derive time of day from \`time\` (that is seconds since the effect started); keep \`time\`/\`dt\` for motion. Use these only when the user asks for time-of-day, daylight, sunrise/sunset or calendar looks.
+
 ${EXAMPLES}
 
 REPAIR: If you are given a previous script and compiler diagnostics, return a corrected script that fixes every error; change as little else as possible.`;
@@ -186,7 +195,7 @@ REPAIR: If you are given a previous script and compiler diagnostics, return a co
 // three of the four examples, cutting the prefix to roughly a third. Generated
 // from the SAME lang-spec tables, so it can never name a builtin the compiler
 // lacks. The full prompt still drives the cloud/WebGPU paths.
-const builtinSigList = BUILTINS.map((b) => b.sig).join("\n  ");
+const builtinSigList = EFFECT_BUILTINS.map((b) => b.sig).join("\n  ");
 
 export const SYSTEM_PROMPT_COMPACT = `You write effects for an LED-mapping runtime in a small GLSL-like language. Output ONLY a program using ONLY the built-ins listed below — no imports, no host APIs, no other functions.
 
@@ -195,7 +204,7 @@ STRUCTURE (both required):
 - \`vec3 shade(Led led)\` — runs per-LED; return linear RGB in 0..1.
 No recursion. \`for\` loops need compile-time-bounded trip counts.
 
-TYPES: ${TYPES.filter((t) => t.name !== "void" && t.name !== "Led").map((t) => t.name).join(", ")}
+TYPES: ${PROMPT_TYPES.map((t) => t.name).join(", ")}
 
 CONTEXTS (read-only globals):
 ${contextTable}
@@ -217,6 +226,8 @@ STATE & DATA:
 - \`texture vec3 img(64,64);\` — read \`sample(img, led.uv)\` (bilinear, uv in 0..1), write \`paint(img, uv, color);\`.
 
 SENSORS: for motion reactions declare by exact name (a knob when no IMU): \`uniform vec3 imu_gravity = 0.0, -1.0, 0.0;\` (unit down, map frame), \`uniform float imu_shake : 0.0 .. 1.0 = 0.0;\`, \`uniform float imu_tap : 0.0 .. 1000.0 = 0.0;\` (a counter: compare with a state copy), also imu_quat (vec4 w,x,y,z), imu_euler, imu_accel, imu_gyro.
+
+CLOCK: time-of-day looks declare by exact name (lamp's local time): \`uniform float clock_day : 0.0 .. 1.0 = 0.5;\` (0..1 over the day, 0.25 = 06:00), \`uniform vec4 clock\` (hour, minute, second, weekday), \`uniform float clock_valid\` (0 = unset). Never time of day from \`time\`.
 
 ${PERF_GUIDE_COMPACT}
 

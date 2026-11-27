@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "mesh-members",
+  "title": "Admit, remove and block mesh fixtures",
+  "summary": "A fixture asking to join your mesh waits for you to admit it. Remove a fixture, or block a lost one for good: the mesh changes its keys.",
+  "prs": [613, 594],
+  "route": "#/maps",
+  "demo": "device,meshadmin",
+  "framing": ["phone"],
+  "theme": "dark",
+  "setup": [
+    { "click": ".tab[data-tab='device']", "wait": 700 },
+    { "click": ".device-row:has-text('Living Room') button[title='Options']", "wait": 900 },
+    { "wait_for": ".mesh-pending-row button:has-text('Admit')" },
+    { "scroll": ".k-sheet:has(.mesh-section)", "by": 4000 }
+  ],
+  "steps": [
+    { "wait": 600 },
+    { "click": ".mesh-pending-row button:has-text('Admit')", "wait": 1500 },
+    { "click": ".mesh-member:has-text('Kitchen')", "wait": 900 },
+    { "click": ".mesh-sheet button:has-text('Block it for good')", "wait": 900 },
+    { "click": ".k-confirm button:has-text('Block for good')", "wait": 2200 }
+  ],
+  "tail_ms": 1200
+}

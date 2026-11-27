@@ -29,7 +29,8 @@ display/splanc_display/     the screen service (Python)
   updates.py                  the updaters' status files -> Updates (lenient), watcher, and
                               the request files the Updates page drops (image only)
   anim.py                     easing, gliding values, scene slides (retarget, never queue)
-  boot.py                     loads the pre-rendered boot animation (boot_frames.bin)
+  boot.py                     loads the pre-rendered boot animation (boot_frames.bin: intro + loop)
+  splash.py                   taking the screens over from the early boot splash (see "Boot splash")
   render_hdmi.py              1920x1080-grid status page, scaled to any framebuffer
   render_oled.py              1-bit pages on a 127x63 canvas (shifted on the 128x64 panel),
                               fixture list/detail, slides + overlays
@@ -44,6 +45,9 @@ tests/                      pytest suite + installer_test.sh
 tools/render_gallery.py     PNGs of every screen (+ boot/menu GIFs), for review and for the docs
 tools/gen_boot_frames.py    shared/brand/splash + web/public/icons/splanc.svg -> 1-bit boot frames
                             (a build step: //pi/bridge:boot_frames, and the image's splancPy)
+tools/gen_splash_assets.py  boot frames + stage texts -> splash_assets.h for the boot splash
+splash/splanc-splash.c      the early boot splash (static C, started from the image's initrd)
+splash/check_stream.py      its build check: its SH1106 bytes == luma.oled's
 ```
 
 ## OLED frame pacing
@@ -87,6 +91,95 @@ through three stages:
 
 The first key press out of the screensaver only wakes it. In the simulator, the
 Passive and Screensaver buttons jump straight to those stages.
+
+## Boot splash
+
+On the SD image the screens come alive from the initrd, seconds before Python can run, and
+splanc-display takes over without a visible seam. Nothing else ever shows on HDMI: no firmware
+rainbow (`disable_splash=1`), no boot menu (the firmware boots the kernel directly), and no
+kernel or systemd messages: `/dev/console` is the serial port, `quiet loglevel=3` (add
+`loglevel=7` to `cmdline.txt` for a verbose serial console), and `fbcon=map:9` keeps the text
+console off HDMI altogether, so tty1 (still a console, so that there always is one) and its
+login prompt never show (`image/nix/rpi.nix`). A boot that
+fails never falls back to showing logs either: it resets into the previous system,
+whose splash says so.
+
+1. **Stage 1** (`image/nix/splash.nix`, the scripted initrd): the kernel modules for the
+   header's SPI0 (`spi-bcm2835`, or `spi-dw-mmio` on the Pi 5's RP1) and `spidev` load with
+   the initrd's own, then `splanc-splash start` forks and returns at once (right after the
+   stage-1 watchdog, `splanc-wdt`). The child renames itself `@splanc-splash` (stage 1's kill
+   loop and systemd leave `@` processes alone), so it keeps running across the switch to the
+   real root. It drives the SH1106 like luma does (`/dev/spidev0.0` at 8 MHz, DC/RST through
+   the GPIO character device, luma's init sequence and page layout, rotated 180°) and, once
+   the KMS driver's framebuffer is there, HDMI on VT 8 in graphics mode. It never draws on
+   (or even opens) simpledrm's framebuffer, the firmware's, which vc4 unregisters from under
+   its users when it loads moments later in the initrd; `splanc.splash_fb=early` allows it.
+2. **What it shows** (`tools/gen_boot_frames.py`, from the approved
+   `shared/brand/splash/frames.json` samples; its README has the timeline): the logo intro
+   (the splash, the glide, the wordmark wipe, the LED row, the glint; 2 s), then a 1.2 s
+   "loading" loop (a head runs along the LED row), with a stage hint under it once the logo is
+   complete: Starting… (initrd), Loading system… (real root), Connecting… (NetworkManager up,
+   no default route), Starting bridge… (online), Almost ready… (the bridge wrote its status).
+   - **OLED:** exactly what splanc-display shows for its boot scene, `boot_frames.bin`,
+     played at 60 fps (every fourth frame of the 240 fps file; both play by the clock). The
+     stage texts are drawn glyph by glyph from the display's own font
+     (`tools/gen_splash_assets.py`; `tests/test_splash.py` checks them pixel for pixel
+     against `splash.draw_stage`).
+   - **HDMI:** the same animation in colour and anti-aliased, `--hdmi-out` (512×256, the
+     approved samples in their own colour at 60 fps from the `titleFrames`, palette-coded
+     deltas, ~260 KB, embedded in the binary), scaled to 3/4 of the screen and centred, its
+     stage text in DejaVu Sans. HDMI starts its intro when its framebuffer first appears
+     (about a second after the OLED), so it never starts mid-way.
+   - **A failed update** (`image/splanc_image/sysupdate.py`): booted the old system
+     while an update was being tried (the trial panicked, hung into the watchdog or lost
+     power): **Recovering…**; once the rollback is recorded, and on the boot after a rollback
+     that rebooted: **Rolled back to 1.x** (the version now running; "Rolled back" when the
+     card has never been updated). These replace the stage hints for the rest of that boot.
+     The updater leaves them in its state directory for the splash (`trial`,
+     `splash-notice`, plain text) and ages the notice out after the boot it was for.
+3. **Smoothness**: nice -10 (real-time stays opt-in unless measurements on a Pi show
+   stutter), `mlockall`, frames paced on `CLOCK_MONOTONIC` deadlines (`clock_nanosleep`
+   `TIMER_ABSTIME`; a late frame is skipped, the animation never drifts), only changed SH1106
+   pages and HDMI canvas pixels written. A frame is well under a millisecond of CPU on the
+   OLED; HDMI writes only what changed. `SCHED_FIFO` priority 10, pinned to the last core on
+   4-core boards, is opt-in (`splanc.splash_rt=1`): a real-time task is the one thing here
+   that could starve the rest of the boot, so it stays off until measured on a Pi.
+4. **Hand-off** (`display/splanc_display/splash.py`): splanc-display imports everything,
+   renders its first frames off-screen, then waits until the system is quiet (two 0.5 s
+   windows below 50% CPU across all cores and, where the kernel has PSI, CPU pressure
+   `some avg10` below 25%; at most 30 s, `SPLANC_DISPLAY_QUIET_MAX`). It renders its first
+   HDMI page into a file in the framebuffer's own format and sends `stop hdmi=1 page=<file>`
+   on the abstract socket `@splanc-splash`. **The splash animates into the app:** on HDMI the
+   page opens in a circle growing from the logo's mark (0.65 s) while the OLED keeps
+   animating; then the splash stops, closes spidev and the framebuffer, replies with the
+   animation's start time on `CLOCK_MONOTONIC`, its stage (and version) and the GPIO line
+   request for DC/RST (passed over the socket: released lines fall back to inputs and the
+   panel would reset), and exits. splanc-display opens the panel without reset/init/clear
+   (`hat.open_device(takeover=)`), continues the same animation from the same moment with
+   the same text to the end of that loop cycle, then slides to the first page; its first
+   HDMI frame is the page the splash just finished drawing. Only one process ever drives a
+   screen; the splash never touches the key GPIOs.
+5. **Without a splash** (Raspberry Pi OS, a restart of splanc-display, `splanc.splash=0`):
+   nothing listens on the socket and splanc-display starts as before.
+
+The flasher's `OLED=off|i2c` and `OLED_ROTATE` live on the boot partition, which the
+initrd can't read: until `splanc-flash-config` has run (early in stage 2) the splash
+assumes the defaults (SPI, rotated 180°); then it stops driving the panel for `off`/`i2c`
+and portrait rotations and flips for `OLED_ROTATE=0`. With no HAT fitted it writes to an
+empty SPI bus, which is harmless (see `hat.py`).
+
+It gives up after 600 s without a hand-off. Kernel command line: `splanc.splash=0` (off),
+`splanc.splash_oled=0` (HDMI only), `splanc.splash_fb=0` (OLED only), `splanc.splash_fb=early`
+(also simpledrm's framebuffer), `splanc.splash_rt=1` (`SCHED_FIFO`; with
+`splanc.splash_cpu=<n|-1>`), `splanc.splash_max=<s>`, `splanc.splash_stats=1` (frame timing
+to the kernel log every 10 s; a summary is always logged at the hand-off). Each one turns a
+single part off or on, so a problem on a board can be narrowed down from the command line.
+On the bridge: `dmesg | grep -E 'splanc-(splash|wdt)'` (start, stages, frame timing, the
+outro, hand-off; the watchdog hand-over),
+`journalctl -u splanc-display | grep -E 'took over|first'`,
+`splanc-splash bench 10` (pacing and the HDMI decode under the current load) and
+`SPLANC_DISPLAY_FRAME_STATS=1` in the service environment (the Python animation's frame
+intervals, to compare).
 
 ## The bridge contract
 
@@ -149,13 +242,14 @@ image/nix/bridge.nix        the appliance: users, splanc-bridge / splanc-display
                             agent self-update timer, optional SSH, read-mostly tuning
 image/nix/flash-config.nix  splanc-flash-config.service: applies the flasher's boot-partition files
 image/nix/improv.nix        splanc-improv.service: Improv-over-BLE WiFi provisioning from the phone app
-image/nix/rpi.nix           Pi bits: SPI + I2C + key pull-ups in config.txt, gpiochip perms, image name
+image/nix/rpi.nix           Pi bits: kernel loader, SPI + I2C + key pull-ups in config.txt, gpiochip perms, image name
 image/nix/lean.nix          size trims (no docs, rescue tools, nixpkgs source, ModemManager, gtk3)
 image/nix/packages.nix      agent bundle (agent-pin.json), Python env (luma from requirements.lock,
                             lgpio from its sdist), the display package with its vendored fonts
 image/nix/system-update.nix full-system OTA: splanc-system-update timer/service, the boot-time
                             health check + rollback (splanc-system-update-confirm), panic/watchdog
-image/nix/system-update-rpi.nix  Pi 5 tryboot mode + FAT generation limit
+image/nix/system-update-rpi.nix  Pi tryboot mode (all boards), U-Boot card migration, FAT generation limit
+image/nix/boot-watchdog.nix splanc-wdt: the hardware watchdog armed from stage 1 until systemd takes it
 image/nix/vm-test.nix       QEMU smoke test (generic aarch64 VM, same appliance modules)
 image/nix/vm-test-ota.nix   QEMU test of the system OTA (A -> B, bad keys, health-check rollback)
 image/splanc_image/         on-device Python: bootconfig.py (boot-partition settings),
@@ -305,19 +399,42 @@ job fails.
 check then tests exactly what boots next time, and rollback is clean. Downtime is one reboot; the
 fixtures keep playing (they don't depend on the bridge), only remote control pauses.
 
-- **Pi 5, `tryboot`:** the firmware boots `nixos/default/` straight from the FAT partition. The
-  updater leaves that (and `config.txt`) on the old system, has the old system's installer add
-  `nixos/<N>-default/` for the new generation, writes `tryboot.txt` (the new `config.txt` with
-  `os_prefix=nixos/<N>-default/`) and reboots with `reboot "0 tryboot"`: the firmware uses it for
-  that one boot only. Only a passing health check makes the new system the default. So anything
-  that stops the new system before the commit (kernel panic → `panic=10`, stage-1 failure →
-  `boot.panic_on_fail`, a hang → the 15 s hardware watchdog, a power cut) boots the old system
-  again, which notices and rolls back. The FAT partition keeps one older generation (default +
-  newest, ~50 MB each) because the default of four would fill the 256 MB partition.
-- **Pi 3 / Pi 4 / Zero 2 W, `reboot`:** U-Boot/extlinux has no one-shot entry, so the new
-  generation is the default before the reboot. Rollback needs the new system to reach the health
-  check; a system that can't boot at all can't roll itself back (choose the previous entry on the
-  U-Boot console, or reflash).
+- **`tryboot`, every board** (the Pi 5 since #412, every board after 1.2): the firmware boots
+  `nixos/default/` straight from the FAT partition (nixos-raspberrypi's generational `kernel`
+  loader, `image/nix/rpi.nix`; no U-Boot, no boot menu). The updater leaves that (and
+  `config.txt`) on the old system, has the old system's installer add `nixos/<N>-default/` for the
+  new generation, writes `tryboot.txt` (the new `config.txt` with `os_prefix=nixos/<N>-default/`)
+  and reboots with `reboot "0 tryboot"`: the firmware uses it for that one boot only. Only a
+  passing health check makes the new system the default. So anything that stops the new system
+  before the commit boots the old system again, which notices and rolls back: a kernel panic
+  (`panic=10`), a stage-1 failure (`boot.panic_on_fail`), a stall before systemd (the stage-1
+  watchdog, below), a hang after it (the 15 s hardware watchdog systemd pets; on the trial boot a
+  soft lockup, a task hung for 2 min or an RCU stall also panics: `TRIAL_KERNEL_PARAMS`, added to
+  the trial's `cmdline.txt` only), a power cut. The FAT partition keeps one older generation
+  (default + newest, ~50 MB each) because the default of four would fill the 256 MB partition.
+- **Cards still on U-Boot** (Pi 3 / Pi 4 / Zero 2 W flashed with 1.2 or older): their updater predates
+  this and installs in `reboot` mode (`<new>/bin/switch-to-configuration boot`, plain reboot). The
+  new system's boot loader installer (`image/nix/system-update-rpi.nix`) turns that into a trial
+  too: while `config.txt` still boots U-Boot and the running system isn't the one being
+  installed, it writes the generational layout next to U-Boot, the new `config.txt` as
+  `tryboot.txt` (not `config.txt`), and `0 tryboot` as systemd's reboot parameter. The card boots
+  the kernel loader once; any failure resets into U-Boot and the old system, whose updater rolls
+  back as for any update that didn't come up. The new system's commit writes the kernel loader's
+  `config.txt`. A board whose firmware ignored `tryboot` would simply never boot the trial: the
+  update is rolled back and nothing changes.
+- **`reboot`** (generic: the VM tests): the new generation is the boot default before the reboot,
+  so rollback needs the new system to reach the health check.
+
+**Stage-1 watchdog** (`image/nix/boot-watchdog.nix`, `splash/splanc-wdt.c`). systemd only opens
+the hardware watchdog once it is PID 1, so until 1.2 nothing reset a board that stalled without
+panicking in the initrd, the root mount or stage 2's activation. `splanc-wdt start` is stage 1's
+first hook: it arms `/dev/watchdog0` (15 s), pets it while the boot goes on (`@splanc-wdt`
+survives the switch to the real root), and as soon as PID 1 is systemd closes it without the magic
+close, so it stays armed until systemd (which retries the device every 7.5 s) takes it over. At
+`splanc.boot_deadline=` (180 s after power-on, 600 s more on the first boot, which registers the
+Nix store and grows the root partition) it stops petting: a boot that hasn't reached systemd by
+then resets. `splanc.wdt=0` turns it off for one boot (also off when `systemd.watchdog_device=`
+names another device).
 
 **Signing key.** `ota-public-keys.txt` (committed) is baked into the image; the secret key lives
 only in the `BRIDGE_NIX_SIGNING_KEY` secret of the GitHub environment `Bridge release`, which only
@@ -548,6 +665,9 @@ under Bazel, which has neither; run it in a venv that has the lockfile plus `gpi
 | Image: Improv WiFi: phone-app RPC bytes -> Pi codec -> keyfile byte-identical to the flasher's (tricky SSIDs/PSKs), add vs dedupe, fresh scan + join, hidden fallback, rollback on failure                             | `//pi/bridge/image:image_py_test` (fake nmcli)                                                                                                     |
 | Image: boots; flash config applied; bridge on the baked bundle, then self-updated onto a newer one with the flash-time relay; NetworkManager reads the flasher's tricky keyfile exactly; HDMI page renders; CLI        | `checks.aarch64-linux.vm` (QEMU, generic aarch64; CI `vm-test` job)                                                                                |
 | Image: Improv-stored networks read back exactly by NetworkManager; real-nmcli failed join leaves the store untouched; no BT adapter, no service                                                                        | `checks.aarch64-linux.vm`                                                                                                                          |
+| Boot splash: its SH1106 init + page bytes equal luma.oled's for the same frame; pacing (bench)                                                                                                                         | `checks.aarch64-linux.splash` (the package's check)                                                                                                |
+| Boot splash: starts in stage 1, survives switch_root, follows the stages, hands over before splanc-display's first frame; frame timing under load                                                                      | `checks.aarch64-linux.vm` (no SPI/HDMI devices in QEMU: OLED and fb paths are not exercised there)                                                 |
+| Hand-off protocol (fd passing, quiet wait), looping boot frames, continued animation + stage text, takeover without reset/init                                                                                         | `display_test` (`test_splash.py`); `test_luma_gpiozero.py` with real luma                                                                          |
 | Image: every board evaluates and builds; config.txt has SPI/I2C/pull-ups; size budget                                                                                                                                  | CI `image` job (and `nix eval` locally)                                                                                                            |
 | Flasher: disk filtering, raw write + read-back, progress protocol, elevation wrappers, keyfile/conf rendering round-tripped through the image's parser, release lookup, download + checksum + unpack, sidecar protocol | `//pi/bridge/flasher:flasher_test`; again on each OS before packaging                                                                              |
 | Units                                                                                                                                                                                                                  | `systemd-analyze verify` with Bookworm's systemd 252 (clean), plus `security --offline`                                                            |
@@ -555,6 +675,8 @@ under Bazel, which has neither; run it in a venv that has the lockfile plus `gpi
 
 Not yet verified on hardware:
 
+- the boot splash on a real Pi: SPI + GPIO from the initrd, the simpledrm -> vc4
+  framebuffer switch, the seamless OLED takeover (no reset, no flash);
 - the physical SH1106 panel: orientation (`OLED_ROTATE=2` is derived from the scan-direction
   registers in Waveshare's driver), contrast and burn-in behaviour;
 - key debounce on real switches;

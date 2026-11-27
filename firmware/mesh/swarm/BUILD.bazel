@@ -48,8 +48,13 @@ SRCS = glob(["src/*.rs"])
 rust_library(
     name = "swarm_net",
     srcs = SRCS,
-    # Host builds (tests, meshsim, Pi nodes) carry the custodian spill; firmware does not.
-    crate_features = ["custodian_spill"],
+    # Host builds (tests, meshsim, Pi nodes) carry the custodian spill (firmware does not), the
+    # firmware image updater and swarm settings bundles (both on the C6 too, desk D-463).
+    crate_features = [
+        "custodian_spill",
+        "fw_update",
+        "swarm_settings",
+    ],
     crate_root = "src/lib.rs",
     edition = "2021",
     target_compatible_with = _HOST_ONLY,
@@ -65,6 +70,11 @@ rust_test(
     name = "swarm_net_test",
     size = "small",
     crate = ":swarm_net",
+    crate_features = [
+        "custodian_spill",
+        "fw_update",
+        "swarm_settings",
+    ],
     data = ["proto/testdata/swarm_wire_golden.txt"],
     edition = "2021",
     env = {"SWARM_WIRE_GOLDEN": "$(rootpath proto/testdata/swarm_wire_golden.txt)"},
@@ -73,7 +83,13 @@ rust_test(
 rust_library(
     name = "swarm_net_fw",
     srcs = SRCS,
-    crate_features = ["mbedtls"],
+    # The C6 keeps the firmware image updater and settings bundles (desk D-463: OTA over the
+    # mesh comes back on them).
+    crate_features = [
+        "fw_update",
+        "mbedtls",
+        "swarm_settings",
+    ],
     crate_name = "swarm_net",
     crate_root = "src/lib.rs",
     edition = "2021",

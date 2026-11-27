@@ -19,7 +19,6 @@ import { appState } from "../app/state";
 import { deviceStore } from "../../store/deviceStore";
 import {
   PRESETS,
-  DEFAULT_PROFILE,
   buildLut,
   inverseLut,
   transfer,
@@ -31,6 +30,7 @@ import {
   GAMMA_MAX,
   type GammaProfile,
 } from "../../color/correction";
+import { loadProfile, saveProfile } from "../../color/activeProfile";
 import { installColorCorrectionStyles } from "./colorCorrection.css";
 import { loadBrightness, saveBrightness } from "../../store/brightnessSetpoint";
 import { compileScript } from "../../fx/preview";
@@ -41,35 +41,10 @@ const CHANNELS = ["R", "G", "B"] as const;
 const CH_COLOR = ["#ff5d5d", "#57d16a", "#5d8bff"];
 const PUSH_DEBOUNCE_MS = 200;
 
-/** Per-device persistence of the last-used profile: the UI remembers what was
- * last dialed in for a fast first paint and an offline fallback. On open, if a
- * device is connected, get_color_correction hydrates the authoritative current
- * values over this (see hydrateFromDevice). */
-function storeKey(deviceId: string): string {
-  return `cc:profile:${deviceId}`;
-}
-function loadProfile(deviceId: string | null): GammaProfile {
-  if (deviceId) {
-    try {
-      const raw = localStorage.getItem(storeKey(deviceId));
-      if (raw) {
-        const p = JSON.parse(raw) as GammaProfile;
-        if (Array.isArray(p.gamma) && Array.isArray(p.luminance)) return cloneProfile(p);
-      }
-    } catch {
-      /* fall through to default */
-    }
-  }
-  return cloneProfile(DEFAULT_PROFILE);
-}
-function saveProfile(deviceId: string | null, p: GammaProfile): void {
-  if (!deviceId) return;
-  try {
-    localStorage.setItem(storeKey(deviceId), JSON.stringify(p));
-  } catch {
-    /* storage full / disabled — non-fatal */
-  }
-}
+// Per-device persistence of the last-used profile (color/activeProfile.ts):
+// the UI remembers what was last dialed in for a fast first paint and an
+// offline fallback. On open, if a device is connected, get_color_correction
+// hydrates the authoritative current values over this (see hydrateFromDevice).
 
 export function ColorCorrectionScreen(_router: Router): Screen {
   installColorCorrectionStyles();

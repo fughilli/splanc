@@ -556,12 +556,19 @@ pub const C_ROOM_MIN: u8 = 14; // 3 — room bounding box (room frame, m)
 pub const C_ROOM_MAX: u8 = 15; // 3
 
 pub const MAGIC: [u8; 4] = *b"FXB1";
-/// The `.fxb` format version this VM executes: the header's version byte (offset
-/// 4). The compiler stamps it, `Program::parse` rejects any other value (the
-/// firmware answers `bad_fxb`), and the device reports it (welcome.fxb_format, the
-/// agent manifest's protocol.fxb_format) so a host toolchain can check it emits
-/// what the device runs.
-pub const FORMAT_VERSION: u8 = 1;
+/// The newest `.fxb` format version this VM executes: the header's version byte
+/// (offset 4). The compiler stamps each effect with the oldest format that
+/// describes it, `Program::parse` accepts [`MIN_FORMAT_VERSION`]..=this and
+/// rejects anything else (the firmware answers `bad_fxb`), and the device
+/// reports it (welcome.fxb_format, the agent manifest's protocol.fxb_format) so
+/// a host can tell before uploading whether the device runs an effect.
+///
+/// Format 2 (D-541/D-557) is format 1's bytecode with newer uniform widget kinds
+/// in the manifest (`vector`, `direction`, ...): firmware older than this
+/// refuses such an effect rather than mishandling its controls.
+pub const FORMAT_VERSION: u8 = 2;
+/// The oldest `.fxb` format this VM still executes (every format-1 effect).
+pub const MIN_FORMAT_VERSION: u8 = 1;
 pub const NO_ENTRY: u16 = 0xFFFF;
 
 /// A parsed program, borrowing the `.fxb` byte buffer.
@@ -590,6 +597,8 @@ pub struct Program<'a> {
     /// per-LED `Program::parse` on the firmware's shade path stays as cheap as
     /// it was (decoding it eagerly cost fx_bench ~300 cycles/LED).
     memo_trailer: &'a [u8],
+    /// The shared-state footer's `(slot, width)` pairs (empty when absent).
+    shared: &'a [u8],
 }
 
 /// flags bit: a buffer descriptor table follows `code` in the `.fxb`.
@@ -622,6 +631,21 @@ pub const FLAG_DRIVER: u8 = 0x10;
 ///    per frame. Hosts that don't bind one run the original code unchanged.
 /// (0x10 is FUG-107's [`FLAG_DRIVER`].)
 pub const FLAG_MEMO: u8 = 0x20;
+/// flags bit: a `shared state` footer ends the file — `(slot u8, width u8) × n, n u8`
+/// — naming the state ranges a mesh rejoin copies from the gateway's VM
+/// ([`Program::shared_state`], [`Vm::snapshot_shared`]). At the very end, so nothing
+/// before it moves: a host that predates it ignores the flag and the bytes.
+pub const FLAG_SHARED_STATE: u8 = 0x40;
+/// flags bit (D-500): the program has state initial values / `void init()`. Its
+/// update() entry (a driver's: poll()) starts with the init guard
+/// `LoadState done 1; BrFalse I`; `I` is `PushConst 1; StoreState done 1` (the
+/// first-update path), and the init code follows it. That code ends by
+/// re-testing `done`: still 0 (entered past `I` by [`Vm::run_init`]) it returns,
+/// else it continues into update(). A host runs it when it loads the program, so
+/// init happens at load, before anything else writes the state; a host that
+/// doesn't still gets it from the guard on the first update(). No extra bytes:
+/// a host that predates the flag ignores it.
+pub const FLAG_INIT: u8 = 0x80;
 /// Most memo words one program may request per LED (the validity mask is one
 /// bit per word, at most 4 bytes).
 pub const LED_CACHE_MAX_WORDS: usize = 32;
@@ -804,7 +828,7 @@ impl<'a> Program<'a> {
         if buf[0..4] != MAGIC {
             return Err(ParseErr::BadMagic);
         }
-        if buf[4] != FORMAT_VERSION {
+        if !(MIN_FORMAT_VERSION..=FORMAT_VERSION).contains(&buf[4]) {
             return Err(ParseErr::BadVersion);
         }
         let flags = buf[5];
@@ -840,6 +864,14 @@ impl<'a> Program<'a> {
         } else {
             &[]
         };
+        // Optional shared-state footer (FLAG_SHARED_STATE), from the end of the file.
+        let shared = if flags & FLAG_SHARED_STATE != 0 {
+            let n = *buf.last().ok_or(ParseErr::TooShort)? as usize;
+            let start = buf.len().checked_sub(1 + 2 * n).filter(|&s| s >= o).ok_or(ParseErr::TooShort)?;
+            &buf[start..buf.len() - 1]
+        } else {
+            &[]
+        };
         Ok(Program {
             consts,
             code,
@@ -852,7 +884,35 @@ impl<'a> Program<'a> {
             buffers,
             flags,
             memo_trailer,
+            shared,
         })
+    }
+
+    /// The `shared state` ranges `(slot, width)`, clamped to the state the program
+    /// declares (a malformed entry is dropped, never read out of bounds).
+    pub fn shared_state(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let n_state = self.n_state as usize;
+        self.shared
+            .chunks_exact(2)
+            .map(|c| (c[0] as usize, c[1] as usize))
+            .filter(move |&(s, w)| w > 0 && s + w <= n_state && s + w <= MAX_STATE)
+    }
+
+    /// Words of shared state (what a snapshot carries).
+    pub fn shared_words(&self) -> usize {
+        self.shared_state().map(|(_, w)| w).sum()
+    }
+
+    /// A hash of the program's code, consts and state layout: a snapshot taken from one
+    /// build of an effect is only restored into the same build (FNV-1a, 32 bit).
+    pub fn layout_hash(&self) -> u32 {
+        let mut h: u32 = 0x811c_9dc5;
+        let mut eat = |b: u8| h = (h ^ b as u32).wrapping_mul(0x0100_0193);
+        for &b in self.code.iter().chain(self.consts.iter()).chain(self.shared.iter()) {
+            eat(b);
+        }
+        eat(self.n_state);
+        h
     }
 
     /// The per-frame PREPARE entry (NO_ENTRY if absent): code the compiler
@@ -1294,6 +1354,65 @@ impl Default for Vm {
 }
 
 impl Vm {
+    /// Copy the program's `shared state` words into `out`, range by range in footer
+    /// order (raw f32 bits: ints and fixed ride in the same slots). Returns the words
+    /// written (stops when `out` is full).
+    pub fn snapshot_shared(&self, prog: &Program, out: &mut [u32]) -> usize {
+        let mut n = 0;
+        for (s, w) in prog.shared_state() {
+            for i in s..s + w {
+                if n == out.len() {
+                    return n;
+                }
+                out[n] = self.state[i].to_bits();
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Each `shared state` word in footer order (what [`Vm::snapshot_shared`] copies),
+    /// for a writer that streams it out (no buffer).
+    pub fn each_shared_word(&self, prog: &Program, mut f: impl FnMut(u32)) {
+        for (s, w) in prog.shared_state() {
+            for i in s..s + w {
+                f(self.state[i].to_bits());
+            }
+        }
+    }
+
+    /// [`Vm::restore_shared`] from the wire form: the words little-endian, 4 bytes each.
+    pub fn restore_shared_le(&mut self, prog: &Program, le: &[u8]) -> bool {
+        if le.len() != 4 * prog.shared_words() {
+            return false;
+        }
+        let mut words = le.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+        for (s, w) in prog.shared_state() {
+            for i in s..s + w {
+                if let Some(x) = words.next() {
+                    self.state[i] = f32::from_bits(x);
+                }
+            }
+        }
+        true
+    }
+
+    /// Write a [`Vm::snapshot_shared`] of the same program back into `state`. Returns
+    /// false (and writes nothing) unless `words` is exactly the program's shared size.
+    pub fn restore_shared(&mut self, prog: &Program, words: &[u32]) -> bool {
+        if words.len() != prog.shared_words() {
+            return false;
+        }
+        let mut n = 0;
+        for (s, w) in prog.shared_state() {
+            for i in s..s + w {
+                self.state[i] = f32::from_bits(words[n]);
+                n += 1;
+            }
+        }
+        true
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -1628,7 +1747,60 @@ impl Vm {
         frame: &Frame,
         budget: &Budget,
     ) -> (Outcome, Counters) {
-        if prog.update_entry == NO_ENTRY {
+        self.run_frame_code(prog, frame, budget, prog.update_entry)
+    }
+
+    /// The init code of a [`FLAG_INIT`] program: `(done flag slot, entry)`,
+    /// or `None` when it has none (or the guard isn't where the flag says).
+    pub fn init_entry(prog: &Program) -> Option<(usize, usize)> {
+        if prog.flags & FLAG_INIT == 0 || prog.flags & FLAG_DRIVER != 0 {
+            return None;
+        }
+        let code = prog.code;
+        let e = prog.update_entry as usize;
+        if code.get(e) != Some(&(Op::LoadState as u8)) || code.get(e + 2) != Some(&1) {
+            return None;
+        }
+        if code.get(e + 3) != Some(&(Op::BrFalse as u8)) {
+            return None;
+        }
+        let rel = i16::from_le_bytes([*code.get(e + 4)?, *code.get(e + 5)?]) as isize;
+        let i = (e as isize + 6 + rel) as usize;
+        let done = code[e + 1];
+        if code.get(i) != Some(&(Op::PushConst as u8))
+            || code.get(i + 3) != Some(&(Op::StoreState as u8))
+            || code.get(i + 4) != Some(&done)
+            || code.get(i + 5) != Some(&1)
+        {
+            return None;
+        }
+        let s = i + 6;
+        (s < code.len() && (done as usize) < prog.n_state as usize).then_some((done as usize, s))
+    }
+
+    /// D-500: run the program's state initial values and `void init()` now — call
+    /// it when the program is loaded into this VM (fresh state, uniforms set),
+    /// before anything else writes the state, so a later restore (a mesh
+    /// catch-up's `shared state`) wins over init and the first update() doesn't
+    /// re-run it. `frame` is what init() reads as time/dt/frame. Returns false
+    /// (and runs nothing) when the program has no init or it already ran; such a
+    /// program initialises on its first update() instead.
+    pub fn run_init(&mut self, prog: &Program, frame: &Frame, budget: &Budget) -> bool {
+        let Some((done, s)) = Self::init_entry(prog) else { return false };
+        if self.state[done] != 0.0 {
+            return false;
+        }
+        // Entered past the `done = 1` store, the init code returns at its end
+        // instead of continuing into update(). Then mark it done (also when the
+        // budget cut it off: it is not retried every frame).
+        self.run_frame_code(prog, frame, budget, s as u16);
+        self.state[done] = 1.0;
+        true
+    }
+
+    /// Run frame-level code (update(), or the init code) from `entry`.
+    fn run_frame_code(&mut self, prog: &Program, frame: &Frame, budget: &Budget, entry: u16) -> (Outcome, Counters) {
+        if entry == NO_ENTRY {
             return (Outcome::Ok, Counters::default());
         }
         let led = Led::default();
@@ -1666,7 +1838,7 @@ impl Vm {
             &mut self.stack,
             &mut self.locals,
             &mut self.call_stack,
-            prog.update_entry as usize,
+            entry as usize,
             budget,
             self.jit_blocks,
             self.jit_len,

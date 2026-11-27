@@ -27,6 +27,9 @@ import { RESYNC_MS, TimeDiscipline, deviceEpochs, skewBoundMs, type ClockSync, t
 import { Toolchains, type ToolchainChoice } from "./toolchain";
 import { decideTrust, trustError, trusted } from "./trust";
 
+/** How often a player's last-used time is saved to the config (Hub.markUsed). */
+const USED_SAVE_MS = 10 * 60_000;
+
 export type Selector = string | string[] | undefined;
 
 type WelcomeOf = Awaited<ReturnType<DeviceSession["connect"]>>;
@@ -172,6 +175,7 @@ export class Hub {
   }
 
   private readonly persistConfig: () => void;
+  private readonly used = new Map<string, number>();
 
   /** A hub around one already-connected session (no discovery, no persistence):
    * the single-player bridge, and the tests' MCP surface. */
@@ -781,6 +785,24 @@ export class Hub {
     return this.session(p);
   }
 
+  /** Someone used this player just now (a tool call addressed to it, or the app's
+   * live controls): the screens list fixtures most recently used first. Kept in
+   * memory exactly; saved to the config at most every USED_SAVE_MS per player, so
+   * a performer's 60 Hz fader doesn't rewrite the SD card. */
+  markUsed(id: string, now = Date.now()): void {
+    this.used.set(id, now);
+    const rem = this.config.players[id];
+    if (!rem) return;
+    if (now - (rem.used ?? 0) * 1000 < USED_SAVE_MS) return;
+    rem.used = Math.floor(now / 1000);
+    this.persistConfig();
+  }
+
+  /** When this player was last used (ms since the epoch; 0 = never). */
+  lastUsed(id: string): number {
+    return Math.max(this.used.get(id) ?? 0, (this.config.players[id]?.used ?? 0) * 1000);
+  }
+
   toolchainNote(id: string): string | undefined {
     return this.choice.get(id)?.note;
   }
@@ -807,6 +829,7 @@ export class Hub {
           s = await this.session(p);
           const cur = this.registry.get(p.id) ?? [...this.registry.list()].find((r) => this.sessions.get(r.id) === s) ?? p;
           const live = this.liveness.get(s);
+          this.markUsed(cur.id);
           const off = s.hold("a tool call"); // never released mid-call (#444)
           try {
             const result = live ? await live.watch(fn(s, cur)) : await fn(s, cur);

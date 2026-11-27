@@ -84,6 +84,20 @@ pub struct ScenarioSpec {
     /// Decode-lock dead time after each phase switch (no frames), seconds.
     #[serde(rename = "deadS")]
     pub dead_s: f64,
+    /// "phased" (default: the `2S-1` phases above, a global step every
+    /// `phaseS`) or "rolling" (docs/design/rolling-stride.md: the kernel's
+    /// `stride_lit_rolling` at the pattern-clock frame — no phases, no global
+    /// dead time, no bridges; an LED is observed from its second own code
+    /// cycle in each dwell, the first being the decode's lead-in).
+    #[serde(rename = "strideMode")]
+    pub stride_mode: String,
+    /// Rolling: code cycle length, seconds (frames of the v1 code book for
+    /// `ledCount` LEDs at 4 symbols share it).
+    #[serde(rename = "cycleS")]
+    pub cycle_s: f64,
+    /// Rolling: dwell length D, code cycles.
+    #[serde(rename = "dwellCycles")]
+    pub dwell_cycles: u32,
     /// Probability an observation carries a wrong (random) LED id.
     #[serde(rename = "swapP")]
     pub swap_p: f64,
@@ -114,6 +128,9 @@ impl Default for ScenarioSpec {
             anchor_density: 3,
             phase_s: 6.0,
             dead_s: 0.0,
+            stride_mode: "phased".into(),
+            cycle_s: 0.4,
+            dwell_cycles: ledmapper_pattern::ROLLING_DWELL_DEFAULT,
             swap_p: 0.0,
             k: [800.0, 800.0, 640.0, 360.0],
             seed: 1,
@@ -316,6 +333,25 @@ pub fn generate(spec: &ScenarioSpec) -> Scenario {
         .collect();
 
     let stride = spec.stride.max(1);
+    let rolling = stride > 1 && spec.stride_mode == "rolling";
+    let code = ledmapper_pattern::CodeSpec::derive(leds.len() as u32, 4, true);
+    let rs = ledmapper_pattern::RollingStride::new(
+        stride as u32,
+        spec.anchor_density as u32,
+        spec.dwell_cycles,
+        leds.len() as u32,
+        0,
+    );
+    let bit_s = spec.cycle_s.max(1e-3) / code.cycle_frames as f64;
+    // Rolling: lit at pattern frame `seq`, past the first own cycle of its
+    // lit interval (that cycle is the decode's lead-in).
+    let rolling_seen = |j: usize, seq: u32| -> bool {
+        if !ledmapper_pattern::stride_lit_rolling(j as u32, seq, &code, &rs) {
+            return false;
+        }
+        let (start, _) = ledmapper_pattern::rolling_interval(j as u32, seq as i64, &code, &rs);
+        seq as i64 >= start + code.cycle_frames as i64
+    };
     let mut detections: Vec<Value> = Vec::new();
     for i in 0..(dur * spec.frame_hz) as usize {
         let t = i as f64 / spec.frame_hz;
@@ -323,13 +359,18 @@ pub fn generate(spec: &ScenarioSpec) -> Scenario {
             continue;
         }
         let phase_idx = (t / spec.phase_s).floor();
-        if stride > 1 && phase_idx > 0.0 && t - phase_idx * spec.phase_s < spec.dead_s {
+        if stride > 1 && !rolling && phase_idx > 0.0 && t - phase_idx * spec.phase_s < spec.dead_s {
             continue;
         }
+        let seq = (t / bit_s).floor() as u32;
         let phase = phase_idx as usize;
         let (p, r) = (pos(t), rot(t));
         for (j, l) in leds.iter().enumerate() {
-            if !stride_lit(j, phase, stride, spec.anchor_density) {
+            if rolling {
+                if !rolling_seen(j, seq) {
+                    continue;
+                }
+            } else if !stride_lit(j, phase, stride, spec.anchor_density) {
                 continue;
             }
             if let Some(ns) = &normals {

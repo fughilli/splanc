@@ -27,6 +27,7 @@ const CSS = `
 .bridge-cue { display:flex; gap:var(--sp-2); align-items:center; margin:var(--sp-2) 0; }
 .bridge-select { flex:1; min-width:0; padding:8px; border-radius:var(--sp-1); border:1px solid var(--border);
   background:var(--surface); color:var(--text); font:inherit; }
+.bridge-color { display:flex; flex-direction:column; gap:var(--sp-2); margin:var(--sp-3) 0; font-size:14px; }
 .bridge-row { display:flex; align-items:center; gap:var(--sp-2); margin:var(--sp-2) 0; font-size:14px; }
 .bridge-tools, .bridge-pads { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin-top:var(--sp-2); }
 .bridge-footer { display:flex; flex-direction:column; gap:var(--sp-2); margin-top:var(--sp-3); }

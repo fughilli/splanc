@@ -1,0 +1,59 @@
+"""The device wall clock: UTC civil time (unix µs <-> Y/M/D h:m:s, weekday), the
+software-RTC discipline (source offers with age-grown error, lowest-error
+selection, step > 1 s / slew below, sanity bounds, crystal-rate fit), the
+monotonic step-back guard, the soft-reset carry-over record, and POSIX TZ rules
+(D-562: the zone the lamp stores) behind the LocalOffset seam.
+
+no_std, zero-dependency, never allocates."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "clock",
+    srcs = [
+        "src/carry.rs",
+        "src/civil.rs",
+        "src/discipline.rs",
+        "src/guard.rs",
+        "src/lib.rs",
+        "src/local.rs",
+        "src/tz.rs",
+    ],
+    crate_name = "ledmapper_clock",
+    edition = "2021",
+    # Not on the render path (one i64 add per read): built for size on the ESP32 images.
+    rustc_flags = COLD_CRATE_RUSTC_FLAGS,
+)
+
+rust_test(
+    name = "civil_test",
+    srcs = ["tests/civil.rs"],
+    edition = "2021",
+    deps = [":clock"],
+)
+
+rust_test(
+    name = "discipline_test",
+    srcs = ["tests/discipline.rs"],
+    edition = "2021",
+    deps = [":clock"],
+)
+
+rust_test(
+    name = "guard_test",
+    srcs = ["tests/guard.rs"],
+    edition = "2021",
+    deps = [":clock"],
+)
+
+# tzdata vectors from Python zoneinfo: regenerate with tools/gen_tz_vectors.py.
+rust_test(
+    name = "tz_test",
+    srcs = ["tests/tz.rs"],
+    compile_data = ["tests/testdata/tz_vectors.txt"],
+    edition = "2021",
+    deps = [":clock"],
+)

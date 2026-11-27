@@ -1,7 +1,9 @@
 /**
  * Auto uniform panel (docs/design/effects-compiler.md §"live uniform panel"):
- * renders one control per manifest uniform (slider/color/toggle/dropdown; a
- * ranged vector gets one slider per component, a mat3/mat4 an N×N number grid)
+ * renders one control per manifest uniform (slider/HSV colour picker/toggle/dropdown; a
+ * ranged vector gets one slider per component, a `: vector` / `: direction`
+ * vec2/vec3 an XY pad / direction dial or sphere, a mat3/mat4 a Move / Rotate /
+ * Scale gizmo with its N×N number grid behind an "Advanced" disclosure)
  * and holds the live values. Preview and device consume the SAME values — dragging a
  * control fires `onChange(slot, value[])` with the exact numbers both sinks use.
  *
@@ -13,7 +15,20 @@
 
 import type { FxUiKind, FxUniform } from "../../fx/preview";
 import { reassembleUniformValues } from "../../net/uniformWire";
-import { clampUniformValue, componentRanges, isRangedVector, matIndex, matrixDim } from "../uniformValues";
+import { matKindOf, rotationAngle, decompose, type MatKind } from "../../geom/trs";
+import { MatSwatch } from "../../ui/kit/matGizmo";
+import { VectorSwatch, vectorSummary } from "../../ui/kit/vectorPicker";
+import {
+  clampUniformValue,
+  componentRanges,
+  isRangedVector,
+  matIndex,
+  matrixDim,
+  snapToStep,
+  stepAttr,
+} from "../uniformValues";
+import { toHex } from "../../color/hsv";
+import { ColorSwatch } from "../../ui/kit/hsvPicker";
 
 interface Slot {
   uniform: FxUniform;
@@ -38,7 +53,13 @@ export class UniformPanel {
     /** `label` renames controls for display (the Effects tab's tune sheet shows
      * "Base color" for `base_color`); the editor shows the raw names. `empty`
      * replaces the "No uniforms declared." line. */
-    private readonly opts: { label?: (name: string) => string; empty?: string } = {},
+    private readonly opts: {
+      label?: (name: string) => string;
+      empty?: string;
+      /** Once at the end of a gesture (a pad / slider release, a typed value):
+       * the place to persist (LiveControl.commit) without waiting for idle. */
+      onCommit?: (slot: number, value: number[]) => void;
+    } = {},
   ) {}
 
   private label(name: string): string {
@@ -102,6 +123,12 @@ export class UniformPanel {
     this.render();
   }
 
+  /** The end of a gesture on slot `slotIndex`: hand its value to onCommit. */
+  private commitSlot(slotIndex: number): void {
+    const s = this.slots[slotIndex];
+    if (s) this.opts.onCommit?.(s.uniform.slot, s.value.slice());
+  }
+
   private set(slotIndex: number, value: number[]): void {
     const s = this.slots[slotIndex];
     if (s === undefined) return;
@@ -133,7 +160,8 @@ export class UniformPanel {
   /** Append one uniform's three grid cells (name, control, value). The row is a
    * `display:contents` label so clicking the name targets the control. */
   private row(grid: HTMLElement, s: Slot, i: number): void {
-    const row = document.createElement(s.uniform.ui.kind === "matrix" ? "div" : "label");
+    const isMat = s.uniform.ui.kind === "matrix" || s.uniform.ui.kind === "transform2d";
+    const row = document.createElement(isMat ? "div" : "label");
     row.className = "upanel-row";
 
     const name = document.createElement("span");
@@ -141,10 +169,8 @@ export class UniformPanel {
     name.textContent = this.label(s.uniform.name);
     name.title = s.uniform.name;
 
-    if (s.uniform.ui.kind === "matrix") {
-      // The N×N grid spans the control + value columns.
-      row.append(name, this.matrix(s, i));
-      grid.appendChild(row);
+    if (isMat) {
+      this.matrixRows(grid, row, name, s, i);
       return;
     }
 
@@ -183,7 +209,7 @@ export class UniformPanel {
           const next = s.value.slice();
           next[c] = v;
           this.set(i, clampUniformValue(u, next));
-        }),
+        }, () => this.commitSlot(i)),
       );
       row.append(name, ctrl, value);
       grid.appendChild(row);
@@ -191,9 +217,60 @@ export class UniformPanel {
     this.setters.set(u.slot, (v) => movers.forEach((m, c) => m(v[c] ?? 0)));
   }
 
+  /** A mat3/mat4 (D-541 PR 10): a button opening the Move / Rotate / Scale
+   * gizmo (a full Sheet on phones, a popover on desktop) whose drags stream
+   * through onChange and commit on release, plus the raw N×N grid behind an
+   * "Advanced" disclosure on the next row. Both are registered in `setters`,
+   * so MIDI / the agent move them. */
+  private matrixRows(grid: HTMLElement, row: HTMLElement, name: HTMLElement, s: Slot, i: number): void {
+    const u = s.uniform;
+    const kind = matKindOf(u.width, u.ui.kind);
+    const ranges = componentRanges(u) ?? undefined;
+    const ctrl = document.createElement("span");
+    ctrl.className = "upanel-ctrl";
+    const value = document.createElement("span");
+    value.className = "upanel-val";
+    const label = (v: readonly number[]): string => matValueLabel(kind, v);
+    const gridBox = this.matrix(s, i);
+    const moveGrid = this.setters.get(u.slot);
+    const sw = MatSwatch({
+      value: s.value,
+      kind,
+      ...(ranges ? { ranges } : {}),
+      title: this.label(u.name),
+      onInput: (v) => {
+        const next = clampUniformValue(u, v);
+        this.set(i, next);
+        moveGrid?.(next);
+        value.textContent = label(next);
+      },
+      onCommit: (v) => this.opts.onCommit?.(u.slot, clampUniformValue(u, v)),
+    });
+    ctrl.appendChild(sw.el);
+    value.textContent = label(s.value);
+    value.title = kind === "affine2d" ? "2D transform" : kind === "mat3" ? "3D rotation / scale" : "3D transform";
+    row.append(name, ctrl, value);
+    grid.appendChild(row);
+
+    // The raw numbers, one disclosure away (a full-width grid row).
+    const adv = document.createElement("details");
+    adv.className = "upanel-adv";
+    const sum = document.createElement("summary");
+    sum.textContent = `Advanced: ${u.width === 16 ? "4×4" : "3×3"} numbers`;
+    adv.append(sum, gridBox);
+    grid.appendChild(adv);
+
+    this.setters.set(u.slot, (v) => {
+      moveGrid?.(v);
+      sw.set(v);
+      value.textContent = label(v);
+    });
+  }
+
   /** A mat3/mat4 as an N×N grid of number fields, shown row by row like a
    * written matrix; storage is column-major (GLSL): element (row r, col c) is
-   * value[c*N + r]. A typed entry is clamped to the declared range. */
+   * value[c*N + r]. A typed entry is clamped to the declared range and
+   * committed. Registers a grid-only setter (matrixRows wraps it). */
   private matrix(s: Slot, i: number): HTMLElement {
     const u = s.uniform;
     const n = matrixDim(u) ?? Math.max(1, Math.round(Math.sqrt(u.width)));
@@ -223,6 +300,9 @@ export class UniformPanel {
           const v = clampUniformValue(u, next);
           el.value = fmtNum(v[k] ?? 0);
           this.set(i, v);
+          // Keep the gizmo button in step with a typed entry.
+          this.setters.get(u.slot)?.(v);
+          this.commitSlot(i);
         });
         el.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
@@ -239,24 +319,25 @@ export class UniformPanel {
   }
 
   /** A range slider (in `ctrl`) + an editable number field (in `value`) for one
-   * number in [min,max]; typing clamps + snaps to the step. Returns a mover
-   * that sets both from outside (MIDI / hydration). */
+   * number in [min,max]; typing clamps (and snaps when the uniform has a step
+   * grid). `step` 0 is continuous: the uniform's native f32 precision, no
+   * grid (D-541). Returns a mover that sets both from outside (MIDI / hydration). */
   private sliderPair(
     ctrl: HTMLElement,
     value: HTMLElement,
     min: number,
     max: number,
-    stepIn: number,
+    step: number,
     current: () => number,
     onValue: (v: number) => void,
+    onRelease?: () => void,
   ): (v: number) => void {
-    const step = stepIn > 0 ? stepIn : 0.001;
     const cur = current();
     const el = document.createElement("input");
     el.type = "range";
     el.min = String(min);
     el.max = String(max);
-    el.step = String(step);
+    el.step = stepAttr(step);
     el.value = String(cur);
 
     const num = document.createElement("input");
@@ -264,7 +345,7 @@ export class UniformPanel {
     num.className = "upanel-num";
     num.min = String(min);
     num.max = String(max);
-    num.step = String(step);
+    num.step = stepAttr(step);
     num.value = fmtNum(cur);
 
     el.addEventListener("input", () => {
@@ -272,14 +353,19 @@ export class UniformPanel {
       num.value = fmtNum(v);
       onValue(v);
     });
-    // Commit the typed value on Enter/blur: clamp to [min,max] and snap to step.
+    el.addEventListener("change", () => onRelease?.());
+    // Commit the typed value on Enter/blur: clamp to [min,max] (+ snap to a
+    // declared step grid; a continuous uniform keeps exactly what was typed).
     const commit = (): void => {
-      let v = parseFloat(num.value);
+      // The field shows a rounded label: an unedited field (Enter / blur with
+      // no change) keeps the exact live value rather than the label.
+      let v = num.value === fmtNum(current()) ? current() : parseFloat(num.value);
       if (!Number.isFinite(v)) v = current();
-      v = snap(v, min, max, step);
+      v = snapToStep(v, min, max, step);
       el.value = String(v);
       num.value = fmtNum(v);
       onValue(v);
+      onRelease?.();
     };
     num.addEventListener("change", commit);
     num.addEventListener("keydown", (e) => {
@@ -319,27 +405,29 @@ export class UniformPanel {
     }
 
     if (ui.kind === "color") {
-      // A native <input type="color"> renders inconsistently across platforms —
-      // a full-width swatch on Android/Chrome but a small fixed circle on iOS
-      // WKWebView (it ignores width/height). Wrap it: a styled swatch we control
-      // for the visuals, with the native input overlaid invisibly so a tap still
-      // opens each platform's colour picker.
-      const wrap = document.createElement("label");
-      wrap.className = "upanel-color";
-      const swatch = document.createElement("span");
-      swatch.className = "upanel-color-swatch";
-      const el = document.createElement("input");
-      el.type = "color";
-      el.value = rgbToHex(s.value);
-      swatch.style.background = el.value;
-      value.textContent = el.value;
-      el.addEventListener("input", () => {
-        this.set(i, hexToRgb(el.value, s.uniform.width));
-        swatch.style.background = el.value;
-        value.textContent = el.value;
+      // The live HSV picker (D-541): a swatch that opens a hue ring + SV
+      // square (a Sheet on phones, a popover on desktop). Float output, every
+      // move streams through onChange; a vec4 gets an alpha slider. The hex in
+      // the value column is a label only (no 8-bit round-trip).
+      const label = (v: readonly number[]): string => toHex(v, s.uniform.width >= 4 ? (v[3] ?? 1) : undefined);
+      const swatch = ColorSwatch({
+        value: s.value,
+        alpha: s.uniform.width >= 4,
+        title: this.label(s.uniform.name),
+        onInput: (v) => {
+          const next = clampUniformValue(s.uniform, v);
+          this.set(i, next);
+          value.textContent = value.title = label(next);
+        },
+        onCommit: (v) => this.opts.onCommit?.(s.uniform.slot, clampUniformValue(s.uniform, v)),
       });
-      wrap.append(swatch, el);
-      ctrl.appendChild(wrap);
+      ctrl.appendChild(swatch.el);
+      value.textContent = value.title = label(s.value);
+      value.classList.add("upanel-hex");
+      this.setters.set(s.uniform.slot, (v) => {
+        swatch.set(v);
+        value.textContent = value.title = label(v);
+      });
       return;
     }
 
@@ -357,11 +445,50 @@ export class UniformPanel {
       return;
     }
 
-    if (ui.kind === "matrix") return; // rendered by matrix()
+    if (ui.kind === "matrix" || ui.kind === "transform2d") return; // rendered by matrixRows()
+
+    if (ui.kind === "vector" || ui.kind === "direction") {
+      // The XY pad (+ z slider) / direction dial or sphere (D-541 PR 4): a
+      // button opening the picker (a Sheet on phones, a popover on desktop).
+      // Every move streams through onChange; the release commits.
+      const dims: 2 | 3 = s.uniform.width >= 3 ? 3 : 2;
+      const mode = ui.kind;
+      const ranges = componentRanges(s.uniform) ?? undefined;
+      const summary = (v: readonly number[]): string => vectorSummary(v, dims, mode);
+      const pad = VectorSwatch({
+        value: s.value,
+        dims,
+        mode,
+        ...(ranges ? { ranges } : {}),
+        step: ui.kind === "vector" ? ui.step : 0,
+        title: this.label(s.uniform.name),
+        onInput: (v) => {
+          const next = clampUniformValue(s.uniform, v);
+          this.set(i, next);
+          value.textContent = value.title = summary(next);
+        },
+        onCommit: (v) => this.opts.onCommit?.(s.uniform.slot, clampUniformValue(s.uniform, v)),
+      });
+      ctrl.appendChild(pad.el);
+      value.textContent = value.title = summary(s.value);
+      // External drivers (MIDI, the agent) move the button and an open picker.
+      this.setters.set(s.uniform.slot, (v) => {
+        pad.set(v);
+        value.textContent = value.title = summary(v);
+      });
+      return;
+    }
 
     // slider + an editable number field (type a value → clamp+snap to range).
-    const move = this.sliderPair(ctrl, value, ui.min, ui.max, ui.step, () => this.slots[i]?.value[0] ?? ui.min, (v) =>
-      this.set(i, [v]),
+    const move = this.sliderPair(
+      ctrl,
+      value,
+      ui.min,
+      ui.max,
+      ui.step,
+      () => this.slots[i]?.value[0] ?? ui.min,
+      (v) => this.set(i, [v]),
+      () => this.commitSlot(i),
     );
     // External (MIDI) driver moves both the slider and the number field.
     this.setters.set(s.uniform.slot, (v) => move(v[0] ?? ui.min));
@@ -370,35 +497,17 @@ export class UniformPanel {
 
 const COMPONENT = ["x", "y", "z", "w"];
 
-function clampN(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
+/** The value column of a matrix row: its rotation, or its scale when it has
+ * none (the button carries the full move · rotate · scale summary). */
+function matValueLabel(kind: MatKind, v: readonly number[]): string {
+  const deg = kind === "affine2d" ? decompose(kind, v).r[2] : rotationAngle(kind, v);
+  if (Math.abs(deg) >= 0.05) return `${Math.round(deg * 10) / 10}°`;
+  const s = Math.abs(decompose(kind, v).s[0]);
+  return `×${Math.round(s * 100) / 100}`;
 }
-/** Clamp to [min,max] then snap to the slider's step grid. */
-function snap(v: number, min: number, max: number, step: number): number {
-  v = clampN(v, min, max);
-  if (step > 0) v = min + Math.round((v - min) / step) * step;
-  return clampN(v, min, max);
-}
+
 /** Compact numeric label (up to 4 decimals, trailing zeros trimmed). */
 function fmtNum(v: number): string {
   if (!Number.isFinite(v)) return "0";
   return String(Math.round(v * 1e4) / 1e4);
-}
-
-function clamp255(x: number): number {
-  return Math.max(0, Math.min(255, Math.round(x * 255)));
-}
-function rgbToHex(v: number[]): string {
-  const [r, g, b] = [v[0] ?? 0, v[1] ?? 0, v[2] ?? 0];
-  const h = (n: number): string => clamp255(n).toString(16).padStart(2, "0");
-  return `#${h(r)}${h(g)}${h(b)}`;
-}
-function hexToRgb(hex: string, width: number): number[] {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const out = [r, g, b];
-  // vec4 color uniforms carry an alpha slot; default it opaque.
-  if (width >= 4) out.push(1);
-  return out.slice(0, Math.max(3, width));
 }

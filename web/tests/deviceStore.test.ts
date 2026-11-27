@@ -174,3 +174,65 @@ test("clampCaptureStride rounds, bounds, and rejects non-numbers", () => {
   assert.equal(clampCaptureStride(NaN), undefined);
   assert.ok(DEFAULT_CAPTURE_STRIDE >= MIN_CAPTURE_STRIDE && DEFAULT_CAPTURE_STRIDE <= MAX_CAPTURE_STRIDE);
 });
+
+// A DHCP lease moved between fixtures: CalvinLamp was at .71, moved to .75, and
+// PixieLamp2 got .71. Improv handed the app wss://192.168.68.71/ws; the URL-keyed
+// record there was CalvinLamp's, so the app showed CalvinLamp while connecting and
+// PixieLamp2's welcome then overwrote CalvinLamp's record.
+const CALVIN = "98:88:E0:71:55:92";
+const PIXIE = "98:A3:16:81:98:7A";
+const AT71 = "wss://192.168.68.71/ws";
+
+function calvinAt71() {
+  const d = deviceStore.upsert(AT71);
+  deviceStore.applyWelcome(d.id, { mac: CALVIN, deviceName: "CalvinLamp" });
+  deviceStore.setFolder(d.id, "Bench");
+  deviceStore.markWssOk(AT71);
+  mem.setItem(`brightness:${d.id}`, "0.4");
+  mem.setItem("ledmapper.deviceEffects", JSON.stringify({ [d.id]: ["fx-a"] }));
+  return d;
+}
+
+test("another device's welcome at a saved address moves the old record aside", () => {
+  const d = calvinAt71();
+  deviceStore.applyWelcome(d.id, { mac: PIXIE, deviceName: "PixieLamp2" });
+  const here = deviceStore.get(d.id)!;
+  assert.equal(here.label, "PixieLamp2");
+  assert.equal(here.bleMac, PIXIE);
+  assert.equal(here.folder, undefined, "CalvinLamp's folder stays with CalvinLamp");
+  assert.equal(deviceStore.wssTrusted(AT71), false, "CalvinLamp's certificate was trusted, not PixieLamp2's");
+  const calvin = deviceStore.list().find((x) => x.label === "CalvinLamp")!;
+  assert.equal(calvin.bleMac, CALVIN);
+  assert.equal(calvin.folder, "Bench");
+  assert.equal(mem.getItem(`brightness:${calvin.id}`), "0.4");
+  assert.equal(mem.getItem(`brightness:${d.id}`), null);
+  assert.deepEqual(JSON.parse(mem.getItem("ledmapper.deviceEffects")!), { [calvin.id]: ["fx-a"] });
+  // CalvinLamp answers at its new address: its moved record folds into that one.
+  const at75 = deviceStore.upsert("wss://192.168.68.75/ws");
+  deviceStore.applyWelcome(at75.id, { mac: CALVIN, deviceName: "CalvinLamp" });
+  const calvins = deviceStore.list().filter((x) => sameHex(x.bleMac, CALVIN));
+  assert.equal(calvins.length, 1);
+  assert.equal(calvins[0]!.id, at75.id);
+  assert.equal(calvins[0]!.folder, "Bench");
+  assert.equal(mem.getItem(`brightness:${at75.id}`), "0.4", "its settings follow it");
+});
+
+test("Improv's expected identity moves a stale record aside before connecting", () => {
+  const d = calvinAt71();
+  deviceStore.setBleId(AT71, "calvin-ble");
+  const dev = deviceStore.upsert(AT71, "PixieLamp2", { name: "PixieLamp2", bleId: "pixie-ble" });
+  assert.equal(dev.id, d.id);
+  assert.equal(dev.label, "PixieLamp2", "shown as PixieLamp2 while it connects");
+  assert.equal(dev.folder, undefined);
+  const calvin = deviceStore.list().find((x) => x.label === "CalvinLamp")!;
+  assert.equal(calvin.bleId, "calvin-ble");
+  assert.equal(calvin.folder, "Bench");
+  // The same fixture re-provisioned at its own address keeps its record.
+  const again = deviceStore.upsert(AT71, "PixieLamp2", { name: "PixieLamp2" });
+  assert.equal(again.id, d.id);
+  assert.equal(deviceStore.list().length, 2);
+});
+
+function sameHex(a: string, b: string): boolean {
+  return a.replace(/[^0-9a-f]/gi, "").toUpperCase() === b.replace(/[^0-9a-f]/gi, "").toUpperCase();
+}

@@ -22,16 +22,18 @@ use swarm_net::mesh::BROADCAST;
 use swarm_net::net::NetOf;
 use swarm_net::update::Flash;
 
-use crate::admin::{self, AdminGate, GatewaySession, Grant, SessionMsg, Sessions, UnlockError};
+use crate::admin::{self, AdminGate, Delegation, GatewaySession, Grant, GrantReject, SessionMsg, Sessions, UnlockError};
 use crate::backhaul::{Backhaul, NodeId};
+use crate::blob::{BlobDone, BlobStore, Blobs, Fetch, Hash, NoBlobs, SceneMsg};
 use crate::crypto::{key_hash, DeviceKey, Entropy, KeyHash};
 use crate::envelope::{Header, MicLen};
 use crate::gateway::{self, Fanout, ReplyMsg, StatusMsg, STATUS_EVERY_US, T_STATUS};
+use crate::topo::{self, Link, PoseKnown, Topo, TopoLocal, TopoMsg, T_TOPO};
 #[cfg(feature = "open_mode")]
 use crate::guest::{FollowEvent, Follower};
 #[cfg(feature = "open_mode")]
 use crate::membership::Follow;
-use crate::membership::{Credentials, Groups, Membership, Mode, Note, Out, Phase, ProvisionSource};
+use crate::membership::{Credentials, Groups, MeshState, Membership, Mode, Note, Out, Phase, ProvisionSource};
 use crate::meshtime::{MeshTime, ShowEpoch, TimeBeacon, BEACON_MAX};
 #[cfg(feature = "open_mode")]
 use crate::msg::GuestHello;
@@ -81,7 +83,10 @@ pub enum EpochPolicy {
     AnyMember,
 }
 
-/// The one switch desk #79 decides ([`MeshStack::originate_epoch`] applies it).
+/// The one switch desk #79 decides ([`MeshStack::originate_epoch`] applies it). On a mesh
+/// with an admin key (mesh M7) the epoch is always the admin session's: only a connection
+/// that presented a grant may start one, and members take it only from that session's
+/// signed `TIME_BASE` (beacon gossip of any other epoch is ignored, [`MeshTime::authorise`]).
 pub const EPOCH_POLICY: EpochPolicy = EpochPolicy::GatewaySession;
 
 /// Where a request to start a show epoch came from.
@@ -168,6 +173,24 @@ pub enum Event<'a> {
     /// Gateway: this session's grant expires at `not_after` (mesh seconds); the app should
     /// sign a renewal (same session, later expiry) and present it with `unlock`.
     GrantRenewalDue { session: u32, not_after: u32 },
+    /// The admin ejected this device (mesh M7, issue #571's seam): its mesh state is gone;
+    /// the firmware forgets the persisted state and turns the mesh off.
+    Ejected,
+    /// Member (M6): every blob `msg` names is held (fetched and hash-checked): apply it as
+    /// the scene says (at `apply_at`, at once, or only hold it) and answer the gateway when
+    /// it asked ([`MeshStack::reply`]).
+    Scene { origin: NodeId, msg: SceneMsg },
+    /// Member (M6): a scene's blob could not be had (code: [`SceneFail`]); answered already.
+    SceneFailed { origin: NodeId, op_id: u32, code: u16 },
+    /// A blob fetch finished (M6; logging).
+    Blob(BlobDone),
+    /// Gateway (M6): the first phase of [`MeshStack::distribute`] is over: `have` of `of`
+    /// targets hold the blob. The device now picks the show-clock time and calls
+    /// [`MeshStack::distribute_apply`].
+    Fetched { op_id: u32, have: usize, of: usize },
+    /// Gateway (M6): `node` (re)joined the session after the scene changed: send it the
+    /// current scene (a catch-up share, [`SceneMsg::CATCH_UP`]).
+    CatchUp { node: NodeId },
     #[cfg(feature = "open_mode")]
     FollowStarted { mesh_id: u32 },
     #[cfg(feature = "open_mode")]
@@ -232,6 +255,38 @@ pub struct Neighbour {
     pub last_us: i64,
 }
 
+/// Why a member could not have a scene's blob (the code in its `REPLY`).
+pub mod scene_fail {
+    pub const TOO_BIG: u16 = 0xb001;
+    pub const NO_ROOM: u16 = 0xb002;
+    pub const BAD_HASH: u16 = 0xb003;
+    pub const STALLED: u16 = 0xb004;
+}
+pub use scene_fail as SceneFail;
+
+/// A scene a member works on (fetching its blobs).
+#[derive(Clone, Copy, Debug)]
+struct PendingScene {
+    origin: NodeId,
+    msg: SceneMsg,
+}
+
+/// A gateway's two-phase share (M6): fetch everywhere, then apply on one frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Distribution {
+    pub conn: usize,
+    pub op_id: u32,
+    pub fetch_op: u32,
+    pub targets: Targets,
+    pub blob: (Hash, u16),
+    pub fetched: bool,
+}
+
+/// Catch-ups a gateway queues (members that synced after a scene change).
+pub const CATCHUPS: usize = 4;
+/// How long a gateway collects "have" answers before applying anyway.
+pub const FETCH_TIMEOUT_US: i64 = 12_000_000;
+
 /// A command waiting for its session to sync (one at a time: the newest wins).
 struct Held<const P: usize> {
     origin: NodeId,
@@ -275,6 +330,9 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     /// Session crypto waiting for [`MeshStack::run_crypto`]: the newest grant needing a
     /// verify, and member Acks needing an ECDH (gateway).
     pending_grant: Option<Grant>,
+    /// A delegation certificate waiting for its verify (verified before the grant it
+    /// precedes).
+    pending_deleg: Option<Delegation>,
     pending_acks: [Option<SessionMsg>; CRYPTO_ACKS],
     renewal_asked: Option<(u32, u32)>,
     /// Session crypto jobs run so far (ECDSA verifies and ECDHs).
@@ -290,8 +348,28 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     status_local: Option<StatusMsg>,
     status_sent: Option<StatusMsg>,
     next_status_us: Option<i64>,
+    /// This device's room pose and when its topology goes out ([`crate::topo`]), and the hops
+    /// of the application packet being delivered.
+    pub topo: TopoLocal,
+    rx_hops: u8,
     /// Epoch requests refused by [`EPOCH_POLICY`].
     pub epochs_refused: u32,
+    /// Gateway on a signed mesh (M7): the epoch it originated still has to go out as the
+    /// session's `TIME_BASE` (it is also re-sent with every grant broadcast).
+    epoch_announce: bool,
+    /// Signed `TIME_BASE` commands sent (gateway) and taken (member).
+    pub epochs_sent: u32,
+    pub epochs_signed: u32,
+    /// Blobs and scenes (M6): the bulk side, the scene this member works on, the gateway's
+    /// share in progress, its scene generation and the members to catch up.
+    pub blobs: Blobs,
+    scene: Option<PendingScene>,
+    pub dist: Option<Distribution>,
+    pub scene_gen: u32,
+    catchup: [Option<NodeId>; CATCHUPS],
+    pub scenes_in: u32,
+    pub scenes_failed: u32,
+    pub catchups: u32,
 }
 
 impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> MeshStack<B, P, K, E, R> {
@@ -309,18 +387,38 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     ///
     /// # Safety
     /// `dst` is valid for writes. On `Ok` every field is initialised; on `Err` none is.
-    pub unsafe fn init_in(dst: *mut Self, me: NodeId, mac: [u8; 6], backhaul: B, dev: K, mut rng: E, mut cfg: StackConfig) -> Result<(), MtuTooSmall> {
+    pub unsafe fn init_in(dst: *mut Self, me: NodeId, mac: [u8; 6], backhaul: B, dev: K, rng: E, cfg: StackConfig) -> Result<(), MtuTooSmall> {
+        Self::init_in_with(dst, me, mac, |p| p.write(backhaul), |p| p.write(dev), rng, cfg)
+    }
+
+    /// [`MeshStack::init_in`] with the backhaul and the device key built in place too
+    /// (`backhaul` and `dev` initialise their slots), and every field built in its own
+    /// frame ([`put`]): the stack this needs is the largest single field's, not the sum of
+    /// all of them. The firmware builds the mesh on the tick's 14 KB stack this way, with
+    /// no separate ~26 KB create stack to find in the heap.
+    ///
+    /// # Safety
+    /// As [`MeshStack::init_in`]; `backhaul` and `dev` must initialise their slots. On
+    /// `Err` nothing is left initialised (`dev` was not called).
+    pub unsafe fn init_in_with(
+        dst: *mut Self,
+        me: NodeId,
+        mac: [u8; 6],
+        backhaul: impl FnOnce(*mut B),
+        dev: impl FnOnce(*mut K),
+        mut rng: E,
+        mut cfg: StackConfig,
+    ) -> Result<(), MtuTooSmall> {
         use core::ptr::addr_of_mut;
         if !cfg.capacity_aware {
             cfg.class = Class::C6;
         }
         let seed = rng.u32();
-        let guard = MeshSecurity::new(me, cfg.mic, backhaul.mtu(), cfg.counter_mark);
         let c = cfg;
-        Node::init_in(
+        Node::init_in_with(
             addr_of_mut!((*dst).node),
             |np: *mut NetOf<P>| {
-                np.write(NetOf::<P>::new(me, None, c.fw_key, c.firmware, seed));
+                NetOf::<P>::init_in(np, me, None, c.fw_key, c.firmware, seed);
                 let net = &mut *np;
                 net.mesh.cfg.high_ports = Port::HIGH_PRIORITY;
                 net.mesh.cfg.hop_limit = c.hop_limit.clamp(1, MAX_HOPS);
@@ -336,14 +434,15 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 }
             },
             backhaul,
-            guard,
+            |gp: *mut MeshSecurity, mtu| put(gp, || MeshSecurity::new(me, c.mic, mtu, c.counter_mark)),
             cfg.node,
         )?;
+        dev(addr_of_mut!((*dst).dev));
         #[cfg(feature = "open_mode")]
-        let kh = key_hash(&dev.public_key());
+        let kh = key_hash(&(*dst).dev.public_key());
         macro_rules! w {
             ($f:ident, $v:expr) => {
-                addr_of_mut!((*dst).$f).write($v)
+                put(addr_of_mut!((*dst).$f), || $v)
             };
         }
         w!(membership, Membership::new(me, mac, cfg.firmware));
@@ -355,7 +454,6 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         #[cfg(feature = "open_mode")]
         w!(follower, Follower::new(Follow::Off, me, kh, cfg.firmware));
         w!(gate, AdminGate::new());
-        w!(dev, dev);
         w!(rng, rng);
         w!(neighbours, [None; NEIGHBOURS]);
         w!(cfg, cfg);
@@ -373,6 +471,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(next_time_us, None);
         w!(next_probe_us, None);
         w!(pending_grant, None);
+        w!(pending_deleg, None);
         w!(pending_acks, [None; CRYPTO_ACKS]);
         w!(renewal_asked, None);
         w!(crypto_jobs, 0);
@@ -382,7 +481,20 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(status_local, None);
         w!(status_sent, None);
         w!(next_status_us, None);
+        w!(topo, TopoLocal::new());
+        w!(rx_hops, 0);
         w!(epochs_refused, 0);
+        w!(epoch_announce, false);
+        w!(epochs_sent, 0);
+        w!(epochs_signed, 0);
+        w!(blobs, Blobs::new());
+        w!(scene, None);
+        w!(dist, None);
+        w!(scene_gen, 0);
+        w!(catchup, [None; CATCHUPS]);
+        w!(scenes_in, 0);
+        w!(scenes_failed, 0);
+        w!(catchups, 0);
         Ok(())
     }
 
@@ -418,6 +530,50 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     pub fn provision(&mut self, now_us: i64, c: &Credentials, source: ProvisionSource) {
         self.membership.provision(c, source, now_us);
         self.sync_keys(now_us);
+    }
+
+    /// The persisted mesh state at boot (mesh M7): as provisioned, searching first.
+    pub fn restore(&mut self, now_us: i64, s: MeshState) {
+        self.membership.restore(s, now_us);
+        self.sync_keys(now_us);
+    }
+
+    /// Leave the mesh (the app's `mesh_admin.leave`, or the admin's eject): every credential,
+    /// session and key is dropped; nothing is sealed or accepted until provisioned again.
+    pub fn leave(&mut self) {
+        let id = self.node.guard.mesh_id;
+        self.membership.leave();
+        self.node.guard.set_none(id);
+        self.installed = None;
+        self.sessions = Sessions::new();
+        self.gateway = None;
+        self.rekeyer = None;
+        self.rekey_member = RekeyMember::default();
+        self.gate = AdminGate::new();
+        self.held = None;
+        self.live = None;
+        self.pending_grant = None;
+        self.pending_deleg = None;
+        self.pending_acks = [None; CRYPTO_ACKS];
+        self.epoch_announce = false;
+        self.time.epoch_allowed = None;
+        self.scene = None;
+        self.dist = None;
+        self.catchup = [None; CATCHUPS];
+    }
+
+    /// Connection `conn` holds a grant for this gateway's live session (not envelope trust).
+    pub fn signing_session(&self, conn: usize) -> bool {
+        match (self.gate.session(conn), self.gateway.as_ref()) {
+            (Some(s), Some(g)) => s != SESSION_ENVELOPE && g.grant.session == s,
+            _ => false,
+        }
+    }
+
+    /// A connection holding a signing session, if any (the console's epochs go out under it).
+    pub fn signing_conn(&self) -> Option<usize> {
+        // Live connections first; then the grant an app left behind (D-534).
+        (0..admin::MAX_CONNECTIONS).chain(core::iter::once(admin::DETACHED)).find(|&c| self.signing_session(c))
     }
 
     /// The `mesh_follow` device setting (§7.2).
@@ -541,6 +697,13 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// Run the device's mesh for one step: receive, timers, adverts, sessions, the mesh slot,
     /// deliver. `scratch` must hold `scratch_len()` bytes. Bounded work; never blocks.
     pub fn tick(&mut self, now_us: i64, flash: &mut dyn Flash, scratch: &mut [u8], on: &mut dyn FnMut(Event<'_>)) {
+        self.tick_blobs(now_us, flash, &mut NoBlobs, scratch, on);
+    }
+
+    /// [`MeshStack::tick`] for a device that keeps blobs (M6: effect sharing, catch-up).
+    pub fn tick_blobs(&mut self, now_us: i64, flash: &mut dyn Flash, store: &mut dyn BlobStore, scratch: &mut [u8], on: &mut dyn FnMut(Event<'_>)) {
+        // Signed epochs (M7): with an admin key, only the session's TIME_BASE sets the epoch.
+        self.time.epoch_signed = !self.envelope_trust();
         // 0. The last time beacon's completion (two-step stamp, M4).
         if let Some(st) = self.node.backhaul.take_tx_stamp() {
             self.time.on_stamp(st.done_us, st.err_us);
@@ -573,6 +736,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     }
                     None => self.time.stats.bad += 1,
                 },
+                Rx::Range { src, body, .. } => self.node.backhaul.range_in(now_us, src, body),
             }
         }
         // 2. Membership timers (bounded).
@@ -622,6 +786,14 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 self.time.cancel_pending();
             }
         }
+        // 3c. Link ranging (crate::ranging, off unless enabled on the backhaul): one probe or
+        // stamp report per pass at most, one hop, ACKed unicast.
+        if self.membership.is_member() {
+            let mut body = [0u8; crate::ranging::MSG_MAX];
+            if let Some((dst, n)) = self.node.backhaul.range_out(now_us, &mut body) {
+                self.node.send_range(now_us, dst, &body[..n], &mut self.plain_tx, &mut self.plain_sealed);
+            }
+        }
         // 4. The follower (guests).
         #[cfg(feature = "open_mode")]
         match self.follower.poll(now_us) {
@@ -645,10 +817,18 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     self.renewal_asked = Some((g.session, g.not_after));
                     on(Event::GrantRenewalDue { session: g.session, not_after: g.not_after });
                 }
-                if now_us >= *self.next_grant_us.get_or_insert(now_us) {
+                // Due, or the clock stepped back past the period (admin.rs due_ack).
+                let next = *self.next_grant_us.get_or_insert(now_us);
+                if now_us >= next || next - now_us > GRANT_EVERY_US {
                     self.next_grant_us = Some(now_us + GRANT_EVERY_US);
-                    self.send_session(BROADCAST, &SessionMsg::Grant(g), false);
+                    self.send_grant(BROADCAST);
+                    // The epoch this gateway originated goes again with the grant, for
+                    // members that joined or rebooted since (M7).
+                    self.epoch_announce |= self.time.epoch.is_some_and(|e| e.origin == self.me());
                 }
+            }
+            if self.epoch_announce && self.node.net.mesh.can_send() {
+                self.announce_epoch(now_us);
             }
             // Only when the outbox has room: a packet the mesh can't queue would be lost
             // until the next round (a C6 gateway's outbox holds 4).
@@ -685,6 +865,20 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         if self.node.guard.next_epoch().is_some() && (self.node.guard.take_heard_next() || gw_ready) {
             self.node.guard.switch_to_next(now_us);
         }
+        // 5c. Blobs (M6): the next request, chunk or announcement, paced like all bulk (one
+        // hop: every holder serves its neighbours), and a stalled fetch given up.
+        if let Some(d) = self.blobs.poll(now_us, store) {
+            self.on_blob_done(d, on);
+        }
+        if self.membership.is_member() && self.bulk_clear_to_send(now_us) {
+            let mut b = [0u8; crate::blob::BULK_MAX];
+            if let Some((dest, n)) = self.blobs.next(now_us, store, &mut b) {
+                let hops = if dest == BROADCAST || self.is_neighbour(now_us, dest) { 0 } else { self.node.net.mesh.cfg.hop_limit };
+                if self.node.net.mesh.send_with_hops(dest, Port::Bulk as u8, &b[..n], false, hops).is_some() {
+                    self.last_bulk_us = Some(now_us);
+                }
+            }
+        }
         // 6. The mesh slot.
         if self.may_transmit() {
             self.node.run_slot(now_us, flash, scratch);
@@ -693,6 +887,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             on(Event::PersistCounter(m));
         }
         // 6b. Member status (M5): every 10 s and on a change, once the firmware reported one.
+        let mut sent_status = false;
         if self.membership.is_member() && self.node.net.mesh.can_send() {
             if let Some(st) = self.status_local {
                 let due = self.next_status_us.is_none_or(|t| now_us >= t) || self.status_sent.is_none_or(|s| st.differs(&s));
@@ -703,8 +898,22 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                             self.status_sent = Some(st);
                             let jitter = (self.rng.u32() as i64).rem_euclid(STATUS_EVERY_US / 4);
                             self.next_status_us = Some(now_us + STATUS_EVERY_US - jitter);
+                            sent_status = true;
                         }
                     }
+                }
+            }
+        }
+        // 6c. Topology (room pose + neighbours, crate::topo): not in the same pass as a status.
+        if !sent_status && self.membership.is_member() && self.node.net.mesh.can_send() && self.topo.due(now_us) {
+            let mut links = [Link::EMPTY; topo::NEIGHBOURS];
+            let n = self.node.backhaul.links(now_us, &mut links);
+            let m = self.topo.message(now_us, &links[..n]);
+            let mut b = [0u8; topo::TOPO_MAX];
+            if let Some(len) = m.encode(&mut b) {
+                if self.node.net.send(BROADCAST, Port::Status as u8, &b[..len], false).is_some() {
+                    let jitter = (self.rng.u32() as i64).rem_euclid(topo::TOPO_EVERY_US / 4);
+                    self.topo.sent(now_us, &m, topo::TOPO_EVERY_US - jitter);
                 }
             }
         }
@@ -714,7 +923,127 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             if pkt.hops >= self.hops_seen.0 || now_us - self.hops_seen.1 >= DIAMETER_WINDOW_US {
                 self.hops_seen = (pkt.hops, now_us);
             }
-            self.deliver(now_us, pkt.origin, pkt.port, &pkt.payload[..pkt.len], on);
+            self.rx_hops = pkt.hops;
+            self.deliver(now_us, pkt.origin, pkt.port, &pkt.payload[..pkt.len], store, on);
+        }
+        // 8. Scenes (M6): the member's blobs, the gateway's share and its catch-ups.
+        self.scene_step(now_us, store, on);
+        if let Some(d) = self.dist.as_mut().filter(|d| !d.fetched) {
+            if let Some(r) = self.fanout.take_done_op(d.fetch_op) {
+                d.fetched = true;
+                let have = r.status[..r.n].iter().filter(|s| **s == gateway::Status::Ok).count();
+                on(Event::Fetched { op_id: d.op_id, have, of: r.n });
+            }
+        }
+        if self.dist.is_none() {
+            if let Some(node) = self.catchup.iter_mut().find_map(|c| c.take()) {
+                self.catchups += 1;
+                on(Event::CatchUp { node });
+            }
+        }
+    }
+
+    fn is_neighbour(&self, now_us: i64, id: NodeId) -> bool {
+        self.neighbours.iter().flatten().any(|n| n.id == id && now_us - n.last_us < 5_000_000)
+    }
+
+    // ---- Blobs and scenes (M6, crate::blob) ----
+
+    fn on_blob_done(&mut self, d: BlobDone, on: &mut dyn FnMut(Event<'_>)) {
+        on(Event::Blob(d));
+        let (BlobDone::BadHash(h) | BlobDone::Stalled(h)) = d else { return };
+        if self.scene.is_some_and(|p| p.msg.blobs().iter().any(|b| b.0 == h)) {
+            let code = if matches!(d, BlobDone::BadHash(_)) { SceneFail::BAD_HASH } else { SceneFail::STALLED };
+            self.fail_scene(code, on);
+        }
+    }
+
+    fn fail_scene(&mut self, code: u16, on: &mut dyn FnMut(Event<'_>)) {
+        let Some(p) = self.scene.take() else { return };
+        self.scenes_failed += 1;
+        if p.msg.want_reply() {
+            let _ = self.reply(p.origin, &ReplyMsg { op_id: p.msg.op_id, status: gateway::Status::Failed, arm: gateway::arm::SUBMIT_EFFECT as u8, code });
+        }
+        on(Event::SceneFailed { origin: p.origin, op_id: p.msg.op_id, code });
+    }
+
+    /// The member's scene: fetch the first blob it lacks; once all are held, hand it over.
+    fn scene_step(&mut self, now_us: i64, store: &mut dyn BlobStore, on: &mut dyn FnMut(Event<'_>)) {
+        let Some(p) = self.scene else { return };
+        for &(h, size) in p.msg.blobs() {
+            match self.blobs.fetch(now_us, &h, size as usize, p.origin, store) {
+                Fetch::Have => continue,
+                Fetch::Started => return,
+                Fetch::TooBig => return self.fail_scene(SceneFail::TOO_BIG, on),
+                Fetch::NoRoom => return self.fail_scene(SceneFail::NO_ROOM, on),
+            }
+        }
+        self.scene = None;
+        on(Event::Scene { origin: p.origin, msg: p.msg });
+    }
+
+    /// The scene this member is fetching blobs for: (op id, blobs held, blobs named).
+    pub fn scene_pending(&self) -> Option<(u32, usize)> {
+        self.scene.map(|p| (p.msg.op_id, p.msg.n as usize))
+    }
+
+    /// Gateway: send scene `msg` under connection `conn`'s session to its targets (all synced
+    /// members, or `msg.targets`' nodes), and collect their answers for `timeout_us` when it
+    /// wants replies. Returns the packets sent.
+    pub fn share(&mut self, now_us: i64, conn: usize, msg: &SceneMsg, timeout_us: i64) -> Result<usize, SendError> {
+        let mut b = [0u8; SceneMsg::MAX_LEN];
+        let n = msg.encode(&mut b).ok_or(SendError::TooBig)?;
+        let only = match msg.targets {
+            Targets::Nodes { ids, n } => Some((ids, n as usize)),
+            _ => None,
+        };
+        let only_slice = only.as_ref().map(|(ids, n)| &ids[..*n]);
+        let sent = self.send_admin(now_us, conn, Port::Scene, &b[..n], only_slice)?;
+        if msg.want_reply() {
+            let me = self.me();
+            self.fanout.begin(now_us, conn, msg.op_id, gateway::arm::SUBMIT_EFFECT as u8, &msg.targets, timeout_us, me);
+        }
+        Ok(sent)
+    }
+
+    /// Gateway: share blob `blob` (it is in this device's store) with `targets` in two
+    /// phases. First every target fetches it and answers "have" (up to `fetch_timeout_us`);
+    /// then [`Event::Fetched`] asks the device for the show-clock time, and
+    /// [`MeshStack::distribute_apply`] tells every target to apply it then, so all switch on
+    /// one frame. A member that had no blob by then applies it as soon as it does (late).
+    pub fn distribute(&mut self, now_us: i64, conn: usize, op_id: u32, targets: Targets, blob: (Hash, u16), fetch_timeout_us: i64) -> Result<usize, SendError> {
+        let fetch_op = op_id ^ 0x8000_0000;
+        let msg = SceneMsg::new(fetch_op, SceneMsg::WANT_REPLY, 0, targets, &[blob]).ok_or(SendError::TooBig)?;
+        let n = self.share(now_us, conn, &msg, fetch_timeout_us)?;
+        self.dist = Some(Distribution { conn, op_id, fetch_op, targets, blob, fetched: false });
+        self.scene_changed();
+        Ok(n)
+    }
+
+    /// Gateway: the second phase: apply at `apply_at` on the show clock (None: at once),
+    /// collecting answers for `timeout_us`. The share is over (its result is `op_id`'s).
+    pub fn distribute_apply(&mut self, now_us: i64, apply_at: Option<u32>, timeout_us: i64) -> Result<SceneMsg, SendError> {
+        let d = self.dist.take().ok_or(SendError::NoRecipients)?;
+        let flags = SceneMsg::APPLY | SceneMsg::WANT_REPLY | if apply_at.is_none() { SceneMsg::NOW } else { 0 };
+        let msg = SceneMsg::new(d.op_id, flags, apply_at.unwrap_or(0), d.targets, &[d.blob]).ok_or(SendError::TooBig)?;
+        self.share(now_us, d.conn, &msg, timeout_us)?;
+        Ok(msg)
+    }
+
+    /// Gateway: the look changed through this session (a share, or relayed control that is
+    /// part of the scene: an effect, committed uniforms, brightness, crossfade). Members that
+    /// sync with the session from now on get a catch-up.
+    pub fn scene_changed(&mut self) {
+        self.scene_gen = self.scene_gen.wrapping_add(1).max(1);
+    }
+
+    /// Gateway: send `node` a catch-up (a member that missed a change: it failed or was away).
+    pub fn queue_catch_up(&mut self, node: NodeId) {
+        if node == self.me() || self.catchup.contains(&Some(node)) {
+            return;
+        }
+        if let Some(slot) = self.catchup.iter_mut().find(|c| c.is_none()) {
+            *slot = Some(node);
         }
     }
 
@@ -751,15 +1080,62 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// gossip it from then on. None: refused (the device keeps following the mesh's epoch).
     /// The one seam owner desk #79 decides.
     pub fn originate_epoch(&mut self, by: EpochSource, epoch_mesh_us: Option<i64>) -> Option<ShowEpoch> {
-        let allowed = match (EPOCH_POLICY, by) {
-            (EpochPolicy::AnyMember, _) | (_, EpochSource::Console) => true,
-            (EpochPolicy::GatewaySession, EpochSource::Connection(conn)) => self.gate.is_unlocked(conn),
+        // A mesh with an admin key (M7): only a grant's session, and the epoch goes out as
+        // its signed TIME_BASE (members ignore any other). The console, too, needs one.
+        let signed = !self.envelope_trust();
+        let allowed = match (signed, EPOCH_POLICY, by) {
+            (true, _, EpochSource::Connection(conn)) => self.signing_session(conn),
+            (true, _, EpochSource::Console) => self.signing_conn().is_some(),
+            (false, EpochPolicy::AnyMember, _) | (false, _, EpochSource::Console) => true,
+            (false, EpochPolicy::GatewaySession, EpochSource::Connection(conn)) => self.gate.is_unlocked(conn),
         };
         if !allowed {
             self.epochs_refused += 1;
             return None;
         }
-        Some(self.time.originate(epoch_mesh_us))
+        let e = self.time.originate(epoch_mesh_us);
+        self.epoch_announce = signed;
+        Some(e)
+    }
+
+    /// Send the epoch this gateway originated as its session's signed `TIME_BASE`.
+    /// A catch-up's show epoch, to `node` only, right before its scene: the member's clock
+    /// is then on the mesh's when the scene's state lands. The epoch this gateway holds,
+    /// whoever originated it (a member takes any epoch the admin session signs): the
+    /// gateway that started it may be the fixture that just rebooted. Unicast, so a
+    /// gateway holding an older epoch can't move the rest of the mesh back.
+    pub fn announce_epoch_to(&mut self, now_us: i64, node: NodeId) {
+        let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else { return };
+        if !self.node.net.mesh.can_send() {
+            return;
+        }
+        let mut b = [0u8; ShowEpoch::LEN];
+        let Some(n) = e.encode(&mut b) else { return };
+        if self.send_admin(now_us, conn, Port::TimeBase, &b[..n], Some(&[node])).is_ok() {
+            self.epochs_sent += 1;
+        }
+    }
+
+    fn announce_epoch(&mut self, now_us: i64) {
+        let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else {
+            self.epoch_announce = false;
+            return;
+        };
+        if e.origin != self.me() {
+            self.epoch_announce = false;
+            return;
+        }
+        let mut b = [0u8; ShowEpoch::LEN];
+        let Some(n) = e.encode(&mut b) else { return };
+        match self.send_admin(now_us, conn, Port::TimeBase, &b[..n], None) {
+            Ok(_) => {
+                self.epochs_sent += 1;
+                self.epoch_announce = false;
+            }
+            // No member confirmed yet: the next grant round tries again.
+            Err(SendError::NoRecipients) => self.epoch_announce = false,
+            Err(_) => {}
+        }
     }
 
     fn send_session(&mut self, to: NodeId, m: &SessionMsg, want_ack: bool) {
@@ -803,7 +1179,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         on(Event::FollowStopped);
     }
 
-    fn deliver(&mut self, now_us: i64, origin: NodeId, port: u8, payload: &[u8], on: &mut dyn FnMut(Event<'_>)) {
+    fn deliver(&mut self, now_us: i64, origin: NodeId, port: u8, payload: &[u8], store: &mut dyn BlobStore, on: &mut dyn FnMut(Event<'_>)) {
         #[cfg(feature = "open_mode")]
         let role = if self.node.guard.domain() == Domain::Guest { Role::Guest } else { Role::Member };
         #[cfg(not(feature = "open_mode"))]
@@ -834,11 +1210,43 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             Err(_) => return,
         };
         match port {
-            Port::Freshness => self.on_freshness(now_us, origin, body, on),
+            Port::Freshness => self.on_freshness(now_us, origin, body, store, on),
+            Port::Bulk => {
+                if let Some(d) = self.blobs.on_packet(now_us, origin, body, store) {
+                    self.on_blob_done(d, on);
+                }
+            }
+            Port::Scene if admin => {
+                // The admin session's scene (M6): authoritative; one at a time, the newest.
+                if let Some(msg) = SceneMsg::decode(body) {
+                    if msg.targets.includes(self.me(), &self.membership.groups()) {
+                        self.scenes_in += 1;
+                        self.scene = Some(PendingScene { origin, msg });
+                    }
+                }
+            }
             Port::Membership => {
                 if let Some(c) = MemberCommand::decode(body) {
+                    if let MemberCommand::Eject { node, key_hash } = c {
+                        // Only an authenticated command reaches here (admin session, or
+                        // envelope trust on a dev mesh); it names this device by id and key.
+                        if node == self.me() && key_hash == self.key_hash() {
+                            self.leave();
+                            on(Event::Ejected);
+                        }
+                        return;
+                    }
                     let note = self.membership.on_command(now_us, &c);
                     self.handle_note(now_us, note, on);
+                }
+            }
+            Port::TimeBase if admin => {
+                // The admin session's show epoch (M7, desk #79): authoritative.
+                if let Some(e) = ShowEpoch::decode(body) {
+                    self.epochs_signed += 1;
+                    if let Some(e) = self.time.authorise(e) {
+                        on(Event::ShowEpoch(e));
+                    }
                 }
             }
             Port::Status if body.first() == Some(&T_PROBE) => {}
@@ -851,6 +1259,13 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             Port::Status if body.first() == Some(&T_STATUS) => {
                 if let Some(st) = StatusMsg::decode(body) {
                     self.fanout.on_status(now_us, origin, st);
+                    self.fanout.note_hops(origin, self.rx_hops.saturating_add(1));
+                }
+            }
+            Port::Status if body.first() == Some(&T_TOPO) => {
+                if let Some(t) = TopoMsg::decode(body) {
+                    self.fanout.on_topo(now_us, origin, &t);
+                    self.fanout.note_hops(origin, self.rx_hops.saturating_add(1));
                 }
             }
             Port::Reply if body.first() == Some(&gateway::T_REPLY) => {
@@ -868,7 +1283,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         }
     }
 
-    fn on_freshness(&mut self, now_us: i64, origin: NodeId, body: &[u8], on: &mut dyn FnMut(Event<'_>)) {
+    fn on_freshness(&mut self, now_us: i64, origin: NodeId, body: &[u8], store: &mut dyn BlobStore, on: &mut dyn FnMut(Event<'_>)) {
         let me = self.me();
         let mesh_id = self.node.guard.mesh_id;
         if let Some(m) = SessionMsg::decode(body) {
@@ -877,14 +1292,31 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     if g.gateway == me {
                         return;
                     }
+                    if !self.sessions.knows_signer(&g) {
+                        // A delegate's grant: its certificate first. Being verified now, or
+                        // ask the gateway for it (it sends the certificate, then the grant).
+                        let pending = self.pending_deleg.is_some_and(|d| g.by == Some(d.hash()));
+                        if pending {
+                            self.pending_grant = Some(g);
+                        } else {
+                            self.send_session(g.gateway, &SessionMsg::Request { session: g.session, node: me }, false);
+                        }
+                        return;
+                    }
                     if self.sessions.needs_crypto(&g) {
                         // A new session or a renewal: verify off this path (run_crypto).
                         self.pending_grant = Some(g);
                         return;
                     }
                     let admin_key = self.membership.admin_key().copied();
-                    if let Ok(Some(ack)) = self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), mesh_id, me, &self.dev, &mut self.rng) {
+                    let revoked = self.membership.revoked();
+                    if let Ok(Some(ack)) = self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), &revoked, mesh_id, me, &self.dev, &mut self.rng) {
                         self.send_session(g.gateway, &ack, false);
+                    }
+                }
+                SessionMsg::Delegation(d) => {
+                    if self.sessions.delegation_needs_crypto(&d) {
+                        self.pending_deleg = Some(d);
                     }
                 }
                 SessionMsg::Ack { .. } => {
@@ -904,13 +1336,13 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                         on(Event::SessionSynced { session, gateway: gw });
                         if let Some(h) = self.held.take() {
                             let buf = h.buf;
-                            self.deliver(now_us, h.origin, h.port, &buf[..h.len], on);
+                            self.deliver(now_us, h.origin, h.port, &buf[..h.len], store, on);
                         }
                     }
                 }
                 SessionMsg::Request { session, .. } => {
-                    if let Some(g) = self.gateway.as_ref().map(|g| g.grant).filter(|g| g.session == session) {
-                        self.send_session(BROADCAST, &SessionMsg::Grant(g), false);
+                    if self.gateway.as_ref().is_some_and(|g| g.grant.session == session) {
+                        self.send_grant(BROADCAST);
                     }
                 }
             }
@@ -945,12 +1377,22 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             self.node.guard.stage_next(s.mesh_id, k.epoch, &k.mesh_key);
             self.installed = Some((s.mesh_id, k.epoch, k.mesh_key));
         }
+        // Delegates now on the revocation list: their certificates and sessions go, here
+        // and, if this gateway signs for one, its gateway session and unlocked connections.
+        let revoked = self.membership.revoked();
+        self.sessions.drop_revoked(&revoked);
+        if let Some(gs) = self.gateway.as_ref().filter(|gs| gs.grant.by.is_some_and(|h| revoked.contains(&h))) {
+            let session = gs.grant.session;
+            self.gate.drop_session(session);
+            self.gateway = None;
+            self.next_grant_us = None;
+        }
         on(Event::Rekeyed { epoch: k.epoch });
     }
 
     /// Session crypto waiting (a grant to verify, Acks to check).
     pub fn crypto_pending(&self) -> bool {
-        self.pending_grant.is_some() || self.pending_acks.iter().any(|a| a.is_some())
+        self.pending_grant.is_some() || self.pending_deleg.is_some() || self.pending_acks.iter().any(|a| a.is_some())
     }
 
     /// Run one session crypto job (an ECDSA verify plus an ECDH, or one ECDH). Firmware
@@ -961,11 +1403,22 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     pub fn run_crypto(&mut self, now_us: i64) -> bool {
         let me = self.me();
         let mesh_id = self.node.guard.mesh_id;
+        if let Some(d) = self.pending_deleg.take() {
+            self.crypto_jobs += 1;
+            let admin_key = self.membership.admin_key().copied();
+            let revoked = self.membership.revoked();
+            self.sessions.on_delegation(&d, admin_key.as_ref(), mesh_id, self.mesh_s(now_us), &revoked);
+            return true;
+        }
         if let Some(g) = self.pending_grant.take() {
             self.crypto_jobs += 1;
             let admin_key = self.membership.admin_key().copied();
-            if let Ok(Some(ack)) = self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), mesh_id, me, &self.dev, &mut self.rng) {
-                self.send_session(g.gateway, &ack, false);
+            let revoked = self.membership.revoked();
+            match self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), &revoked, mesh_id, me, &self.dev, &mut self.rng) {
+                Ok(Some(ack)) => self.send_session(g.gateway, &ack, false),
+                // Its certificate was refused or never came: ask again.
+                Err(GrantReject::UnknownDelegate) => self.send_session(g.gateway, &SessionMsg::Request { session: g.session, node: me }, false),
+                _ => {}
             }
             return true;
         }
@@ -975,6 +1428,11 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             if let Some(gs) = self.gateway.as_mut() {
                 if let Some((to, conf)) = gs.on_ack(&m, &self.dev, mesh_id, me, counter) {
                     self.send_session(to, &conf, false);
+                    // A member synced after the look changed (it joined, or rebooted): it
+                    // gets the current scene (M6).
+                    if self.scene_gen != 0 {
+                        self.queue_catch_up(to);
+                    }
                 }
             }
             return true;
@@ -986,24 +1444,38 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// `mesh_unlock{grant}` on connection `conn` (§7.9): the app signed a grant for this
     /// gateway. The grant is broadcast; members ack, and are commanded once confirmed.
-    pub fn unlock(&mut self, now_us: i64, conn: usize, grant: &Grant) -> Result<(), UnlockError> {
+    ///
+    /// A grant a delegate signed comes with its certificate (`delegation`), which this
+    /// gateway then sends ahead of every broadcast of the grant.
+    pub fn unlock(&mut self, now_us: i64, conn: usize, grant: &Grant, delegation: Option<&Delegation>) -> Result<(), UnlockError> {
         let mesh_id = self.membership.mesh_id().unwrap_or(0);
         let admin_key = self.membership.admin_key().copied();
+        let revoked = self.membership.revoked();
         let my_key = self.dev.public_key();
-        self.gate.unlock(now_us, self.mesh_s(now_us), conn, grant, admin_key.as_ref(), mesh_id, self.me(), &my_key)?;
+        self.gate.unlock(now_us, self.mesh_s(now_us), conn, grant, delegation, admin_key.as_ref(), &revoked, mesh_id, self.me(), &my_key)?;
+        let delegation = grant.by.and(delegation.copied());
         match self.gateway.as_mut() {
             // A renewal keeps the roster and its pairwise keys; members verify the new expiry.
             Some(gs) if gs.grant.session == grant.session => {
-                if gs.renew(*grant) {
+                if gs.renew(*grant, delegation) {
                     self.next_grant_us = Some(now_us);
                 }
             }
             _ => {
-                self.gateway = Some(GatewaySession::new(*grant));
+                self.gateway = Some(GatewaySession::new(*grant, delegation));
                 self.next_grant_us = Some(now_us);
             }
         }
         Ok(())
+    }
+
+    /// Send the gateway session's grant, its delegate's certificate first.
+    fn send_grant(&mut self, to: NodeId) {
+        let Some((g, d)) = self.gateway.as_ref().map(|gs| (gs.grant, gs.delegation)) else { return };
+        if let Some(d) = d {
+            self.send_session(to, &SessionMsg::Delegation(d), false);
+        }
+        self.send_session(to, &SessionMsg::Grant(g), false);
     }
 
     /// Originate an admin-class packet for an unlocked connection: MAC'd for each recipient
@@ -1042,6 +1514,15 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             n += 1;
         }
         if n == 0 {
+            // No other member online: a membership command (admit, eject, block, groups) is
+            // still the gateway's own to apply, so a lone gateway can admit the fixture
+            // waiting to join (D-519 bench). Anything else has nobody to reach.
+            if port == Port::Membership {
+                if let Some(c) = MemberCommand::decode(body) {
+                    self.membership.on_command(now_us, &c);
+                    return Ok(0);
+                }
+            }
             return Err(SendError::NoRecipients);
         }
         let per = admin::recipients_per_packet(self.node.max_payload(), body.len());
@@ -1094,7 +1575,16 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// Connection `conn` opened or closed: whatever session it held is gone.
     pub fn connection_changed(&mut self, conn: usize) {
-        self.gate.connection_changed(conn);
+        // The app went away, but the grant it unlocked is still good (members keep its
+        // session until it expires). Keep it on the detached slot so this gateway still
+        // catches up a member that reboots or rejoins, and re-announces its show epoch,
+        // while no app is connected. Nothing else can use that slot; a new unlock
+        // replaces the gateway session, and the old one then signs nothing.
+        if conn != admin::DETACHED && self.signing_session(conn) {
+            self.gate.detach(conn);
+        } else {
+            self.gate.connection_changed(conn);
+        }
     }
 
     /// A member's answer to relayed control `op_id` from `gateway` (ACKed unicast, desk #70).
@@ -1107,6 +1597,23 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// The firmware's view of this device for its status broadcasts (M5).
     pub fn set_status(&mut self, st: StatusMsg) {
         self.status_local = Some(st);
+    }
+
+    /// This device's room pose for its topology broadcasts ([`crate::topo`]); nothing goes
+    /// out until the firmware reports one (`Unposed` counts). A change goes out at once.
+    pub fn set_pose(&mut self, p: PoseKnown) {
+        self.topo.set_pose(p);
+    }
+
+    /// A peer's latest topology (room pose, neighbours, hops) as this node heard it: every
+    /// member keeps every live member's, not only the gateway.
+    pub fn peer_topo(&self, now_us: i64, node: NodeId) -> Option<&Topo> {
+        self.fanout.member(now_us, node).map(|m| &m.topo)
+    }
+
+    /// This node's own radio links (what its topology reports), strongest first.
+    pub fn links(&self, now_us: i64, out: &mut [Link]) -> usize {
+        self.node.backhaul.links(now_us, out)
     }
 
     fn send_control_with(&mut self, now_us: i64, conn: usize, h: ControlHeader, inner: &[u8]) -> Result<usize, SendError> {
@@ -1162,6 +1669,19 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         self.command(now_us, conn, &MemberCommand::AssignGroups { node, groups: Groups::from_slice(groups) })
     }
 
+    /// Eject one member (M7; issue #571's seam): it leaves the mesh. Not a removal (no
+    /// rotation): use [`MeshStack::rotate`] with a revocation to keep it out.
+    pub fn eject(&mut self, now_us: i64, conn: usize, node: NodeId, key_hash: KeyHash) -> Result<usize, SendError> {
+        let n = self.command(now_us, conn, &MemberCommand::Eject { node, key_hash })?;
+        // It leaves on receipt: the app's member list drops it now (the e2e saw it listed
+        // for the 30 s MEMBER_STALE_US), and the session's commands stop MAC'ing for it.
+        self.fanout.forget(node);
+        if let Some(gs) = self.gateway.as_mut() {
+            gs.remove(node);
+        }
+        Ok(n)
+    }
+
     pub fn set_mode(&mut self, now_us: i64, conn: usize, mode: Mode) -> Result<usize, SendError> {
         let generation = self.membership.state.map(|s| s.generation).unwrap_or(0).wrapping_add(1);
         self.command(now_us, conn, &MemberCommand::SetMode { mode, generation })
@@ -1176,6 +1696,15 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         let admin_key = self.membership.admin_key().copied().ok_or(SendError::BadOrder)?;
         let rk = Rekeyer::start(now_us, gs, order, mesh_key, site_secret, &admin_key, exclude, &mut self.rng).ok_or(SendError::BadOrder)?;
         self.rekeyer = Some(rk);
+        // The removed get no wrap, and no command MACs from now on (M7).
+        if let Some(gs) = self.gateway.as_mut() {
+            for &n in exclude {
+                gs.remove(n);
+            }
+        }
+        for &n in exclude {
+            self.fanout.forget(n);
+        }
         let keys = NewKeys { epoch: order.epoch, mesh_key: *mesh_key, site_secret: *site_secret, rev_version: order.rev_version, revoked: order.revoked, n_revoked: order.n_revoked };
         self.install(now_us, &keys, on);
         Ok(())
@@ -1191,4 +1720,15 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         }
         self.node.net.send(dest, port as u8, body, want_ack).ok_or(SendError::QueueFull)
     }
+}
+
+/// Write `f()` into `dst` from a frame of its own (never inlined): a by-value temporary of
+/// a big field lives only as long as this call, so building a struct field by field through
+/// it needs the stack of its largest field, not of all of them at once.
+///
+/// # Safety
+/// `dst` is valid for writes.
+#[inline(never)]
+pub(crate) unsafe fn put<T>(dst: *mut T, f: impl FnOnce() -> T) {
+    dst.write(f())
 }

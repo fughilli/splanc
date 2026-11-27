@@ -22,7 +22,10 @@
 
 #![no_std]
 
-use ledmapper_pattern::{color_for_frame, color_index_for_frame_coded, stride_lit, CodeSpec, Rgb, SyncPattern};
+use ledmapper_pattern::{
+    color_for_frame, color_index_for_frame_coded, stride_lit, stride_lit_rolling, CodeSpec, Rgb, RollingStride,
+    SyncPattern, ROLLING_DWELL_DEFAULT,
+};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_view::ledmapper::v1 as pv;
 use pb::ServerMessage_::Msg as SMsg;
@@ -141,6 +144,12 @@ struct ActiveCapture {
     stride_spacing: u32,
     anchor_density: u32,
     stride_phase: u32,
+    /// Rolling stride (docs/design/rolling-stride.md, feature "stride_rolling"):
+    /// the lit subset is `stride_lit_rolling(led, pattern-clock frame)` and
+    /// `stride_phase` is unused. Kept across Configure unless it names a mode.
+    stride_rolling: bool,
+    /// Rolling dwell D in code cycles (the clamped value the kernel runs).
+    dwell_cycles: u32,
     /// PHYSICAL LEDs driven (the strip). Equals `spec.led_count` except in a
     /// group capture, where `spec` is derived from the group's shared code space.
     led_count: u32,
@@ -190,6 +199,10 @@ fn set_group_params(cp: &mut pb::CodeParams, active: &ActiveCapture) {
 }
 
 impl ActiveCapture {
+    /// The rolling-stride geometry the kernel masks with.
+    fn rolling(&self) -> RollingStride {
+        RollingStride::new(self.stride_spacing, self.anchor_density, self.dwell_cycles, self.led_count, self.code_offset)
+    }
     /// Wire brightness in [0,1] (cold: only for encoding CodeParams).
     fn brightness(&self) -> f64 {
         self.brightness_q8 as f64 / BRIGHTNESS_ONE_Q8 as f64
@@ -232,12 +245,40 @@ fn parse_stride(
 }
 
 /// Echo the active stride onto a CodeParams reply, only when striding is on
-/// (unset fields mean "legacy all-lit" on the wire).
+/// (unset fields mean "legacy all-lit" on the wire). The mode and dwell are
+/// echoed only for a rolling stride, so a phased reply is byte-identical to
+/// what players before the feature sent.
 fn set_stride_params(cp: &mut pb::CodeParams, active: &ActiveCapture) {
     if active.stride_spacing > 1 {
         cp.set_stride_spacing(active.stride_spacing as i32);
         cp.set_anchor_density(active.anchor_density as i32);
         cp.set_stride_phase(active.stride_phase as i32);
+        if active.stride_rolling {
+            cp.set_stride_mode(s64(STRIDE_MODE_ROLLING));
+            cp.set_dwell_cycles(active.rolling().dwell() as i32);
+        }
+    }
+}
+
+/// The wire stride mode (start_mapping / configure `strideMode`): Some(true) =
+/// rolling, Some(false) = phased, None = unset (keep the default). Rolling
+/// needs this build's FEATURE_STRIDE_ROLLING; without it the request runs
+/// phased and the reply says so (no strideMode echo), like the stagger pilot.
+fn parse_stride_mode(mode: Option<&str>, features: &[&str]) -> Result<Option<bool>, pb::ServerMessage> {
+    match mode {
+        None => Ok(None),
+        Some(m) if m == STRIDE_MODE_ROLLING => Ok(Some(features.contains(&FEATURE_STRIDE_ROLLING))),
+        Some("phased") => Ok(Some(false)),
+        Some(_) => Err(error("bad_message", "strideMode must be phased or rolling")),
+    }
+}
+
+/// The wire rolling dwell (code cycles), or `default` when unset.
+fn parse_dwell(v: Option<i32>, default: u32) -> Result<u32, pb::ServerMessage> {
+    match v {
+        None => Ok(default),
+        Some(d) if d < 1 => Err(error("bad_message", "dwellCycles must be >= 1")),
+        Some(d) => Ok(RollingStride::new(2, 3, d as u32, 0, 0).dwell()),
     }
 }
 
@@ -495,6 +536,9 @@ pub struct Player {
     /// welcome at encode time like the board descriptor (the firmware profile
     /// carries no inline feature strings).
     features: &'static [&'static str],
+    /// One feature set at run time after the static ones (the firmware's flash: its JEDEC id
+    /// and whether erase auto-suspend is on, PR-41), empty for none.
+    extra_feature: micropb::heapless::String<32>,
     /// The .fxb format version the effects VM accepts (welcome.fxb_format).
     fxb_format: u32,
     /// This fixture's room pose (set_fixture_pose); None = unposed. `pose_gen`
@@ -562,6 +606,7 @@ impl Player {
             board_caps: None,
             board_caps_sets: (false, false, false),
             features: &[],
+            extra_feature: micropb::heapless::String::new(),
             fxb_format: 0,
             pose: None,
             pose_gen: 0,
@@ -777,7 +822,16 @@ impl Player {
             | CMsg::SetNetworkOutput(_)
             // The mesh gateway: the netstack player's mesh (player_app mesh_ffi.rs), when on.
             | CMsg::MeshSend(_)
-            | CMsg::GetMesh(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
+            | CMsg::GetMesh(_)
+            | CMsg::MeshAdmin(_)
+            | CMsg::SetFxState(_)
+            // Lamp power: the player_app power layer (power_ffi.rs).
+            | CMsg::SetPower(_)
+            | CMsg::GetPower(_)
+            | CMsg::SetPowerConfig(_)
+            // The wall clock: the player_app clock layer (clock_ffi.rs).
+            | CMsg::SetWallClock(_)
+            | CMsg::GetClock(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.
@@ -835,6 +889,14 @@ impl Player {
             Ok(v) => v,
             Err(e) => return e,
         };
+        let stride_rolling = match parse_stride_mode(options.stride_mode(), self.features) {
+            Ok(v) => v.unwrap_or(false),
+            Err(e) => return e,
+        };
+        let dwell_cycles = match parse_dwell(options.dwell_cycles(), ROLLING_DWELL_DEFAULT) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let (code_offset, code_space) =
             match parse_code_layout(led_count as u32, options.code_offset(), options.code_space()) {
                 Ok(v) => v,
@@ -880,6 +942,8 @@ impl Player {
             stride_spacing,
             anchor_density,
             stride_phase,
+            stride_rolling,
+            dwell_cycles,
             led_count: led_count as u32,
             code_offset,
             stop_at_ms,
@@ -940,6 +1004,14 @@ impl Player {
             Ok(v) => v,
             Err(e) => return e,
         };
+        let stride_rolling = match parse_stride_mode(options.and_then(|o| o.stride_mode()), self.features) {
+            Ok(v) => v.unwrap_or(active.stride_rolling),
+            Err(e) => return e,
+        };
+        let dwell_cycles = match parse_dwell(options.and_then(|o| o.dwell_cycles()), active.dwell_cycles) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         // A group capture keeps its code layout (the shared space grows only if
         // this fixture's strip outgrew it).
         let code_space = (active.spec.led_count).max(active.code_offset + led_count as u32);
@@ -957,6 +1029,8 @@ impl Player {
             stride_spacing,
             anchor_density,
             stride_phase,
+            stride_rolling,
+            dwell_cycles,
             led_count: led_count as u32,
             code_offset: active.code_offset,
             // A renegotiation keeps the original auto-stop deadline.
@@ -1482,8 +1556,7 @@ impl Player {
         let cap = out.len();
         let mut w: &mut [u8] = out;
         let feats: usize = self
-            .features
-            .iter()
+            .all_features()
             .map(|f| 1 + sizeof_varint32(f.len() as u32) + f.len())
             .sum();
         let pose_len = self.pose.as_ref().map(|p| p.compute_size());
@@ -1495,7 +1568,7 @@ impl Player {
             enc.encode_tag(Tag::from_parts(1, WIRE_TYPE_LEN)).ok()?;
             enc.encode_varint32(inner as u32).ok()?;
             wl.encode(&mut enc).ok()?;
-            for f in self.features {
+            for f in self.all_features() {
                 enc.encode_tag(Tag::from_parts(10, WIRE_TYPE_LEN)).ok()?;
                 enc.encode_string(f).ok()?;
             }
@@ -1563,6 +1636,17 @@ impl Player {
     pub fn set_features(&mut self, features: &'static [&'static str], fxb_format: u32) {
         self.features = features;
         self.fxb_format = fxb_format;
+    }
+
+    /// A feature known only at run time, served after the static ones (empty: none).
+    pub fn set_extra_feature(&mut self, f: &str) {
+        self.extra_feature.clear();
+        let _ = self.extra_feature.push_str(f);
+    }
+
+    /// The static features, then the run-time one.
+    fn all_features(&self) -> impl Iterator<Item = &str> {
+        self.features.iter().copied().chain(Some(self.extra_feature.as_str()).filter(|f| !f.is_empty()))
     }
 
     /// The features declared by [`Player::set_features`].
@@ -1813,21 +1897,29 @@ impl Player {
 
     // -- output-driver hooks ------------------------------------------------
 
-    /// The color LED `led` shows in mapping-pattern cycle frame
-    /// `frame_index` (callers reduce the running frame counter modulo
-    /// `cycle_frames`); None when no capture is active. Scaled by the
-    /// phone-servoed capture brightness — hue is the carrier, so a uniform
-    /// scale changes nothing the decoder reads (it normalizes against each
-    /// track's own white frame).
-    pub fn pattern_color(&self, led: u32, frame_index: u32) -> Option<Rgb> {
+    /// The color LED `led` shows at mapping-pattern frame `seq`: the ABSOLUTE
+    /// frame index since the pattern epoch (the rolling stride is a function of
+    /// it; the code itself only of `seq mod cycle_frames`, which this reduces —
+    /// so a caller passing an already-reduced cycle frame gets the same colours
+    /// for every non-rolling capture). None when no capture is active. Scaled
+    /// by the phone-servoed capture brightness — hue is the carrier, so a
+    /// uniform scale changes nothing the decoder reads (it normalizes against
+    /// each track's own white frame).
+    pub fn pattern_color(&self, led: u32, seq: u32) -> Option<Rgb> {
         let active = self.active.as_ref()?;
-        // Diffuse striding: LEDs outside the active phase's subset are OFF. Return
-        // BLACK (not None) — the render loop leaves a None LED at its prior color,
+        let frame_index = seq % active.spec.cycle_frames.max(1);
+        // Diffuse striding: LEDs outside the lit subset are OFF. Return BLACK
+        // (not None) — the render loop leaves a None LED at its prior color,
         // which would strand masked LEDs lit from the previous phase.
-        if active.stride_spacing > 1
-            && !stride_lit(led, active.stride_phase, active.stride_spacing, active.anchor_density)
-        {
-            return Some((0, 0, 0));
+        if active.stride_spacing > 1 {
+            let lit = if active.stride_rolling {
+                stride_lit_rolling(led, seq, &active.spec, &active.rolling())
+            } else {
+                stride_lit(led, active.stride_phase, active.stride_spacing, active.anchor_density)
+            };
+            if !lit {
+                return Some((0, 0, 0));
+            }
         }
         if led >= active.led_count {
             return Some((0, 0, 0));
@@ -1989,6 +2081,14 @@ pub fn upload_malformed() -> pb::ServerMessage {
 /// staggered pilot (`start_mapping` `syncPattern: "stagger_pilot"`). The host
 /// player and the C6/P4 firmware set it.
 pub const FEATURE_STAGGER_PILOT: &str = "hue_stagger_pilot";
+
+/// The welcome feature a player advertises when it runs the rolling stride
+/// (`start_mapping` `strideMode: "rolling"`, docs/design/rolling-stride.md):
+/// its render loop passes the ABSOLUTE pattern frame to [`Player::pattern_color`].
+pub const FEATURE_STRIDE_ROLLING: &str = "stride_rolling";
+
+/// The wire value of a rolling stride (`strideMode`).
+pub const STRIDE_MODE_ROLLING: &str = "rolling";
 
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;
 /// the derivation itself lives in ledmapper_pattern so the pattern generator
@@ -2195,7 +2295,7 @@ impl Player {
         j.str(self.fw_git_commit.as_str());
         j.raw(if self.fw_git_dirty { ",\"dirty\":true}" } else { ",\"dirty\":false}" });
         j.raw(",\"protocol\":{\"package\":\"ledmapper.v1\",\"ws_path\":\"/ws\",\"profile\":\"core\",\"features\":[");
-        for (i, f) in self.features.iter().enumerate() {
+        for (i, f) in self.all_features().enumerate() {
             if i > 0 {
                 j.raw(",");
             }

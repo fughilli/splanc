@@ -39,6 +39,7 @@ uint32_t ns_ble_player_take_frame(uint8_t *out, uint32_t cap);
 void ns_ble_player_notify(const uint8_t *data, uint32_t len);
 uint32_t ns_ble_player_poll_notify(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_take_wifi(uint8_t *ssid, uint32_t ssid_cap, uint8_t *pass, uint32_t pass_cap);
+uint32_t ns_ble_take_identify();
 void ns_ble_provision_result(uint32_t ok, const uint8_t *url, uint32_t url_len);
 void ns_ble_provision_fail(uint32_t reason);
 void ns_ble_set_name(const uint8_t *name, uint32_t len);
@@ -345,6 +346,8 @@ void player_ble_push(const uint8_t *data, size_t len) {
 }
 
 extern "C" bool lm_kiosk_enabled(void);  // kiosk_ffi.rs
+
+bool improv_ble_take_identify() { return ns_ble_take_identify() != 0; }
 
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {
   bool got = ns_ble_take_wifi(reinterpret_cast<uint8_t *>(ssid), (uint32_t)ssid_cap,

@@ -18,6 +18,7 @@ import { nowPlaying } from "../../store/nowPlaying";
 import type { StoredEffect } from "../../store/effectStore";
 import type { FxCompiled } from "../../fx/preview";
 import { appState } from "../app/state";
+import { meshPeers } from "../../net/mesh";
 import { openDeviceSheet } from "./deviceSheet";
 import { installEffectsHomeStyles } from "./effectsHome.css";
 import type { Router } from "../app/router";
@@ -85,7 +86,14 @@ export function openEffectTune(router: Router, e: StoredEffect): void {
       const c = appState.client;
       if (c?.isConnected) c.live.setUniform(slot, value);
     },
-    { label: friendlyUniformName, empty: "This effect has nothing to adjust." },
+    {
+      label: friendlyUniformName,
+      empty: "This effect has nothing to adjust.",
+      onCommit: () => {
+        const c = appState.client;
+        if (c?.isConnected) c.live.commit();
+      },
+    },
   );
 
   const editor = Button({
@@ -146,7 +154,9 @@ export function openEffectTune(router: Router, e: StoredEffect): void {
       nowPlaying.set(devId, e.id);
       played = true;
       adjust.hidden = false;
-      setStatus("ok", `Playing on ${fixtureName()}`);
+      // Whole-mesh control (mesh M6): every member switched with it.
+      const peers = c.meshAll ? meshPeers(c.meshState).length : 0;
+      setStatus("ok", peers ? `Playing on ${fixtureName()} and ${peers} meshed fixture${peers === 1 ? "" : "s"}` : `Playing on ${fixtureName()}`);
     } catch (err) {
       if (disposed) return;
       setStatus("err", `Couldn't start it on ${fixtureName()}: ${msg(err)}`);

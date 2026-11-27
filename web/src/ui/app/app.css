@@ -699,7 +699,8 @@ body.is-locked {
   display: grid;
   grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr) 3.6rem;
   column-gap: var(--sp-2);
-  row-gap: 6px;
+  /* The value fields stack one row apart: >= 8 px between them (no crammed controls). */
+  row-gap: var(--sp-2);
   align-items: center;
   width: 100%;
 }
@@ -722,33 +723,14 @@ body.is-locked {
   width: 100%;
   margin: 0;
 }
-/* Colour control: a styled swatch (consistent on iOS + Android) with the native
- * <input type="color"> overlaid invisibly so tapping still opens the OS picker. */
-.upanel-color {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 1.5rem;
-  cursor: pointer;
-}
-.upanel-color-swatch {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctrl);
-  box-sizing: border-box;
-}
-.upanel-color input[type="color"] {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  cursor: pointer;
+/* Colour control: a ColorSwatch (ui/kit/hsvPicker.ts) opening the live HSV
+ * picker; the value column shows its hex as a label. */
+.upanel-hex {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
 }
 .upanel-ctrl select {
   width: 100%;
@@ -780,8 +762,26 @@ body.is-locked {
 .upanel-mat {
   grid-column: 2 / span 2;
   display: grid;
-  gap: 2px;
+  gap: var(--sp-2);
   min-width: 0;
+}
+/* D-541 PR 10: the matrix grid sits behind an "Advanced" disclosure under the
+ * gizmo button, as its own full-width row. */
+.upanel-adv {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.upanel-adv > summary {
+  cursor: pointer;
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  padding: var(--sp-1) 0;
+}
+.upanel-adv[open] > summary {
+  margin-bottom: var(--sp-2);
+}
+.upanel-adv > .upanel-mat {
+  grid-column: auto;
 }
 .upanel-num::-webkit-outer-spin-button,
 .upanel-num::-webkit-inner-spin-button {
@@ -1213,7 +1213,7 @@ body.is-locked {
   box-sizing: border-box;
   padding: 0.6rem 0.8rem;
   font: 13px/1.5 var(--font-mono, ui-monospace, monospace);
-  tab-size: 2;
+  tab-size: 4;
   white-space: pre;
   overflow: auto;
   border: 0;
@@ -1344,7 +1344,9 @@ body.is-locked {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 0.35rem 0.8rem;
+  /* 8px above the row: its budget toggle keeps the no-crammed-controls gap
+   * from the code textarea right above it. */
+  padding: 0.5rem 0.8rem 0.35rem;
   font: 12px/1.4 ui-monospace, monospace;
   border-top: 1px solid var(--border);
   background: var(--surface-2);
@@ -1392,7 +1394,7 @@ body.is-locked {
   justify-content: center;
   width: 20px;
   height: 20px;
-  margin: -2px -4px -2px 0;
+  margin: 0 -4px -2px 0;
   padding: 0;
   background: none;
   border: 0;
@@ -1479,7 +1481,7 @@ body.is-locked {
   padding-top: env(safe-area-inset-top, 0px);
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-2); /* ≥ 8 px between Back, the name, ⋯ and collapse (layout guard) */
   background: color-mix(in srgb, var(--surface-2) 88%, transparent);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(6px);
@@ -2046,7 +2048,8 @@ body.is-locked {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
-  padding: 0 0 0 0.5rem;
+  /* Right: ≥ 8 px from the next dock's tabs across the divider (layout guard). */
+  padding: 0 var(--sp-2) 0 0.5rem;
   min-height: 1.35rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
@@ -2064,7 +2067,7 @@ body.is-locked {
 }
 .fxpane-ctl {
   display: flex;
-  gap: 0;
+  gap: var(--sp-2); /* Move / Hide pane: ≥ 8 px apart (layout guard) */
   flex: 0 0 auto;
 }
 .fxpane-btn {
@@ -2177,6 +2180,9 @@ body.is-locked {
   align-items: center;
   flex: 0 0 auto;
   margin-left: auto;
+  /* ≥ 8 px from the tabs, between Move / Hide, and from the next dock (layout guard). */
+  padding: 0 var(--sp-2);
+  gap: var(--sp-2);
 }
 .fxlayout-edgetab {
   flex: 0 0 auto;
@@ -3050,6 +3056,43 @@ input.device-name-input {
 .device-row--stale .device-url {
   color: var(--err);
 }
+/* The row's plug: accent to connect, red to disconnect. */
+.k-iconbtn.device-connect {
+  background: var(--accent);
+  color: #fff;
+}
+.k-iconbtn.device-connect:hover {
+  background: var(--accent);
+  filter: brightness(1.12);
+}
+.k-iconbtn.device-disconnect {
+  background: var(--err);
+  color: #fff;
+}
+.k-iconbtn.device-disconnect:hover {
+  background: var(--err);
+  filter: brightness(1.12);
+}
+/* A mesh: the gateway's row, its members in a collapsible group under it. */
+.device-mesh-group .device-collapse-head {
+  padding-left: calc(10px + var(--sp-3));
+  font-size: var(--f-caption);
+}
+.device-mesh-members {
+  padding-left: calc(10px + var(--sp-3));
+  border-left: 2px solid var(--border, rgba(127, 127, 127, 0.25));
+  margin-left: 4px;
+}
+/* Inactive: fixtures that weren't found, collapsed at the bottom with one note. */
+.device-inactive {
+  margin-top: var(--sp-3);
+}
+.device-inactive .device-url {
+  color: var(--text-dim);
+}
+.device-inactive-list > .device-stale {
+  padding: var(--sp-2) 0;
+}
 /* Connecting: gray plug that breathes, with a slash "wave" sweeping across —
    reads as in-progress, before it settles to the red disconnect. */
 .k-iconbtn.device-connecting {
@@ -3716,4 +3759,394 @@ input.device-name-input {
   font: inherit;
   font-size: 0.8em;
   max-width: 7em;
+}
+
+/* -- Code editor diagnostics (D-501) -------------------------------------
+ * .fxedit-diaglayer repeats the code (transparent) over the highlighted
+ * backdrop: lines with an error / warning get a tinted band with a stripe in
+ * the left padding, the offending span a wavy underline. Hover (or the caret
+ * inside a span) shows .fxdiag-tip with the compiler's explanation. */
+.fxedit-diaglayer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font: 13px/1.5 var(--font-mono, ui-monospace, monospace);
+  tab-size: 4;
+  white-space: pre;
+  overflow: hidden;
+  border: 0;
+  color: transparent;
+  background: transparent;
+  pointer-events: none;
+  z-index: 0;
+}
+.fxdiag-line {
+  display: inline-block;
+  vertical-align: top;
+  min-width: calc(100% + 0.8rem);
+  margin-left: -0.8rem;
+  padding-left: 0.8rem;
+}
+.fxdiag-line--error {
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--err);
+}
+.fxdiag-line--warning {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+.fxdiag-sq {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1.5px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+.fxdiag-sq--error {
+  text-decoration-color: var(--err);
+}
+.fxdiag-sq--warning {
+  text-decoration-color: var(--warn);
+}
+.fxdiag-tip {
+  position: absolute;
+  z-index: 6;
+  max-width: min(28rem, calc(100% - 8px));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  font: 12px/1.4 var(--font-ui, system-ui, sans-serif);
+  pointer-events: none;
+  white-space: normal;
+}
+.fxdiag-tip-sev {
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fxdiag-tip-sev--error {
+  color: var(--err);
+}
+.fxdiag-tip-sev--warning {
+  color: var(--warn);
+}
+/* Cursor readout at the right end of the status line; keeps its own colour
+ * whatever the compile status tints the line. */
+.fxedit-cursorpos {
+  flex: 0 0 auto;
+  margin-left: var(--sp-3);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Keyboard-shortcut hint on a menu item (e.g. Format code ⌘⇧F). */
+.fxedit-menu-item:has(.fxedit-menu-kbd) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.fxedit-menu-kbd {
+  font: 11px/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--text-dim);
+}
+
+/* ---- FX editor: Docs pane + selection actions (D-541 PR 6) ---------------- */
+.fxpane[data-pane="docs"] .fxpane-body {
+  overflow: hidden;
+  padding: 0;
+}
+.fxdocs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+/* Phone: the panel lives in a bottom sheet with its own scroll under a fixed
+   search box. */
+.k-sheet .fxdocs-sheetbody {
+  display: flex;
+  flex-direction: column;
+  height: min(72vh, 640px);
+}
+.fxdocs-head {
+  flex: 0 0 auto;
+  padding: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+.k-sheet .fxdocs-head {
+  padding: 0 0 var(--sp-2);
+}
+.fxdocs-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  background: var(--bg);
+  color: var(--text-dim);
+}
+.fxdocs-search:focus-within {
+  border-color: var(--accent);
+}
+.fxdocs-search svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.fxdocs-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* no iOS zoom-on-focus */
+  padding: 6px 0;
+}
+.fxdocs-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3) var(--sp-4);
+}
+.k-sheet .fxdocs-body {
+  padding: var(--sp-2) 0 var(--sp-4);
+}
+.fxdocs-intro,
+.fxdocs-count,
+.fxdocs-note {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.fxdocs-note {
+  margin: var(--sp-2) 0 0;
+}
+.fxdocs-cat h3,
+.fxdocs-page h3 {
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.fxdocs-cat:first-of-type h3 {
+  margin-top: 0;
+}
+.fxdocs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.fxdocs-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px var(--sp-2);
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctrl);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.fxdocs-row:hover,
+.fxdocs-row:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.fxdocs-row-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: #c9a3ff;
+}
+.fxdocs-row-sum {
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.fxdocs-nav {
+  margin-bottom: var(--sp-2);
+}
+.fxdocs-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--f-title);
+}
+.fxdocs-title code {
+  font-family: var(--font-mono);
+}
+.fxdocs-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.fxdocs-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.fxdocs-badge--type {
+  color: #7fd0ff;
+  font-family: var(--font-mono);
+}
+.fxdocs-badge--scope {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.fxdocs-sigs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+.fxdocs-sig,
+.fxdocs-code {
+  margin: 0;
+  padding: var(--sp-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  font: 12px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fxdocs-summary {
+  margin: 0 0 var(--sp-2);
+  font-weight: 500;
+}
+.fxdocs-doc {
+  font-size: var(--f-body);
+  line-height: 1.5;
+}
+.fxdocs-doc p {
+  margin: 0 0 var(--sp-2);
+}
+.fxdocs-doc code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.fxdocs-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: var(--sp-3) 0 0;
+  font-size: var(--f-caption);
+}
+.fxdocs-facts dt {
+  color: var(--text-dim);
+}
+.fxdocs-facts dd {
+  margin: 0;
+}
+.fxdocs-actions,
+.fxdocs-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* Touch: the floating action chip under a selection (owner answer D-551). */
+.fxsel-chip {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.fxsel-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fxsel-chip-btn svg {
+  width: 16px;
+  height: 16px;
+}
+/* Desktop: the right-click menu on the code. */
+.fxsel-menu {
+  position: fixed;
+  z-index: 400;
+  min-width: 13rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+.fxsel-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 30px;
+  padding: 0 var(--sp-2);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.fxsel-menu-item:hover,
+.fxsel-menu-item:focus-visible {
+  background: var(--accent-quiet);
+  outline: none;
+}
+.fxsel-menu-item svg {
+  width: 16px;
+  height: 16px;
+}
+.fxsel-menu-sep {
+  border-top: 1px solid var(--border);
+}
+.fxsel-menu-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 0 var(--sp-2);
 }

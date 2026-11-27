@@ -34,7 +34,8 @@ target_compile_definitions(rfctl PRIVATE
   PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0
   PICO_STDIO_DEFAULT_CRLF=0
 )
-target_link_libraries(rfctl pico_stdlib hardware_spi hardware_timer hardware_watchdog hardware_sync)
+target_link_libraries(rfctl pico_stdlib hardware_spi hardware_timer hardware_watchdog hardware_sync
+  hardware_pio hardware_uart hardware_clocks)
 pico_enable_stdio_usb(rfctl 1)
 pico_enable_stdio_uart(rfctl 0)
 pico_add_extra_outputs(rfctl)

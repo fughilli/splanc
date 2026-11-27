@@ -16,6 +16,7 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "fx_compiler",
     srcs = [
+        "src/lang.rs",
         "src/lib.rs",
         "src/lint.rs",
         "src/memo.rs",
@@ -31,6 +32,47 @@ rust_binary(
     srcs = ["bin/compile_main.rs"],
     edition = "2021",
     deps = [":fx_compiler"],
+)
+
+# The language reference table (src/lang.rs) as the web module the editor's
+# lang-spec.ts derives from:
+#   bazel run //fx_compiler:fx_lang > web/src/effects/editor/lang-table.gen.ts
+rust_binary(
+    name = "fx_lang",
+    srcs = ["bin/lang_main.rs"],
+    edition = "2021",
+    deps = [":fx_compiler"],
+)
+
+# The language table's coverage: every name the compiler accepts (probed with
+# every identifier-shaped literal in its sources) has an entry, every entry is
+# known to the compiler, context types match, every example compiles without a
+# warning, and the generated web table is fresh.
+rust_test(
+    name = "lang_test",
+    srcs = ["tests/lang.rs"],
+    compile_data = [
+        "src/lang.rs",
+        "src/lib.rs",
+        "src/lint.rs",
+        "src/memo.rs",
+        "src/opt.rs",
+        "//web:src/effects/editor/lang-table.gen.ts",
+    ],
+    edition = "2021",
+    deps = [":fx_compiler"],
+)
+
+# D-500: state initial values + void init().
+rust_test(
+    name = "init_test",
+    srcs = ["tests/init.rs"],
+    compile_data = ["//pi/hitl/harness:ab_demo/dbgInit.fx"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
 )
 
 rust_test(
@@ -56,7 +98,10 @@ rust_test(
 rust_test(
     name = "driver_test",
     srcs = ["tests/driver.rs"],
-    compile_data = ["//firmware/sensor:drivers/mpu6050.fx"],
+    compile_data = [
+        "//firmware/sensor:drivers/mpu6050.fx",
+        "//firmware/sensor:drivers/ttp223_touch.fx",
+    ],
     edition = "2021",
     deps = [
         ":fx_compiler",
@@ -74,6 +119,34 @@ rust_test(
         ":fx_compiler",
         "//firmware/fx_vm",
         "//firmware/osc",
+        "@crates//:serde_json",
+    ],
+)
+
+# D-541 PR 4: `: vector` / `: direction` uniforms, the .fxb format-2 stamp
+# (D-557), and the firmware keypoint blend reading the compiled manifest.
+rust_test(
+    name = "vector_test",
+    srcs = ["tests/vector.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+        "//firmware/keypoint",
+        "@crates//:serde_json",
+    ],
+)
+
+# D-541 PR 10 (D-556): `uniform mat3 x : transform2d` (2D affine gizmo), on
+# the same .fxb format 2, and the firmware keypoint blend reading it.
+rust_test(
+    name = "transform2d_test",
+    srcs = ["tests/transform2d.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+        "//firmware/keypoint",
         "@crates//:serde_json",
     ],
 )
@@ -123,6 +196,18 @@ rust_test(
 rust_test(
     name = "integrator_test",
     srcs = ["tests/integrator.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
+# `shared state` (docs/design/fx-mesh-state-and-agents.md): the .fxb footer and the
+# VM's snapshot / restore of exactly the shared slots (a mesh rejoin).
+rust_test(
+    name = "shared_state_test",
+    srcs = ["tests/shared_state.rs"],
     edition = "2021",
     deps = [
         ":fx_compiler",

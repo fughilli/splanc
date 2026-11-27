@@ -8,22 +8,22 @@
       "label": "empty",
       "fxbBase64": "RlhCMQEAAAACAAEADQD//wAAW10AAAAAAAAAAAAAAAAAIQMhAw==",
       "ledCount": 128,
-      "measuredFrameCycles": 150619,
-      "measuredShowCycles": 92962
+      "measuredFrameCycles": 146851,
+      "measuredShowCycles": 599330
     },
     {
       "label": "sweep16",
       "fxbBase64": "RlhCMQEAAAACAAEAEAD//wAAW10AAAAABgMXAwEAAAAAAAAAIQMhAw==",
       "ledCount": 16,
-      "measuredFrameCycles": 38305,
-      "measuredShowCycles": 49144
+      "measuredFrameCycles": 37395,
+      "measuredShowCycles": 83630
     },
     {
       "label": "sweep256",
       "fxbBase64": "RlhCMQEAAAACAAEAEAD//wAAW10AAAAABgMXAwEAAAAAAAAAIQMhAw==",
       "ledCount": 256,
-      "measuredFrameCycles": 363590,
-      "measuredShowCycles": 155993
+      "measuredFrameCycles": 317056,
+      "measuredShowCycles": 1189800
     },
     {
       "label": "hash1M",

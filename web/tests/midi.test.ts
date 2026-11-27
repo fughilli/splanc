@@ -108,14 +108,19 @@ const SPEED_SEMANTIC: SemanticControl = {
   control: CC74.control,
 };
 
-test("isDrivable accepts scalar slider/toggle, rejects vectors", () => {
+test("isDrivable accepts scalar slider/toggle, and colour per channel", () => {
   assert.equal(isDrivable(slider("s", 0, 0, 1)), true);
   assert.equal(
     isDrivable({ name: "t", slot: 1, width: 1, ui: { kind: "toggle" }, default: [0] }),
     true,
   );
+  // D-541 PR 3: colours are driven per channel (see midiColour.test.ts).
   assert.equal(
     isDrivable({ name: "tint", slot: 2, width: 3, ui: { kind: "color" }, default: [0, 0, 0] }),
+    true,
+  );
+  assert.equal(
+    isDrivable({ name: "pick", slot: 3, width: 1, ui: { kind: "dropdown", options: ["a"] }, default: [0] }),
     false,
   );
 });
@@ -154,4 +159,13 @@ test("resolveControlUpdates: step snaps the scaled value", () => {
   const updates = resolveControlUpdates({ ...CC74, value: 0.44 }, manifest, [SPEED_SEMANTIC], bindings);
   // 0.44 * 10 = 4.4 → snaps to 4.
   assert.equal(updates[0]!.value[0], 4);
+});
+
+test("resolveControlUpdates: a continuous slider (step 0) is not snapped", () => {
+  // D-541: float uniforms compile to step 0; the CC value reaches the uniform
+  // at full precision instead of landing on a (hi-lo)/100 grid.
+  const manifest = [slider("speed", 1, 0, 5, 0)];
+  const bindings: UniformBinding[] = [{ uniform: "speed", semantic: "speed" }];
+  const updates = resolveControlUpdates({ ...CC74, value: 37 / 127 }, manifest, [SPEED_SEMANTIC], bindings);
+  assert.ok(Math.abs(updates[0]!.value[0]! - (5 * 37) / 127) < 1e-9, String(updates[0]!.value[0]));
 });

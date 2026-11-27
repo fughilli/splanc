@@ -49,6 +49,9 @@ pub const NONCES: usize = 4;
 pub const PENDING: usize = 4;
 /// How often a member re-tells gateways about the same pending join.
 pub const PENDING_FORWARD_US: i64 = 10_000_000;
+/// A join waiting for approval is forgotten once its node stops asking this long (it joined
+/// through another member, or gave up): a waiting node re-asks every JOIN_RETRY_US.
+pub const PENDING_STALE_US: i64 = 30_000_000;
 /// An admission waits this long for the admitted device's next request.
 pub const ADMITTED_US: i64 = 120_000_000;
 pub const ADMITTED: usize = 4;
@@ -280,27 +283,33 @@ impl MeshState {
 
     pub fn encode(&self) -> [u8; STATE_LEN] {
         let mut b = [0u8; STATE_LEN];
+        self.encode_into(&mut b);
+        b
+    }
+
+    /// [`MeshState::encode`] into `b` (at least [`STATE_LEN`] bytes; firmware: a heap buffer,
+    /// not an 0.8 KB stack temporary). Returns [`STATE_LEN`], or 0 if `b` is too small.
+    pub fn encode_into(&self, out: &mut [u8]) -> usize {
+        let Some(b) = out.get_mut(..STATE_LEN) else { return 0 };
+        b.fill(0);
         let flags = (self.site_secret.is_some() as u8)
             | ((self.admin_key.is_some() as u8) << 1)
             | ((self.pairwise.is_some() as u8) << 2)
             | ((self.owner_key.is_some() as u8) << 3);
         let (pw_peer, pw_key) = self.pairwise.unwrap_or((0, [0; 16]));
-        let mut w = msg::W::new(&mut b);
+        let mut w = msg::W::new(b);
         w.u8(STATE_VERSION).u32(self.mesh_id).u8(self.channel).u8(self.mode as u8).u32(self.generation).u8(self.epoch);
         w.put(&self.mesh_key).u8(flags).u8(self.source as u8);
         w.put(&self.site_secret.unwrap_or([0; 32])).put(&self.admin_key.unwrap_or([0; 65]));
         self.revoked.encode_into(&mut w);
         w.u16(pw_peer).put(&pw_key);
-        w.u8(self.groups.n).put(&self.groups.ids).u8(self.allow.n);
-        for h in &self.allow.h {
-            w.put(h);
-        }
+        w.u8(self.groups.n).put(&self.groups.ids).u8(self.allow.n).put(self.allow.h.as_flattened());
         w.put(&self.owner_key.unwrap_or([0; 65]));
         let n = w.done().unwrap_or(0);
         debug_assert_eq!(n, STATE_LEN - 4);
         let crc = crc32(&b[..STATE_LEN - 4]);
         b[STATE_LEN - 4..].copy_from_slice(&crc.to_be_bytes());
-        b
+        STATE_LEN
     }
 
     pub fn decode(b: &[u8]) -> Option<MeshState> {
@@ -329,9 +338,7 @@ impl MeshState {
             return None;
         }
         let mut allow = AllowList { n: an, ..AllowList::default() };
-        for h in allow.h.iter_mut() {
-            *h = r.arr()?;
-        }
+        allow.h.as_flattened_mut().copy_from_slice(r.take(ALLOW_MAX * 8)?);
         let owner: [u8; 65] = r.arr()?;
         r.end()?;
         Some(MeshState {
@@ -423,6 +430,7 @@ pub struct MembershipStats {
 struct PendingReq {
     req: JoinRequest,
     forwarded_us: Option<i64>,
+    heard_us: i64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -520,6 +528,11 @@ impl Membership {
         self.state.map(|s| s.groups).unwrap_or_default()
     }
 
+    /// The revocation list (device keys and delegates the admin removed); empty with no mesh.
+    pub fn revoked(&self) -> crate::rekey::Revocations {
+        self.state.map(|s| s.revoked).unwrap_or_default()
+    }
+
     pub fn admin_key(&self) -> Option<&PublicKey> {
         self.state.as_ref().and_then(|s| s.admin_key.as_ref())
     }
@@ -559,6 +572,19 @@ impl Membership {
             Phase::Searching { until_us: now_us + SEARCH_US }
         };
         Note::KeysChanged
+    }
+
+    /// Leave the mesh (the app's `mesh_admin.leave`, or the admin's `Eject`, mesh M7): forget
+    /// every credential; the device is unprovisioned again.
+    pub fn leave(&mut self) {
+        self.state = None;
+        self.phase = Phase::Unprovisioned;
+        self.best = None;
+        self.request = None;
+        self.pending = [None; PENDING];
+        self.admitted = [None; ADMITTED];
+        self.gateway_pending = [None; GATEWAY_PENDING];
+        (self.rx_ok, self.rx_bad, self.key_suspect) = (0, 0, false);
     }
 
     /// Restore persisted state at boot (as if provisioned; searching first).
@@ -627,6 +653,13 @@ impl Membership {
             return req.encode(out).map(Out::Plain);
         }
         if self.phase == Phase::Member {
+            // A node that stopped asking joined through another member (or gave up): forget
+            // it, so its join isn't forwarded to the gateways forever (D-519 bench).
+            for p in self.pending.iter_mut() {
+                if p.is_some_and(|p| now_us - p.heard_us >= PENDING_STALE_US) {
+                    *p = None;
+                }
+            }
             // Forward one join waiting for approval that the gateways have not heard lately.
             for p in self.pending.iter_mut().flatten() {
                 if p.forwarded_us.is_none_or(|t| now_us - t >= PENDING_FORWARD_US) {
@@ -739,7 +772,7 @@ impl Membership {
         };
         if !ok {
             // New to us: list it here too (this member may be the gateway the app is on).
-            let note = if self.remember_pending(r) { self.on_pending(&self.pending_of(r)) } else { Note::None };
+            let note = if self.remember_pending(now_us, r) { self.on_pending(&self.pending_of(r)) } else { Note::None };
             return (None, note);
         }
         let salt = if proof { s.site_secret } else { None };
@@ -762,9 +795,10 @@ impl Membership {
     }
 
     /// Keep a join waiting for approval; true if it is new.
-    fn remember_pending(&mut self, r: &JoinRequest) -> bool {
+    fn remember_pending(&mut self, now_us: i64, r: &JoinRequest) -> bool {
         if let Some(p) = self.pending.iter_mut().flatten().find(|p| p.req.node == r.node) {
             p.req = *r;
+            p.heard_us = now_us;
             return false;
         }
         self.stats.joins_pending += 1;
@@ -781,7 +815,7 @@ impl Membership {
                 best
             }
         };
-        self.pending[slot] = Some(PendingReq { req: *r, forwarded_us: None });
+        self.pending[slot] = Some(PendingReq { req: *r, forwarded_us: None, heard_us: now_us });
         true
     }
 
@@ -830,6 +864,12 @@ impl Membership {
                         *p = None;
                     }
                 });
+                // Admitted: whichever member wraps its keys, this one stops forwarding it.
+                self.pending.iter_mut().for_each(|p| {
+                    if p.is_some_and(|p| crate::crypto::key_hash(&p.req.public_key) == key_hash) {
+                        *p = None;
+                    }
+                });
                 Note::StateChanged
             }
             Command::AssignGroups { node, groups } => {
@@ -859,6 +899,8 @@ impl Membership {
                 }
                 Note::StateChanged
             }
+            // The stack acts on an eject for this device (it knows its own key).
+            Command::Eject { .. } => Note::None,
         }
     }
 

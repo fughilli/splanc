@@ -48,15 +48,40 @@ export interface SemanticControl {
   control: MidiControlId;
 }
 
+/** Which part of a colour / vector / matrix uniform a binding drives:
+ * `r` `g` `b` `a` (colour, RGB), `h` `s` `v` (colour, HSV; hue in turns),
+ * `x` `y` `z` `w` (a vector's components), or a component index `"0"`..`"15"`
+ * (any vector or matrix, column-major). Scalars take no channel. */
+export type BindingChannel = string;
+
+/** The colour space a colour binding works in (implied by its channel). */
+export type ColorSpace = "rgb" | "hsv";
+
 /** A per-effect binding: `uniform` (by name) is driven by `semantic` (by name).
  * `min`/`max` optionally override the uniform's declared range (so a knob can
- * sweep a sub-range); `invert` flips the direction. */
+ * sweep a sub-range); `invert` flips the direction.
+ *
+ * Colour and vector uniforms (D-541 PR 3) are driven one channel per binding,
+ * so one uniform may carry several bindings (e.g. three knobs as `h`, `s`,
+ * `v`). `space` records the colour space (`hsv` for h/s/v, `rgb` for r/g/b/a).
+ * `fixed` pins saturation/value of an HSV colour (0..1), e.g. one knob on `h`
+ * with S and V held. All three fields are optional: bindings stored before
+ * they existed load unchanged (a scalar never has them). */
 export interface UniformBinding {
   uniform: string;
   semantic: string;
   min?: number;
   max?: number;
   invert?: boolean;
+  channel?: BindingChannel;
+  space?: ColorSpace;
+  fixed?: { s?: number; v?: number };
+}
+
+/** True when `a` and `b` drive the same target (uniform + channel), so one
+ * replaces the other. */
+export function sameTarget(a: UniformBinding, b: UniformBinding): boolean {
+  return a.uniform === b.uniform && (a.channel ?? "") === (b.channel ?? "");
 }
 
 interface MidiConfig {
@@ -207,27 +232,35 @@ class MidiStore {
     return read().bindings[effectId] ?? [];
   }
 
-  /** The binding for one uniform in an effect, if any. */
+  /** The binding for one uniform in an effect, if any (the first one, for a
+   * colour/vector uniform with several channel bindings). */
   bindingFor(effectId: string, uniform: string): UniformBinding | undefined {
     return this.bindings(effectId).find((b) => b.uniform === uniform);
   }
 
-  /** Create or replace the binding for a uniform (by name). */
+  /** Every binding on one uniform (one per channel for colour/vector). */
+  bindingsFor(effectId: string, uniform: string): UniformBinding[] {
+    return this.bindings(effectId).filter((b) => b.uniform === uniform);
+  }
+
+  /** Create or replace the binding for a uniform (by name and channel). */
   setBinding(effectId: string, binding: UniformBinding): void {
     const cfg = read();
-    const list = (cfg.bindings[effectId] ?? []).filter((b) => b.uniform !== binding.uniform);
+    const list = (cfg.bindings[effectId] ?? []).filter((b) => !sameTarget(b, binding));
     list.push(binding);
     cfg.bindings[effectId] = list;
     write(cfg);
     this.emit();
   }
 
-  /** Remove a uniform's binding in an effect. */
-  clearBinding(effectId: string, uniform: string): void {
+  /** Remove a uniform's bindings in an effect (all channels, or just one). */
+  clearBinding(effectId: string, uniform: string, channel?: BindingChannel): void {
     const cfg = read();
     const list = cfg.bindings[effectId];
     if (!list) return;
-    cfg.bindings[effectId] = list.filter((b) => b.uniform !== uniform);
+    cfg.bindings[effectId] = list.filter(
+      (b) => b.uniform !== uniform || (channel !== undefined && (b.channel ?? "") !== channel),
+    );
     write(cfg);
     this.emit();
   }

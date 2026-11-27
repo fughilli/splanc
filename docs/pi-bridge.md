@@ -92,9 +92,11 @@ the Pi's system partition, which Windows can't read.
 ## 3. Boot the Pi
 
 With the Pi unplugged, fit the OLED HAT onto its header if you have one, and plug in the HDMI
-screen if you use one. Insert the card and connect power. In about a minute the screens show
-**Ready to pair** with a code like `ABCD-EFGH`. (The first boot takes a little longer: the Pi
-grows its file system to fill the card.)
+screen if you use one. Insert the card and connect power. Within a few seconds the screens show
+the Splanc logo with a moving "loading" row of lights and what the Pi is doing (Starting…,
+Connecting…, Starting bridge…). In about a minute they show **Ready to pair** with a code like
+`ABCD-EFGH`. (The first boot takes a little longer: the Pi grows its file system to fill the
+card.)
 
 The bridge starts by itself every time the Pi powers on. It finds your fixtures on the network by
 itself.
@@ -126,8 +128,9 @@ After pairing, it shows how many clients are connected. Along the bottom are:
 
 ![HDMI after pairing](img/pi-bridge/hdmi-paired.png)
 
-**OLED HAT**: when the screen service starts it plays a short Splanc logo animation (about two
-seconds, while the bridge itself starts up), then slides to five pages, which rotate every 8
+**OLED HAT**: from power-on it shows the Splanc logo animation and the loading progress
+(on the SD image; on Raspberry Pi OS a two-second logo when the screen service starts), then
+slides to five pages, which rotate every 8
 seconds:
 
 1. **Home**: the state, the pairing code in large letters, the short pairing link, the time left
@@ -257,8 +260,9 @@ itself; installing one always takes a press on the OLED HAT.
   - A new system (**System**) restarts the Pi (about a minute without the bridge; your fixtures
     keep playing). If an app is connected through the bridge, the Pi waits until it disconnects;
     press again on **Restart now** to restart anyway. Your pairings and Wi-Fi are kept. If the new
-    system doesn't come up healthy within five minutes, the Pi goes back to the previous one by
-    itself. Only updates signed by Splanc are accepted.
+    system doesn't start, or doesn't come up healthy within five minutes, the Pi goes back to the
+    previous one by itself, and the screens say so as it starts again (**Recovering…**, then
+    **Rolled back to** and the version you're on). Only updates signed by Splanc are accepted.
 - **Without the OLED HAT**, install over SSH: `sudo splanc-system-update install` (system) or
   `sudo splanc-bridge update` (Splanc software).
 - Writing the card again with the flasher also works, but starts fresh: you pair your agents again

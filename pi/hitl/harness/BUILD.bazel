@@ -111,9 +111,11 @@ py_test(
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
     },
-    # 4/5 on the rigs: one unexplained BLE link drop just after the stage-2
-    # configure (ATT 0x0e, DUT `[ble] link state=6`). Open follow-up in the
-    # Halloween CLEANUP list; retry so it can't wedge main's merge queue.
+    # The "unexplained" ATT 0x0e drops were hitl-rig-2's central losing the link
+    # (DUT `disc=0x08`; 26/58 rig-2 attempts vs 1/57 on rig-1, Nov 2026). The driver
+    # now rides them out like the app (ble_link_core.MAX_LINK_LOSSES) and reports
+    # each; flaky stays as the backstop for reservation-deadline infra until the
+    # rig-2 central is fixed and the drop rate is back to rig-1's.
     flaky = True,
     imports = ["."],
     main = "hitl_ble_capture_e2e.py",
@@ -133,23 +135,28 @@ py_test(
 py_library(
     name = "harness",
     srcs = [
+        "ble_link_core.py",
         "ble_rename_core.py",
         "board_caps.py",
+        "clock_app_core.py",
         "ctrl_budget_core.py",
         "ctrl_budget_probe.py",
         "device_cert_core.py",
         "e2e_phases.py",
         "effect_store_core.py",
+        "flash_render_core.py",
         "frontend_relay_core.py",
         "fx_bench_core.py",
         "fx_debug_core.py",
         "hardware_config_pattern.py",
         "heap_census.py",
         "heavy_effect_reachability_core.py",
+        "hitl_ble_player.py",
         "hitl_client.py",
         "hitl_improv.py",
         "hitl_metrics.py",
         "hitl_ws.py",
+        "identify_blink_core.py",
         "improv.py",
         "improv_fresh_join_core.py",
         "improv_wrong_password_core.py",
@@ -161,13 +168,18 @@ py_library(
         "loaded_tls_core.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
+        "mesh_app_e2e_core.py",
         "mesh_apply_at_skew_core.py",
+        "mesh_effect_core.py",
         "mesh_gateway_core.py",
+        "mesh_join_admin_core.py",
+        "mesh_range_core.py",
         "mesh_smoke_core.py",
         "mesh_spike_core.py",
         "no_reboot_no_park_core.py",
         "osc_deck_follow_core.py",
         "ota_core.py",
+        "power_core.py",
         "provision.py",
         "rejoin_loop_core.py",
         "rig_isolation_core.py",
@@ -626,17 +638,22 @@ py_test(
 # snapshot — output, state and buffers must match BIT-EXACTLY (JIT on), one LED's
 # re-run locals must match the host's, and a paused engine must auto-resume on a
 # lapsed hold and on a disconnect. Pure verdict: fx_debug_core.
+# fx_compiler's init_test pins the state slots hitl_fx_debug.py checks.
+exports_files(["ab_demo/dbgInit.fx"])
+
 genrule(
     name = "fxdebug_fxbs",
     srcs = [
         "ab_demo/dbgFixed.fx",
         "ab_demo/dbgHue.fx",
+        "ab_demo/dbgInit.fx",
         "ab_demo/dbgLoop.fx",
         "ab_demo/dbgTrail.fx",
     ],
     outs = [
         "dbgFixed.fxb",
         "dbgHue.fxb",
+        "dbgInit.fxb",
         "dbgLoop.fxb",
         "dbgTrail.fxb",
     ],
@@ -645,6 +662,7 @@ genrule(
         for n in [
             "dbgFixed",
             "dbgHue",
+            "dbgInit",
             "dbgLoop",
             "dbgTrail",
         ]
@@ -874,6 +892,46 @@ py_test(
 # transport with one connected (applies when advertising resumes, link kept), a 32-byte
 # name (Shortened, Improv advert intact), then Improv still provisions; no reset and
 # the effect keeps rendering throughout. Pure logic: ble_rename_core.
+# The connect picker's Blink (D-259): Improv Identify blinks every output across
+# min(per-channel, 539) LEDs in ~1 s while an effect keeps rendering.
+py_test(
+    name = "identify_blink",
+    timeout = "eternal",
+    srcs = [
+        "hitl_identify_blink.py",
+        "hitl_map_upload.py",
+    ],
+    data = [
+        # Shipped into the rig container (scp) and run there; ble_identify.py imports
+        # the shared scan/connect/adapter path from hitl_improv.py (+ its improv.py codec).
+        "ble_identify.py",
+        "hitl_improv.py",
+        "improv.py",
+        ":plasma_hue_fixed_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "IDENTIFY_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+    },
+    imports = ["."],
+    main = "hitl_identify_blink.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 py_test(
     name = "ble_rename",
     timeout = "eternal",
@@ -1332,6 +1390,115 @@ py_test(
     ],
 )
 
+# Lamp power (docs/design/lamp-power.md): set_power off/on with pushes and nothing
+# rendering while off, EFFECT transitions (stored with submit_effect power_slot)
+# settling after their length, the TTP223 touch driver on GPIO 3 in the driver VM
+# toggling the lamp through toggle_trigger (the pin's internal pull simulates the
+# finger: rig-2/3 have no host GPIO into the DUT), the OFF state surviving a reboot,
+# and the effect's frame rate unchanged once on again.
+#   bazel run //pi/hitl/harness:lamp_power_netstack -- --server http://hitl-rig-2:8087
+py_test(
+    name = "lamp_power_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_lamp_power.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//firmware/sensor:drivers/ttp223_touch.fx",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_lamp_power.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# The wall clock (docs/design/wall-clock.md, desk D-559): an app-style set_wall_clock
+# (time_sync_ping rounds, then UTC at a device-clock instant + a POSIX zone), readings
+# within the device's own error of the harness's UTC, a soft reset (console CLOCK RESTART)
+# that keeps the clock (the RTC no-init carry-over), and render running with no late frame.
+# Pure logic: clock_app_core.
+#   bazel run //pi/hitl/harness:clock_app_netstack -- --server http://hitl-rig-2:8087
+py_test(
+    name = "clock_app_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_clock_app.py",
+        "hitl_effect_store.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_clock_app.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# PR-40 / desk D-459: the app's flash writers (effect store, map upload, settings) never
+# stall the render task (flash auto-suspend): no late frame while they write.
+#   bazel run //pi/hitl/harness:flash_render_netstack -- --server http://hitl-rig-1:8087
+py_test(
+    name = "flash_render_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_effect_store.py",
+        "hitl_flash_render.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_flash_render.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # Kiosk mode (docs/design/kiosk-mode.md): enable + attract capture, the lock gate's
 # refusals (kiosk_locked), a visitor effect that is never persisted (reboot -> the
 # attract show), the idle revert + its push, the BLE player transport (refusals, a
@@ -1731,6 +1898,44 @@ py_binary(
     ],
 )
 
+# Mesh link ranging (docs/design/mesh-ftm.md): two DUTs of one rig on the meshdev image with
+# `MESH RANGE on`. --mode gate (default): both sides' estimate of the link (n, sigma, A->B vs
+# B->A, phase states flagged, never "calibrated") with render cadence unchanged (no blipping);
+# --mode tape / coax: the owner's ground-truth runs (D-520 tape distances, D-521 the mesh rig's
+# delay bank or hand-swapped coax), fitting K per phase-state pair. Pure logic: mesh_range_core.
+py_binary(
+    name = "mesh_range",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_range.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "mesh_serial_bridge.py",
+        ":plasma_hue_fixed_fxb",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+        "//pi/hitl/meshbench:rfctl.py",
+        "//pi/hitl/meshbench:scenarios.py",
+    ],
+    env = {
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+    },
+    imports = ["."],
+    main = "hitl_mesh_range.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # Mesh M4 (docs/design/mesh.md §6, §15): mesh time and apply_at skew on hitl-rig-1 (owner
 # desk #69): agreement and the skew of a scheduled change against the rig AP's beacons, under
 # BLE coex, a rejoin and a member reboot. Pure logic: mesh_apply_at_skew_core.
@@ -1771,14 +1976,20 @@ py_binary(
 genrule(
     name = "mesh_gateway_fxbs",
     srcs = [
+        "ab_demo/meshEmber.fx",
         "ab_demo/meshHue.fx",
+        "ab_demo/meshStorm.fx",
         "ab_demo/meshTint.fx",
     ],
     outs = [
+        "meshEmber.fxb",
         "meshHue.fxb",
+        "meshStorm.fxb",
         "meshTint.fxb",
     ],
-    cmd = "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshHue.fx) $(location meshHue.fxb) && " +
+    cmd = "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshEmber.fx) $(location meshEmber.fxb) && " +
+          "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshHue.fx) $(location meshHue.fxb) && " +
+          "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshStorm.fx) $(location meshStorm.fxb) && " +
           "$(execpath //fx_compiler:fx_compile) $(location ab_demo/meshTint.fx) $(location meshTint.fxb)",
     tools = ["//fx_compiler:fx_compile"],
 )
@@ -1822,6 +2033,142 @@ py_binary(
         ":harness",
         "//pi/server",
         "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Mesh M7 (docs/design/mesh.md §7, §15 M7): real membership and signed admin sessions on
+# hitl-rig-1: a closed mesh from the site secret, an approval join, the admin's grant,
+# insider refusals (envelope control, beacon epochs), a revocation that survives a reboot.
+# The admin side is //firmware/mesh:mesh_admin_tool. Pure logic: mesh_join_admin_core.
+py_binary(
+    name = "mesh_join_admin",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_apply_at_skew.py",
+        "hitl_mesh_gateway.py",
+        "hitl_mesh_join_admin.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "mesh_serial_bridge.py",
+        ":mesh_gateway_fxbs",
+        "//firmware/mesh:mesh_admin_tool",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+    ],
+    env = {
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "MESH_ADMIN_TOOL_RUNFILE": "_main/firmware/mesh/mesh_admin_tool",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/meshTint.fxb",
+    },
+    imports = ["."],
+    main = "hitl_mesh_join_admin.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Mesh M6 (docs/design/mesh-m6.md): a 2-4 KB effect with uniforms (meshStorm) submitted
+# through one gateway runs on every member, all switching on one frame, rendering smoothly
+# through the transfer; a member that joins later and one that reboots catch up (effect +
+# uniforms). hitl-rig-1's three C6s. Pure logic: mesh_effect_core.
+py_binary(
+    name = "mesh_effect",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_apply_at_skew.py",
+        "hitl_mesh_effect.py",
+        "hitl_mesh_gateway.py",
+        "hitl_mesh_join_admin.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "hitl_ble_player.py",
+        "hitl_improv.py",
+        "improv.py",
+        "mesh_ble_gateway.py",
+        "mesh_serial_bridge.py",
+        ":mesh_gateway_fxbs",
+        "//firmware/mesh:mesh_admin_tool",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+    ],
+    env = {
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "MESH_ADMIN_TOOL_RUNFILE": "_main/firmware/mesh/mesh_admin_tool",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/meshTint.fxb",
+        "MESH_EMBER_RUNFILE": "_main/pi/hitl/harness/meshEmber.fxb",
+        "MESH_STORM_RUNFILE": "_main/pi/hitl/harness/meshStorm.fxb",
+    },
+    imports = ["."],
+    main = "hitl_mesh_effect.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# The real app drives real C6s through the mesh flow (PR #613's UI on the M6/M7 firmware):
+# the //web:ios_payload bundle in headless Chromium (Playwright) over wss through the rig,
+# on hitl-rig-1's three C6s: "Create a mesh" (the app provisions each and its browser-signed
+# grant unlocks the gateway), "Control the whole mesh" (an effect typed into the editor,
+# a slider, brightness: one frame on every DUT, AP-beacon clock), eject + re-add, reboot
+# catch-up, reload auto-unlock; screenshots of every screen (phone + desktop) and every
+# late frame with its cause. Pure logic: mesh_app_e2e_core. Needs a browser: manual.
+py_binary(
+    name = "mesh_app_e2e",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_mesh_app_e2e.py",
+        "hitl_mesh_apply_at_skew.py",
+        "hitl_mesh_smoke.py",
+        "hitl_mesh_spike.py",
+    ],
+    data = [
+        "ab_demo/meshStorm.fx",
+        "hitl_improv.py",
+        "improv.py",
+        "mesh_serial_bridge.py",
+        ":mesh_gateway_fxbs",
+        "//firmware/player_app:esp32c6_netstack_meshdev_flashbundle",
+        "//shared/protocol/proto:ledmapper.proto",
+        "//web:ios_payload",
+    ],
+    env = {
+        "HITL_SKU": "esp32c6",
+        "MESH_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_meshdev_flashbundle.tar",
+        "MESH_EFFECT_SRC_RUNFILE": "_main/pi/hitl/harness/ab_demo/meshStorm.fx",
+        "MESH_FXB_RUNFILE": "_main/pi/hitl/harness/meshTint.fxb",
+        "MESH_PROTO_RUNFILE": "_main/shared/protocol/proto/ledmapper.proto",
+        "MESH_WEB_RUNFILE": "_main/web/ios_payload",
+    },
+    imports = ["."],
+    main = "hitl_mesh_app_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "//tools/ui_layout:layout_guard",
+        "@rules_python//python/runfiles",
+        requirement("playwright"),
         requirement("websockets"),
     ],
 )

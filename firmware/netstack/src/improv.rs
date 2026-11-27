@@ -155,7 +155,8 @@ impl Improv {
             error: ErrorState::None,
             error_detail: join_failure::NONE,
             result: Buf::new(),
-            capabilities: 0x00,
+            // Identify is supported: the player blinks every output (D-259).
+            capabilities: 0x01,
         }
     }
 
@@ -345,6 +346,28 @@ impl ImprovService {
         let mut svc = Self::empty();
         svc.reset();
         svc
+    }
+
+    /// Write the [`ImprovService::empty`] state into possibly-uninitialized
+    /// storage at `p` (then [`ImprovService::reset`] it as usual). For a static
+    /// kept in zeroed `.bss` storage: a const `empty()` initializer has non-zero
+    /// bytes (the GATT table's `None` niches, `State::Authorized`, ...) and would
+    /// put the ~4 KiB service in `.data`, which the image also carries in flash.
+    ///
+    /// # Safety
+    /// `p` must be valid for writes and suitably aligned; any previous value is
+    /// overwritten without being dropped.
+    pub unsafe fn init_in_place(p: *mut Self) {
+        use core::ptr::addr_of_mut;
+        GattDb::init_in_place(addr_of_mut!((*p).db));
+        addr_of_mut!((*p).improv).write(Improv::new());
+        addr_of_mut!((*p).h_device_name).write(0);
+        addr_of_mut!((*p).h_current).write(0);
+        addr_of_mut!((*p).h_error).write(0);
+        addr_of_mut!((*p).h_rpc_cmd).write(0);
+        addr_of_mut!((*p).h_rpc_result).write(0);
+        addr_of_mut!((*p).h_player_rx).write(0);
+        addr_of_mut!((*p).h_player_tx).write(0);
     }
 
     /// Rebuild the service IN PLACE: a fresh Improv state machine and GATT table
@@ -650,6 +673,27 @@ mod tests {
         // Success never carries a reason.
         im.provisioning_result_detail(true, join_failure::PASSWORD_REJECTED, &["http://x/"]);
         assert_eq!(im.error_state().as_slice(), &[0x00]);
+    }
+
+    #[test]
+    fn init_in_place_matches_empty() {
+        // Garbage-filled storage, initialized in place, then reset: behaves like new().
+        let mut slot = core::mem::MaybeUninit::<ImprovService>::uninit();
+        unsafe {
+            core::ptr::write_bytes(slot.as_mut_ptr() as *mut u8, 0xa5, core::mem::size_of::<ImprovService>());
+            ImprovService::init_in_place(slot.as_mut_ptr());
+        }
+        let svc = unsafe { slot.assume_init_mut() };
+        assert_eq!(svc.improv.state, State::Authorized);
+        assert_eq!(svc.improv.error, ErrorState::None);
+        assert_eq!(svc.db.value_of(1), None); // empty table
+        svc.reset();
+        let fresh = ImprovService::new();
+        for h in 0..40u16 {
+            assert_eq!(svc.db.value_of(h), fresh.db.value_of(h), "handle {h}");
+        }
+        assert_eq!(svc.h_rpc_cmd, fresh.h_rpc_cmd);
+        assert_eq!(svc.h_player_tx, fresh.h_player_tx);
     }
 
     #[test]

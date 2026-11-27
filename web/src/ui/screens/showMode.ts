@@ -31,6 +31,7 @@ import {
   midiSupported,
   controlKey,
   controlLabel,
+  raw7,
   type MidiControlEvent,
 } from "../../midi/manager";
 import {
@@ -165,7 +166,7 @@ export function ShowModeScreen(_router: Router): Screen {
   function setCrossfade(v: number, fromUser = false): void {
     if (fromUser) cancelAnimationFrame(fadeRaf);
     crossfade = Math.min(1, Math.max(0, v));
-    fader.value = String(Math.round(crossfade * 100));
+    fader.value = String(crossfade);
     xfReadout.textContent = crossfadeLabel();
     pushCrossfade();
   }
@@ -222,7 +223,7 @@ export function ShowModeScreen(_router: Router): Screen {
     const { action, value } = resolved;
     const kind = showActionKind(action);
     if (kind === "encoder") {
-      const steps = encoders.delta(action, ev.raw, midiStore.showBindingMode(action));
+      const steps = encoders.delta(action, raw7(ev), midiStore.showBindingMode(action));
       if (action === "deckA.browse") browseDeck = 0;
       else if (action === "deckB.browse") browseDeck = 1;
       moveFocus(steps, false);
@@ -354,12 +355,13 @@ export function ShowModeScreen(_router: Router): Screen {
   const fader = document.createElement("input");
   fader.type = "range";
   fader.min = "0";
-  fader.max = "100";
-  fader.step = "1";
+  fader.max = "1";
+  // Continuous: set_crossfade carries a double; no 101-step grid (D-541).
+  fader.step = "any";
   fader.value = "0";
   fader.className = "show-xfader-input";
   fader.setAttribute("aria-label", "Crossfade A to B");
-  fader.addEventListener("input", () => setCrossfade(Number(fader.value) / 100, true));
+  fader.addEventListener("input", () => setCrossfade(Number(fader.value), true));
   const modeBtn = Button({ label: "RGB", variant: "quiet", onClick: toggleMode });
   modeBtn.classList.add("show-mode-btn");
   modeBtn.title = "Blend colour space: linear RGB vs linear HSV";
@@ -476,7 +478,7 @@ export function ShowModeScreen(_router: Router): Screen {
 
     unsub = midiManager.onControl((ev) => {
       if (sampling && controlKey(ev.control) === sampling.key) {
-        sampling.raws.push(ev.raw);
+        sampling.raws.push(raw7(ev));
         const g = detectEncoderMode(sampling.raws);
         if (g) {
           if (midiStore.showBindingMode(sampling.action) !== g.mode) {
@@ -493,7 +495,7 @@ export function ShowModeScreen(_router: Router): Screen {
       listening = null;
       guesses.delete(action);
       if (showActionKind(action) === "encoder" && ev.control.kind === "cc") {
-        sampling = { action, key: controlKey(ev.control), raws: [ev.raw] };
+        sampling = { action, key: controlKey(ev.control), raws: [raw7(ev)] };
         guesses.set(action, "Keep turning slowly, both ways, to detect its mode…");
         clearTimeout(learnTimer);
         learnTimer = setTimeout(() => {

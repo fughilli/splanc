@@ -36,6 +36,7 @@ rust_library(
     crate_name = "ledmapper_netstack",
     crate_root = "src/lib.rs",
     edition = "2021",
+    deps = ["//firmware/bss"],  # BssOption: tcp_slots' table stays .bss
 )
 
 # Host unit tests (the crate's inline #[cfg(test)] modules: parsers, rings,
@@ -291,7 +292,27 @@ rust_static_library(
     crate_name = "wifi_sta_ffi",
     edition = "2021",
     target_compatible_with = _C6,
-    deps = [":netstack"],
+    deps = [
+        ":netstack",
+        "//firmware/bss",
+    ],
+)
+
+# The same FFI with two TCP server slots (concurrent wss clients): the P4's C6 front end,
+# which has the RAM the players don't (docs/design/p4-c6-split.md §4.3.1).
+rust_static_library(
+    name = "wifi_sta_ffi_sessions2",
+    srcs = ["examples/wifi_sta_ffi.rs"],
+    crate_features = ["sessions2"],
+    # Its own crate name: the archive is named after it, and :wifi_sta_ffi's would collide.
+    crate_name = "wifi_sta_ffi_sessions2",
+    crate_root = "examples/wifi_sta_ffi.rs",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [
+        ":netstack",
+        "//firmware/bss",
+    ],
 )
 
 cc_binary(

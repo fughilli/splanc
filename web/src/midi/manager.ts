@@ -16,12 +16,17 @@
  * for tests; the manager is the stateful event pump around it.
  */
 
-/** The kind of physical control a message came from. */
-export type MidiControlKind = "cc" | "note" | "pitch";
+import { MidiDecoder } from "./decoder";
+
+/** The kind of physical control a message came from. `nrpn` is a
+ * Non-Registered Parameter Number (CC 99/98 + data entry), detected by
+ * {@link MidiDecoder}; its `number` is the 14-bit parameter number. */
+export type MidiControlKind = "cc" | "note" | "pitch" | "nrpn";
 
 /** A physical MIDI control, identified stably across sessions.
  * `device` is the input port name (stable per hardware model); `channel` is
- * 0..15; `number` is the CC number / note number (pitch-bend uses 0). */
+ * 0..15; `number` is the CC number / note number / NRPN parameter number
+ * (pitch-bend uses 0). A 14-bit CC pair keeps its MSB's id (CC 0..31). */
 export interface MidiControlId {
   device: string;
   kind: MidiControlKind;
@@ -32,10 +37,17 @@ export interface MidiControlId {
 /** A normalized control event: which control moved and its value in 0..1. */
 export interface MidiControlEvent {
   control: MidiControlId;
-  /** Normalized 0..1 (CC/velocity /127, pitch-bend /16383). */
+  /** Normalized 0..1 (CC/velocity /127; pitch-bend, 14-bit CC and 14-bit
+   * NRPN /16383). */
   value: number;
   /** Raw 14-bit-or-7-bit integer value, for display. */
   raw: number;
+  /** 14 for a 14-bit CC pair or 14-bit NRPN; absent for 7-bit messages (and
+   * pitch-bend, which has always been 14-bit). */
+  bits?: 14;
+  /** The 7-bit MSB of a 14-bit CC/NRPN, for consumers that decode 7-bit values
+   * (relative encoders, absolute-knob deltas). Absent when `bits` is. */
+  raw7?: number;
 }
 
 /** Stable string key for a control id — used as a map key everywhere. */
@@ -48,62 +60,18 @@ export function controlLabel(c: MidiControlId): string {
   const ch = c.channel + 1;
   if (c.kind === "cc") return `CC ${c.number} · ch ${ch}`;
   if (c.kind === "note") return `Note ${c.number} · ch ${ch}`;
+  if (c.kind === "nrpn") return `NRPN ${c.number} · ch ${ch}`;
   return `Pitch bend · ch ${ch}`;
 }
 
-/**
- * Parse one raw MIDI message into a normalized control event, or null if it is
- * a message kind we don't map (clock, sysex, note-off treated below, etc.).
- * Pure and side-effect free — the manager wraps it, tests call it directly.
- *
- * Recognized:
- *   - Control Change (0xB0): value = data2/127.
- *   - Note On (0x90) with velocity>0: value = velocity/127. Note On vel 0 and
- *     Note Off (0x80) map to value 0 (so a pad press-release drives 1→0).
- *   - Pitch Bend (0xE0): 14-bit, value = ((data2<<7)|data1)/16383.
- */
-export function parseMidiMessage(
-  device: string,
-  data: Uint8Array | number[],
-): MidiControlEvent | null {
-  if (data.length < 2) return null;
-  const status = data[0]!;
-  const type = status & 0xf0;
-  const channel = status & 0x0f;
-  const d1 = data[1]! & 0x7f;
-  const d2 = (data[2] ?? 0) & 0x7f;
+// The stateless parser lives in ./parse (shared with ./decoder without an
+// import cycle); re-exported here, its historical home.
+export { parseMidiMessage } from "./parse";
 
-  switch (type) {
-    case 0xb0: // Control Change
-      return {
-        control: { device, kind: "cc", channel, number: d1 },
-        value: d2 / 127,
-        raw: d2,
-      };
-    case 0x90: // Note On (velocity 0 == note off)
-      return {
-        control: { device, kind: "note", channel, number: d1 },
-        value: d2 / 127,
-        raw: d2,
-      };
-    case 0x80: // Note Off
-      return {
-        control: { device, kind: "note", channel, number: d1 },
-        value: 0,
-        raw: 0,
-      };
-    case 0xe0: {
-      // Pitch Bend — 14-bit little-endian (d1 = LSB, d2 = MSB).
-      const raw = (d2 << 7) | d1;
-      return {
-        control: { device, kind: "pitch", channel, number: 0 },
-        value: raw / 16383,
-        raw,
-      };
-    }
-    default:
-      return null;
-  }
+/** The 7-bit value of an event, for code that decodes 7-bit CC values
+ * (relative encoders): the MSB of a 14-bit CC/NRPN, else `raw`. */
+export function raw7(e: MidiControlEvent): number {
+  return e.raw7 ?? e.raw;
 }
 
 // Web MIDI types (MIDIAccess / MIDIInput / MIDIMessageEvent) come from the DOM
@@ -138,6 +106,8 @@ export class MidiManager {
   private readonly deviceListeners = new Set<DevicesListener>();
   private readonly sysexListeners = new Set<SysexListener>();
   private lastEvent: MidiControlEvent | null = null;
+  /** 14-bit CC / NRPN detection state (per device + channel). */
+  private readonly decoder = new MidiDecoder();
   private sysexGranted = false;
 
   /** Whether {@link enable} has succeeded (MIDI access granted). */
@@ -245,7 +215,7 @@ export class MidiManager {
       for (const fn of this.sysexListeners) fn(e.data, input.name ?? input.id);
       return;
     }
-    const ev = parseMidiMessage(input.name ?? input.id, e.data);
+    const ev = this.decoder.decode(input.name ?? input.id, e.data, e.timeStamp);
     if (ev === null) return;
     this.lastEvent = ev;
     for (const fn of this.controlListeners) fn(ev);

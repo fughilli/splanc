@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "mesh-create",
+  "title": "Create a mesh of your fixtures",
+  "summary": "Link fixtures so they play together: pick them and name the mesh. The app sets each one up and shows them joining and syncing.",
+  "prs": [613, 594],
+  "route": "#/maps",
+  "demo": "device,meshsim",
+  "framing": ["phone"],
+  "theme": "dark",
+  "setup": [
+    { "click": ".tab[data-tab='device']", "wait": 700 },
+    { "click": ".device-row:has-text('Living Room') button[title='Options']", "wait": 900 },
+    { "wait_for": ".mesh-section button:has-text('Create a mesh')" },
+    { "scroll": ".k-sheet:has(.mesh-section)", "by": 4000 },
+    { "click": ".mesh-section button:has-text('Create a mesh')", "wait": 1200 },
+    { "click": ".cf-actions button:has-text('Get started')", "wait": 900 }
+  ],
+  "steps": [
+    { "click": ".mf-pick-row:has-text('Kitchen')", "wait": 300 },
+    { "click": ".cf-actions button:has-text('Continue')", "wait": 300 },
+    { "click": ".cf-actions button:has-text('Create mesh')", "wait": 300 },
+    { "wait_for": ".cf-title:has-text('All set up')", "timeout": 8000 },
+    { "click": ".cf-actions button:has-text('Continue')", "wait": 300 },
+    { "wait_for": ".cf-title:has-text('Your mesh is ready')", "timeout": 8000 }
+  ],
+  "tail_ms": 1400
+}

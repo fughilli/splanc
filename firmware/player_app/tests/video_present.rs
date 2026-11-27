@@ -188,3 +188,15 @@ fn a_device_clock_step_back_keeps_the_time_base_and_queue_continuous() {
     assert_eq!(a.r#clock_jumps, 1);
     assert_eq!(a.r#shown_at_ms, 30_100, "effect time of the show, on the shifted base");
 }
+
+#[test]
+fn a_one_quantum_clock_step_back_is_caught_too() {
+    // The smallest step seen on a c6: 2^24 systimer ticks = 1048.576 ms, which across a
+    // 50 ms frame reads as dt = -999 ms. It used to slip under a "< -1000 ms" guard.
+    for t in (300_000..=300_200).step_by(50) {
+        unsafe { lm_clock_observe(t) };
+    }
+    let shift = unsafe { lm_clock_observe(300_200 + 50 - 1049) };
+    assert_eq!(shift, -1049);
+    assert_eq!(unsafe { lm_clock_observe(300_200 + 100 - 1049) }, 0, "steady after the step");
+}

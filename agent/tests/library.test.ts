@@ -137,6 +137,7 @@ describe("validation + helpers", () => {
         assert.equal(u.ui.kind, want.ui.kind, `${s.file} ${u.name} ui`);
         if (u.ui.kind === "slider" && want.ui.kind === "slider") {
           assert.ok(Math.abs(u.ui.min - want.ui.min) < 1e-6 && Math.abs(u.ui.max - want.ui.max) < 1e-6, `${s.file} ${u.name} range`);
+          assert.ok(Math.abs(u.ui.step - want.ui.step) < 1e-9, `${s.file} ${u.name} step ${u.ui.step} vs ${want.ui.step}`);
         }
         assert.equal(u.default.length, want.default.length, `${s.file} ${u.name} default`);
         u.default.forEach((d, k) => assert.ok(Math.abs(d - want.default[k]!) < 1e-5, `${s.file} ${u.name} default ${k}`));
@@ -157,6 +158,49 @@ describe("validation + helpers", () => {
     );
     assert.equal(more[0]!.doc, "which look");
     assert.equal(more[2]!.unit, "m/s");
+    // D-541: a slider's step is the type's native precision unless annotated.
+    const steps = uniformsFromSource(
+      'uniform float f : 0..5 = 1.0;\nuniform int n : 0..10 = 2;\nuniform float g : 0..8 step 0.5 "beats" = 2.0;\n',
+    );
+    assert.deepEqual(
+      steps.map((u) => [u.name, u.ui.kind === "slider" ? u.ui.step : null, u.unit]),
+      [
+        ["f", 0, undefined],
+        ["n", 1, undefined],
+        ["g", 0.5, "beats"],
+      ],
+    );
+    // D-541 PR 4: vector / direction pads.
+    const vecs = uniformsFromSource(
+      'uniform vec2 wind : vector = vec2(0.5, 0);\nuniform vec2 drift : vector -3 .. 3 step 0.5 = 1, -1;\n' +
+        'uniform vec3 sun : direction = vec3(0, 1, 0);\n',
+    );
+    assert.deepEqual(
+      vecs.map((u) => [u.name, u.ui]),
+      [
+        ["wind", { kind: "vector", min: -1, max: 1, step: 0 }],
+        ["drift", { kind: "vector", min: -3, max: 3, step: 0.5 }],
+        ["sun", { kind: "direction" }],
+      ],
+    );
+    // D-541 PR 10: matrices (a mat3 `: transform2d` is a 2D affine); no
+    // default is the identity, and constructor names are not values.
+    const mats = uniformsFromSource(
+      "uniform mat4 pose;\nuniform mat3 xf : transform2d -4 .. 4 = mat3(2, 0, 0, 0, 2, 0, 0.5, -0.5, 1);\n" +
+        "uniform mat3 rot : -2 .. 2 = 0.5;\nuniform mat4 bad : transform2d;\n",
+    );
+    assert.deepEqual(
+      mats.map((u) => [u.name, u.ui, u.width, u.min, u.max]),
+      [
+        ["pose", { kind: "matrix", min: -1000, max: 1000 }, 16, -1000, 1000],
+        ["xf", { kind: "transform2d", min: -4, max: 4 }, 9, -4, 4],
+        ["rot", { kind: "matrix", min: -2, max: 2 }, 9, -2, 2],
+      ],
+      "a mat4 cannot be transform2d (skipped, as the compiler refuses it)",
+    );
+    assert.deepEqual(mats[0]!.default, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    assert.deepEqual(mats[1]!.default, [2, 0, 0, 0, 2, 0, 0.5, -0.5, 1]);
+    assert.deepEqual(mats[2]!.default, [0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.5]);
   });
 
   test("the seed effects are the skill's examples, verbatim", () => {

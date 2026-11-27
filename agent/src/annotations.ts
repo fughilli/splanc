@@ -58,6 +58,9 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   set_fixture_pose: write("Place a fixture in its room", true, true),
   align_time: write("Align effect clocks", false, true),
   time_sync_status: read("Clock sync status"),
+  // the wall clock (time of day): set_clock is undone by setting it again.
+  get_clock: read("Read lamp clocks"),
+  set_clock: write("Set lamp clocks", false, true),
   // device control
   set_brightness: write("Set brightness", false, true),
   update_firmware: write("Update firmware over Wi-Fi", true, true),
@@ -83,6 +86,14 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   // (recoverable only over BLE / the console), so it counts as destructive.
   get_wifi_policy: read("Read the Wi-Fi rejoin policy"),
   set_wifi_policy: write("Change the Wi-Fi rejoin policy", true, false),
+  // lamp power: on/off is undone by set_power; set_transitions replaces the stored
+  // transition effects (no undo but setting them again), so it counts as destructive.
+  get_power: read("Read lamp power"),
+  set_power: write("Turn lamps on or off", false, false),
+  set_transitions: write("Set the ON/OFF transitions", true, true),
+  // Loads a driver (replacing the loaded one): destructive like deploy_driver.
+  setup_touch_sensor: write("Set up a touch sensor", true, true),
+  wire_trigger: write("Bind a sensor trigger to power", false, true),
   // effect authoring
   compile_effect: read("Compile an effect"),
   estimate_effect: read("Estimate an effect's frame cost"),
@@ -128,7 +139,8 @@ export const SERVER_INSTRUCTIONS =
   "(set_device_name), re-trusting a certificate (trust_player), updating firmware (update_firmware) or forgetting a player. Ask where fixtures " +
   "are rather than guessing poses. Use commit=true sparingly (flash wear). If a player is unreachable, " +
   "say so; refresh_players looks again. Nothing here rewires or re-maps a fixture: that is done in the " +
-  "Splanc app. To change effects live without a hard cut, crossfade_to fades to the new one (in step across " +
+  "Splanc app. set_power switches a lamp on or off (off: dark, still connected; a lid touch sensor set up with " +
+  "setup_touch_sensor does the same) and set_transitions picks how it fades or plays an effect doing so. To change effects live without a hard cut, crossfade_to fades to the new one (in step across " +
   "players; rollback_effect fades back). plot_fixture draws a fixture or a room in 3D (PNG) to check a map or poses. " +
   "When a fixture doesn't look like the preview, compare_with_preview replays the device's exact frame on the " +
   "host and says whether the engine, the inputs (map/topology/LED order) or the output stage differs; " +

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "whats-new",
+  "title": "What's new, after every update",
+  "summary": "After an update a sparkle appears in the corner. Tap it for the release notes since your last version, with a picker for the app, firmware and bridge.",
+  "prs": [506],
+  "route": "#/maps",
+  "framing": ["phone"],
+  "theme": "dark",
+  "app_version": "1.15.7",
+  "storage": { "splanc.whatsnew": "{\"lastSeen\":\"1.15.5\"}" },
+  "fixtures": {
+    "/whatsnew/index.json": "web/src/ui/whatsnew/clipdata/index.json",
+    "/whatsnew/app.json": "web/src/ui/whatsnew/clipdata/app.json",
+    "/whatsnew/firmware.json": "web/src/ui/whatsnew/clipdata/firmware.json",
+    "/whatsnew/bridge.json": "web/src/ui/whatsnew/clipdata/bridge.json"
+  },
+  "steps": [
+    { "wait": 600 },
+    { "click": ".wn-bubble", "wait": 1300 },
+    { "scroll": ".k-sheet", "by": 520, "duration": 1600, "wait": 500 },
+    { "select": "select[aria-label='Product']", "label": "Firmware", "wait": 1400 },
+    { "click": ".k-sheet-head button", "wait": 600 }
+  ]
+}

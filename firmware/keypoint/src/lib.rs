@@ -73,6 +73,19 @@ pub enum Kind {
     Color,
     Toggle,
     Dropdown,
+    /// A free vector (`: vector`, .fxb format 2): blended per component like a
+    /// slider (and snapped to its step when it has one).
+    Vector,
+    /// A unit vector (`: direction`, .fxb format 2): blended per component,
+    /// then renormalised so a morph between two directions stays on the
+    /// sphere. (Firmware older than format 2 never loads such an effect; had it
+    /// done so, the unknown kind fell to `Other`, a plain clamped lerp.)
+    Direction,
+    /// A mat3 2D affine transform (`: transform2d`, .fxb format 2): blended
+    /// per component and clamped to its range, exactly as a plain matrix
+    /// (`Other`) is. Named so a later blend (e.g. decompose / slerp) has a
+    /// place to go without another format change.
+    Transform2d,
 }
 
 /// One tracked uniform.
@@ -342,6 +355,9 @@ fn scan_ui<'a>(j: &'a [u8], i: usize, u: &mut Uniform<'a>) -> Option<usize> {
                             b"color" => Kind::Color,
                             b"toggle" => Kind::Toggle,
                             b"dropdown" => Kind::Dropdown,
+                            b"vector" => Kind::Vector,
+                            b"direction" => Kind::Direction,
+                            b"transform2d" => Kind::Transform2d,
                             _ => Kind::Other,
                         };
                         k = e;
@@ -692,7 +708,7 @@ pub fn blend(rules: &Rules, sources: &[&Packed], weights: &[f32], fill: &Packed,
                             x += wi * val(i, c);
                         }
                     }
-                    if r.kind == Kind::Slider && r.step > 0.0 && r.min.is_finite() {
+                    if matches!(r.kind, Kind::Slider | Kind::Vector) && r.step > 0.0 && r.min.is_finite() {
                         x = r.min + floorf((x - r.min) / r.step + 0.5) * r.step;
                     }
                     if r.min <= r.max {
@@ -700,9 +716,33 @@ pub fn blend(rules: &Rules, sources: &[&Packed], weights: &[f32], fill: &Packed,
                     }
                     out[c] = x;
                 }
+                if r.kind == Kind::Direction {
+                    normalize(&mut out[o..o + wd]);
+                }
             }
         }
     }
+}
+
+/// Scale `v` to unit length in place; a (near-)zero or NaN vector is left as
+/// is (opposite directions blended 50/50 have no direction to pick).
+fn normalize(v: &mut [f32]) {
+    let len2: f32 = v.iter().map(|x| x * x).sum();
+    if !(len2 > 1e-12) {
+        return;
+    }
+    let len = sqrtf(len2);
+    v.iter_mut().for_each(|x| *x /= len);
+}
+
+/// `no_std` square root for a positive finite `x`: a bit-level estimate
+/// refined by Newton steps (to f32 precision for the unit-ish lengths here).
+fn sqrtf(x: f32) -> f32 {
+    let mut y = f32::from_bits((x.to_bits() >> 1) + 0x1fbd_1df5);
+    for _ in 0..4 {
+        y = 0.5 * (y + x / y);
+    }
+    y
 }
 
 // ---------------------------------------------------------------------------

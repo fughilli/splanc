@@ -10,7 +10,7 @@
  * theme via CSS tokens (see .fxhl-* in app.css).
  */
 
-import { BUILTINS, KEYWORDS, TYPES } from "./lang-spec";
+import { BUILTINS, CONTEXTS, KEYWORDS, TYPES } from "./lang-spec";
 
 // Keywords vs. types: KEYWORDS from lang-spec mixes control words and type
 // names, so split them for distinct colouring. Type names come from TYPES
@@ -19,8 +19,8 @@ const TYPE_WORDS = new Set<string>(TYPES.map((t) => t.name));
 const KEYWORD_WORDS = new Set<string>(KEYWORDS.filter((k) => !TYPE_WORDS.has(k)));
 // Built-in function names, parsed from the "name(args)" signatures in lang-spec.
 const BUILTIN_WORDS = new Set<string>(BUILTINS.map((b) => b.sig.slice(0, b.sig.indexOf("("))));
-// Read-only context globals highlighted as constants.
-const CONTEXT_WORDS = new Set(["time", "dt", "frame", "led", "imu", "true", "false"]);
+// Read-only context globals (and the bool literals) highlighted as constants.
+const CONTEXT_WORDS = new Set<string>([...CONTEXTS.map((c) => c.name), "true", "false"]);
 
 function escapeHtml(s: string): string {
   return s

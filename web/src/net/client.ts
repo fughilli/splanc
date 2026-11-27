@@ -76,8 +76,35 @@ import {
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
+import {
+  flatPowerState,
+  type PowerState,
+  type PowerStateMessage,
+  type SetPowerConfigMessage,
+} from "./proto";
+import {
+  flatClockState,
+  type ClockState,
+  type ClockStateMessage,
+  type SetWallClockMessage,
+} from "./wallClock";
 import { LiveControl, applyAt } from "./liveControl";
-import { meshResultError, wrapForMesh, type MeshInfoMessage, type MeshResultInfo, type MeshStateInfo } from "./mesh";
+import { fxbFormatProblem } from "./fxbFormat";
+import {
+  meshAdminMessage,
+  meshTopologyRequest,
+  readMeshTopology,
+  meshResultError,
+  meshLargeSender,
+  meshRoute,
+  type MeshAdminOp,
+  type MeshAdminResultInfo,
+  type MeshInfoMessage,
+  type MeshResultInfo,
+  type MeshStateInfo,
+} from "./mesh";
+import { meshEffectMessage, meshShareMessage, type MeshShareOptions } from "./meshEffect";
+export type { MeshShareOptions } from "./meshEffect";
 export { applyAt } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
@@ -397,6 +424,8 @@ export class LedMapperClient {
   /** Live control drives every fixture meshed with this one (mesh M5; net/mesh.ts). */
   private meshAll_ = false;
   private meshState_: MeshStateInfo | null = null;
+  // Lamp power: power_state replies AND the device's unsolicited pushes.
+  private powerSubs = new Set<(s: PowerState) => void>();
 
   /**
    * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
@@ -454,6 +483,14 @@ export class LedMapperClient {
 
   get welcome(): WelcomeMessage | null {
     return this.welcome_;
+  }
+
+  /** Refuse, before sending, an effect stamped with a newer `.fxb` format than
+   * the device reports (net/fxbFormat.ts, D-557): a `fxb_too_new` error naming
+   * the firmware update instead of the device's bare `bad_fxb`. */
+  private checkFxbFormat(fxb: Uint8Array): void {
+    const why = fxbFormatProblem(fxb, this.welcome_?.fxbFormat);
+    if (why !== null) throw new ServerErrorReply("fxb_too_new", why);
   }
 
   /** Bytes the socket hasn't put on the wire yet (0 when closed or unknown): the
@@ -879,6 +916,9 @@ export class LedMapperClient {
     // Sharded like submit_map: a compiled effect can exceed one window, and on
     // the BLE transport a whole-frame send would blow the small per-frame cap.
     // Small effects still take the single-window fast path inside sendChunked.
+    // Whole-mesh control (mesh M6): every member loads it, all on one frame.
+    if (this.meshAll_) return this.meshShareEffect(effectId, fxb, { activate, deck });
+    this.checkFxbFormat(fxb);
     this.live.resetDeck(deck);
     // A sharded upload goes out as upload_chunk frames: count it as activity here.
     for (const fn of this.activitySubs) fn();
@@ -889,6 +929,19 @@ export class LedMapperClient {
       activate,
       deck,
     } as unknown as ClientMessage);
+  }
+
+  /** Share a compiled effect with the whole mesh through this fixture (mesh M6;
+   * net/meshEffect.ts): any size up to the player's effect limit. This fixture answers as
+   * a load would (result_ready{effectId}, or the error); it and every member then load it
+   * on one show-clock frame once all of them hold it (members joining later catch up).
+   * With `wantReply` (the default) the per-member outcome is pushed to
+   * {@link onMeshResult} subscribers. Only for players in a mesh (see {@link getMesh}). */
+  async meshShareEffect(effectId: string, fxb: Uint8Array, opts: MeshShareOptions = {}): Promise<ResultReadyMessage> {
+    this.live.resetDeck(opts.deck ?? 0);
+    for (const fn of this.activitySubs) fn();
+    const inner = encodeClient(meshEffectMessage(effectId, fxb, opts));
+    return this.sendChunked("EFFECT", meshShareMessage(inner, opts));
   }
 
   /** Select the active effect by id ("" or "off" clears it). `deck` (FUG-110)
@@ -1129,6 +1182,7 @@ export class LedMapperClient {
    * docs/design/effect-store.md). An effect with the same id is replaced. Sharded
    * like submitEffect. Reply: result_ready (id=effectId). */
   async storeEffect(effectId: string, name: string, fxb: Uint8Array): Promise<ResultReadyMessage> {
+    this.checkFxbFormat(fxb);
     for (const fn of this.activitySubs) fn();
     return this.sendChunked("EFFECT", {
       type: "submit_effect",
@@ -1381,6 +1435,26 @@ export class LedMapperClient {
     return this.meshState_;
   }
 
+  /** The mesh with its topology (the mesh map): every member's room pose, hops and radio
+   * neighbours, and this fixture's own; read in as many pages as the mesh needs. Older
+   * firmware answers a plain state (no topology fields). */
+  async getMeshTopology(timeoutMs = 5000): Promise<MeshStateInfo> {
+    const s = await readMeshTopology(async (from) => {
+      const r = (await this.request(meshTopologyRequest(from), "mesh", timeoutMs)) as unknown as MeshInfoMessage;
+      return r.state ?? {};
+    });
+    this.meshState_ = s;
+    return s;
+  }
+
+  /** Membership and administration (mesh M7): provision this fixture into a mesh, unlock
+   * it as the gateway with the admin's grant, admit, revoke, leave. Resolves with the
+   * fixture's answer (check it with net/mesh.ts meshAdminError). */
+  async meshAdmin(op: MeshAdminOp, timeoutMs = 8000): Promise<MeshAdminResultInfo> {
+    const r = (await this.request(meshAdminMessage(op), "mesh", timeoutMs)) as unknown as MeshInfoMessage;
+    return r.admin ?? {};
+  }
+
   /** The last mesh state read with {@link getMesh} (null before). */
   get meshState(): MeshStateInfo | null {
     return this.meshState_;
@@ -1407,6 +1481,71 @@ export class LedMapperClient {
   onKioskStatus(fn: (s: KioskStatusMessage) => void): () => void {
     this.kioskSubs.add(fn);
     return () => this.kioskSubs.delete(fn);
+  }
+
+  // -- Lamp power (docs/design/lamp-power.md; the "power" feature) -------------
+
+  /** Turn the lamp on (`on`) / off, or `toggle` it. The configured ON/OFF
+   * transition plays unless `instant`; `durationMs` overrides its length for
+   * this change. Reply: the new power state. */
+  async setPower(
+    req: { on?: boolean; toggle?: boolean; instant?: boolean; durationMs?: number },
+    timeoutMs = 5000,
+  ): Promise<PowerState> {
+    const msg = { type: "set_power", ...req } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** Set the lamp's wall clock (UTC at a device-clock instant) and/or its zone
+   * (a POSIX TZ rule): firmware feature "wall_clock". Usually through
+   * net/wallClock.ts pushWallClock, which syncs first. Reply: clock_state. */
+  async setWallClock(req: Omit<SetWallClockMessage, "type">, timeoutMs = 5000): Promise<ClockState> {
+    const msg = { type: "set_wall_clock", ...req } as unknown as ClientMessage;
+    return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
+  }
+
+  /** The lamp's wall clock (feature "wall_clock"). */
+  async getClock(timeoutMs = 5000): Promise<ClockState> {
+    const msg = { type: "get_clock" } as unknown as ClientMessage;
+    return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
+  }
+
+  /** The lamp's power state + config. */
+  async getPower(timeoutMs = 5000): Promise<PowerState> {
+    const msg = { type: "get_power" } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** Configure boot behaviour / the ON + OFF transitions (unset fields keep
+   * their value). Reply: the new power state. */
+  async setPowerConfig(cfg: Omit<SetPowerConfigMessage, "type">, timeoutMs = 5000): Promise<PowerState> {
+    const msg = { type: "set_power_config", ...cfg } as unknown as ClientMessage;
+    return flatPowerState((await this.request(msg, "power_state", timeoutMs)) as unknown as PowerStateMessage);
+  }
+
+  /** Store a compiled effect on the device as the ON (`slot` 1) or OFF (2)
+   * transition effect (SubmitEffect.power_slot). It is validated and kept, not
+   * played: a transition with style EFFECT plays it. deck 1 + activate false
+   * keep it harmless on firmware without the "power" feature. Reply:
+   * result_ready (the new power state is pushed too). */
+  async storeTransitionEffect(slot: 1 | 2, effectId: string, fxb: Uint8Array): Promise<ResultReadyMessage> {
+    this.checkFxbFormat(fxb);
+    for (const fn of this.activitySubs) fn();
+    return this.sendChunked("EFFECT", {
+      type: "submit_effect",
+      effectId,
+      fxb,
+      activate: false,
+      deck: 1,
+      powerSlot: slot,
+    } as unknown as ClientMessage);
+  }
+
+  /** Subscribe to power_state frames: replies AND the unsolicited pushes (a lid
+   * tap, another client, a transition settling). Returns an unsubscribe fn. */
+  onPowerState(fn: (s: PowerState) => void): () => void {
+    this.powerSubs.add(fn);
+    return () => this.powerSubs.delete(fn);
   }
 
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
@@ -1804,10 +1943,12 @@ export class LedMapperClient {
   private send(msg: ClientMessage): boolean {
     if (this.sock === null || this.sock.readyState !== SOCKET_OPEN) return false;
     try {
-      // Whole-mesh control: relayable messages go through this fixture to every member;
-      // the reply is still this fixture's own (net/mesh.ts).
-      const wire = this.meshAll_ ? (wrapForMesh(msg, encodeClient) ?? msg) : msg;
-      this.sock.send(encodeClient(wire));
+      // Whole-mesh control: relayable messages go through this fixture to every member; the
+      // reply is still this fixture's own (net/mesh.ts). One too big for a mesh packet (an
+      // effect program) goes here directly and to the others through mesh effect sharing.
+      const route = this.meshAll_ ? meshRoute(msg, encodeClient) : ({ kind: "direct" } as const);
+      this.sock.send(encodeClient(route.kind === "wrap" ? route.wire : msg));
+      if (route.kind === "large") meshLargeSender()?.share(this, msg, route.inner);
       if (KIOSK_ACTIVITY_TYPES.has(msg.type as string)) for (const fn of this.activitySubs) fn();
       return true;
     } catch {
@@ -1881,6 +2022,11 @@ export class LedMapperClient {
     if ((msg.type as string) === "kiosk_status") {
       // Subscribers see every kiosk_status (pushes included), then any waiter.
       for (const fn of this.kioskSubs) fn(msg as unknown as KioskStatusMessage);
+    }
+    if ((msg.type as string) === "power_state" && this.powerSubs.size > 0) {
+      // Likewise power_state: every push reaches the subscribers, then a waiter.
+      const st = flatPowerState(msg as unknown as PowerStateMessage);
+      for (const fn of this.powerSubs) fn(st);
     }
     const w = this.waiters.get(msg.type);
     if (w) {

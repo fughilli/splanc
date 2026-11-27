@@ -138,6 +138,35 @@ class SelectionTest(unittest.TestCase):
         capped = wm.select_releases(rel, wm.APP_TAG, 10, up_to="app-v1.9.10")
         self.assertEqual([r["tag_name"] for r in capped], ["app-v1.9.10", "app-v1.9.2"])
 
+    def test_an_untagged_draft_is_matched_by_name_once(self):
+        # GitHub reports a draft's tag as untagged-<id> once another release claims
+        # the tag (app-v1.17.0): match it by name, keep the newest draft only, and
+        # a published release beats any draft.
+        rows = [
+            {"tag_name": "untagged-aa", "name": "app-v1.17.0", "draft": True, "created_at": "2026-11-23T00:00:00Z"},
+            {"tag_name": "untagged-bb", "name": "app-v1.17.0", "draft": True, "created_at": "2026-11-25T00:00:00Z"},
+            {"tag_name": "app-v1.16.0", "name": "app-v1.16.0", "draft": False},
+        ]  # fmt: skip
+        picked = wm.select_releases(rows, wm.APP_TAG, 10, up_to="app-v1.17.0")
+        self.assertEqual([r["tag_name"] for r in picked], ["app-v1.17.0", "app-v1.16.0"])
+        self.assertEqual(picked[0]["created_at"], "2026-11-25T00:00:00Z")
+        self.assertEqual(
+            [r["tag_name"] for r in wm.select_releases(rows, wm.APP_TAG, 10)], ["app-v1.16.0"]
+        )
+        rows.append(
+            {
+                "tag_name": "app-v1.17.0",
+                "name": "app-v1.17.0",
+                "draft": False,
+                "created_at": "2026-11-20T00:00:00Z",
+            }
+        )
+        picked = wm.select_releases(rows, wm.APP_TAG, 10, up_to="app-v1.17.0")
+        self.assertEqual(
+            [(r["tag_name"], r["draft"]) for r in picked],
+            [("app-v1.17.0", False), ("app-v1.16.0", False)],
+        )
+
     def test_up_to_draft_is_included(self):
         # The Release workflow mirrors its own (still draft) release before publishing it.
         picked = wm.select_releases(load_fixture(), wm.APP_TAG, 10, up_to="app-v1.11.0")
@@ -386,6 +415,163 @@ class MirrorTest(unittest.TestCase):
         with open(os.path.join(out, "index.json")) as f:
             idx = json.load(f)
         self.assertEqual([p["count"] for p in idx["products"]], [1, 1, 1])
+
+
+class ClipsTest(unittest.TestCase):
+    """preview-clips.json (tools/release_clips) becomes the release's `clips`;
+    the GIF section and the clip assets don't show twice."""
+
+    API = "https://api.github.com/repos/fughilli/splanc/releases/assets/"
+    DL = "https://github.com/fughilli/splanc/releases/download/app-v1.11.0/"
+
+    def release(self, draft):
+        names = ["preview-clips.json", "ai-tab-phone.mp4", "ai-tab-phone.webm", "ai-tab-phone.jpg",
+                 "ai-tab-phone.gif", "screenshot.png"]  # fmt: skip
+        assets = [
+            {"id": i, "name": n, "url": self.API + str(i), "browser_download_url": self.DL + n,
+             "content_type": {"json": "application/json", "mp4": "video/mp4", "webm": "video/webm",
+                              "jpg": "image/jpeg", "gif": "image/gif", "png": "image/png"}[n.rsplit(".", 1)[1]],
+             "updated_at": "2026-11-20T00:00:00Z"}
+            for i, n in enumerate(names, start=1)
+        ]  # fmt: skip
+        gif = self.DL + "ai-tab-phone.gif"
+        return {
+            "tag_name": "app-v1.11.0", "name": "app-v1.11.0", "draft": draft, "prerelease": False,
+            "published_at": None if draft else "2026-11-20T00:00:00Z", "created_at": "2026-11-20T00:00:00Z",
+            "body_html": '<h2>Feature previews</h2><h3>AI tab</h3><p><a href="' + gif + '"><img src="' + gif
+            + '" alt="AI tab"></a></p><p>Pick where AI runs.</p>'
+            + "<h2>What's Changed</h2><ul><li>AI tab by x in #558</li></ul>",
+            "assets": assets,
+        }  # fmt: skip
+
+    def net(self, draft):
+        manifest = {
+            "schema": 1, "tag": "app-v1.11.0",
+            "clips": [{"id": "ai-tab", "title": "AI tab", "summary": "Pick where AI runs.", "prs": [558],
+                       "variants": [{"framing": "phone", "mp4": "ai-tab-phone.mp4", "webm": "ai-tab-phone.webm",
+                                     "poster": "ai-tab-phone.jpg", "gif": "ai-tab-phone.gif",
+                                     "width": 600, "height": 1298, "duration": 9.5}]},
+                      {"id": "broken", "title": "No video", "summary": "x",
+                       "variants": [{"framing": "phone", "mp4": "missing.mp4"}]}],
+        }  # fmt: skip
+        base = self.API if draft else self.DL
+        key = (lambda i, n: self.API + str(i)) if draft else (lambda i, n: self.DL + n)
+        files = {
+            key(1, "preview-clips.json"): (json.dumps(manifest).encode(), "application/json"),
+            key(2, "ai-tab-phone.mp4"): (MP4, "video/mp4"),
+            key(3, "ai-tab-phone.webm"): (MP4 + b"w", "video/webm"),
+            key(4, "ai-tab-phone.jpg"): (PNG + b"j", "image/jpeg"),
+            key(5, "ai-tab-phone.gif"): (PNG + b"g", "image/gif"),
+            key(6, "screenshot.png"): (PNG + b"s", "image/png"),
+        }
+        net = FakeNet()
+        net.files = files
+        self.assertTrue(base)
+        return net
+
+    def mirror(self, draft):
+        net = self.net(draft)
+        media = wm.MediaStore(tempfile.mkdtemp(), net, lambda m: None)
+        return wm.mirror_release(self.release(draft), wm.APP.pattern, media, "fughilli/splanc"), net
+
+    def check(self, r):
+        self.assertEqual([c["id"] for c in r["clips"]], ["ai-tab"])  # no-MP4 clip dropped
+        v = r["clips"][0]["variants"][0]
+        self.assertEqual(v["framing"], "phone")
+        self.assertEqual((v["width"], v["height"]), (600, 1298))
+        for k in ("mp4", "webm", "poster"):
+            self.assertRegex(v[k], r"^media/[0-9a-f]{20}\.(mp4|webm|jpg)$")
+            self.assertIn(v[k], r["media"])
+        self.assertEqual(r["clips"][0]["prs"], [558])
+        # The GIF section is gone, the rest of the notes stay.
+        self.assertNotIn("Feature previews", text_of(r["body"]))
+        self.assertNotIn("Pick where AI runs.", text_of(r["body"]))
+        self.assertIn("What's Changed", text_of(r["body"]))
+        # The gallery keeps unrelated media only (no GIF, MP4, manifest).
+        srcs = [
+            n["a"]["src"]
+            for n in walk(r["body"])
+            if isinstance(n, dict) and n["t"] in ("img", "video")
+        ]
+        self.assertEqual(len(srcs), 1)
+        self.assertNotIn(srcs[0], (v["mp4"], v["webm"], v["poster"]))
+
+    def test_published_release(self):
+        r, net = self.mirror(draft=False)
+        self.check(r)
+        self.assertFalse(any(u.startswith(self.API) for u in net.calls))
+
+    def test_draft_release_reads_assets_through_the_api(self):
+        r, net = self.mirror(draft=True)
+        self.check(r)
+        self.assertFalse(any(u.startswith(self.DL) for u in net.calls))
+
+    def test_draft_assets_served_as_octet_stream(self):
+        # What GitHub really does while the Release workflow mirrors its draft
+        # (app-v1.17.1 shipped with no clips): the asset API URL has no file
+        # extension and answers application/octet-stream, and the draft's
+        # browser_download_url is an untagged-... one. The asset name types the
+        # download, for the clips, the gallery and an image inline in the notes.
+        rel = self.release(True)
+        for a in rel["assets"]:
+            a["browser_download_url"] = a["browser_download_url"].replace(
+                "app-v1.11.0", "untagged-0f3c"
+            )
+        shot = self.DL + "screenshot.png"  # the notes link the tag's future URL
+        rel["body_html"] += '<p><img src="' + shot + '" alt="shot"></p>'
+        net = self.net(True)
+        net.files = {u: (data, "application/octet-stream") for u, (data, _) in net.files.items()}
+        logs = []
+        media = wm.MediaStore(tempfile.mkdtemp(), net, logs.append)
+        r = wm.mirror_release(rel, wm.APP.pattern, media, "fughilli/splanc", log=logs.append)
+        self.check(r)  # clips kept; the screenshot shows once (inline, no gallery copy)
+        v = r["clips"][0]["variants"][0]
+        self.assertTrue(v["mp4"].endswith(".mp4") and v["webm"].endswith(".webm"))
+        self.assertTrue(v["poster"].endswith(".jpg"))
+        img = [n for n in walk(r["body"]) if isinstance(n, dict) and n["t"] == "img"]
+        self.assertEqual(len(img), 1)
+        self.assertRegex(img[0]["a"]["src"], r"^media/[0-9a-f]{20}\.png$")
+        self.assertEqual(len(r["media"]), 4)
+        self.assertFalse([m for m in logs if "skipping media" in m])
+        self.assertFalse(any(u.startswith(self.DL) or "untagged" in u for u in net.calls))
+
+    def test_name_hint_only_admits_media(self):
+        octet = "application/octet-stream"
+        self.assertEqual(wm._media_ext(self.API + "7", octet, "clip.mp4"), ".mp4")
+        self.assertEqual(wm._media_ext(self.API + "7", "", "poster.jpeg"), ".jpg")
+        self.assertIsNone(wm._media_ext(self.API + "7", octet))
+        self.assertIsNone(wm._media_ext(self.API + "7", octet, "splanc-webapp.tar.gz"))
+        self.assertIsNone(wm._media_ext(self.API + "7", octet, "preview-clips.json"))
+        # A specific non-media type is never overridden by the name.
+        self.assertIsNone(wm._media_ext(self.API + "7", "text/html", "x.png"))
+        self.assertEqual(wm._media_ext(self.API + "7", "image/png", "x.bin"), ".png")
+
+    def test_no_manifest_keeps_the_body(self):
+        rel = self.release(False)
+        rel["assets"] = [a for a in rel["assets"] if a["name"] != "preview-clips.json"]
+        media = wm.MediaStore(tempfile.mkdtemp(), self.net(False), lambda m: None)
+        r = wm.mirror_release(rel, wm.APP.pattern, media, "fughilli/splanc")
+        self.assertNotIn("clips", r)
+        self.assertIn("Feature previews", text_of(r["body"]))
+
+    def test_bad_manifest_is_ignored(self):
+        net = self.net(False)
+        net.files[self.DL + "preview-clips.json"] = (b"{nope", "application/json")
+        media = wm.MediaStore(tempfile.mkdtemp(), net, lambda m: None)
+        logs = []
+        r = wm.mirror_release(
+            self.release(False), wm.APP.pattern, media, "fughilli/splanc", log=logs.append
+        )
+        self.assertNotIn("clips", r)
+        self.assertTrue(any("unreadable preview-clips.json" in m for m in logs))
+
+    def test_manifest_changes_the_digest(self):
+        rel = self.release(False)
+        before = wm.digest([(wm.APP, [rel])])
+        next(a for a in rel["assets"] if a["name"] == "preview-clips.json")[
+            "updated_at"
+        ] = "2026-11-21T00:00:00Z"
+        self.assertNotEqual(before, wm.digest([(wm.APP, [rel])]))
 
 
 if __name__ == "__main__":

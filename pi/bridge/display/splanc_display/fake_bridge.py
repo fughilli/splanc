@@ -221,7 +221,9 @@ def sample(state: str, now: float, code: str = "K7QX-M2PD", **over) -> dict:
         doc["pairing"] = {
             "code": code,
             "expires_at": int(now) + 272,
-            "url": f"https://splanc.io/pair#{code}",
+            # The relay's real form (agent/relay/src/bridgeObject.ts: <origin>/pair?code=),
+            # so the preview's QR is the size the OLED draws for a real bridge.
+            "url": f"https://splanc.pages.dev/pair?code={code}",
         }
     if state == "paired":
         doc["clients"] = 2

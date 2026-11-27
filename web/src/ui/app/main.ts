@@ -43,9 +43,18 @@ import { SettingsScreen } from "../screens/settings";
 import { WifiNetworksScreen } from "../screens/wifiNetworks";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
+import { PowerTransitionsScreen } from "../screens/powerTransitions";
+import { SensorsScreen } from "../screens/sensors";
+import { KitOnboardingScreen } from "../screens/kitOnboarding";
+import { ShareScreen } from "../screens/shareScreen";
+import { installAppLinks } from "../../net/appLinks";
 import { HardwareSetupScreen } from "../screens/hardwareSetup";
+import { NewFixtureScreen } from "../screens/newFixture";
+import { installNewFixtureWatch } from "./newFixtureWatch";
 import { AboutScreen } from "../screens/about";
 import { CreditsFlowScreen } from "../screens/creditsFlow";
+import { MeshFlowScreen } from "../screens/meshFlow";
+import { MeshTopologyScreen } from "../screens/meshTopology";
 import { warmActiveProvider } from "../../effects/ai/generate";
 import { refreshFreeTierLimit } from "../../effects/ai/tiers";
 import { AcidModeScreen } from "../screens/acidMode";
@@ -208,9 +217,35 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Wi-Fi networks", back: true, tabs: true });
       return WifiNetworksScreen(router);
     })
+    .add("/new-fixture", () => {
+      // A new fixture's setup (D-259): name, LED count, colour order — one step
+      // per screen, opened by installNewFixtureWatch on a fixture with no map.
+      shell.setChrome({ title: "New fixture", back: true, tabs: false });
+      return NewFixtureScreen(router);
+    })
     .add("/settings/hardware", () => {
       shell.setChrome({ title: "Hardware Setup", back: true, tabs: true });
       return HardwareSetupScreen(router);
+    })
+    .add("/device/transitions", () => {
+      // Lamp power: the dedicated ON / OFF transitions flow (docs/design/lamp-power.md).
+      shell.setChrome({ title: "Transitions", back: true, tabs: true });
+      return PowerTransitionsScreen(router);
+    })
+    .add("/sensors", () => {
+      // Sensor modules (a touch lid toggling power): agent chat + form + live test.
+      shell.setChrome({ title: "Sensors", back: true, tabs: true });
+      return SensorsScreen(router);
+    })
+    .add("/kit/:id", (m) => {
+      // Kit onboarding from the booklet QR (kits/kits.ts kitUrl).
+      shell.setChrome({ title: "Set up your lamp", back: false, tabs: false });
+      return KitOnboardingScreen(router, m.params["id"]);
+    })
+    .add("/share", (m) => {
+      // A share link opened (docs/design/share-links.md): admin access to a mesh or a fixture.
+      shell.setChrome({ title: "Splanc link", back: false, tabs: false });
+      return ShareScreen(m.query);
     })
     .add("/settings/ai", () => {
       // Settings ▸ AI: the AI provider settings + Splanc AI credits account.
@@ -237,6 +272,22 @@ async function main(): Promise<void> {
       // Coming back from Stripe: no app-bar Back (it would return to Stripe).
       shell.setChrome({ title: "Splanc AI credits", back: mode !== "return", tabs: false });
       return CreditsFlowScreen(router, known ? mode : "buy");
+    })
+    .add("/mesh/new", (m) => {
+      // The dedicated "Create a mesh" flow (mesh M7; one step per screen).
+      shell.setChrome({ title: "Create a mesh", back: true, tabs: false });
+      const from = m.query.get("from");
+      return MeshFlowScreen(router, "new", from ? { from } : {});
+    })
+    .add("/mesh/add/:id", (m) => {
+      shell.setChrome({ title: "Add to mesh", back: true, tabs: false });
+      const from = m.query.get("from");
+      return MeshFlowScreen(router, "add", { meshId: Number(m.params["id"]) >>> 0, ...(from ? { from } : {}) });
+    })
+    .add("/mesh/topology", () => {
+      // The mesh map: the connected fixture's mesh in 3D (room positions, links, health).
+      shell.setChrome({ title: "Mesh map", back: true, tabs: false });
+      return MeshTopologyScreen(router);
     })
     .add("/room", () => {
       shell.setChrome({ title: "Localize room", back: true, tabs: false });
@@ -291,6 +342,11 @@ async function main(): Promise<void> {
     history.replaceState(history.state, "", `${location.pathname}${location.search}#/credits/return`);
   }
   router.start();
+  // Universal links (share links) handed to the native app: open their in-app route.
+  installAppLinks();
+  // A brand-new fixture (no stored map) opens its setup flow once; a name typed
+  // while flashing / setting it up is applied when it connects (D-259).
+  if (!demoParam && !driverParam && !startedInPlay) installNewFixtureWatch(router);
 
   // iOS: App Store purchases still waiting for their credit (a crash or no
   // network between paying and crediting) and Ask to Buy approvals, from

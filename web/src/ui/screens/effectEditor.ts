@@ -34,9 +34,12 @@ import {
   deriveLedTopology,
   warningsFeedback,
   type FxCompiled,
+  type FxDiagnostic,
   type FxUniform,
   type LedTopology,
 } from "../../fx/preview";
+import { applyClockUniforms, clockBindings } from "../../fx/clockUniforms";
+import { ClockScrubber } from "../../effects/editor/clockScrubber";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
@@ -47,6 +50,15 @@ import { deviceHasEffectStore, storeErrorText } from "../../net/effectStore";
 import { sceneUniformValues, type EffectScene } from "../../effects/scene";
 import { highlight } from "../../effects/editor/highlight";
 import { formatFx } from "../../effects/editor/format";
+import {
+  closeBraceEdit,
+  diagnosticsHtml,
+  indentEdit,
+  newlineEdit,
+  rowColAt,
+  type Mark,
+  type TextEdit,
+} from "../../effects/editor/editing";
 import { complete, type CompletionItem } from "../../effects/editor/completions";
 import {
   CONTINUE_NOTE,
@@ -95,10 +107,15 @@ import {
   withDeviceLock,
 } from "../../effects/devicePerf";
 import { BudgetBar } from "./budgetBar";
-import { MidiRouter, isDrivable } from "../../midi/router";
+import { MidiRouter, isAutoBindable } from "../../midi/router";
+import {
+  MIDI_REMAP_PROMPT,
+  midiListSummary as sharedMidiListSummary,
+  validateMidiMappings,
+} from "../../midi/agentSummary";
 import { MidiMapPanel } from "../../effects/editor/midi-panel";
-import { midiStore, type UniformBinding } from "../../store/midiStore";
-import { midiManager, controlLabel } from "../../midi/manager";
+import { midiStore } from "../../store/midiStore";
+import { midiManager } from "../../midi/manager";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { deviceEffects } from "../../store/deviceEffects";
 import { KeypointStrip } from "./keypointStrip";
@@ -120,14 +137,17 @@ import { DEVICE_MAP, initialPreviewMap, learnDeviceMap, pickMap, pickedMap } fro
 import { deviceMapTitle, deviceMaps } from "./deviceMapCard";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
-import { Button, IconButton, confirmDialog, icon, toast, type IconName } from "../kit";
+import { Button, IconButton, Sheet, confirmDialog, icon, toast, type IconName } from "../kit";
 import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
 import { TurnHistory, TurnRecorder } from "../../feedback/agentTrace";
 import type { FeedbackScreenContext } from "../../feedback/appFeedback";
 import { openAgentFeedbackSheet, reportButton } from "./agentFeedbackSheet";
 import { mountEffectsTour } from "../guide/effectsTour";
 import { captureDemoPreview, makeDemoProvider } from "../../effects/ai/providers/demo";
-import { FxLayout } from "../../effects/editor/layout";
+import { FxLayout, NARROW_QUERY } from "../../effects/editor/layout";
+import { DocsPanel } from "../../effects/editor/docs-panel";
+import { insertSnippetEdit, termAt } from "../../effects/editor/docs";
+import { SelectionActions, type SelectionAction } from "../../effects/editor/selection-actions";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { FxDebugPanel } from "../../effects/editor/fxDebugPanel";
 import { renderMarkdown } from "../markdown";
@@ -136,6 +156,8 @@ import type { Router, Screen } from "../app/router";
 
 const COMPILE_DEBOUNCE_MS = 300;
 const SAVE_DEBOUNCE_MS = 800;
+/** Apple keyboards label the format shortcut ⌘⇧F; everything else Ctrl+Shift+F. */
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /** window.localStorage, or null where touching it throws (blocked storage). */
 function safeLocalStorage(): Storage | null {
@@ -341,15 +363,133 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   codeEl.spellcheck = false;
   codeEl.autocapitalize = "off";
   codeEl.setAttribute("autocomplete", "off");
-  codeWrap.append(backdrop, codeEl);
+  // Diagnostics layer (D-501): the same text, transparent, drawn over the
+  // highlighted backdrop and under the textarea — a tinted band on every line
+  // with an error / warning and a red / yellow squiggle under its span. It
+  // takes no pointer events; hovering is hit-tested against its spans' boxes.
+  const diagLayer = document.createElement("pre");
+  diagLayer.className = "fxedit-diaglayer";
+  diagLayer.setAttribute("aria-hidden", "true");
+  const diagTip = document.createElement("div");
+  diagTip.className = "fxdiag-tip";
+  diagTip.id = `fxdiag-tip-${Math.random().toString(36).slice(2)}`;
+  diagTip.setAttribute("role", "tooltip");
+  diagTip.style.display = "none";
+  codeWrap.append(backdrop, diagLayer, codeEl, diagTip);
+  let marks: Mark[] = [];
 
   function paintHighlight(): void {
     backdropCode.innerHTML = highlight(codeEl.value);
+    paintDiagnostics();
+  }
+  function paintDiagnostics(): void {
+    diagLayer.innerHTML = diagnosticsHtml(codeEl.value, marks);
+    diagLayer.scrollTop = codeEl.scrollTop;
+    diagLayer.scrollLeft = codeEl.scrollLeft;
   }
   function syncScroll(): void {
     backdrop.scrollTop = codeEl.scrollTop;
     backdrop.scrollLeft = codeEl.scrollLeft;
+    diagLayer.scrollTop = codeEl.scrollTop;
+    diagLayer.scrollLeft = codeEl.scrollLeft;
     if (popupOpen) positionPopup();
+    hideDiagTip();
+  }
+
+  /** Show the tooltip for squiggle `sq` (a `.fxdiag-sq` in the layer). */
+  function showDiagTip(sq: HTMLElement): void {
+    const m = marks[Number(sq.dataset["i"])];
+    if (!m) return hideDiagTip();
+    diagTip.replaceChildren();
+    const head = document.createElement("span");
+    head.className = `fxdiag-tip-sev fxdiag-tip-sev--${m.severity}`;
+    head.textContent = m.severity === "error" ? "Error" : "Warning";
+    const body = document.createElement("span");
+    body.textContent = m.msg.replace(/^warning:\s*/, "");
+    diagTip.append(head, body);
+    diagTip.style.display = "";
+    // Below the span, flipped above it when that would leave the pane.
+    const wrap = codeWrap.getBoundingClientRect();
+    const r = sq.getBoundingClientRect();
+    const tipH = diagTip.offsetHeight;
+    const below = r.bottom - wrap.top + 4;
+    const top = below + tipH > wrap.height && r.top - wrap.top - tipH - 4 >= 0 ? r.top - wrap.top - tipH - 4 : below;
+    const left = Math.max(4, Math.min(r.left - wrap.left, wrap.width - diagTip.offsetWidth - 4));
+    diagTip.style.top = `${top}px`;
+    diagTip.style.left = `${left}px`;
+    codeEl.setAttribute("aria-describedby", diagTip.id);
+  }
+  function hideDiagTip(): void {
+    if (diagTip.style.display === "none") return;
+    diagTip.style.display = "none";
+    codeEl.removeAttribute("aria-describedby");
+  }
+  /** The squiggle under a viewport point (the whole line's height counts). */
+  function squiggleAt(x: number, y: number): HTMLElement | null {
+    for (const sq of diagLayer.querySelectorAll<HTMLElement>(".fxdiag-sq")) {
+      for (const r of sq.getClientRects()) {
+        if (x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 2 && y <= r.bottom + 2) return sq;
+      }
+    }
+    return null;
+  }
+  /** The squiggle the caret sits in (keyboard / touch users get the tooltip too). */
+  function squiggleAtCaret(): HTMLElement | null {
+    if (marks.length === 0 || codeEl.selectionStart !== codeEl.selectionEnd) return null;
+    const caret = codeEl.selectionStart;
+    let off = 0;
+    // Walk the layer's text nodes to find the span containing the caret offset.
+    const walker = document.createTreeWalker(diagLayer, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const len = (n.textContent ?? "").replace(/\u200b/g, "").length;
+      const sq = n.parentElement?.closest<HTMLElement>(".fxdiag-sq") ?? null;
+      if (sq && caret >= off && caret <= off + len) return sq;
+      off += len;
+      if (off > caret) break;
+    }
+    return null;
+  }
+  let hoverRaf = 0;
+  codeEl.addEventListener("mousemove", (ev) => {
+    if (marks.length === 0) return;
+    if (hoverRaf) cancelAnimationFrame(hoverRaf);
+    hoverRaf = requestAnimationFrame(() => {
+      hoverRaf = 0;
+      const sq = squiggleAt(ev.clientX, ev.clientY);
+      if (sq) showDiagTip(sq);
+      else hideDiagTip();
+    });
+  });
+  codeEl.addEventListener("mouseleave", hideDiagTip);
+
+  /** Replace the compiler marks (errors, then warnings) and repaint them. */
+  function setMarks(errors: readonly FxDiagnostic[], warnings: readonly FxDiagnostic[]): void {
+    marks = [
+      ...errors.map((d) => ({ ...d, severity: "error" as const })),
+      ...warnings.map((d) => ({ ...d, severity: "warning" as const })),
+    ];
+    hideDiagTip();
+    paintDiagnostics();
+  }
+
+  /** Apply a TextEdit through the browser's editing pipeline, so it lands on
+   * the undo stack (Ctrl/Cmd+Z) like typing does; `input` then repaints,
+   * recompiles and saves. Falls back to setRangeText where execCommand is gone. */
+  function applyEdit(e: TextEdit): void {
+    codeEl.setSelectionRange(e.from, e.to);
+    const want = codeEl.value.slice(0, e.from) + e.text + codeEl.value.slice(e.to);
+    let ok = false;
+    try {
+      ok = e.text === "" ? document.execCommand("delete") : document.execCommand("insertText", false, e.text);
+    } catch {
+      ok = false;
+    }
+    if (!ok || codeEl.value !== want) {
+      codeEl.value = want;
+      codeEl.dispatchEvent(new Event("input"));
+    }
+    codeEl.setSelectionRange(e.selStart, e.selEnd);
+    updateCursorPos();
   }
 
   // -- autocomplete popup ---------------------------------------------------
@@ -391,7 +531,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     swizzle: "sw",
   };
 
-  function caretPixel(): { left: number; top: number } {
+  function caretPixel(caret = codeEl.selectionEnd): { left: number; top: number } {
     // Copy the metrics that affect glyph flow from the textarea to the mirror.
     const cs = getComputedStyle(codeEl);
     const props = [
@@ -414,7 +554,6 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     for (const p of props) mirror.style.setProperty(cssProp(p), cs[p as keyof CSSStyleDeclaration] as string);
     mirror.style.width = `${codeEl.clientWidth}px`;
 
-    const caret = codeEl.selectionEnd;
     mirror.textContent = codeEl.value.slice(0, caret);
     mirror.appendChild(mirrorMark);
     mirrorMark.textContent = "​";
@@ -509,6 +648,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // caret is no longer at the token the popup was opened for, dismiss it — we
   // don't reopen here to avoid a popup on every click; typing reopens it.
   function onSelectionChange(): void {
+    if (document.activeElement === codeEl) {
+      updateCursorPos();
+      const sq = squiggleAtCaret();
+      if (sq) showDiagTip(sq);
+      else hideDiagTip();
+    }
     if (!popupOpen) return;
     if (document.activeElement !== codeEl) return closePopup();
     const caret = codeEl.selectionEnd;
@@ -569,7 +714,16 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   statusEl.className = "fxedit-status";
   const statusText = document.createElement("span");
   statusText.className = "fxedit-status-text";
-  statusEl.append(statusText);
+  // Cursor readout (D-501), `row : col`, at the right end of the status line.
+  const cursorPos = document.createElement("span");
+  cursorPos.className = "fxedit-cursorpos";
+  cursorPos.title = "Line : column";
+  statusEl.append(statusText, cursorPos);
+  function updateCursorPos(): void {
+    const { row, col } = rowColAt(codeEl.value, codeEl.selectionEnd);
+    cursorPos.textContent = `${row} : ${col}`;
+    cursorPos.setAttribute("aria-label", `Line ${row}, column ${col}`);
+  }
 
   // -- FUG-11 budget bar ----------------------------------------------------
   // The color-coded fraction of the frame budget the current program consumes,
@@ -684,12 +838,30 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   const diagsEl = document.createElement("ul");
   diagsEl.className = "fxedit-diags";
 
-  const panel = new UniformPanel(uniformsHost, (slot, value) => {
-    preview?.setUniform(slot, value);
-    const c = appState.client;
-    // The live-control channel: latest value wins, paced on the device.
-    if (c?.isConnected) c.live.setUniform(slot, value);
-  });
+  // Wall-clock uniforms (clock, clock_day, ...): the preview feeds the phone's
+  // clock, or a picked time of day; the block shows only for an effect using them.
+  const clockScrubber = new ClockScrubber();
+  let clockBound: FxUniform[] = [];
+  const uniformsPane = document.createElement("div");
+  uniformsPane.append(clockScrubber.el, uniformsHost);
+
+  const panel = new UniformPanel(
+    uniformsHost,
+    (slot, value) => {
+      preview?.setUniform(slot, value);
+      const c = appState.client;
+      // The live-control channel: latest value wins, paced on the device.
+      if (c?.isConnected) c.live.setUniform(slot, value);
+    },
+    {
+      // A release persists right away (firmware with uniform_commit) rather
+      // than after the idle timer.
+      onCommit: () => {
+        const c = appState.client;
+        if (c?.isConnected) c.live.commit();
+      },
+    },
+  );
 
   // -- MIDI: route hardware controls into the SAME uniform seam as a manual
   // drag (moves the panel control → preview + device), plus a per-effect
@@ -699,7 +871,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   let lastUniforms: FxUniform[] = [];
   let initialScene: EffectScene | undefined;
   let sceneUniformsApplied = false;
-  const midiRouter = new MidiRouter((u) => panel.applyExternal(u.slot, u.value));
+  const midiRouter = new MidiRouter(
+    (u) => panel.applyExternal(u.slot, u.value),
+    (u) => panelValue(u.slot),
+  );
   midiRouter.setEffect(effectId);
   const midiPanel = new MidiMapPanel(effectId, { onRemap: () => runRemap() });
 
@@ -1115,10 +1290,23 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     resetChat();
     closeMenu();
   });
+  const miDocs = document.createElement("button");
+  miDocs.type = "button";
+  miDocs.className = "fxedit-menu-item";
+  miDocs.textContent = "Language docs";
+  miDocs.addEventListener("click", () => {
+    closeMenu();
+    openDocs(null);
+  });
   const miFormat = document.createElement("button");
   miFormat.type = "button";
   miFormat.className = "fxedit-menu-item";
-  miFormat.textContent = "Format code";
+  const miFormatLabel = document.createElement("span");
+  miFormatLabel.textContent = "Format code";
+  const miFormatKbd = document.createElement("kbd");
+  miFormatKbd.className = "fxedit-menu-kbd";
+  miFormatKbd.textContent = IS_MAC ? "⌘⇧F" : "Ctrl+Shift+F";
+  miFormat.append(miFormatLabel, miFormatKbd);
   miFormat.addEventListener("click", () => {
     formatCode();
     closeMenu();
@@ -1155,7 +1343,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       miRecall.appendChild(it);
     }
   }
-  menu.append(miKey, miNewChat, miFormat, miReset, miRecall);
+  menu.append(miKey, miNewChat, miDocs, miFormat, miReset, miRecall);
 
   // Auto-format (re-indent) the buffer, keeping the caret at roughly the same
   // logical spot (measured in non-whitespace characters, which the reformat
@@ -1170,7 +1358,6 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const caret = codeEl.selectionStart ?? 0;
     let before = 0;
     for (let i = 0; i < caret; i++) if (!/\s/.test(old[i]!)) before++;
-    codeEl.value = next;
     let seen = 0;
     let pos = next.length;
     if (before === 0) {
@@ -1183,11 +1370,9 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         }
       }
     }
-    codeEl.setSelectionRange(pos, pos);
-    paintHighlight();
+    // One undoable edit (Ctrl/Cmd+Z restores the unformatted text).
+    applyEdit({ from: 0, to: old.length, text: next, selStart: pos, selEnd: pos });
     syncScroll();
-    scheduleCompile();
-    scheduleSave();
     toast("Formatted");
   }
   menuWrap.appendChild(menu);
@@ -1429,6 +1614,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
 
     const warnings = r.warnings ?? [];
     renderDiagnostics([...r.diagnostics, ...warnings]);
+    setMarks(r.ok ? [] : r.diagnostics, warnings);
     if (!r.ok && r.compilerUnavailable !== undefined) {
       // The compiler couldn't be downloaded (retried in the background; the
       // status listener recompiles when it lands): a network problem, not an
@@ -1467,6 +1653,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       sceneUniformsApplied = true;
     }
     lastUniforms = r.uniforms;
+    clockBound = clockBindings(r.uniforms);
+    clockScrubber.setVisible(clockBound.length > 0);
     // Auto-push: a clean compile goes straight to the connected device — but only
     // when the .fxb actually changed, so a whitespace-only edit doesn't re-flash.
     if (!appState.client?.isConnected) {
@@ -1482,7 +1670,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     // Auto-bind uniforms to like-named controls ("speed" uniform ↔ a knob named
     // "speed") — fills gaps only, never overrides an explicit binding. Emits, so
     // the panel re-renders; then refresh its manifest for the drivable list.
-    midiStore.autoBind(effectId, r.uniforms.filter(isDrivable).map((u) => u.name));
+    midiStore.autoBind(effectId, r.uniforms.filter(isAutoBindable).map((u) => u.name));
     midiPanel.setManifest(r.uniforms);
     // A preview failure (e.g. the fx-vm module can't load) must not block the
     // rest of the compile pipeline — the status, uniforms and disassembly below
@@ -1535,8 +1723,14 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
     if (preview === null || mapView === null || currentMap === null || positions === null) return;
     const time = (t - startT) / 1000;
+    feedClock(preview);
     preview.tick(time, dt / 1000, frame++, currentMap.leds.length);
     mapView.setLedColors(preview.shadeAll(positions));
+  }
+
+  /** The clock uniforms the lamp's firmware writes, from the preview time. */
+  function feedClock(p: FxPreview): void {
+    if (clockBound.length > 0) applyClockUniforms(clockBound, clockScrubber.current(), (slot, v) => p.setUniform(slot, v));
   }
 
   // -- AI chat: run one user turn through the tool-use loop ------------------
@@ -1558,12 +1752,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // The canned "magic remap" prompt (FUG-9): the model reads the effect's
   // uniforms + the named MIDI controls and wires them via the mapping layer —
   // never by editing the effect source.
-  const REMAP_PROMPT =
-    "Map my MIDI controls to this effect's uniforms. First call list_midi_controls " +
-    "to see the drivable uniforms and the named controls, then call set_midi_mapping " +
-    "to wire them. Match by meaning (a 'speed'/'rate' knob → a speed uniform, " +
-    "'brightness' → an intensity/gain uniform, etc.) and only map scalar uniforms. " +
-    "Do NOT modify the effect source — the mapping is a separate layer.";
+  const REMAP_PROMPT = MIDI_REMAP_PROMPT;
 
   async function runRemap(): Promise<void> {
     if (chatBusy) return;
@@ -1573,49 +1762,26 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   }
 
   /** Build the always-included MIDI context for the AI: the effect's drivable
-   * uniforms, the globally-named controls, and the current bindings. */
+   * uniforms (colours with their current value), the globally-named controls,
+   * and the current bindings. */
   function midiListSummary(): string {
-    const uniforms = lastUniforms.filter(isDrivable).map((u) => ({
-      name: u.name,
-      type: u.ui.kind,
-      ...(u.ui.kind === "slider" ? { min: u.ui.min, max: u.ui.max } : {}),
-    }));
-    const controls = midiStore.semantics().map((s) => ({
-      name: s.name,
-      source: `${s.control.device} · ${controlLabel(s.control)}`,
-    }));
-    const current = midiStore.bindings(effectId).map((b) => ({
-      uniform: b.uniform,
-      control: b.semantic,
-      ...(b.min !== undefined ? { min: b.min } : {}),
-      ...(b.max !== undefined ? { max: b.max } : {}),
-      ...(b.invert ? { invert: true } : {}),
-    }));
-    return JSON.stringify(
-      { uniforms, namedControls: controls, currentMappings: current, midiEnabled: midiManager.enabled },
-      null,
-      2,
-    );
+    return sharedMidiListSummary({
+      uniforms: lastUniforms,
+      values: (u) => panelValue(u.slot),
+      semantics: midiStore.semantics(),
+      bindings: midiStore.bindings(effectId),
+      midiEnabled: midiManager.enabled,
+    });
+  }
+
+  /** The editor panel's current value for a slot (undefined if unknown). */
+  function panelValue(slot: number): number[] | undefined {
+    return panel.values().find((v) => v.slot === slot)?.value;
   }
 
   /** Apply AI-proposed mappings to the mapping layer (never the source). */
   function applyMidiMappings(mappings: MidiMappingCall[]): string {
-    const drivable = new Set(lastUniforms.filter(isDrivable).map((u) => u.name));
-    const applied: UniformBinding[] = [];
-    const skipped: string[] = [];
-    for (const m of mappings) {
-      if (!drivable.has(m.uniform)) {
-        skipped.push(`${m.uniform} (not a drivable uniform)`);
-        continue;
-      }
-      applied.push({
-        uniform: m.uniform,
-        semantic: m.control,
-        ...(typeof m.min === "number" ? { min: m.min } : {}),
-        ...(typeof m.max === "number" ? { max: m.max } : {}),
-        ...(m.invert ? { invert: true } : {}),
-      });
-    }
+    const { applied, skipped } = validateMidiMappings(mappings, lastUniforms);
     midiStore.replaceBindings(effectId, applied);
     return `Applied ${applied.length} mapping(s)${
       skipped.length ? `; skipped: ${skipped.join(", ")}` : ""
@@ -2008,6 +2174,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   async function capturePreviewImage(): Promise<string> {
     if (preview !== null && mapView !== null && currentMap !== null && positions !== null) {
       const time = (performance.now() - startT) / 1000;
+      feedClock(preview);
       preview.tick(time, 1 / 60, frame++, currentMap.leds.length);
       // MapView runs its own rAF loop, so pushing fresh colors updates the
       // canvas on the next frame; the capture reflects the current effect.
@@ -2208,6 +2375,75 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   disasmBody.className = "fxedit-disasmbody";
   disasmBody.appendChild(disasmPre);
 
+  // ---- docs pane + selection actions (D-541 PR 6) ---------------------------
+  // Desktop: a dockable "Docs" pane. Phone: the same panel in a bottom sheet
+  // (a fresh instance per open, so the pane's page stays where it was).
+  /** Insert an example snippet on its own line above the caret's line. */
+  function insertExample(snippet: string): void {
+    codeEl.focus();
+    const e = insertSnippetEdit(codeEl.value, codeEl.selectionStart, snippet);
+    applyEdit(e);
+    toast(`Inserted on line ${codeEl.value.slice(0, e.from).split("\n").length}`);
+  }
+  function copyText(text: string): void {
+    void navigator.clipboard
+      ?.writeText(text)
+      .then(() => toast("Copied"))
+      .catch(() => toast("Couldn't copy: select the example and copy it", { error: true }));
+  }
+  const docsOpts = { onInsert: insertExample, onCopy: copyText };
+  const docsPanel = new DocsPanel(docsOpts);
+  let docsSheet: { close: () => void } | null = null;
+  /** Open the docs at `term`'s page (or the index with the search focused). */
+  function openDocs(term: string | null): void {
+    if (window.matchMedia(NARROW_QUERY).matches) {
+      docsSheet?.close();
+      const sheet = Sheet("Docs", { onClose: () => (docsSheet = null) });
+      sheet.body.classList.add("fxdocs-sheetbody");
+      const panel = new DocsPanel({
+        onInsert: (snippet) => {
+          sheet.close();
+          insertExample(snippet);
+        },
+        onCopy: copyText,
+      });
+      sheet.body.append(panel.node);
+      if (term) panel.show(term);
+      docsSheet = sheet;
+      return;
+    }
+    layout.revealPane("docs");
+    if (term) docsPanel.show(term);
+    else docsPanel.focusSearch();
+  }
+  /** The selection (or caret) as a selection-action context. */
+  function selectionContext(): { src: string; start: number; end: number; text: string; term: string | null } {
+    const src = codeEl.value;
+    const start = Math.min(codeEl.selectionStart, codeEl.selectionEnd);
+    const end = Math.max(codeEl.selectionStart, codeEl.selectionEnd);
+    return { src, start, end, text: src.slice(start, end), term: termAt(src, start, end) };
+  }
+  // Watch ("Add to Watch") registers here next.
+  const selectionActionList: SelectionAction[] = [
+    {
+      id: "docs",
+      icon: "info",
+      label: (ctx) => `Docs: ${ctx.term ?? ""}`,
+      available: (ctx) => ctx.term !== null,
+      run: (ctx) => openDocs(ctx.term),
+    },
+  ];
+  const selectionActions = new SelectionActions({
+    code: codeEl,
+    wrap: codeWrap,
+    caretPixel: (offset) => ({
+      ...caretPixel(offset),
+      lineH: parseFloat(getComputedStyle(codeEl).lineHeight) || 18,
+    }),
+    context: selectionContext,
+    actions: () => selectionActionList,
+  });
+
   // ---- pane model + slots -------------------------------------------------
   // Each pane wraps a STABLE content node (never recreated — only re-parented)
   // so the code textarea / MapView canvas / chat log preserve state across
@@ -2218,13 +2454,14 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     ...(screenOpts.demo ? { preset: "effects-demo" as const, storageKey: null } : {}),
     panes: [
       { id: "code", title: "Code", primary: true, node: editorWrap },
-      { id: "uniforms", title: "Uniforms", primary: true, node: uniformsHost },
+      { id: "uniforms", title: "Uniforms", primary: true, node: uniformsPane },
       { id: "preview", title: "Preview", node: previewBody },
       { id: "diagnostics", title: "Device", node: diagBody },
       { id: "disasm", title: "Disassembly", node: disasmBody },
       { id: "chat", title: "AI chat", node: chatBody },
       { id: "midi", title: "MIDI", node: midiPanel.node },
       { id: "video", title: "Video", node: videoPanel.node },
+      { id: "docs", title: "Docs", node: docsPanel.node, wideOnly: true, home: "right" as const },
       ...(fxDebugPanel ? [{ id: "fxdebug", title: "Debugger", node: fxDebugPanel.node }] : []),
     ],
     onRelayout: () => {
@@ -2354,18 +2591,60 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     scheduleCompile();
     scheduleSave();
     schedulePopup();
+    updateCursorPos();
   });
   codeEl.addEventListener("scroll", syncScroll);
+  // Escape, then Tab, leaves the editor (Tab indents otherwise, so keyboard
+  // users still have a way out — the convention code editors use).
+  let tabLeaves = false;
   codeEl.addEventListener("keydown", (ev) => {
     if (popupKeydown(ev)) {
       ev.preventDefault();
       ev.stopPropagation();
       return;
     }
-    // Shift+Alt+F → auto-format (VS Code convention).
-    if (ev.altKey && ev.shiftKey && (ev.key === "F" || ev.key === "f")) {
+    if (ev.isComposing) return;
+    hideDiagTip();
+    // F1: the docs for the word under the caret (or the index).
+    if (ev.key === "F1") {
+      ev.preventDefault();
+      openDocs(selectionContext().term);
+      return;
+    }
+    const isF = ev.code === "KeyF" || ev.key === "F" || ev.key === "f";
+    // Cmd+Shift+F (Mac) / Ctrl+Shift+F → auto-format; Shift+Alt+F (VS Code) too.
+    if (isF && ev.shiftKey && (ev.metaKey || ev.ctrlKey || ev.altKey)) {
       ev.preventDefault();
       formatCode();
+      return;
+    }
+    if (ev.key === "Escape") {
+      tabLeaves = true;
+      return;
+    }
+    const plain = !ev.metaKey && !ev.ctrlKey && !ev.altKey;
+    if (ev.key === "Tab" && plain) {
+      if (tabLeaves) {
+        tabLeaves = false;
+        return; // default: move focus
+      }
+      ev.preventDefault();
+      const e = indentEdit(codeEl.value, codeEl.selectionStart, codeEl.selectionEnd, ev.shiftKey);
+      if (e) applyEdit(e);
+      return;
+    }
+    tabLeaves = false;
+    if (ev.key === "Enter" && plain && !ev.shiftKey) {
+      ev.preventDefault();
+      applyEdit(newlineEdit(codeEl.value, codeEl.selectionStart, codeEl.selectionEnd));
+      return;
+    }
+    if (ev.key === "}" && plain) {
+      const e = closeBraceEdit(codeEl.value, codeEl.selectionStart, codeEl.selectionEnd);
+      if (e) {
+        ev.preventDefault();
+        applyEdit(e);
+      }
     }
   });
   codeEl.addEventListener("keyup", (ev) => {
@@ -2407,7 +2686,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       midiRouter.detach();
       midiPanel.dispose();
       videoPanel.dispose();
+      clockScrubber.dispose();
       fxDebugPanel?.dispose();
+      selectionActions.dispose();
+      docsSheet?.close();
       layout.unmount();
       preview?.dispose();
       worker.dispose();

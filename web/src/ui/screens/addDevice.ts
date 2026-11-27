@@ -18,6 +18,7 @@ import { Button, PasswordReveal, Sheet, confirmDialog, toast } from "../kit";
 import {
   ImprovError,
   bridgeHostFromRedirect,
+  identifyViaBle,
   provisionViaBle,
   requestImprovDevice,
   wsUrlFromRedirect,
@@ -28,6 +29,7 @@ import { savedNetworks } from "../../store/savedNetworks";
 import { wifiDraft } from "../../store/wifiDraft";
 import { deviceStore, type KnownDevice } from "../../store/deviceStore";
 import { appState } from "../app/state";
+import { normalizeFixtureName, pendingName } from "../../store/newFixture";
 import { isNativePlatform } from "../../net/native";
 import type { BleDevice } from "../../net/bleTransport";
 
@@ -92,6 +94,17 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
   lead.textContent =
     "Choose the Wi-Fi network the fixture should join, then pick the fixture in the Bluetooth list. " +
     "The network is saved for next time.";
+
+  // Its name (D-259), optional: applied when the app first connects to it. A name
+  // typed in the flasher is carried over (pinned to that board's MAC).
+  const pendingBefore = pendingName.get();
+  const nameInput = document.createElement("input");
+  nameInput.className = "sheet-input";
+  nameInput.placeholder = "Fixture name (optional), e.g. Desk lamp";
+  nameInput.setAttribute("aria-label", "Fixture name (optional)");
+  nameInput.maxLength = 32;
+  nameInput.autocomplete = "off";
+  nameInput.value = pendingBefore?.name ?? "";
 
   // Saved-network pick list (tap to fill the fields below).
   const picks = document.createElement("div");
@@ -162,6 +175,10 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
     block: true,
     onClick: () => {
       const creds = current();
+      // The name waits for the fixture (keeps the flasher's MAC pin if it had one).
+      const name = normalizeFixtureName(nameInput.value);
+      if (name) pendingName.set(name, pendingBefore?.mac);
+      else if (pendingBefore) pendingName.clear();
       // Whatever is entered when Connect is pressed is saved (D-72), upserted by
       // SSID; the join's outcome is recorded on it below. Synchronous, so the
       // Bluetooth chooser that follows still has the click's user gesture.
@@ -189,6 +206,25 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
   });
   stopBtn.classList.add("wifi-secondary");
   stopBtn.hidden = true;
+  // Blink (D-259): once a fixture is picked, flash its lights (Improv Identify) so
+  // the user can check it's the right one. On iPhone the picker rows have it too.
+  const blinkBtn = Button({
+    label: "Blink the fixture",
+    icon: "sparkles",
+    variant: "quiet",
+    block: true,
+    onClick: () => {
+      if (!picked) return;
+      blinkBtn.disabled = true;
+      void identifyViaBle(picked, { keepConnected: inflight !== null })
+        .catch((e: unknown) => setStatus(`Couldn't reach it to blink: ${msg(e)}`, "error"))
+        .finally(() => {
+          blinkBtn.disabled = false;
+        });
+    },
+  });
+  blinkBtn.classList.add("wifi-secondary");
+  blinkBtn.hidden = picked === null;
   const otherBtn = Button({
     label: "Choose a different device",
     variant: "quiet",
@@ -197,6 +233,7 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
       if (picked) dropLink(picked);
       picked = null;
       otherBtn.hidden = true;
+      blinkBtn.hidden = true;
       void runBle(current(), null);
     },
   });
@@ -250,6 +287,7 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
         go.disabled = false;
       }
       picked = device;
+      blinkBtn.hidden = false;
     }
     if (!creds.ssid) {
       setStatus("Enter a Wi-Fi network name.", "error");
@@ -281,7 +319,7 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
     cap.textContent = "Saved networks";
     sheet.body.append(cap, picks);
   }
-  sheet.body.append(ssidInput, pass.el, status, go, stopBtn, otherBtn);
+  sheet.body.append(ssidInput, pass.el, nameInput, status, go, stopBtn, blinkBtn, otherBtn);
   if (opts.error !== undefined) showFailure(opts.error);
   else ssidInput.focus();
 }
@@ -367,7 +405,12 @@ async function provisionWithDevice(
   const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
   if (!target) throw new Error(`device joined but sent no usable address (${urls})`);
   setStatus(`Provisioned at ${target} — connecting…`);
-  appState.connect(target);
+  // The address may still be saved under another fixture (its DHCP lease went to
+  // this one): say who this is, so that record moves aside instead of being reused.
+  const expect: { name?: string; bleId?: string } = {};
+  if (device.name) expect.name = device.name;
+  if (device.id) expect.bleId = device.id;
+  appState.connect(target, device.name || undefined, { expect });
   // Remember which physical Bluetooth device this record is, so a later
   // re-discover can warn if a different one is picked.
   if (device.id) deviceStore.setBleId(target, device.id);

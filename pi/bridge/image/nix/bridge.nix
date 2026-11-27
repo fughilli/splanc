@@ -165,9 +165,19 @@ in
       default = [ ];
       internal = true; # the VM test points the updater at a local http server
     };
+    kernelParams = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = ''
+        The appliance's own kernel parameters. Use this, not boot.kernelParams:
+        nix/rpi.nix sets the Pi images' whole command line (mkForce, to keep the
+        console off HDMI) from these.
+      '';
+    };
   };
 
   config = {
+    boot.kernelParams = cfg.kernelParams;
     networking.hostName = lib.mkDefault "splanc-bridge";
     # The app's direct LAN endpoint for live VJ (`splanc-agent bridge --live-port`,
     # default 8443; docs/design/live-vj-relay.md). TLS + a ticket minted via the relay.

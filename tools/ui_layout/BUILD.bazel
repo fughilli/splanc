@@ -19,10 +19,13 @@ py_binary(
     srcs = [
         "connect_scenarios.py",
         "credits_scenarios.py",
+        "editor_scenarios.py",
+        "mesh_scenarios.py",
+        "newfixture_scenarios.py",
         "oobe_scenarios.py",
         "ui_layout_check.py",
     ],
-    data = ["//web:dist"],
+    data = ["//web:ios_payload"],  # the app + its wasm (the editor compiles)
     main = "ui_layout_check.py",
     deps = [
         ":layout_guard",

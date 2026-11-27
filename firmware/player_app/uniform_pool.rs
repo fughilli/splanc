@@ -8,6 +8,8 @@
 //! Producers:
 //! - the native sensor core (sensor_ffi.rs): the fixed `imu_*` entries below,
 //!   computed per frame from the seqlocked snapshot, and only when bound;
+//! - the wall clock (clock_ffi.rs): the fixed `clock*` entries, local time
+//!   from the loop task's cache extrapolated per frame, only when bound;
 //! - dynamic entries published by name (`publish`) — the hook the on-device
 //!   driver VM's exports use (FUG-107), so a VM-driven sensor lands in the
 //!   same pool.
@@ -23,11 +25,11 @@ use ledmapper_fx_vm::Program;
 use ledmapper_osc as osc;
 use ledmapper_sensor::math::Quat;
 
-use super::{deck, fx_set_uniform, sensor_ffi, N_DECKS};
+use super::{clock_ffi, deck, fx_set_uniform, sensor_ffi, N_DECKS};
 
 /// Pool entries: the fixed sensor names + up to 8 dynamic ones (one driver's
 /// exports; each dynamic entry is 92 B of static RAM: up to a mat4).
-pub const POOL_CAP: usize = SENSOR_ENTRIES.len() + 8;
+pub const POOL_CAP: usize = FIXED + 8;
 /// Bound uniforms per deck.
 pub const MAX_BIND: usize = 12;
 const NAME_MAX: usize = osc::MAX_NAME;
@@ -63,6 +65,24 @@ pub const SENSOR_ENTRIES: [(&str, u8); 9] = [
     ("imu_shake_count", 1),
 ];
 
+/// The wall clock's entries (docs/design/wall-clock.md), LOCAL time in the
+/// lamp's zone. Written only while the clock is valid, except `clock_valid`
+/// (always), so an effect previews with its UI values on an unset lamp.
+pub const CLOCK_ENTRIES: [(&str, u8); 4] = [
+    // (hour 0-23, minute 0-59, second 0-59.999, weekday 0-6 with Sunday = 0).
+    ("clock", 4),
+    // Local seconds since midnight / 86400: 0..1 over the day (smooth daylight curves).
+    ("clock_day", 1),
+    // (year, month 1-12, day 1-31).
+    ("clock_date", 3),
+    // 1 while the wall clock is set, 0 while it is not.
+    ("clock_valid", 1),
+];
+
+const CLOCK0: usize = SENSOR_ENTRIES.len();
+/// Fixed entries (sensor + clock); dynamic ones follow.
+const FIXED: usize = CLOCK0 + CLOCK_ENTRIES.len();
+
 #[derive(Clone, Copy)]
 struct Entry {
     name: [u8; NAME_MAX],
@@ -84,8 +104,8 @@ struct Bind {
 
 const NO_BIND: Bind = Bind { entry: 0, slot: 0, width: 0 };
 
-/// Dynamic entries only (sensor entries are implicit indices 0..SENSOR_ENTRIES).
-static mut DYN: [Entry; POOL_CAP - SENSOR_ENTRIES.len()] = [EMPTY; POOL_CAP - SENSOR_ENTRIES.len()];
+/// Dynamic entries only (fixed entries are implicit indices 0..FIXED).
+static mut DYN: [Entry; POOL_CAP - FIXED] = [EMPTY; POOL_CAP - FIXED];
 static mut DYN_LEN: usize = 0;
 static mut BINDS: [[Bind; MAX_BIND]; N_DECKS] = [[NO_BIND; MAX_BIND]; N_DECKS];
 static mut BIND_N: [u8; N_DECKS] = [0; N_DECKS];
@@ -94,29 +114,41 @@ static mut BIND_N: [u8; N_DECKS] = [0; N_DECKS];
 pub(crate) static mut ANY_BOUND: bool = false;
 /// Any deck reads a sensor entry (gates the per-frame snapshot read).
 static mut BINDS_SENSOR: [bool; N_DECKS] = [false; N_DECKS];
+/// Any deck reads a clock entry (gates the loop task's refresh and the render read).
+static mut BINDS_CLOCK: [bool; N_DECKS] = [false; N_DECKS];
+
+/// Some deck binds a `clock*` uniform (the loop task keeps the clock cache fresh).
+pub(crate) fn clock_bound() -> bool {
+    // SAFETY: written on the loop task under the mutex, like every reader.
+    unsafe { (*addr_of!(BINDS_CLOCK)).iter().any(|&b| b) }
+}
 
 fn entry_name(i: usize) -> &'static [u8] {
-    if i < SENSOR_ENTRIES.len() {
+    if i < CLOCK0 {
         SENSOR_ENTRIES[i].0.as_bytes()
+    } else if i < FIXED {
+        CLOCK_ENTRIES[i - CLOCK0].0.as_bytes()
     } else {
         // SAFETY: names are only mutated on the loop task under the mutex.
         unsafe {
-            let e = &(*addr_of!(DYN))[i - SENSOR_ENTRIES.len()];
+            let e = &(*addr_of!(DYN))[i - FIXED];
             core::slice::from_raw_parts(e.name.as_ptr(), e.name_len as usize)
         }
     }
 }
 
 fn entry_width(i: usize) -> u8 {
-    if i < SENSOR_ENTRIES.len() {
+    if i < CLOCK0 {
         SENSOR_ENTRIES[i].1
+    } else if i < FIXED {
+        CLOCK_ENTRIES[i - CLOCK0].1
     } else {
-        unsafe { (*addr_of!(DYN))[i - SENSOR_ENTRIES.len()].width }
+        unsafe { (*addr_of!(DYN))[i - FIXED].width }
     }
 }
 
 unsafe fn entries() -> usize {
-    SENSOR_ENTRIES.len() + DYN_LEN
+    FIXED + DYN_LEN
 }
 
 /// (Re)bind deck `d`'s uniforms to pool entries by name. Called at effect load
@@ -131,6 +163,7 @@ pub(crate) unsafe fn bind(d: usize, manifest: &[u8]) {
     let table = osc::parse_manifest(manifest);
     let mut n = 0usize;
     let mut sensor = false;
+    let mut clock = false;
     for i in 0..entries() {
         if n >= MAX_BIND {
             break;
@@ -143,11 +176,17 @@ pub(crate) unsafe fn bind(d: usize, manifest: &[u8]) {
             }
             (*addr_of_mut!(BINDS))[d][n] = Bind { entry: i as u8, slot: port.slot, width: w };
             n += 1;
-            sensor |= i < SENSOR_ENTRIES.len();
+            sensor |= i < CLOCK0;
+            clock |= (CLOCK0..FIXED).contains(&i);
         }
     }
     (*addr_of_mut!(BIND_N))[d] = n as u8;
     (*addr_of_mut!(BINDS_SENSOR))[d] = sensor;
+    (*addr_of_mut!(BINDS_CLOCK))[d] = clock;
+    if clock {
+        // The first frame sees the current time, not a stale or empty cache.
+        clock_ffi::pool_refresh();
+    }
     ANY_BOUND = (*addr_of!(BIND_N)).iter().any(|&k| k > 0);
 }
 
@@ -171,6 +210,16 @@ unsafe fn rebind_all() {
 ///
 /// # Safety
 /// Loop task, under the player mutex.
+/// A dynamic entry's first value (a driver export such as a trigger counter),
+/// None until it has been published.
+pub(crate) unsafe fn dynamic_value(name: &[u8]) -> Option<f32> {
+    let dyn_ = &*addr_of!(DYN);
+    dyn_[..DYN_LEN]
+        .iter()
+        .find(|e| e.live && &e.name[..e.name_len as usize] == name)
+        .map(|e| e.vals[0])
+}
+
 pub(crate) unsafe fn publish(name: &[u8], vals: &[f32]) -> bool {
     if name.is_empty() || name.len() > NAME_MAX || vals.is_empty() || vals.len() > VALS_MAX {
         return false;
@@ -186,7 +235,7 @@ pub(crate) unsafe fn publish(name: &[u8], vals: &[f32]) -> bool {
     let i = match found {
         Some(i) => i,
         None => {
-            if DYN_LEN >= dyn_.len() || SENSOR_ENTRIES.iter().any(|(n, _)| n.as_bytes() == name) {
+            if DYN_LEN >= dyn_.len() || (0..FIXED).any(|i| entry_name(i) == name) {
                 return false;
             }
             let e = &mut dyn_[DYN_LEN];
@@ -229,11 +278,21 @@ pub(crate) unsafe fn apply_frame() {
     }
     let need_sensor = (*addr_of!(BINDS_SENSOR)).iter().any(|&b| b);
     let snap = if need_sensor { sensor_ffi::running_snapshot() } else { None };
+    let need_clock = (*addr_of!(BINDS_CLOCK)).iter().any(|&b| b);
+    let clk = if need_clock { clock_ffi::pool_frame() } else { None };
     for d in 0..N_DECKS {
         for b in &(*addr_of!(BINDS))[d][..n[d] as usize] {
             let i = b.entry as usize;
             let mut v = [0.0f32; VALS_MAX];
-            if i < SENSOR_ENTRIES.len() {
+            if (CLOCK0..FIXED).contains(&i) {
+                match (i - CLOCK0, clk.as_ref()) {
+                    (3, c) => v[0] = c.is_some() as u8 as f32,
+                    (_, None) => continue,
+                    (0, Some(c)) => v[..4].copy_from_slice(&c.0),
+                    (1, Some(c)) => v[0] = c.1,
+                    (_, Some(c)) => v[..3].copy_from_slice(&c.2),
+                }
+            } else if i < CLOCK0 {
                 let Some(s) = snap.as_ref() else { continue };
                 let g = 1.0 / ledmapper_sensor::math::GRAVITY;
                 match i {
@@ -248,7 +307,7 @@ pub(crate) unsafe fn apply_frame() {
                     _ => v[0] = s.shake_count as f32,
                 }
             } else {
-                let e = &(*addr_of!(DYN))[i - SENSOR_ENTRIES.len()];
+                let e = &(*addr_of!(DYN))[i - FIXED];
                 if !e.live {
                     continue;
                 }

@@ -12,12 +12,14 @@ from __future__ import annotations
 import threading
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 
 from PIL import Image, ImageChops, ImageDraw
 
 from . import boot as boot_mod
 from . import draw as d
 from . import fonts, gliders
+from . import splash as splash_mod
 from . import updates as upd
 from .anim import Scene, SlideView
 from .status import (
@@ -214,11 +216,11 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
             ]
             f = fits[0] if fits else f  # the largest that fits across and between
             _center(dr, top + max(0, (url_y - top - f.height) // 2), code.code, f)
-            _center(dr, url_y, short_url(code.url, 24), small)
+            _center(dr, url_y, _pair_url(dr, code.url, small), small)
         else:
             foot = 52
             _center(dr, 15, code.code, f)
-            _center(dr, 39, short_url(code.url, 24), small)
+            _center(dr, 39, _pair_url(dr, code.url, small), small)
         left = "exp " + fmt_remaining(code.remaining(now)) if code.expires_at else ""
         d.text(dr, (M, foot), left, small, ON)
         right = f"{s.clients} client" + ("" if s.clients == 1 else "s")
@@ -249,9 +251,26 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         _center(dr, 50, "pairing code", small)
 
 
+def _pair_url(dr: ImageDraw.ImageDraw, url: str, f) -> str:
+    """Where to type the code, as wide as the screen allows: host + path (no query or
+    fragment: the code is right above it), else the host alone, else the host cut
+    with "…". Measured in pixels (a relay's ``<origin>/pair?code=...`` overflowed a
+    character limit)."""
+    parts = urlsplit(url)
+    if not parts.netloc:
+        return d.ellipsize(dr, short_url(url, 40), f, W)
+    path = parts.path.rstrip("/")
+    for cand in (parts.netloc + path, parts.netloc):
+        if d.text_size(dr, cand, f)[0] <= W:
+            return cand
+    return d.ellipsize(dr, parts.netloc, f, W)
+
+
 def _qr(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
     code = s.active_code(now)
-    matrix = d.qr_matrix(code.url) if code and code.url else None
+    # 2 px modules when the code fits them (n * 2 + 4 <= H): a relay pairing URL
+    # needs level L for that, which a crisp OLED scans fine at twice the size.
+    matrix = d.qr_matrix(code.url, fit=(H - 4) // 2) if code and code.url else None
     small = F("small")
     if not matrix:
         _header(dr, "Scan to pair")
@@ -391,9 +410,39 @@ def _scrollbar(
     dr.rectangle([W - 3, ty, W - 1, ty + th - 1], fill=ON)
 
 
-def _list(img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, pos: float) -> None:
+# A row hint drawn as a spinner (Check now while a check runs), not as text.
+SPIN = "\0spin"
+SPIN_PERIOD = 0.9  # seconds per turn
+_DIGIT_BOX: dict = {}  # font -> (top, height) of a digit's ink in its text box
+
+
+def digit_box(f) -> tuple:
+    """Where a digit's ink sits in text drawn at y = 0 in font ``f``: (top, height).
+    The spinner takes that size and place, so it is as tall as the row's text and
+    sits on its baseline."""
+    key = id(f)
+    if key not in _DIGIT_BOX:
+        probe = Image.new("1", (32, 32), OFF)
+        pd = ImageDraw.Draw(probe)
+        pd.fontmode = "1"
+        d.text(pd, (0, 0), "0", f, ON)
+        box = probe.getbbox() or (0, 0, 0, 7)
+        _DIGIT_BOX[key] = (box[1], max(5, box[3] - box[1]))
+    return _DIGIT_BOX[key]
+
+
+def _spinner(dr: ImageDraw.ImageDraw, x: int, y: int, size: int, t: float) -> None:
+    """A ``size`` px three-quarter ring turning once per SPIN_PERIOD, top-left at (x, y)."""
+    a = (t % SPIN_PERIOD) / SPIN_PERIOD * 360.0
+    dr.arc([x, y, x + size - 1, y + size - 1], start=a, end=a + 270, fill=ON, width=1)
+
+
+def _list(
+    img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, pos: float, now: float = 0.0
+) -> None:
     """A selectable list under the header: rows of (glyph condition, name, hint),
-    scrolled by ``top`` rows, with the highlight bar at row ``pos``."""
+    scrolled by ``top`` rows, with the highlight bar at row ``pos``. A hint of
+    SPIN draws a turning spinner (phase from ``now``)."""
     small = F("small")
     n = len(rows)
     scrolls = n > LIST_ROWS
@@ -409,9 +458,13 @@ def _list(img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, pos
         cond, name, hint = rows[i]
         y = round((i - top) * ROW_H)
         _glyph(bd, M + 1, y + 3, cond)
-        hw = d.text_size(bd, hint, small)[0] if hint else 0
-        if hint:
-            d.text(bd, (right - 2 - hw, y + dy), hint, small, ON)
+        if hint == SPIN:
+            top_ink, hw = digit_box(small)
+            _spinner(bd, right - 2 - hw, y + dy + top_ink, hw, now)
+        else:
+            hw = d.text_size(bd, hint, small)[0] if hint else 0
+            if hint:
+                d.text(bd, (right - 2 - hw, y + dy), hint, small, ON)
         name_w = right - (M + 11) - (hw + 6 if hint else 2)
         d.text(bd, (M + 11, y + dy), d.ellipsize(bd, name, small, name_w), small, ON)
     # The highlight: an inverted bar that glides between rows.
@@ -660,10 +713,9 @@ def _updates(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v
     _header(dr, "Updates", "…" if u.busy else (f"{n} new" if n else ""))
     rows = [(_track_cond(t), t.title, _track_hint(t)) for t in u.tracks]
     checked = u.checked_at
-    rows.append(
-        ("action", "Check now", fmt_age(None if checked is None else max(0, now - checked)))
-    )
-    _list(img, dr, rows, v.update_top, v.update_pos)
+    age = fmt_age(None if checked is None else max(0, now - checked))
+    rows.append(("action", "Check now", SPIN if v.update_checking else age))
+    _list(img, dr, rows, v.update_top, v.update_pos, now)
 
 
 UPDATE_LABELS = ("Now", "New", "Size", "State", "Notes", "Info")
@@ -741,9 +793,13 @@ DETAIL_PAGES = ("detail", "client", "update")
 TOP_PAGES = ("home", "qr", "matter", "players", "network", "clients", "updates")
 
 
-def _boot(img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames) -> None:
+def _boot(
+    img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames, text: str = ""
+) -> None:
     if frames is not None:
         img.paste(frames.at(t or 0.0), (0, 0))
+        if text and (t or 0.0) >= frames.duration and frames.loop_start is not None:
+            splash_mod.draw_stage(img, text)  # as the boot splash draws it (its hand-off)
         return
     f = F("boot")
     _center(dr, (H - d.line_height(dr, f)) // 2, "Splanc", f)  # no pre-rendered frames
@@ -767,7 +823,9 @@ def _scene_key(status: Status, scene: Scene, view: View, now: float, frames):
     elif scene.page == "client":
         extra = (view.client_scroll,)
     elif scene.page == "updates":
-        extra = (view.update_sel, view.update_pos, view.update_top)
+        extra = (view.update_sel, view.update_pos, view.update_top, view.update_checking)
+        if view.update_checking:  # the spinner turns: a new frame every 1/16 turn
+            extra += (int(now / SPIN_PERIOD * 16),)
     elif scene.page == "update":
         extra = (view.update_scroll,)
     else:
@@ -797,7 +855,7 @@ def _draw_scene(status: Status, scene: Scene, view: View, now: float, frames) ->
     dr = ImageDraw.Draw(img)
     dr.fontmode = "1"  # no anti-aliasing: crisp 1-bit glyphs
     if scene.page == "boot":
-        _boot(img, dr, view.boot_t, frames)
+        _boot(img, dr, view.boot_t, frames, view.boot_text)
     elif scene.page in LIST_RENDERERS:
         v = (
             view
@@ -894,9 +952,19 @@ def _overlay(
         f = title
         text = d.ellipsize(dr, v.overlay_text, f, W - 8)
         tw, _ = d.text_size(dr, text, f)
-        top = min(H - 16, H - 4 - f.height) if d.is_bitmap(f) else H - 16
+        top = toast_top(f)
+        # One black row above the lit band, so it never runs into a highlighted
+        # list row (also lit) behind it.
+        dr.rectangle([0, top - 1, W - 1, top - 1], fill=OFF)
         dr.rectangle([0, top, W - 1, H - 1], fill=ON)
         d.text(dr, ((W - tw) // 2, top + 2), text, f, OFF)
+
+
+def toast_top(f=None) -> int:
+    """The first lit row of a toast in font ``f`` (default: the active title font);
+    the row above it is drawn black."""
+    f = f or F("title")
+    return min(H - 16, H - 4 - f.height) if d.is_bitmap(f) else H - 16
 
 
 def _confirm_update(dr: ImageDraw.ImageDraw, v: View, s: Optional[Status]) -> None:
@@ -967,6 +1035,18 @@ def _render(status: Status, view: View, now: Optional[float], frames) -> Image.I
         view.page == "boot" or (view.slide and "boot" in (view.slide.src.page, view.slide.dst.page))
     ):
         frames = default_frames()
+    if view.page == "boot" and view.slide is None and frames is not None and not view.overlay:
+        # The boot animation fills the whole panel, unshifted: pixel for pixel what
+        # the early boot splash (pi/bridge/splash) drew before its hand-off,
+        # including the stage text on the panel's last row.
+        panel = frames.at(view.boot_t or 0.0).copy()
+        if (
+            view.boot_text
+            and (view.boot_t or 0.0) >= frames.duration
+            and frames.loop_start is not None
+        ):
+            splash_mod.draw_stage(panel, view.boot_text)
+        return panel
     if view.slide is not None:
         sv = view.slide
         img = _compose(

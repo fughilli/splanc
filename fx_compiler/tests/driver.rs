@@ -178,3 +178,202 @@ fn mpu6050_driver_configures_and_reads() {
     assert!(other.writes.is_empty());
     assert_eq!(ex(&vm2, "imu_ok")[0], 0.0);
 }
+
+// -- GPIO intrinsics + trigger uniforms (docs/design/lamp-power.md) ------------
+
+const TOUCH_DRIVER: &str = include_str!("../../firmware/sensor/drivers/ttp223_touch.fx");
+
+/// A bus whose GPIO pseudo device (0x80) is one input pin with a settable level.
+struct PinBus {
+    level: u8,
+    pin: u8,
+    modes: Vec<(u8, u8)>,
+}
+
+impl I2cBus for PinBus {
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> bool {
+        assert_eq!(addr, ledmapper_fx_compiler::GPIO_DEV);
+        self.modes.push((bytes[0], bytes[1]));
+        true
+    }
+    fn read_reg(&mut self, addr: u8, reg: u8, out: &mut [u8]) -> bool {
+        assert_eq!(addr, ledmapper_fx_compiler::GPIO_DEV);
+        if reg != self.pin {
+            return false;
+        }
+        out[0] = self.level;
+        true
+    }
+}
+
+#[test]
+fn gpio_intrinsics_route_to_the_pseudo_device() {
+    let _g = POLL.lock().unwrap();
+    let src = r#"
+export float lvl;
+export float ok;
+export float other;
+void poll() {
+  ok = float(gpio_mode(5, 2));
+  lvl = float(gpio_read(5));
+  other = float(gpio_read(6));
+}
+"#;
+    let c = compile(src).unwrap();
+    let mut bus = PinBus { level: 1, pin: 5, modes: vec![] };
+    let mut vm = Vm::new();
+    let prog = Program::parse(&c.fxb).unwrap();
+    assert_eq!(vm.run_poll(&prog, &Frame::default(), &mut bus, &Budget::default()).0, Outcome::Ok);
+    let get = |n: &str| {
+        let e = c.exports.iter().find(|e| e.name == n).unwrap();
+        let mut v = [0.0f32];
+        vm.export(e.slot as usize, &mut v);
+        v[0]
+    };
+    assert_eq!(bus.modes, vec![(5, 2)]);
+    assert_eq!(get("ok"), 1.0);
+    assert_eq!(get("lvl"), 1.0);
+    assert_eq!(get("other"), -1.0, "an unavailable pin reads -1");
+    assert!(compile("export float x; void poll() { x = float(gpio_read(1.0)); }").is_err(), "int pin");
+}
+
+/// Run the touch driver over a level schedule: (until_s, level), polled every
+/// `step` s. Returns the trigger count after each poll.
+fn run_touch(src: &str, schedule: &[(f32, u8)], step: f32) -> Vec<(f32, f32)> {
+    let c = compile(src).expect("touch driver compiles");
+    let prog = Program::parse(&c.fxb).unwrap();
+    assert_ne!(prog.flags & FLAG_DRIVER, 0);
+    let e = c.exports.iter().find(|e| e.name == "touch_tap").expect("export trigger touch_tap");
+    assert_eq!(e.unit, "trigger");
+    let mut vm = Vm::new();
+    let mut bus = PinBus { level: 0, pin: 3, modes: vec![] };
+    let mut out = vec![];
+    let mut t = 0.0f32;
+    let mut i = 0;
+    let end = schedule.last().unwrap().0;
+    while t < end {
+        while t >= schedule[i].0 {
+            i += 1;
+        }
+        bus.level = schedule[i].1;
+        let f = Frame { time: t, dt: step, ..Default::default() };
+        assert_eq!(vm.run_poll(&prog, &f, &mut bus, &Budget::default()).0, Outcome::Ok);
+        let mut v = [0.0f32];
+        vm.export(e.slot as usize, &mut v);
+        out.push((t, v[0]));
+        t += step;
+    }
+    assert_eq!(bus.modes, vec![(3, 2)], "configured once, pull-down");
+    out
+}
+
+fn fires(trace: &[(f32, f32)]) -> f32 {
+    trace.last().unwrap().1
+}
+
+#[test]
+fn touch_driver_fires_once_per_press_after_calibration() {
+    let _g = POLL.lock().unwrap();
+    // Touch during calibration (ignored), then two real presses, a bounce.
+    let s = [
+        (0.3, 0),
+        (0.8, 1), // finger on during the 1 s calibration: ignored
+        (5.0, 0),
+        (5.2, 1), // press 1
+        (5.4, 0),
+        (5.41, 1), // 10 ms bounce on release
+        (5.42, 0),
+        (6.0, 0),
+        (6.3, 1), // press 2
+        (6.6, 0),
+        (7.0, 0),
+    ];
+    let tr = run_touch(TOUCH_DRIVER, &s, 0.005);
+    assert_eq!(fires(&tr), 2.0, "two presses -> two fires");
+    let first = tr.iter().find(|(_, v)| *v >= 1.0).unwrap().0;
+    assert!((5.0 + 0.025..5.0 + 0.04).contains(&first), "fires 25 ms after the press: {first}");
+    assert!(tr.iter().filter(|(t, _)| *t < 1.0).all(|(_, v)| *v == 0.0));
+}
+
+#[test]
+fn touch_driver_ignores_glitches_and_a_stuck_level() {
+    let _g = POLL.lock().unwrap();
+    // 10 ms glitches never fire.
+    let mut s = vec![(5.0, 0)];
+    for k in 0..10 {
+        let t = 5.0 + k as f32 * 0.1;
+        s.push((t + 0.01, 1));
+        s.push((t + 0.1, 0));
+    }
+    s.push((7.0, 0));
+    assert_eq!(fires(&run_touch(TOUCH_DRIVER, &s, 0.005)), 0.0);
+    // Reads "touched" from power-up (wrong polarity): never fires until released.
+    let s = [(8.0, 1)];
+    assert_eq!(fires(&run_touch(TOUCH_DRIVER, &s, 0.01)), 0.0);
+    let s = [(8.0, 1), (8.5, 0), (8.8, 1), (9.2, 0)];
+    assert_eq!(fires(&run_touch(TOUCH_DRIVER, &s, 0.01)), 1.0);
+}
+
+#[test]
+fn touch_driver_lockout_merges_a_double_bounce() {
+    let _g = POLL.lock().unwrap();
+    // Schedule entries are (until_s, level). Two presses 100 ms apart: one fire
+    // (150 ms lockout); 400 ms apart: two.
+    let s = [(5.0, 0), (5.05, 1), (5.1, 0), (5.2, 1), (6.0, 0)];
+    assert_eq!(fires(&run_touch(TOUCH_DRIVER, &s, 0.005)), 1.0);
+    let s = [(5.0, 0), (5.1, 1), (5.4, 0), (5.5, 1), (6.0, 0)];
+    assert_eq!(fires(&run_touch(TOUCH_DRIVER, &s, 0.005)), 2.0);
+}
+
+#[test]
+fn trigger_uniforms_fire_once_per_change_in_update() {
+    let src = r#"
+uniform trigger tap;
+state float count;
+void update() {
+  if (fired(tap)) {
+    count = count + 1.0;
+  }
+}
+vec3 shade(Led led) { return vec3(count * 0.1); }
+"#;
+    let c = compile(src).expect("trigger effect compiles");
+    let u = &c.uniforms[0];
+    assert!(matches!(u.ui, ledmapper_fx_compiler::UiKind::Trigger));
+    let prog = Program::parse(&c.fxb).unwrap();
+    let m = std::str::from_utf8(prog.manifest).unwrap();
+    assert!(m.contains(r#""kind":"trigger""#), "{m}");
+    let mut vm = Vm::new();
+    // count is the state slot after the trigger's hidden last-seen slot.
+    let count = |vm: &Vm| {
+        let mut v = [0.0f32];
+        vm.export(1, &mut v);
+        v[0]
+    };
+    let f = Frame::default();
+    vm.run_update(&prog, &f);
+    assert_eq!(count(&vm), 0.0, "no fire at start");
+    vm.set_uniform(u.slot as usize, &[1.0]);
+    vm.run_update(&prog, &f);
+    assert_eq!(count(&vm), 1.0);
+    vm.run_update(&prog, &f);
+    assert_eq!(count(&vm), 1.0, "once per change");
+    vm.set_uniform(u.slot as usize, &[3.0]);
+    vm.run_update(&prog, &f);
+    assert_eq!(count(&vm), 2.0, "a jump of two is one frame's fire");
+    vm.set_uniform(u.slot as usize, &[0.0]);
+    vm.run_update(&prog, &f);
+    assert_eq!(count(&vm), 3.0, "a reset (driver reload) is a change too");
+}
+
+#[test]
+fn trigger_rules() {
+    let in_shade = "uniform trigger t; vec3 shade(Led led) { if (fired(t)) { return vec3(1.0); } return vec3(0.0); }";
+    assert!(compile(in_shade).is_err(), "fired() only in update()");
+    let not_trigger = "uniform float t : 0..1 = 0.0; void update() { if (fired(t)) { } } vec3 shade(Led led) { return vec3(0.0); }";
+    assert!(compile(not_trigger).is_err());
+    let fire_uniform = "uniform trigger t; void update() { fire(t); } vec3 shade(Led led) { return vec3(0.0); }";
+    assert!(compile(fire_uniform).is_err(), "fire() bumps an export trigger, not a uniform");
+    let fire_ok = "export trigger t; void poll() { fire(t); }";
+    assert!(compile(fire_ok).is_ok());
+}

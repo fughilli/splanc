@@ -109,6 +109,16 @@ pub fn fx_disassemble(fxb: &[u8]) -> String {
     disassemble(fxb)
 }
 
+/// The language reference table (fx_compiler/src/lang.rs) as JSON: one
+/// `{name, kind, category, scope, sigs, ty, summary, doc, example, related, cost,
+/// constant}` per keyword, type, context, built-in and annotation. The editor's
+/// lang-spec.ts embeds the same JSON (lang-table.gen.ts); the Docs pane can
+/// read it live from the loaded compiler.
+#[wasm_bindgen]
+pub fn fx_language() -> String {
+    ledmapper_fx_compiler::lang::language_json()
+}
+
 fn json_str(s: &str) -> String {
     let mut out = String::from("\"");
     for ch in s.chars() {

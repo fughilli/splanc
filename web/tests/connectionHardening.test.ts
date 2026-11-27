@@ -192,6 +192,50 @@ test("on reload a remembered device is retried over the backoff, not dropped aft
   assert.equal(client.welcome?.mac, mac(0x84));
 });
 
+test("a reload opens one connection to the remembered device, not a probe beside it [rr:PR-29]", async () => {
+  lan.add("10.0.0.85", { mac: mac(0x85), deviceName: "Porch" });
+  deviceStore.setActive(remember("10.0.0.85", 0x85, "Porch"));
+  dom.document.hidden = false;
+
+  appState.restoreActive();
+  await advance(3000);
+
+  assert.ok(appState.client?.isConnected, "connected on the first attempt");
+  assert.equal(lan.socketsTo("10.0.0.85").length, 1, "exactly one socket was opened");
+  assert.equal(lan.peakLiveTo("10.0.0.85"), 1);
+});
+
+test("a remembered device saved under another record id is not probed beside its own connection [rr:PR-29]", async () => {
+  lan.add("10.0.0.90", { mac: mac(0x90), deviceName: "Shed" });
+  // An older record for the same address (another id spelling), active on reload.
+  localStorage.setItem(
+    "ledmapper.devices",
+    JSON.stringify([{ id: "dev-old-shed", wssUrl: "wss://10.0.0.90/ws", label: "Shed", bleMac: "", named: true, lastSeen: "2026-11-22T00:00:00Z" }]),
+  );
+  deviceStore.setActive("dev-old-shed");
+  dom.document.hidden = false;
+
+  appState.restoreActive();
+  await advance(3000);
+
+  assert.ok(appState.client?.isConnected);
+  assert.equal(lan.socketsTo("10.0.0.90").length, 1, "no probe raced the connection");
+});
+
+test("switching devices probes the one it freed, never the one it connects to [rr:PR-29]", async () => {
+  lan.add("10.0.0.86", { mac: mac(0x86), deviceName: "Den" });
+  lan.add("10.0.0.89", { mac: mac(0x89), deviceName: "Attic" });
+  appState.connect("wss://10.0.0.86/ws");
+  await advance(3000);
+  assert.ok(appState.client?.isConnected);
+
+  appState.connect("wss://10.0.0.89/ws");
+  await advance(3000);
+  assert.ok(appState.client?.isConnected);
+  assert.equal(lan.socketsTo("10.0.0.89").length, 1, "one socket to the new device");
+  assert.equal(lan.socketsTo("10.0.0.86").length, 2, "the app's old socket plus one probe of the freed device");
+});
+
 test("the cert-trust popup opens blank in the click and loads the device page only after a settle [rr:PR-29]", async () => {
   await untrusted("10.0.0.85", 0x85);
   const opener = stubWindowOpen();

@@ -57,9 +57,14 @@ import {
   resolveUniforms,
   withDeviceLock,
 } from "../../effects/devicePerf";
-import { isDrivable, MidiRouter } from "../../midi/router";
-import { midiStore, type UniformBinding } from "../../store/midiStore";
-import { midiManager, controlLabel } from "../../midi/manager";
+import { isAutoBindable, MidiRouter } from "../../midi/router";
+import { ColorSwatch } from "../kit/hsvPicker";
+import {
+  midiListSummary as sharedMidiListSummary,
+  validateMidiMappings,
+} from "../../midi/agentSummary";
+import { midiStore } from "../../store/midiStore";
+import { midiManager } from "../../midi/manager";
 import { effectStore } from "../../store/effectStore";
 import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { registerChatDriver } from "../../net/remoteChat";
@@ -286,6 +291,42 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     }
   }
 
+  // -- live colour pickers ------------------------------------------------------
+  // One round swatch per colour uniform of the playing effect: it opens the
+  // live HSV picker (D-541) and streams every move to the preview and the
+  // lights, exactly like a MIDI knob. Reset to the defaults on each new effect.
+  const colorsRow = document.createElement("div");
+  colorsRow.className = "acid-colors";
+  colorsRow.hidden = true;
+  /** Live colour values by slot, for the current program (lastUniforms). */
+  const colorVals = new Map<number, number[]>();
+  function renderColors(uniforms: FxUniform[]): void {
+    colorVals.clear();
+    const colors = uniforms.filter((u) => u.ui.kind === "color");
+    colorsRow.replaceChildren(
+      ...colors.map((u) => {
+        const item = document.createElement("label");
+        item.className = "acid-color";
+        const swatch = ColorSwatch({
+          value: u.default,
+          alpha: u.width >= 4,
+          title: u.name.replace(/_/g, " "),
+          onInput: (v) => {
+            colorVals.set(u.slot, v);
+            preview?.setUniform(u.slot, v);
+            const c = appState.client;
+            if (c?.isConnected) c.live.setUniform(u.slot, v);
+          },
+        });
+        const name = document.createElement("span");
+        name.textContent = u.name.replace(/_/g, " ");
+        item.append(swatch.el, name);
+        return item;
+      }),
+    );
+    colorsRow.hidden = colors.length === 0;
+  }
+
   // -- mic + fallback ---------------------------------------------------------
   const micBtn = document.createElement("button");
   micBtn.type = "button";
@@ -393,7 +434,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
 
   overlay.append(top, title, sub);
   if (play) overlay.append(examples);
-  overlay.append(feed, busyCard, micBtn, micHint, fallback, freeNote);
+  overlay.append(feed, colorsRow, busyCard, micBtn, micHint, fallback, freeNote);
   el.append(canvas, scrim, overlay);
 
   // -- the agent turn ---------------------------------------------------------
@@ -646,7 +687,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     lastGoodSource = source;
     await swapPreview(r.bytecode, r.uniforms);
     midiRouter.setManifest(r.uniforms);
-    midiStore.autoBind(ACID_EFFECT_ID, r.uniforms.filter(isDrivable).map((u) => u.name));
+    midiStore.autoBind(ACID_EFFECT_ID, r.uniforms.filter(isAutoBindable).map((u) => u.name));
 
     // Persist so the effect survives the session + is findable in the library
     // (not for a kiosk visitor: their phone's library is not the owner's).
@@ -674,7 +715,8 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
       await withDeviceLock(() => c.submitEffect(ACID_EFFECT_ID, bytecode, true));
       uploadedFxb = bytecode;
       uploadedTo = deviceStore.activeId();
-      const defaults = uniforms.map((u) => ({ slot: u.slot, value: u.default }));
+      // Defaults, except colours the user has picked live since (same program).
+      const defaults = uniforms.map((u) => ({ slot: u.slot, value: colorVals.get(u.slot) ?? u.default }));
       if (defaults.length > 0) c.setUniforms(defaults);
       appendMsg("think", "📤 Sent it to your lights");
       return null;
@@ -777,6 +819,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
       return;
     }
     for (const u of uniforms) preview.setUniform(u.slot, u.default);
+    renderColors(uniforms);
     if (currentTopo !== null) preview.setTopology(currentTopo);
     startT = performance.now();
     frame = 0;
@@ -795,43 +838,16 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
 
   function midiListSummary(): string {
     void midiManager.enable().catch(() => undefined);
-    const uniforms = lastUniforms.filter(isDrivable).map((u) => ({
-      name: u.name,
-      type: u.ui.kind,
-      ...(u.ui.kind === "slider" ? { min: u.ui.min, max: u.ui.max } : {}),
-    }));
-    const controls = midiStore.semantics().map((s) => ({
-      name: s.name,
-      source: `${s.control.device} · ${controlLabel(s.control)}`,
-    }));
-    const current = midiStore.bindings(ACID_EFFECT_ID).map((b) => ({
-      uniform: b.uniform,
-      control: b.semantic,
-    }));
-    return JSON.stringify(
-      { uniforms, namedControls: controls, currentMappings: current, midiEnabled: midiManager.enabled },
-      null,
-      2,
-    );
+    return sharedMidiListSummary({
+      uniforms: lastUniforms,
+      semantics: midiStore.semantics(),
+      bindings: midiStore.bindings(ACID_EFFECT_ID),
+      midiEnabled: midiManager.enabled,
+    });
   }
 
   function applyMidiMappings(mappings: MidiMappingCall[]): string {
-    const drivable = new Set(lastUniforms.filter(isDrivable).map((u) => u.name));
-    const applied: UniformBinding[] = [];
-    const skipped: string[] = [];
-    for (const m of mappings) {
-      if (!drivable.has(m.uniform)) {
-        skipped.push(`${m.uniform} (not drivable)`);
-        continue;
-      }
-      applied.push({
-        uniform: m.uniform,
-        semantic: m.control,
-        ...(typeof m.min === "number" ? { min: m.min } : {}),
-        ...(typeof m.max === "number" ? { max: m.max } : {}),
-        ...(m.invert ? { invert: true } : {}),
-      });
-    }
+    const { applied, skipped } = validateMidiMappings(mappings, lastUniforms);
     midiStore.replaceBindings(ACID_EFFECT_ID, applied);
     return `Applied ${applied.length} mapping(s)${skipped.length ? `; skipped ${skipped.join(", ")}` : ""}.`;
   }

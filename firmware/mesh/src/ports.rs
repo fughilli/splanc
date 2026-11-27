@@ -369,6 +369,7 @@ mod tests {
     use crate::admin::{seal_command, CommandReject, GatewaySession};
     use crate::crypto::DeviceKey;
     use crate::host_keys::{AdminSigner, HostKey, TestRng};
+    use crate::rekey::Revocations;
 
     const MESH: u32 = 0xA1B2_C3D4;
 
@@ -381,9 +382,9 @@ mod tests {
         let admin = AdminSigner::from_secret(b"0123456789abcdef", MESH);
         let gw = HostKey::from_seed(1);
         let g = admin.grant(MESH, 7, 1, gw.public_key(), 1000);
-        let mut gs = GatewaySession::<4>::new(g);
+        let mut gs = GatewaySession::<4>::new(g, None);
         let mut s = Sessions::new();
-        let ack = s.on_grant(0, 0, &g, Some(&admin.public()), MESH, 5, &HostKey::from_seed(5), &mut TestRng(3)).unwrap().unwrap();
+        let ack = s.on_grant(0, 0, &g, Some(&admin.public()), &Revocations::default(), MESH, 5, &HostKey::from_seed(5), &mut TestRng(3)).unwrap().unwrap();
         let (_, conf) = gs.on_ack(&ack, &gw, MESH, 1, 100).unwrap();
         s.on_confirm(1, &conf, 5);
         (s, gs.entry(5).unwrap().key)
