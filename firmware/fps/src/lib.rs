@@ -538,9 +538,17 @@ impl FpsController {
 
     /// Enter / leave / follow the reserve before a frame is accounted.
     fn apply_reserve(&mut self, cpu_us: u32) {
-        let cpu = cpu_us.max(self.last_cpu_us);
+        let entering = self.reserve && !self.reserved();
+        // Entering: the heavier of the last two frames, so the rung holds both. Following:
+        // only a compute two frames in a row show (the lighter of them): one frame whose
+        // cycle count took in an equal-priority task's slices must not drop the rung.
+        let cpu = if entering {
+            cpu_us.max(self.last_cpu_us)
+        } else {
+            cpu_us.min(self.last_cpu_us)
+        };
         if self.reserve {
-            if !self.reserved() {
+            if entering {
                 self.reserved_from = self.idx;
                 self.clear_window();
             }
@@ -1351,7 +1359,10 @@ mod tests {
         c.set_reserve(true);
         c.on_frame_cpu(9_000, 9_000);
         assert_eq!(c.rung_fps(), 40, "55 fps is off the 12.5 ms grid");
-        // A heavier frame mid-reserve steps down again, still on the grid.
+        // One heavier frame mid-reserve holds the rung; a second in a row steps down,
+        // still on the grid.
+        c.on_frame_cpu(14_000, 14_000);
+        assert_eq!(c.rung_fps(), 40);
         c.on_frame_cpu(14_000, 14_000);
         assert_eq!(c.rung_fps(), 20);
     }
@@ -1421,6 +1432,7 @@ mod tests {
         assert_eq!(c.rung_fps(), 10, "74 ms period needed: 10 fps is the grid rung");
         assert!(d.delay_ms >= 37);
         // Even a compute no rung holds keeps rendering, sleeping its half.
+        c.on_frame_cpu(300_000, 300_000);
         let d = c.on_frame_cpu(300_000, 300_000);
         assert_eq!(c.rung_fps(), 5);
         assert!(d.delay_ms >= 300 && d.delay_ms <= MAX_SLICE_MS, "{d:?}");

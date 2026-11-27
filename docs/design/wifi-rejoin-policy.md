@@ -89,7 +89,9 @@ frames of 16-25 ms against the 12.5 ms period (M6 bench, mesh_effect r7/r8). Now
 - **The handshake runs strictly below render** (`mbedtls_ssl_handshake` inside
   `lm_mesh::BelowRender(true)`, as M7 does for mesh crypto), and a client that is not
   streaming yet (mid-accept, mid-handshake, WS upgrade, a one-shot GET) no longer raises
-  the loop: only an open wss session does. The reserve below is what now guarantees a new
+  the loop: only a wss session that has been open for 1 s does (the opening exchange,
+  upgrade + hello + the app's first reads, otherwise time-sliced with the frames right
+  after the reserve). The reserve below is what now guarantees a new
   client its CPU under a heavy effect.
 - **A reserved slice for it.** The handshake is work with a deadline (the client's
   timeout), so its span is counted (`lm_bg_work_begin/end`). Once one has been open

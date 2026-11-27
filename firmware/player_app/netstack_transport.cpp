@@ -1501,6 +1501,7 @@ struct Session {
   bool setup = false;   // mbedtls_ssl_setup done (bound to g_conf)
   bool tls_hs = false;  // TLS handshake complete
   bool ws_up = false;   // WS upgraded: the LED Mapper protocol is live
+  uint32_t ws_up_ms = 0;  // millis() at the upgrade (netstack_data_plane_active)
   // The session is closing: ws_pump returned false (the peer's WS close / TLS
   // close_notify, a torn read, or a reply that couldn't be written) and our close_notify is
   // out, but the slot stays Established — ws_up still set — until the peer's FIN lands and
@@ -1935,6 +1936,7 @@ static bool ws_pump() {
                        "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept);
       if (!tls_write_all((const uint8_t *)resp, n)) return false;
       g_s->ws_up = true;
+      g_s->ws_up_ms = millis();
       g_s->ws_closing = false;
       g_s->takeover.on_session_start(millis());
       g_s->ws_rxlen = 0;  // the request body ends at the blank line; nothing after it yet
@@ -2546,10 +2548,17 @@ bool netstack_service_due() {
   return rx || (g_tcp_started && ns_tcp_tx_pending_any() != 0);
 }
 
+// How long a new wss session runs below render before it may raise the loop (D-460).
+static constexpr uint32_t kDataPlaneSettleMs = 1000;
 bool netstack_data_plane_active() {
   if (!(g_radio_up && !g_silent && g_leased && !g_hop.active() && ns_pmk_ready())) return false;
+  // A live wss session, once it has settled: a client's opening exchange (the upgrade,
+  // hello / welcome, the app's first reads) also stays below render (D-460). At render's
+  // priority it time-sliced with the frames that ended each handshake's reserve, and the
+  // frame compute (cycle counts) took the loop's slices in: 26-33 ms gaps at every connect.
+  const uint32_t now = millis();
   for (const Session &ss : g_sess)
-    if (ss.tls_hs && ss.ws_up) return true;  // a live wss session
+    if (ss.tls_hs && ss.ws_up && now - ss.ws_up_ms >= kDataPlaneSettleMs) return true;
   // A client that isn't streaming yet (mid-accept, mid-TLS-handshake / WS upgrade, a
   // one-shot GET) no longer raises the loop (D-460): at render's priority its work
   // time-sliced with frames, ~22 late frames per connect under an 80 fps effect. Below
