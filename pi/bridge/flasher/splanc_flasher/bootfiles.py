@@ -177,6 +177,7 @@ def render_conf(
         "#   OLED_ROTATE=2              0-3 (x90 degrees)",
         "#   SPLANC_DISPLAY_HDMI=auto   HDMI status page: auto | off",
         "#   SPLANC_AUTO_UPDATE=1       daily Splanc agent updates: 1 | 0",
+        "#   SPLANC_MATTER=1            Matter bridge (Apple Home, Home Assistant...): 1 | 0",
         "",
     ]
     if hostname:

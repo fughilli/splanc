@@ -2,6 +2,7 @@
 
 -> {"cmd": "new_pairing_code"} | {"cmd": "revoke_all"} | {"cmd": "identify"}
    | {"cmd": "clients"} | {"cmd": "revoke", "grant": "<client id>"}
+   | {"cmd": "matter_pair"} | {"cmd": "matter_reset"}
 <- {"ok": true, ...} | {"ok": false, "error": "..."}
 """
 
@@ -13,7 +14,15 @@ from typing import Optional
 
 from . import status as st
 
-COMMANDS = ("new_pairing_code", "revoke_all", "identify", "clients", "revoke")
+COMMANDS = (
+    "new_pairing_code",
+    "revoke_all",
+    "identify",
+    "clients",
+    "revoke",
+    "matter_pair",
+    "matter_reset",
+)
 
 
 class ControlError(Exception):

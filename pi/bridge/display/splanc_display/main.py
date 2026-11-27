@@ -407,6 +407,7 @@ class App:
             [c.key for c in st.paired],
             lambda k: render_oled.client_row_count(st.client(k), now),
         )
+        self.ui.set_matter(st.matter is not None)
         u = st.updates
         if u is not None:
             self.ui.set_updates(

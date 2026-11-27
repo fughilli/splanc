@@ -92,7 +92,10 @@ BUILD_INPUTS = SRCS + RELAY_SRCS + [
     ":node_modules/@bufbuild/protobuf",
     ":node_modules/@ledmapper/protocol",
     ":node_modules/@anthropic-ai/sdk",
+    ":node_modules/@matter/main",
     ":node_modules/@modelcontextprotocol/sdk",
+    # Test-only: the Matter controller matter_test commissions the bridge with.
+    ":node_modules/@project-chip/matter.js",
     ":node_modules/multicast-dns",
     ":node_modules/vite",
     ":node_modules/ws",
