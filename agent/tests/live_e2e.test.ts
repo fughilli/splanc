@@ -123,7 +123,7 @@ before(async () => {
   for (const [i, name] of ["Kitchen", "Hall"].entries()) {
     const p = new FakePlayer({ name, mac: `CC:FD:49:00:02:0${i}` });
     p.bundle = yFixture();
-    p.features = ["effects", "perf", "decks", "crossfade", "keypoints", "time_base"];
+    p.features = ["effects", "perf", "decks", "crossfade", "keypoints", "time_base", "schedule"];
     await p.start();
     p.serveManifest();
     players.push(p);
@@ -276,8 +276,12 @@ test("Show Mode lock: another live client and an MCP agent are refused until rel
     // The holder still drives it.
     a.control(["Kitchen"], { bri: 0.3 });
     await until(() => players[0]!.brightness === 0.3, "holder drives");
+    // The lock holds the lamp's own schedule too (D-567): a renewed set_schedule{hold_s}.
+    await until(() => players[0]!.scheduleHoldUntil > Date.now() + 60_000, "schedule hold taken");
+    assert.equal(players[1]!.scheduleHoldUntil, 0, "an unlocked player's rules run");
 
     await a.query("lock", { on: false }, ["Kitchen"]);
+    await until(() => players[0]!.scheduleHoldUntil === 0, "schedule hold released");
     b.control(["Kitchen"], { bri: 0.4 });
     await until(() => players[0]!.brightness === 0.4, "released: b drives");
   } finally {

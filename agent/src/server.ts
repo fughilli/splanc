@@ -36,6 +36,8 @@ import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
 import { progress, withCancel, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, bbox, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
 import { DeviceSession, ToolError, summarize, type Curve, type TextureSource } from "./session";
+import { ruleFromInput, type RuleInput } from "./wallSchedule";
+import type { ScheduleRule } from "../../web/src/net/schedule";
 import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixtureplot";
 import type { RGB } from "./plot";
 import { resolve as resolveUniforms, type UniformInput } from "./uniforms";
@@ -537,6 +539,166 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         ok(
           await fan(sel, (s) =>
             s.setClock({ ...(tz !== undefined ? { tz } : {}), ...(time !== undefined ? { time } : {}) }),
+          ),
+        ),
+      ),
+  );
+
+  // -- wall-clock schedules (docs/design/schedule.md; the "schedule" feature) -------------
+  const scheduleAction = z
+    .discriminatedUnion("type", [
+      z.object({
+        type: z.literal("power"),
+        on: z.boolean(),
+        fade_s: z.number().min(0).max(600).optional().describe("0/omitted = the lamp's own on/off transition"),
+      }),
+      z.object({
+        type: z.literal("brightness"),
+        level: z.number().min(0).max(1).describe("0..1"),
+        ramp_s: z.number().min(0).max(600).optional().describe("ramp to it over this long (default: at once)"),
+      }),
+      z.object({
+        type: z.literal("effect"),
+        effect_id: z
+          .string()
+          .min(1)
+          .max(64)
+          .optional()
+          .describe("an effect stored on the lamp (list_schedules lists them), or the id to store library_id/source as"),
+        library_id: z.string().optional().describe("store this library effect on the lamp (search_effects) and use it"),
+        source: z.string().optional().describe("or: effect source to compile and store on the lamp"),
+        crossfade_s: z.number().min(0).max(600).optional().describe("default 5; 0 = a cut"),
+      }),
+      z.object({
+        type: z.literal("trigger"),
+        name: z.string().min(1).max(64).describe("fires the running effect's `uniform trigger <name>`"),
+      }),
+    ])
+    .describe("What the rule does");
+  const scheduleRule = z.object({
+    id: z
+      .number()
+      .int()
+      .min(1)
+      .max(255)
+      .optional()
+      .describe("an existing rule's id to change it (list_schedules); omit to add a new rule"),
+    label: z.string().max(24).optional().describe("a short name for the app's list"),
+    enabled: z.boolean().optional().describe("default true; false keeps the rule but pauses it"),
+    when: z.enum(["time", "sunrise", "sunset"]),
+    time: z.string().optional().describe('"HH:MM" (24 h, the lamp\'s local time) for when: "time"'),
+    offset_min: z
+      .number()
+      .int()
+      .min(-720)
+      .max(720)
+      .optional()
+      .describe("for sunrise / sunset: minutes after it (negative = before)"),
+    days: z
+      .union([z.string(), z.array(z.string())])
+      .optional()
+      .describe('"every day" (default), "weekdays", "weekends", or day names ["mon", "wed", "fri"]'),
+    action: scheduleAction,
+  });
+  server.registerTool(
+    "list_schedules",
+    {
+      description:
+        "List lamps' schedules: the wall-clock rules each lamp runs on its own (\"07:00 Mon–Fri · Turn on\", " +
+        "\"30 min before sunset · Effect embers\"), with ids, the next rule due, whether the lamp's clock is set " +
+        "(rules only fire then) and its location for sunrise/sunset rules.",
+      inputSchema: { players },
+    },
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.listSchedules()))),
+  );
+  server.registerTool(
+    "set_schedule",
+    {
+      description:
+        "Add or change schedule rules on lamps: at a time of day or sunrise/sunset (+ offset), on chosen days, " +
+        "turn on/off, ramp brightness, crossfade to an effect stored on the lamp (an effect rule with library_id or " +
+          "source stores that effect first), or fire an effect trigger. The lamp keeps and " +
+        "runs them itself (no bridge needed), in its own time zone; up to 24 per lamp. A rule without id is added. " +
+        "Changing an existing rule (its id) or replace: true (drop all rules first) changes the user's schedule: " +
+        "ask the user first, then pass overwrite: true. Sunrise/sunset rules need the lamp's location, which only " +
+        "the Splanc app sets (rounded, from the phone). Rules are skipped while a live show holds the lamp.",
+      inputSchema: {
+        rules: z.array(scheduleRule).min(1).max(24),
+        replace: z.boolean().optional().describe("delete every existing rule first (ask the user)"),
+        overwrite: z.boolean().optional().describe("the user agreed to change/replace existing rules"),
+        players,
+      },
+    },
+    ({ rules, replace, overwrite, players: sel }) =>
+      guard(async () => {
+        // Effect rules may bring their effect (library_id / source): stored on each lamp first.
+        const stores: { effectId: string; name: string; source: string }[] = [];
+        const inputs: RuleInput[] = [];
+        for (const r of rules) {
+          const a = r.action;
+          if (a.type !== "effect") {
+            inputs.push(r as RuleInput);
+            continue;
+          }
+          let { effect_id, source } = a;
+          let name = effect_id ?? "";
+          if (a.library_id) {
+            if (!library) throw new ToolError("library_id needs the effects library (search_effects); pass source");
+            const d = await library.forDeploy(a.library_id, effect_id);
+            source ??= d.entry.source;
+            effect_id = d.effectId;
+            name = d.entry.name || d.effectId;
+          }
+          if (source !== undefined) {
+            effect_id ??= slugEffectId("", "scheduled");
+            stores.push({ effectId: effect_id, name: name || effect_id, source });
+          }
+          if (!effect_id) throw new ToolError("an effect rule needs effect_id (stored on the lamp), library_id or source");
+          inputs.push({ ...r, action: { type: "effect", effect_id, crossfade_s: a.crossfade_s } } as RuleInput);
+        }
+        let parsed: ScheduleRule[];
+        try {
+          parsed = inputs.map((r) => ruleFromInput(r));
+        } catch (e) {
+          throw new ToolError(e instanceof Error ? e.message : String(e));
+        }
+        return ok(
+          await fan(sel, (s) =>
+            s.setSchedules(
+              parsed.map((r) => ({ ...r })),
+              {
+                ...(replace !== undefined ? { replace } : {}),
+                ...(overwrite !== undefined ? { overwrite } : {}),
+                stores,
+              },
+            ),
+          ),
+        );
+      }),
+  );
+  server.registerTool(
+    "delete_schedule",
+    {
+      description:
+        "Delete a schedule rule (id from list_schedules) or all of them (all: true) on lamps. This removes the " +
+        "user's rules: ask the user first, then call with confirmed: true (without it, the tool only says what " +
+        "would be deleted).",
+      inputSchema: {
+        id: z.number().int().min(1).max(255).optional(),
+        all: z.boolean().optional(),
+        confirmed: z.boolean().optional().describe("the user agreed to the deletion"),
+        players,
+      },
+    },
+    ({ id, all, confirmed, players: sel }) =>
+      guard(async () =>
+        ok(
+          await fan(sel, (s) =>
+            s.deleteSchedules({
+              ...(id !== undefined ? { id } : {}),
+              ...(all !== undefined ? { all } : {}),
+              ...(confirmed !== undefined ? { confirmed } : {}),
+            }),
           ),
         ),
       ),

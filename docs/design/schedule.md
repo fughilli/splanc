@@ -1,8 +1,8 @@
 # Wall-clock schedules
 
-Status: PR-6 of the real-time effects plan (desk D-559). The firmware engine, the protocol
-and a HITL lane. The app's schedule screen and the MCP tools come in PR-7; group schedules
-over the mesh come in PR-8.
+Status: PR-6 and PR-7 of the real-time effects plan (desk D-559). PR-6: the firmware engine,
+the protocol and a HITL lane. PR-7: the app's schedule screen, the MCP tools and the bridge's
+live-show hold. Group schedules over the mesh come in PR-8.
 
 "At 07:00 on weekdays, fade up." "Thirty minutes before sunset, crossfade to the evening
 effect." Each lamp stores and fires its own rules on its own wall clock, in its own zone
@@ -178,14 +178,50 @@ A lamp holds 24 rules. The pure logic is the no_std crate `//firmware/schedule`,
   - after a soft reset, the reconcile brings the scheduled effect back;
   - render runs with no late frame throughout.
 
+## The app (PR-7)
+
+- **Device sheet:** a "Schedule" card (lamps advertising `schedule`): the rule count, the next
+  rule due, and "Open schedule". Rules are never edited on the sheet.
+- **`#/device/schedule`** (`web/src/ui/screens/scheduleScreen.ts`): the rules, one line each
+  ("07:00 Mon–Fri · Turn on · fade 30 s"), each with an on/off switch; the next rule due; a
+  rule skipped for a live show; "Add a rule". The editor is one decision per screen:
+  **When** (a time, sunrise, sunset) → **Time** (or the sun offset, ±3 h in the app) →
+  **Days** → **Action** (turn on, turn off, brightness, an effect stored on the lamp, a
+  trigger) → its **details** (fade, level + ramp, crossfade, trigger name) → **Review** (a
+  name, Save; Delete when editing). From the review, "Change …" takes only the steps that
+  part needs.
+- **The location (D-565).** The first sun rule on a lamp without a location adds one step
+  before the review. It says what is sent and why, and offers two ways:
+  - "Use this phone's location": the geolocation prompt, only on that tap;
+  - "Choose on map" (`ui/screens/mapPicker.ts`): a drag-to-pan map with a centre pin, or
+    typed coordinates. It needs no permission, so it is also where a denied or failed
+    geolocation lands. The map is OpenStreetMap's keyless raster tiles
+    (`tile.openstreetmap.org`, attributed), so no API key reaches the client; the tiles
+    reveal only the area looked at. Offline (the lamp's own Wi-Fi), the map says so and
+    the typed coordinates still work.
+  Either way the spot is rounded to 0.1° (`net/schedule.ts` `locationRequest`) and sent
+  with `set_clock_config` just before the rule is saved. Nothing is sent for time-of-day
+  rules. "Change location" on the list opens the same step for a lamp that moved. iOS:
+  `NSLocationWhenInUseUsageDescription` (`web/ios-config/apply.sh`).
+- The wire mapping and the rule text live in `web/src/net/schedule.ts`, shared with the bridge.
+
+## The bridge (PR-7)
+
+- **MCP tools:** `list_schedules`, `set_schedule` and `delete_schedule` (`agent/src/wallSchedule.ts`,
+  `DeviceSession.listSchedules / setSchedules / deleteSchedules`). Rules take `when`
+  (`time` + `"HH:MM"`, or `sunrise` / `sunset` + `offset_min`), `days` ("weekdays", day
+  names…) and an `action` in seconds. A rule without `id` is added with a free id.
+- **Ask first:** changing an existing rule (its id) or `replace` is refused unless
+  `overwrite: true`, and `delete_schedule` only says what it would delete unless
+  `confirmed: true`. The error tells the agent to ask the user; the server instructions say
+  so too.
+- **Live shows (D-567):** while a live app holds a player's Show Mode lock, the session
+  renews `set_schedule{hold_s: 120}` every 45 s (`syncScheduleHold`, from the live mux's
+  lock sync). Releasing the lock sends `release_hold`. A bridge that dies mid-show lets the
+  rules resume within 2 minutes.
+
 ## Not here yet
 
-- **PR-7, the app and MCP:**
-  - the `#/device/schedule` route and its stepped editor;
-  - sending the phone's location;
-  - `list_schedules` / `set_schedule` / `delete_schedule` tools;
-  - the bridge renewing `hold_s` while Show Mode's lock is held;
-  - regenerating `web/src/gen/ledmapper_pb.ts` and adding the arms to `web/src/net/proto.ts`.
 - **PR-8:** group rules fanned out over the mesh.
 - **`player_rs`:** answering the arms by wiring the crate into `pi/player_rs/src/schedule.rs`.
 - **The HITL lane** uses one DUT. Two DUTs changing on the same frame (the plan's

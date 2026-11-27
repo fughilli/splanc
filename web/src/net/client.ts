@@ -88,6 +88,14 @@ import {
   type ClockStateMessage,
   type SetWallClockMessage,
 } from "./wallClock";
+import {
+  flatScheduleState,
+  type DeleteScheduleMessage,
+  type ScheduleState,
+  type ScheduleStateMessage,
+  type SetClockConfigMessage,
+  type SetScheduleMessage,
+} from "./schedule";
 import { LiveControl, applyAt } from "./liveControl";
 import { fxbFormatProblem } from "./fxbFormat";
 import {
@@ -1508,6 +1516,33 @@ export class LedMapperClient {
   async getClock(timeoutMs = 5000): Promise<ClockState> {
     const msg = { type: "get_clock" } as unknown as ClientMessage;
     return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
+  }
+
+  /** The lamp's clock settings (set_clock_config): here, the location for sunrise /
+   * sunset rules (1e-4 degrees; net/schedule.ts locationRequest rounds it to 0.1°).
+   * Reply: clock_state. */
+  async setClockConfig(req: Omit<SetClockConfigMessage, "type">, timeoutMs = 5000): Promise<ClockState> {
+    const msg = { type: "set_clock_config", ...req } as unknown as ClientMessage;
+    return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
+  }
+
+  /** Wall-clock schedules (feature "schedule", docs/design/schedule.md): upsert rules
+   * (<= 4 per frame), replace them all, or take / release a live-show hold. */
+  async setSchedule(req: Omit<SetScheduleMessage, "type">, timeoutMs = 5000): Promise<ScheduleState> {
+    const msg = { type: "set_schedule", ...req } as unknown as ClientMessage;
+    return flatScheduleState((await this.request(msg, "schedule_state", timeoutMs)) as unknown as ScheduleStateMessage);
+  }
+
+  /** Delete one rule (`id`) or `all`. */
+  async deleteSchedule(req: Omit<DeleteScheduleMessage, "type">, timeoutMs = 5000): Promise<ScheduleState> {
+    const msg = { type: "delete_schedule", ...req } as unknown as ClientMessage;
+    return flatScheduleState((await this.request(msg, "schedule_state", timeoutMs)) as unknown as ScheduleStateMessage);
+  }
+
+  /** One page (4 rules) of the schedule; net/schedule.ts readSchedule reads them all. */
+  async getSchedule(page = 0, timeoutMs = 5000): Promise<ScheduleState> {
+    const msg = { type: "get_schedule", page } as unknown as ClientMessage;
+    return flatScheduleState((await this.request(msg, "schedule_state", timeoutMs)) as unknown as ScheduleStateMessage);
   }
 
   /** The lamp's power state + config. */

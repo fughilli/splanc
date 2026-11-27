@@ -44,6 +44,7 @@ import { WifiNetworksScreen } from "../screens/wifiNetworks";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { PowerTransitionsScreen } from "../screens/powerTransitions";
+import { ScheduleScreen } from "../screens/scheduleScreen";
 import { SensorsScreen } from "../screens/sensors";
 import { KitOnboardingScreen } from "../screens/kitOnboarding";
 import { ShareScreen } from "../screens/shareScreen";
@@ -231,6 +232,11 @@ async function main(): Promise<void> {
       // Lamp power: the dedicated ON / OFF transitions flow (docs/design/lamp-power.md).
       shell.setChrome({ title: "Transitions", back: true, tabs: true });
       return PowerTransitionsScreen(router);
+    })
+    .add("/device/schedule", () => {
+      // Wall-clock schedules: the rule list + stepped editor (docs/design/schedule.md).
+      shell.setChrome({ title: "Schedule", back: true, tabs: true });
+      return ScheduleScreen(router);
     })
     .add("/sensors", () => {
       // Sensor modules (a touch lid toggling power): agent chat + form + live test.

@@ -125,6 +125,16 @@ export class FakePlayer {
    * firmware would keep it (UTC ms at a fake-device-clock ms). */
   wallClock: { unixMs: number; atDeviceMs: number; tz: string; tzName: string; pushedBy: string } | null = null;
 
+  /** The schedule (the "schedule" feature): rules as received (proto3 JSON), by id. */
+  schedule = new Map<number, Record<string, unknown>>();
+  scheduleCapacity = 24;
+  /** The last live-show hold (set_schedule{hold_s}), Date.now() it ends; 0 = none. */
+  scheduleHoldUntil = 0;
+  /** set_clock_config's location (1e-4 degrees), or null. */
+  location: { latE4: number; lonE4: number } | null = null;
+  /** Effects stored with submit_effect{store: true}: id -> name. */
+  storedEffects = new Map<string, string>();
+
   /** Transition effects stored with submit_effect{powerSlot}: slot -> {id, fxb}. */
   powerEffects = new Map<number, { id: string; fxb: Uint8Array }>();
   /** Every blend_keypoints applied (for assertions). */
@@ -244,6 +254,23 @@ export class FakePlayer {
       tz: c.tz,
       tzName: c.tzName,
       lastSet,
+    };
+  }
+
+  private scheduleState(page: number, result = "SCHEDULE_RESULT_OK"): Msg {
+    const all = [...this.schedule.values()];
+    const pages = Math.max(1, Math.ceil(all.length / 4));
+    return {
+      type: "schedule_state",
+      rules: all.slice(page * 4, page * 4 + 4),
+      page,
+      pages,
+      count: all.length,
+      capacity: this.scheduleCapacity,
+      clockValid: this.wallClock !== null,
+      hasLocation: this.location !== null,
+      holdS: Math.max(0, Math.ceil((this.scheduleHoldUntil - Date.now()) / 1000)),
+      result,
     };
   }
 
@@ -477,6 +504,10 @@ export class FakePlayer {
         return this.reply(ws, this.welcome());
       case "submit_effect":
         if (m["powerSlot"]) return this.reply(ws, this.storePowerEffect(m));
+        if (m["store"] === true) {
+          this.storedEffects.set(m["effectId"] as string, String(m["name"] ?? ""));
+          return this.reply(ws, { type: "result_ready", mapId: m["effectId"] });
+        }
         return this.reply(
           ws,
           this.applyEffect(m["effectId"] as string, m["fxb"] as Uint8Array, m["activate"] as boolean, (m["deck"] as number) ?? 0),
@@ -492,6 +523,10 @@ export class FakePlayer {
         const inner = decodeClient(new Uint8Array(frame)) as unknown as Msg;
         this.received.push(inner);
         if (inner["powerSlot"]) return this.reply(ws, this.storePowerEffect(inner));
+        if (inner["store"] === true) {
+          this.storedEffects.set(inner["effectId"] as string, String(inner["name"] ?? ""));
+          return this.reply(ws, { type: "result_ready", mapId: inner["effectId"] });
+        }
         return this.reply(
           ws,
           this.applyEffect(inner["effectId"] as string, inner["fxb"] as Uint8Array, inner["activate"] as boolean, (inner["deck"] as number) ?? 0),
@@ -581,7 +616,43 @@ export class FakePlayer {
         return this.reply(ws, this.clockState("CLOCK_SET_RESULT_ACCEPTED"));
       }
       case "get_clock":
-        return this.reply(ws, this.clockState("CLOCK_SET_RESULT_NONE"));
+        return this.reply(ws, {
+          ...this.clockState("CLOCK_SET_RESULT_NONE"),
+          ...(this.location ? { hasLocation: true, ...this.location } : {}),
+        });
+      case "set_clock_config":
+        if (m["latE4"] !== undefined) this.location = { latE4: Number(m["latE4"]), lonE4: Number(m["lonE4"]) };
+        if (m["clearLocation"] === true) this.location = null;
+        return this.reply(ws, {
+          ...this.clockState("CLOCK_SET_RESULT_NONE"),
+          ...(this.location ? { hasLocation: true, ...this.location } : {}),
+        });
+      case "set_schedule": {
+        if (m["releaseHold"] === true) this.scheduleHoldUntil = 0;
+        if (Number(m["holdS"] ?? 0) > 0) this.scheduleHoldUntil = Date.now() + Number(m["holdS"]) * 1000;
+        const rules = (m["rules"] as Record<string, unknown>[] | undefined) ?? [];
+        if (rules.length > 4) return this.reply(ws, this.scheduleState(0, "SCHEDULE_RESULT_BAD_RULE"));
+        const next = new Map(m["replaceAll"] === true ? [] : this.schedule);
+        for (const r of rules) next.set(Number(r["id"]), r);
+        if (next.size > this.scheduleCapacity) return this.reply(ws, this.scheduleState(0, "SCHEDULE_RESULT_FULL"));
+        this.schedule = next;
+        return this.reply(ws, this.scheduleState(0));
+      }
+      case "delete_schedule": {
+        if (m["all"] === true) this.schedule.clear();
+        else if (!this.schedule.delete(Number(m["id"]))) {
+          return this.reply(ws, this.scheduleState(0, "SCHEDULE_RESULT_NOT_FOUND"));
+        }
+        return this.reply(ws, this.scheduleState(0));
+      }
+      case "get_schedule":
+        return this.reply(ws, this.scheduleState(Number(m["page"] ?? 0)));
+      case "list_stored_effects":
+        return this.reply(ws, {
+          type: "stored_effect_list",
+          effects: [...this.storedEffects].map(([effectId, name]) => ({ effectId, name })),
+          capacity: 16,
+        });
       case "set_power": {
         const on = m["toggle"] === true ? !(this.power["on"] as boolean) : m["on"] === true;
         this.power = { ...this.power, on, phase: on ? 1 : 0, source: 1, seq: (this.power["seq"] as number) + 1 };
