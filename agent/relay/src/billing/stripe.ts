@@ -26,6 +26,10 @@ export const STRIPE_API = "https://api.stripe.com/v1";
 export const STRIPE_VERSION = "2026-06-24.dahlia";
 /** Signature timestamps older / newer than this are refused (replays). */
 export const STRIPE_TOLERANCE_S = 300;
+/** What follows the account's shortened descriptor on a buyer's card statement
+ * ("<PREFIX>* SPLANC"): the Stripe account is shared with the owner's other
+ * business, whose name is the account's own descriptor. */
+export const STATEMENT_DESCRIPTOR_SUFFIX = "SPLANC";
 
 /** Encode nested params the way Stripe's form API expects (a[b][0][c]=…). */
 export function stripeForm(params: Record<string, unknown>): string {
@@ -64,7 +68,7 @@ export function checkoutSessionParams(p: CheckoutParams): Record<string, unknown
     metadata: meta,
     // The PaymentIntent carries the same metadata, so refunds and disputes
     // (which name the PaymentIntent / Charge, not the session) map back.
-    payment_intent_data: { metadata: meta },
+    payment_intent_data: { metadata: meta, statement_descriptor_suffix: STATEMENT_DESCRIPTOR_SUFFIX },
     // Stripe Tax (owner decision): Checkout collects what tax needs (country /
     // postal code) on its own when automatic tax is on.
     automatic_tax: { enabled: true },
