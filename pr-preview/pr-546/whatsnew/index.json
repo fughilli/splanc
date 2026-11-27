@@ -1,8 +1,8 @@
 {
  "schema": 2,
  "repo": "fughilli/splanc",
- "generated_at": "2026-11-27T07:49:15Z",
- "digest": "sha256:4837666e6e20ab58a8279d3eee457cc25702ef6c76eadcac5dd2577230ba1149",
+ "generated_at": "2026-11-27T09:15:48Z",
+ "digest": "sha256:6026a71292bfd5cd74249f64fea92241d8ca69ce125603ae8d097b8c2266531d",
  "products": [
   {
    "id": "app",
@@ -31,10 +31,10 @@
    "name": "Bridge",
    "label": "Bridge",
    "file": "bridge.json",
-   "count": 6,
+   "count": 7,
    "latest": {
-    "version": "1.3.1",
-    "date": "2026-11-27T04:00:23Z"
+    "version": "1.3.2",
+    "date": "2026-11-27T09:00:37Z"
    }
   }
  ]

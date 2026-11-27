@@ -995,7 +995,7 @@ one packet.</p></li>
 <tr class="row-odd"><td><p>1</p></td>
 <td><p>1</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">type</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">PLAYER</span></code> (ClientMessage bytes), <code class="docutils literal notranslate"><span class="pre">REPLY</span></code> / <code class="docutils literal notranslate"><span class="pre">PUSH</span></code> (ServerMessage bytes), <code class="docutils literal notranslate"><span class="pre">LINK</span></code> (link control), <code class="docutils literal notranslate"><span class="pre">BULK</span></code> (chunked stream), <code class="docutils literal notranslate"><span class="pre">LOG</span></code> (P4 console lines)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PLAYER</span></code> (ClientMessage bytes), <code class="docutils literal notranslate"><span class="pre">REPLY</span></code> / <code class="docutils literal notranslate"><span class="pre">PUSH</span></code> (ServerMessage bytes), <code class="docutils literal notranslate"><span class="pre">LINK</span></code> (link control), <code class="docutils literal notranslate"><span class="pre">BULK</span></code> (chunked stream), <code class="docutils literal notranslate"><span class="pre">LOG</span></code> (P4 console lines), <code class="docutils literal notranslate"><span class="pre">OSC</span></code>, <code class="docutils literal notranslate"><span class="pre">MESH</span></code> (a ClientMessage the mesh relayed to this fixture, §4.3.2)</p></td>
 </tr>
 <tr class="row-even"><td><p>2</p></td>
 <td><p>1</p></td>
@@ -1079,7 +1079,8 @@ the link is down (§4.5).</p></li>
 MTU, the buffer counts, the build ids, and the P4’s player descriptor (features, <code class="docutils literal notranslate"><span class="pre">board</span></code>,
 <code class="docutils literal notranslate"><span class="pre">fxb_format</span></code>). That way the C6 can answer <code class="docutils literal notranslate"><span class="pre">hello</span></code> from cache for a few hundred ms during a P4
 restart.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">HEARTBEAT</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">HEARTBEAT</span></code>. The P4’s carries the player status a mesh member broadcasts (fps, brightness,
+firmware hash) and its kiosk flag (16 B, <code class="docutils literal notranslate"><span class="pre">lk_status</span></code>); older images send it empty.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">RESET</span></code> (resync).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">NAME</span></code> (device name push, C6 to P4).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">STATS</span></code> (counts and errors for the status line).</p></li>
@@ -1400,6 +1401,39 @@ the SDIO link down and reopens it (<code class="docutils literal notranslate"><s
 P4 reply doesn’t hold up the other session), and pub/sub pushes (every subscribed session
 instead of the one that spoke last). Every client is one source to the player, for the kiosk
 unlock too (decided 2026-11-08).</p>
+</section>
+<section id="the-front-end-as-a-mesh-member">
+<h3>4.3.2 The front end as a mesh member<a class="headerlink" href="#the-front-end-as-a-mesh-member" title="Link to this heading">¶</a></h3>
+<p>The C6 front end runs the mesh layer (<code class="docutils literal notranslate"><span class="pre">mesh_ffi</span></code>, docs/design/mesh.md §8.2): the C6 is the mesh
+node, the P4 the endpoint. It is off until the fixture joins a mesh, and off costs no RAM, as
+on the players.</p>
+<ul class="simple">
+<li><p><strong>On the C6</strong> (<code class="docutils literal notranslate"><span class="pre">relay_main.cpp</span></code>): the membership (<code class="docutils literal notranslate"><span class="pre">/lfs/mesh.bin</span></code>) and the frame counter’s
+mark (<code class="docutils literal notranslate"><span class="pre">/lfs/mesh_ctr.bin</span></code>) are kept on its littlefs with the player’s power-loss-safe writer;
+<code class="docutils literal notranslate"><span class="pre">get_mesh</span></code> and <code class="docutils literal notranslate"><span class="pre">mesh_admin</span></code> are answered there (provisioning, unlock, admit, leave); flash
+auto-suspend is on, so a littlefs erase never stalls the SDIO slave. The mesh’s own lines
+(its log, <code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">INFO</span></code> every 10 s) go to the P4’s console as <code class="docutils literal notranslate"><span class="pre">[c6]</span> <span class="pre">[mesh]</span> <span class="pre">...</span></code>, the C6’s
+console not being wired on these boards. While the P4’s kiosk is on (its <code class="docutils literal notranslate"><span class="pre">HEARTBEAT</span></code> flag) the
+front end refuses <code class="docutils literal notranslate"><span class="pre">get_mesh</span></code> / <code class="docutils literal notranslate"><span class="pre">mesh_admin</span></code>, as a locked C6 player’s kiosk gate does (no
+per-session kiosk unlock for them yet). With several wss sessions, the one that last used a
+mesh arm owns the mesh’s wss connection; another taking it over ends the owner’s unlock.</p></li>
+<li><p><strong>Control relayed to this fixture</strong> goes to the P4 as a <code class="docutils literal notranslate"><span class="pre">MESH</span></code> frame, and the P4 answers a
+5-byte result (<code class="docutils literal notranslate"><span class="pre">lk_mesh_result</span></code>: status, code) on the same session. The P4 dispatches it as a
+C6 player dispatches a member’s relayed control (<code class="docutils literal notranslate"><span class="pre">lm_mesh_member_dispatch</span></code>: no kiosk gate, no
+push target, no sharded upload). P4 down or silent: the control fails with <code class="docutils literal notranslate"><span class="pre">0xfff0</span></code> (down),
+<code class="docutils literal notranslate"><span class="pre">0xfff1</span></code> (not sent) or <code class="docutils literal notranslate"><span class="pre">0xfff2</span></code> (no answer), and the gateway lists it.</p></li>
+<li><p><strong>Status.</strong> The P4’s <code class="docutils literal notranslate"><span class="pre">HEARTBEAT</span></code> carries fps, brightness and its firmware hash; the front end
+broadcasts them for the fixture (0s while the P4 is down).</p></li>
+<li><p><strong>Welcome.</strong> The front end’s <code class="docutils literal notranslate"><span class="pre">HELLO</span></code> ends with a feature byte (<code class="docutils literal notranslate"><span class="pre">LK_FE_MESH</span></code>); the P4 then adds
+<code class="docutils literal notranslate"><span class="pre">mesh</span></code> to its Welcome, so the app shows the mesh section.</p></li>
+<li><p><strong>RAM.</strong> The mesh’s heap block (the stack and its 14 KB tick stack) comes out of the front end’s
+heap, ~134.6 KB at its all-time minimum with 2 sessions; turning it on also takes a 26 KB
+create-task stack for a moment.</p></li>
+</ul>
+<p>Not yet (the next step): mesh time on the P4’s render clock (a C6↔P4 clock offset, so <code class="docutils literal notranslate"><span class="pre">apply_at</span></code>
+and scenes land on the same frame on every member; the front end keeps the mapped time base
+for itself meanwhile), effect sharing (M6: a shared effect loads on arrival, through the relayed
+control), and the gateway’s <code class="docutils literal notranslate"><span class="pre">mesh_send</span></code> (the P4 still answers it with <code class="docutils literal notranslate"><span class="pre">error{unsupported}</span></code>).</p>
 </section>
 <section id="pin-map-and-conflicts">
 <h3>4.4 Pin map and conflicts<a class="headerlink" href="#pin-map-and-conflicts" title="Link to this heading">¶</a></h3>
@@ -2179,6 +2213,7 @@ cache, hosted SDIO pins and reset;</p></li>
 <li><a class="reference internal" href="#tracker-photon-to-photon">4.2.1 Tracker: photon to photon</a></li>
 <li><a class="reference internal" href="#c6-firmware-the-front-end-build">4.3 C6 firmware: the front-end build</a></li>
 <li><a class="reference internal" href="#several-wss-sessions-on-the-front-end">4.3.1 Several wss sessions on the front end</a></li>
+<li><a class="reference internal" href="#the-front-end-as-a-mesh-member">4.3.2 The front end as a mesh member</a></li>
 <li><a class="reference internal" href="#pin-map-and-conflicts">4.4 Pin map and conflicts</a></li>
 <li><a class="reference internal" href="#boot-sequencing-and-failure-modes">4.5 Boot sequencing and failure modes</a></li>
 <li><a class="reference internal" href="#phase-b-exit-criteria">4.6 Phase B exit criteria</a></li>
