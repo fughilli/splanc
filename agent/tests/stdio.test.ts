@@ -29,13 +29,24 @@ test("stdio bridge: discover, deploy, read back", async () => {
     protocol: { ws_path: "/ws", features: ["effects"] },
     tls: { cert_sha256: TEST_CERT_SHA256 },
   };
+  const scratch = mkdtempSync(join(tmpdir(), "splanc-stdio-"));
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [MCP, "--host", player.host, "--bundle-root", WASM_ROOT],
     stderr: "pipe",
     // The SDK spawns with a minimal env by default; under rules_js,
     // process.execPath is a node shim that needs the JS_BINARY__* variables.
-    env: { ...(process.env as Record<string, string>), SPLANC_BRIDGE_STATE_DIR: mkdtempSync(join(tmpdir(), "splanc-stdio-")) },
+    // Every per-user path goes to scratch: bazel leaves HOME unset, so
+    // os.homedir() falls back to the passwd entry, and on a dev machine that runs
+    // Splanc the hub would load (and rewrite) the developer's real
+    // ~/.config/splanc/hub.json; its remembered fixtures make several players,
+    // and splanc://device answers keyed by player.
+    env: {
+      ...(process.env as Record<string, string>),
+      SPLANC_CONFIG_DIR: join(scratch, "config"),
+      SPLANC_CACHE_DIR: join(scratch, "cache"),
+      SPLANC_BRIDGE_STATE_DIR: join(scratch, "state"),
+    },
   });
   const client = new Client({ name: "stdio-test", version: "0" });
   let stderr = "";
