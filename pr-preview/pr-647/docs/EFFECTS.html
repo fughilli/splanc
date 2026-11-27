@@ -441,6 +441,7 @@ opcode):</p>
 <span class="k">uniform</span><span class="w"> </span><span class="kt">mat4</span><span class="w">  </span><span class="n">pose</span><span class="p">;</span><span class="w">                          </span><span class="c1">// matrix, identity default (`: lo .. hi` optional)</span>
 <span class="k">uniform</span><span class="w"> </span><span class="kt">vec2</span><span class="w">  </span><span class="n">wind</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">vector</span><span class="w"> </span><span class="o">-</span><span class="mi">2</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.5</span><span class="p">,</span><span class="w"> </span><span class="mo">0</span><span class="p">;</span><span class="w">  </span><span class="c1">// XY pad (vec3: + z slider)</span>
 <span class="k">uniform</span><span class="w"> </span><span class="kt">vec3</span><span class="w">  </span><span class="n">sun</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="n">direction</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mo">0</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mf">0.3</span><span class="p">;</span><span class="w">    </span><span class="c1">// unit vector: dial (vec2) / sphere (vec3)</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">mat3</span><span class="w">  </span><span class="n">uvx</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="n">transform2d</span><span class="p">;</span><span class="w">              </span><span class="c1">// 2D affine (translation in column 2)</span>
 </pre></div>
 </div>
 <p>A <code class="docutils literal notranslate"><span class="pre">vec3</span></code>/<code class="docutils literal notranslate"><span class="pre">vec4</span></code> without a range is a colour (<code class="docutils literal notranslate"><span class="pre">ui.kind:</span> <span class="pre">color</span></code>, 0..1); with a
@@ -456,8 +457,14 @@ An effect using either is stamped <code class="docutils literal notranslate"><sp
 format 1. The VM accepts formats 1..=2 and reports 2 (<code class="docutils literal notranslate"><span class="pre">welcome.fxb_format</span></code>),
 so firmware from before the bump refuses only the effects that use the new
 controls, and the app says “update the firmware” before uploading one. Later
-widget kinds (the mat3 <code class="docutils literal notranslate"><span class="pre">:</span> <span class="pre">transform2d</span></code> gizmo, persisted textures) join
-format 2 rather than bumping again.</p>
+widget kinds (persisted textures) join format 2 rather than bumping again.</p>
+<p>Matrices get a Move / Rotate / Scale gizmo in the app (D-541 PR 10), with the
+raw N×N grid behind “Advanced”. A <code class="docutils literal notranslate"><span class="pre">mat4</span></code> is a full 3D transform; a plain
+<code class="docutils literal notranslate"><span class="pre">mat3</span></code> is a 3D rotation / linear transform (Rotate and Scale only); and
+<code class="docutils literal notranslate"><span class="pre">:</span> <span class="pre">transform2d</span> <span class="pre">[range]</span></code> marks a <code class="docutils literal notranslate"><span class="pre">mat3</span></code> as a 2D homogeneous affine
+(<code class="docutils literal notranslate"><span class="pre">ui.kind:</span> <span class="pre">transform2d</span></code>, translation in column 2, Move x/y, Rotate about z,
+Scale). <code class="docutils literal notranslate"><span class="pre">transform2d</span></code> is format 2, like <code class="docutils literal notranslate"><span class="pre">vector</span></code>; plain matrices stay
+format 1.</p>
 </li>
 <li><p><strong>Matrices</strong> — <code class="docutils literal notranslate"><span class="pre">mat3</span></code>/<code class="docutils literal notranslate"><span class="pre">mat4</span></code> (column-major, GLSL): <code class="docutils literal notranslate"><span class="pre">m[c]</span></code> column, <code class="docutils literal notranslate"><span class="pre">m[c][r]</span></code>
 element, constructors (diagonal scalar, N columns, N×N scalars, <code class="docutils literal notranslate"><span class="pre">mat3(m4)</span></code>,
@@ -1276,7 +1283,11 @@ hand-written effect takes.</p>
 <p>Live sensor values reach effects as <strong>uniforms bound by name</strong> (the uniform
 pool, docs/design/sensor-core.md §6): declare <code class="docutils literal notranslate"><span class="pre">uniform</span> <span class="pre">vec3</span> <span class="pre">imu_gravity</span> <span class="pre">=</span> <span class="pre">0.0,</span> <span class="pre">-1.0,</span> <span class="pre">0.0;</span></code> (or <code class="docutils literal notranslate"><span class="pre">imu_quat</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_euler</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_shake</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_tap</span></code>, …) and the
 firmware writes it every frame while a sensor runs; otherwise it is an ordinary
-knob. Sensor <strong>drivers</strong> (FUG-107) are <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> programs too: <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">poll()</span></code>
+knob. The wall clock lands in the same pool (docs/design/wall-clock.md):
+<code class="docutils literal notranslate"><span class="pre">clock</span></code> (vec4 hour, minute, second, weekday), <code class="docutils literal notranslate"><span class="pre">clock_day</span></code> (0..1 over the local
+day), <code class="docutils literal notranslate"><span class="pre">clock_date</span></code> (vec3 year, month, day) and <code class="docutils literal notranslate"><span class="pre">clock_valid</span></code>, in the lamp’s
+local time, written only while its clock is set. Sensor <strong>drivers</strong> (FUG-107)
+are <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> programs too: <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">poll()</span></code>
 instead of <code class="docutils literal notranslate"><span class="pre">shade()</span></code>, <code class="docutils literal notranslate"><span class="pre">export</span></code> declarations instead of uniforms, the
 <code class="docutils literal notranslate"><span class="pre">i2c_write</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_read8</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_read16</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_read16s</span></code> intrinsics, and
 <code class="docutils literal notranslate"><span class="pre">FLAG_DRIVER</span></code> (0x10) in the header with <code class="docutils literal notranslate"><span class="pre">poll()</span></code> in the shade-entry slot and

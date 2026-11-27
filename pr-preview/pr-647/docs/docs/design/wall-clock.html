@@ -327,9 +327,9 @@
         <article role="main" id="furo-main-content">
           <section id="wall-clock-software-rtc-time-zone-time-from-the-app-and-the-bridge">
 <h1>Wall clock (software RTC, time zone, time from the app and the bridge)<a class="headerlink" href="#wall-clock-software-rtc-time-zone-time-from-the-app-and-the-bridge" title="Link to this heading">¶</a></h1>
-<p>Status: PR-2 of the real-time effects plan (desk D-559). The clock is set from the
-app and the bridge; SNTP on the device, a hardware RTC, schedules and the <code class="docutils literal notranslate"><span class="pre">clock*</span></code>
-effect uniforms come in later PRs.</p>
+<p>Status: PR-2 of the real-time effects plan (desk D-559), plus the <code class="docutils literal notranslate"><span class="pre">clock*</span></code> effect
+uniforms (PR-3). The clock is set from the app and the bridge; SNTP on the device,
+a hardware RTC and schedules come in later PRs.</p>
 <section id="what-the-lamp-keeps">
 <h2>What the lamp keeps<a class="headerlink" href="#what-the-lamp-keeps" title="Link to this heading">¶</a></h2>
 <ul class="simple">
@@ -413,6 +413,61 @@ carries the time over the P4’s soft resets. The C6 front end forwards
 the zone (rule, name, current offset and abbreviation), counters, and the result
 of the set it answers.</p>
 </section>
+<section id="effect-uniforms-pr-3">
+<h2>Effect uniforms (PR-3)<a class="headerlink" href="#effect-uniforms-pr-3" title="Link to this heading">¶</a></h2>
+<p>Effects read the lamp’s LOCAL time through the uniform pool (<code class="docutils literal notranslate"><span class="pre">uniform_pool.rs</span></code>
+<code class="docutils literal notranslate"><span class="pre">CLOCK_ENTRIES</span></code>), bound BY NAME like <code class="docutils literal notranslate"><span class="pre">imu_*</span></code>: no compiler, VM or <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> change,
+and an unbound effect pays nothing new (the per-frame <code class="docutils literal notranslate"><span class="pre">ANY_BOUND</span></code> check is the
+one it already had).</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Uniform</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Value</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">clock</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vec4</span></code></p></td>
+<td><p>(hour 0-23, minute 0-59, second 0-59.999, weekday 0-6, Sunday = 0)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">clock_day</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float</span></code></p></td>
+<td><p>local seconds since midnight / 86400, 0..1</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">clock_date</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vec3</span></code></p></td>
+<td><p>(year, month 1-12, day 1-31)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">clock_valid</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float</span></code></p></td>
+<td><p>1 while the clock is set, else 0</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Render never reads the clock.</strong> The loop task (<code class="docutils literal notranslate"><span class="pre">lm_clock_tick</span></code>, under the
+player mutex) caches the local time of day at a raw esp_timer anchor plus the
+date, every 250 ms and on every accepted time or zone change, only while some
+deck binds a <code class="docutils literal notranslate"><span class="pre">clock*</span></code> uniform (and once at bind, so the first frame is right).
+Render extrapolates from the anchor with one esp_timer read, wraps the time of
+day (and the weekday) at local midnight until the next refresh brings the new
+date, clamps a step-back to the anchor, and stops extrapolating after 60 s
+without a refresh rather than guess.</p></li>
+<li><p><strong>An unset clock</strong> writes only <code class="docutils literal notranslate"><span class="pre">clock_valid</span> <span class="pre">=</span> <span class="pre">0</span></code>; the others keep their UI /
+default values, so an effect previews and can fall back to a neutral look.</p></li>
+<li><p><strong>Preview.</strong> The editor feeds the same values from the phone’s clock
+(<code class="docutils literal notranslate"><span class="pre">web/src/fx/clockUniforms.ts</span></code>), with a “Preview time” slider
+(<code class="docutils literal notranslate"><span class="pre">effects/editor/clockScrubber.ts</span></code>) shown only for an effect that binds one;
+a picked time runs on in real time. MCP <code class="docutils literal notranslate"><span class="pre">preview_effect</span></code> takes them as explicit
+uniforms (<code class="docutils literal notranslate"><span class="pre">clock_day:</span> <span class="pre">0.27</span></code> = 06:30).</p></li>
+<li><p>The AI system prompts and the agent skill document them (use <code class="docutils literal notranslate"><span class="pre">clock_day</span></code> for
+daylight curves; never time of day from <code class="docutils literal notranslate"><span class="pre">time</span></code>); <code class="docutils literal notranslate"><span class="pre">agent/skill/examples/daylight.fx</span></code>
+is the library example.</p></li>
+</ul>
+</section>
 <section id="status-line-and-console">
 <h2>Status line and console<a class="headerlink" href="#status-line-and-console" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">[clock]</span> <span class="pre">valid=1</span> <span class="pre">src=push/app</span> <span class="pre">unix_ms=…</span> <span class="pre">local=2026-11-25T09:00:00</span> <span class="pre">CET</span> <span class="pre">off=3600</span> <span class="pre">err_ms=25</span> <span class="pre">age_s=0</span> <span class="pre">drift_ppb=0</span> <span class="pre">gen=1</span> <span class="pre">steps=1</span> <span class="pre">jumps=0</span> <span class="pre">tz=&quot;CET-1CEST,…&quot;</span></code>: at boot, on
@@ -425,6 +480,9 @@ every accepted set and every 10 minutes. The USB console takes <code class="docu
 <li><p><code class="docutils literal notranslate"><span class="pre">//firmware/clock:tz_test</span></code>: the POSIX parser and evaluator against tzdata vectors.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">//firmware/player_app:clock_test</span></code>: the arms through the C ABI, the zone record,
 the step guard, the carry-over, the kiosk visitor rule.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//firmware/player_app:clock_pool_test</span></code>: the <code class="docutils literal notranslate"><span class="pre">clock*</span></code> uniforms (unset, local
+time in the lamp’s zone, extrapolation, the midnight wrap, a step-back).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//web:clockUniforms_test</span></code>: the preview values and the picked preview time.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">//web:posixTz_test</span></code>, <code class="docutils literal notranslate"><span class="pre">//web:wallClock_test</span></code>, agent tests.</p></li>
 <li><p>HITL <code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:clock_app_netstack</span></code>: an app-style sync, then a soft reset
 keeps the clock, while render keeps running with no late frames.</p></li>
@@ -475,6 +533,7 @@ keeps the clock, while render keeps running with no late frames.</p></li>
 <li><a class="reference internal" href="#rules">Rules</a></li>
 <li><a class="reference internal" href="#p4-c6-split-the-p4-owns-the-clock">P4 + C6 split: the P4 owns the clock</a></li>
 <li><a class="reference internal" href="#protocol">Protocol</a></li>
+<li><a class="reference internal" href="#effect-uniforms-pr-3">Effect uniforms (PR-3)</a></li>
 <li><a class="reference internal" href="#status-line-and-console">Status line and console</a></li>
 <li><a class="reference internal" href="#tests">Tests</a></li>
 </ul>
