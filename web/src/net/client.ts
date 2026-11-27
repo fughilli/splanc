@@ -423,6 +423,7 @@ export class LedMapperClient {
   private meshSubs = new Set<(r: MeshResultInfo) => void>();
   /** Live control drives every fixture meshed with this one (mesh M5; net/mesh.ts). */
   private meshAll_ = false;
+  private meshOps_ = 0;
   private meshState_: MeshStateInfo | null = null;
   // Lamp power: power_state replies AND the device's unsolicited pushes.
   private powerSubs = new Set<(s: PowerState) => void>();
@@ -1453,6 +1454,51 @@ export class LedMapperClient {
   async meshAdmin(op: MeshAdminOp, timeoutMs = 8000): Promise<MeshAdminResultInfo> {
     const r = (await this.request(meshAdminMessage(op), "mesh", timeoutMs)) as unknown as MeshInfoMessage;
     return r.admin ?? {};
+  }
+
+  /** Relay one ClientMessage to this fixture's mesh (mesh_send, want_reply; the agent's
+   * mesh_send tool): `inner` must be on the relay allow-list (net/mesh.ts MESH_RELAY_TYPES)
+   * and fit one mesh packet. Resolves with the MeshResult the gateway pushes once its
+   * members answered (or its refusal); rejects on a timeout. The gateway also applies it
+   * itself unless `skipGateway`. Needs this connection unlocked on a mesh with an admin key
+   * (net/meshAdmin.ts unlockFixture). */
+  async meshSend(
+    inner: ClientMessage,
+    opts: { nodes?: number[]; group?: number; skipGateway?: boolean; leadMs?: number; timeoutMs?: number } = {},
+  ): Promise<MeshResultInfo> {
+    const bytes = encodeClient(inner);
+    const opId = ((Date.now() & 0xffff) << 12 | (this.meshOps_++ & 0xfff)) >>> 0 || 1;
+    const wait = (opts.timeoutMs ?? 2000) + 3000;
+    const wire = {
+      type: "mesh_send",
+      opId,
+      targets: {
+        ...(opts.nodes?.length ? { nodes: opts.nodes } : {}),
+        ...(opts.group ? { group: opts.group } : {}),
+        ...(opts.skipGateway ? { skipGateway: true } : {}),
+      },
+      inner: bytes,
+      wantReply: true,
+      ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.leadMs ? { leadMs: opts.leadMs } : {}),
+    } as unknown as ClientMessage;
+    return new Promise<MeshResultInfo>((resolve, reject) => {
+      const t = setTimeout(() => {
+        off();
+        reject(new Error(`no mesh result for op ${opId} in ${wait} ms`));
+      }, wait);
+      const off = this.onMeshResult((r) => {
+        if ((r.opId ?? 0) >>> 0 !== opId && meshResultError(r) === null) return;
+        clearTimeout(t);
+        off();
+        resolve(r);
+      });
+      if (!this.send(wire)) {
+        clearTimeout(t);
+        off();
+        reject(new Error("not connected"));
+      }
+    });
   }
 
   /** The last mesh state read with {@link getMesh} (null before). */

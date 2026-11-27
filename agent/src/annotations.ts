@@ -58,6 +58,9 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   set_fixture_pose: write("Place a fixture in its room", true, true),
   align_time: write("Align effect clocks", false, true),
   time_sync_status: read("Clock sync status"),
+  // the mesh
+  get_mesh: read("Read the mesh"),
+  mesh_send: write("Send a change to the whole mesh", false, true),
   // the wall clock (time of day): set_clock is undone by setting it again.
   get_clock: read("Read lamp clocks"),
   set_clock: write("Set lamp clocks", false, true),

@@ -7,6 +7,7 @@
 #   splanc-bridge revoke-all [--yes] unpair every client
 #   splanc-bridge clients [--json]   paired clients: name, kind, last used, ID
 #   splanc-bridge revoke <ID> [--yes] unpair one client
+#   splanc-bridge mesh [join|leave]  the bridge in the mesh (needs pimesh: the SD image)
 #   splanc-bridge logs [-f]          bridge + display logs
 #   splanc-bridge restart            restart both services
 #   splanc-bridge update [--force]   install the latest release (daily timer: --auto)
@@ -91,7 +92,7 @@ update() {
 cmd="${1:-status}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
-  status | new-code | identify | revoke-all | clients | revoke) ctl "$cmd" "$@" ;;
+  status | new-code | identify | revoke-all | clients | revoke | mesh) ctl "$cmd" "$@" ;;
   logs)
     exec journalctl -u splanc-bridge -u splanc-display --no-pager -n 200 "$@"
     ;;

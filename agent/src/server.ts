@@ -32,6 +32,7 @@ import type { Pose } from "./config";
 import { lintWarnings, renderPng, preview, type CompileOutcome } from "./fxhost";
 import { Hub, shape, type PlayerResult, type Selector } from "./hub";
 import { localBugOptions, registerFileBug, type BugFilingOptions } from "./bugs";
+import { meshRelay, meshView, type BridgeMesh } from "./bridge/mesh";
 import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
 import { progress, withCancel, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, bbox, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
@@ -210,6 +211,8 @@ export interface ServerOptions {
   /** How file_bug files directly (bugs.ts). Default: localBugOptions() (stdio/CLI:
    * the default relay, signed as this host's bridge if it runs one). */
   bugs?: BugFilingOptions;
+  /** The Pi bridge's own mesh membership (bridge/mesh.ts), when it runs pimesh. */
+  mesh?: BridgeMesh | null;
 }
 
 /** Compile warnings tagged with their kind ("correctness": fix these; "perf":
@@ -503,6 +506,49 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       inputSchema: {},
     },
     () => guard(async () => ok(hub.driftStatus())),
+  );
+
+  // -- the mesh (docs/design/mesh.md §8; agent/src/bridge/mesh.ts) -----------------------
+  server.registerTool(
+    "get_mesh",
+    {
+      description:
+        "The Splanc mesh, as a meshed fixture on this network reports it (the gateway: `gateway` names one, else " +
+        "the first connected member): its members (kind fixture or bridge), each one's radio neighbours with RSSI " +
+        "(dBm), unicast delivery (tx_ok_pct) and ranges where measured, hops, time sync, and fixtures waiting to " +
+        "be admitted. On a Pi bridge it also gives the bridge's own membership (`bridge`). Read-only.",
+      inputSchema: { gateway: z.string().optional() },
+    },
+    ({ gateway }) => guard(async () => ok(await meshView(hub, opts.mesh ?? null, gateway))),
+  );
+  server.registerTool(
+    "mesh_send",
+    {
+      description:
+        "Send one change to every mesh member at once through a meshed fixture (the gateway), scheduled on the " +
+        "mesh's show clock so they apply it on the same frame: `message` is a ClientMessage of type set_brightness " +
+        "{brightness 0..1}, set_effect {effectId, deck?}, set_uniforms {values, deck?, commit?}, set_crossfade or " +
+        "blend_keypoints, with camelCase fields. `nodes` (mesh node ids) or `group` narrows it. Returns each " +
+        "member's answer. On a mesh with an admin key this needs the bridge's delegation from the app.",
+      inputSchema: {
+        message: z.object({ type: z.string() }).passthrough(),
+        gateway: z.string().optional(),
+        nodes: z.array(z.number().int().min(1).max(0xfffe)).max(8).optional(),
+        group: z.number().int().min(1).max(255).optional(),
+        lead_ms: z.number().int().min(0).max(10_000).optional(),
+      },
+    },
+    ({ message, gateway, nodes, group, lead_ms }) =>
+      guard(async () =>
+        ok(
+          await meshRelay(hub, opts.mesh ?? null, message as { type: string } & Record<string, unknown>, {
+            ...(gateway ? { gateway } : {}),
+            ...(nodes ? { nodes } : {}),
+            ...(group ? { group } : {}),
+            ...(lead_ms !== undefined ? { leadMs: lead_ms } : {}),
+          }),
+        ),
+      ),
   );
 
   // -- the wall clock (docs/design/wall-clock.md; the "wall_clock" feature) --------------

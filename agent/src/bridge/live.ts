@@ -37,6 +37,8 @@ import type { Hub, PlayerResult } from "../hub";
 import type { PlayerRecord } from "../registry";
 import { ToolError, type DeviceSession } from "../session";
 import { currentByName, describe, parseManifest, resolve, type ManifestUniform } from "../uniforms";
+import { fromHex, toHex } from "../../../web/src/net/meshKeys";
+import type { BridgeMesh } from "./mesh";
 
 /** One app connection, whichever path it came by. */
 export interface LiveConn {
@@ -73,6 +75,9 @@ export interface LiveMuxOptions {
   lockGraceMs?: number;
   /** Re-dial a player whose session has been down this long (default 20 s). */
   reopenAfterMs?: number;
+  /** The bridge's own mesh membership (pimesh; bridge/mesh.ts): the `mesh` query and the
+   * welcome's `mesh`. */
+  mesh?: BridgeMesh;
 }
 
 interface ConnState {
@@ -296,6 +301,7 @@ export class LiveMux {
       players: players.players,
       rooms: players.rooms,
       tick_ms: cs.conn.via === "lan" ? TICK_LAN_MS : TICK_RELAY_MS,
+      ...(this.opts.mesh ? { mesh: this.opts.mesh.summary() } : {}),
     });
     if (!this.hub.registry.list().length) void this.hub.ready().catch(() => undefined);
   }
@@ -594,6 +600,41 @@ export class LiveMux {
     return Array.isArray(m.to) && m.to.length ? m.to : ["all"];
   }
 
+  /** The bridge's own mesh (pimesh): `action` status | join {mesh_id, admin_key hex,
+   * channel?} (no mesh_id: the mesh of the fixtures on this network) | leave | delegate
+   * {cert hex}. Join is by approval: the app admits the bridge
+   * from the gateway's pending list afterwards. The delegation is the app's certificate for
+   * the bridge's delegate key (`delegate_key` in the status), so the bridge may relay
+   * control on that mesh (bridge/mesh.ts). */
+  private async mesh(m: QueryMsg): Promise<Record<string, unknown>> {
+    const mesh = this.opts.mesh;
+    if (!mesh) throw new Error("this bridge has no mesh radio (pimesh is not running here)");
+    const action = String(m["action"] ?? "status");
+    if (action === "join" && m["mesh_id"] === undefined) {
+      // The mesh the fixtures on this network are in (the admin key comes with the admit).
+      await mesh.joinLan(this.hub);
+    } else if (action === "join") {
+      const id = Number(m["mesh_id"]);
+      const key = typeof m["admin_key"] === "string" && m["admin_key"] ? fromHex(m["admin_key"]) : null;
+      await mesh.join(id, key, Number(m["channel"] ?? 0));
+    } else if (action === "leave") {
+      await mesh.leave();
+    } else if (action === "delegate") {
+      if (typeof m["cert"] !== "string") throw new Error("delegate: give the certificate (hex)");
+      await mesh.setDelegation(fromHex(m["cert"]));
+    } else if (action === "status") {
+      await mesh.poll();
+    } else {
+      throw new Error(`unknown mesh action ${JSON.stringify(action)}`);
+    }
+    const s = mesh.member;
+    return {
+      ...mesh.summary(),
+      ...(s ? { key_hash: s.key_hash, device_key: s.device_key } : {}),
+      delegate_key: toHex(await mesh.delegateKey()),
+    };
+  }
+
   private async each<T>(
     cs: ConnState,
     m: QueryMsg,
@@ -610,6 +651,8 @@ export class LiveMux {
   private async query(cs: ConnState, m: QueryMsg): Promise<{ results?: PerPlayer[]; data?: unknown }> {
     const deck = m["deck"] === 1 ? 1 : 0;
     switch (m.op) {
+      case "mesh":
+        return { data: await this.mesh(m) };
       case "players": {
         if (m["refresh"] === true) await this.hub.refresh({ sweep: "auto" });
         else await this.hub.ready();

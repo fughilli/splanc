@@ -113,6 +113,27 @@ def revoke(grant: str, yes: bool) -> int:
     return 0
 
 
+def mesh(action: str) -> int:
+    cmd = {"status": "mesh", "join": "mesh_join", "leave": "mesh_leave"}[action]
+    try:
+        reply = control.send(cmd, timeout=15.0)
+    except control.ControlError as e:
+        print(f"splanc-bridge: {e}", file=sys.stderr)
+        return 1
+    m = reply.get("mesh") or {}
+    print(m.get("text", "Mesh: unknown"))
+    if m.get("available") and m.get("phase") != "off":
+        print(
+            f"  node {m.get('node', 0):04X}, mesh {m.get('mesh_id', 0):08X}, channel {m.get('channel')}"
+        )
+    for n in reply.get("neighbours") or []:
+        tx = f", {n['tx_ok_pct']}% delivered" if "tx_ok_pct" in n else ""
+        print(f"  neighbour {n['node']:04X}: {n['rssi']} dBm{tx}")
+    if action == "join":
+        print("Now admit it in the Splanc app: open a meshed fixture's Mesh section.")
+    return 0
+
+
 def run(cmd: str) -> int:
     try:
         reply = control.send(cmd)
@@ -143,7 +164,14 @@ def main(argv=None) -> int:
     p = sub.add_parser("revoke", help="unpair one client (an ID from `clients`)")
     p.add_argument("id")
     p.add_argument("--yes", action="store_true")
+    p = sub.add_parser(
+        "mesh",
+        help="the bridge in the mesh: show it, ask to join the lamps' mesh (admit it in the app), or leave",
+    )
+    p.add_argument("action", nargs="?", choices=["status", "join", "leave"], default="status")
     a = ap.parse_args(argv)
+    if a.cmd == "mesh":
+        return mesh(a.action)
     if a.cmd == "status":
         return show_status(a.json)
     if a.cmd == "clients":

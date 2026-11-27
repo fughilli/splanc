@@ -396,6 +396,25 @@ def test_ctl_clients_and_revoke(bridge, monkeypatch, capsys):
     assert "needs a relay update" in capsys.readouterr().out
 
 
+def test_ctl_mesh(bridge, monkeypatch, capsys):
+    # `splanc-bridge mesh [join|leave]` (issue #697): the agent's mesh commands.
+    monkeypatch.setenv("SPLANC_BRIDGE_STATUS", bridge.status_path)
+    monkeypatch.setenv("SPLANC_BRIDGE_CONTROL", bridge.control_path)
+    bridge.set(fake_bridge.sample("paired", time.time()))
+    assert ctl.main(["mesh"]) == 0
+    out = capsys.readouterr().out
+    assert "Mesh: member, 2 radio neighbours" in out
+    assert "node 2E5A, mesh 5E1F00D1, channel 6" in out
+    assert "neighbour 3A41: -52 dBm, 100% delivered" in out
+    assert "neighbour 7C02: -64 dBm\n" in out
+    assert ctl.main(["mesh", "join"]) == 0
+    out = capsys.readouterr().out
+    assert "waiting for approval" in out and "admit it in the Splanc app" in out
+    assert ctl.main(["mesh", "leave"]) == 0
+    assert "not joined" in capsys.readouterr().out
+    assert bridge.commands[-3:] == ["mesh", "mesh_join", "mesh_leave"]
+
+
 def test_app_revokes_one_client_end_to_end(bridge, tmp_path, buttons, clock):
     bridge.set(fake_bridge.sample("paired", time.time()))
     app = main.App(
