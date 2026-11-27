@@ -67,6 +67,7 @@
 #endif
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/identify_blink.h"
+#include "firmware/player_app/mesh_grid.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/board_caps_res.h"  // board_caps_binaryproto[] / _len
 #include "firmware/player_app/led_config.h"
@@ -1038,28 +1039,20 @@ extern "C" int32_t lm_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t shift_ms) {
 // grid_sched_ms: the time to compare apply_at dues against at this frame start (millis()
 // off the grid). pace_adjust_us: how much earlier the next frame should start to land on
 // the grid (bounded to a quarter period per frame, so the cadence never jumps).
+// The grid is the mesh's (mesh_grid.h: one period on every member), not this member's rung.
 static int64_t grid_sched_ms(int64_t now_us, int64_t *k_out) {
   int64_t ep;
   *k_out = -1;
   if (!g_tb_align || !lm_time_base(&ep)) return now_us / 1000;
-  int64_t period = (int64_t)(lm_fps_budget_cycles() / (kCpuHz / 1000000u));
-  int64_t rel = now_us - ep * 1000;
-  if (period <= 0 || rel <= 0) return now_us / 1000;
-  int64_t k = (rel + period / 2) / period;
-  if (llabs(rel - k * period) >= period / 4) return now_us / 1000;  // off the grid: plain time
+  const int64_t k = lm_grid::frame_k(now_us - ep * 1000);
+  if (k < 0) return now_us / 1000;  // off the grid: plain time
   *k_out = k;
-  return ep + (k * period) / 1000;
+  return ep + (k * lm_grid::kGridUs) / 1000;
 }
 static int64_t pace_adjust_us(int64_t next_start_us, uint32_t period_us) {
   int64_t ep;
-  if (!g_tb_align || period_us == 0 || !lm_time_base(&ep)) return 0;
-  int64_t p = period_us;
-  int64_t e = (next_start_us - ep * 1000) % p;
-  if (e < 0) e += p;
-  if (e > p / 2) e -= p;  // e > 0: the next start would be late by e
-  if (e > p / 4) e = p / 4;
-  if (e < -p / 4) e = -p / 4;
-  return e;
+  if (!g_tb_align || !lm_time_base(&ep)) return 0;
+  return lm_grid::pace_adjust(next_start_us - ep * 1000, period_us);
 }
 
 static const DeviceCertStore kTlsStore = {tls_store_read, tls_store_write};

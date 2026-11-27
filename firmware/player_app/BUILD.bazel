@@ -1057,6 +1057,7 @@ cc_library(
         ":board_caps_res",
         ":color_correction",
         ":identify_blink",
+        ":mesh_grid",
         ":device_cert",  # per-device TLS key + cert (first-boot keygen, littlefs-persisted)
         ":improv_ble_netstack",
         ":improv_codec",
@@ -1176,6 +1177,7 @@ cc_binary(
         ":device_cert",
         ":flash_suspend",  # the SPI1 lock (flash auto-suspend, D-459): littlefs writes never stall
         ":identify_blink",
+        ":mesh_grid",
         ":improv_ble_netstack",
         ":improv_codec",
         # The mesh node (docs/design/mesh.md §8.2): the C6 front end runs the mesh layer
@@ -1629,6 +1631,7 @@ cc_binary(
         ":device_cert_core",
         ":identify_blink",
         ":improv_codec",
+        ":mesh_grid",
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
@@ -1695,6 +1698,7 @@ cc_binary(
         ":device_cert_core",
         ":identify_blink",
         ":improv_codec",
+        ":mesh_grid",
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
@@ -1832,6 +1836,7 @@ cc_binary(
         ":color_correction",
         ":identify_blink",
         ":improv_codec",
+        ":mesh_grid",
         ":osc_bench_fxb_res",
         ":ota_app",
         ":player_ffi",
@@ -1911,6 +1916,7 @@ cc_binary(
         ":identify_blink",
         ":improv_codec",
         ":jit_bench_fxb_res",
+        ":mesh_grid",
         ":ota_app",
         ":player_ffi",
         ":ws_codec",
@@ -2131,11 +2137,26 @@ cc_library(
     hdrs = ["identify_blink.h"],
 )
 
+cc_library(
+    name = "mesh_grid",
+    hdrs = ["mesh_grid.h"],
+)
+
+cc_test(
+    name = "mesh_grid_test",
+    srcs = ["mesh_grid_test.cc"],
+    deps = [
+        ":mesh_grid",
+        "@rules_requirements//cc:case",
+    ],
+)
+
 cc_test(
     name = "identify_blink_test",
     srcs = ["identify_blink_test.cc"],
     deps = [
         ":identify_blink",
+        ":mesh_grid",
         "@rules_requirements//cc:case",
     ],
 )
