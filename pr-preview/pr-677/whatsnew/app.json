@@ -3,6 +3,526 @@
  "product": "app",
  "releases": [
   {
+   "version": "1.17.1",
+   "tag": "app-v1.17.1",
+   "name": "app-v1.17.1",
+   "date": "2026-11-25T20:39:27Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.17.1",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "netstack: ACK + MAC retries and 6 Mb/s for data TX; RST on post-WS reclaim by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/625"
+         },
+         "c": [
+          "#625"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: adaptive data TX rate (Minstrel-like, legacy rates) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/626"
+         },
+         "c": [
+          "#626"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "netstack: keep the RX ring from overflowing (shed junk, side queue) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/627"
+         },
+         "c": [
+          "#627"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "web: effect editor indent/outdent, auto-indent, format shortcut, row:col, inline diagnostics (D-500, D-501) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/637"
+         },
+         "c": [
+          "#637"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Mesh topology: members gossip room pose + radio neighbours; get_mesh{topology} by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/639"
+         },
+         "c": [
+          "#639"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Mesh map: the mesh's fixtures in 3D with links and health (#/mesh/topology) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/640"
+         },
+         "c": [
+          "#640"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "release_clips: desk_review no longer sends the token on the artifact redirect by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/643"
+         },
+         "c": [
+          "#643"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fx: state initial values (constants) and void init() at load (D-500, D-506, D-507) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/636"
+         },
+         "c": [
+          "#636"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "release_clips: tap dot stays put, filled pulse, end-aware scroll easing, phone + dark by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/644"
+         },
+         "c": [
+          "#644"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "App: Devices drawer for meshes, P4 flashing on Android, Improv address reuse by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/642"
+         },
+         "c": [
+          "#642"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "mesh: build in place on the tick stack, NO_MEMORY, deck-B catch-up, shared state by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/641"
+         },
+         "c": [
+          "#641"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "release: publish the reviewed draft, with clip links that work before and after by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/660"
+         },
+         "c": [
+          "#660"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "Mesh feature clips for app-v1.17.1; clips at HD 30 fps (D-527, D-503) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/649"
+         },
+         "c": [
+          "#649"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/app-v1.17.0...app-v1.17.1"
+       },
+       "c": [
+        "app-v1.17.0...app-v1.17.1"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": [
+    "media/2b4042a11e5c7d537882.webm",
+    "media/36376b91d35aef8c31b8.jpg",
+    "media/37a55e4facd4b3b3d2b6.mp4",
+    "media/3ffbf95c27bea8cddf84.jpg",
+    "media/4ddce37330628c077400.mp4",
+    "media/4f417c364490fb8a975c.mp4",
+    "media/4f9dcd60b69300a10ca8.jpg",
+    "media/5c62d3c3dca6d777d9c6.mp4",
+    "media/6e6590fc45666db047ce.mp4",
+    "media/7f5570266e8b497af677.webm",
+    "media/885695c5959d2ecd4091.mp4",
+    "media/9073bc90e1558c06b602.jpg",
+    "media/90a9ff49553d78e49268.webm",
+    "media/a26090f7bf605fa3782d.jpg",
+    "media/ba2cd116e7c4af53de27.mp4",
+    "media/bad5b4f53a200a5b9a66.webm",
+    "media/bd24a4778a34f02d1bfe.webm",
+    "media/c3d4bcf719ff002cf6df.webm",
+    "media/cf4a2760906dcf2764a5.jpg",
+    "media/ec32456e77c771203ac1.webm",
+    "media/ef894e850e8f1dca783d.jpg"
+   ],
+   "clips": [
+    {
+     "id": "ai-model-setup",
+     "title": "Set up AI in one place",
+     "summary": "Model setup compares the AI options side by side: free OpenRouter models, Splanc AI credits, or your own key. Each lists its cost, quality, limits and privacy.",
+     "prs": [
+      644
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/4ddce37330628c077400.mp4",
+       "webm": "media/90a9ff49553d78e49268.webm",
+       "poster": "media/cf4a2760906dcf2764a5.jpg",
+       "width": 780,
+       "height": 1688
+      }
+     ]
+    },
+    {
+     "id": "ai-settings-tab",
+     "title": "AI settings have their own tab",
+     "summary": "Pick where effect generation runs (cloud, a local server, or in the browser) from Settings → AI, available from anywhere in the app.",
+     "prs": [
+      644
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/5c62d3c3dca6d777d9c6.mp4",
+       "webm": "media/7f5570266e8b497af677.webm",
+       "poster": "media/ef894e850e8f1dca783d.jpg",
+       "width": 780,
+       "height": 1688
+      }
+     ]
+    },
+    {
+     "id": "mesh-create",
+     "title": "Create a mesh of your fixtures",
+     "summary": "Link fixtures so they play together: pick them and name the mesh. The app sets each one up and shows them joining and syncing.",
+     "prs": [
+      649
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/ba2cd116e7c4af53de27.mp4",
+       "webm": "media/ec32456e77c771203ac1.webm",
+       "poster": "media/9073bc90e1558c06b602.jpg",
+       "width": 780,
+       "height": 1688
+      }
+     ]
+    },
+    {
+     "id": "mesh-devices",
+     "title": "Mesh fixtures grouped in Devices",
+     "summary": "The Devices list shows a mesh's fixtures together, under the one this phone is connected to. Open the group to see and connect to each member.",
+     "prs": [
+      642,
+      649
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/6e6590fc45666db047ce.mp4",
+       "webm": "media/bad5b4f53a200a5b9a66.webm",
+       "poster": "media/a26090f7bf605fa3782d.jpg",
+       "width": 780,
+       "height": 1688
+      }
+     ]
+    },
+    {
+     "id": "mesh-effects",
+     "title": "One effect, every fixture in the mesh",
+     "summary": "With Control the whole mesh on, an effect you start goes to every fixture in the mesh and they switch on the same frame. The Mesh section shows who got it.",
+     "prs": [
+      649
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/885695c5959d2ecd4091.mp4",
+       "webm": "media/bd24a4778a34f02d1bfe.webm",
+       "poster": "media/4f9dcd60b69300a10ca8.jpg",
+       "width": 780,
+       "height": 1688
+      }
+     ]
+    },
+    {
+     "id": "mesh-map",
+     "title": "See your mesh on a map",
+     "summary": "The mesh map shows each fixture where it sits in the room, the radio links between them and their health. Tap a fixture for its details.",
+     "prs": [
+      640,
+      649
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/37a55e4facd4b3b3d2b6.mp4",
+       "webm": "media/c3d4bcf719ff002cf6df.webm",
+       "poster": "media/3ffbf95c27bea8cddf84.jpg",
+       "width": 780,
+       "height": 1688
+      }
+     ]
+    },
+    {
+     "id": "mesh-members",
+     "title": "Admit, remove and block mesh fixtures",
+     "summary": "A fixture asking to join your mesh waits for you to admit it. Remove a fixture, or block a lost one for good: the mesh changes its keys.",
+     "prs": [
+      649
+     ],
+     "variants": [
+      {
+       "framing": "phone",
+       "mp4": "media/4f417c364490fb8a975c.mp4",
+       "webm": "media/2b4042a11e5c7d537882.webm",
+       "poster": "media/36376b91d35aef8c31b8.jpg",
+       "width": 780,
+       "height": 1688
+      }
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.17.0",
    "tag": "app-v1.17.0",
    "name": "app-v1.17.0",
