@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 3,
     "test_cases": 38,
-    "gaps": 45
+    "gaps": 44
   },
   "levels": [
     {
@@ -1658,12 +1658,6 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_netstack",
-      "message": "//pi/hitl/harness:fx_bench_netstack pi/hitl/harness/fx_bench_netstack error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
