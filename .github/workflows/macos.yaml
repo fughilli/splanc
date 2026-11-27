@@ -376,7 +376,11 @@ jobs:
           CAP_DISABLE_TELEMETRY: 'true'
         run: pnpm --config.verify-deps-before-run=false --dir web exec cap add ios
 
+      # Release builds carry universal links (share links open the app). The
+      # distribution profile has Associated Domains since D-547.
       - name: Apply native config (ios-config)
+        env:
+          SPLANC_IOS_ASSOCIATED_DOMAINS: '1'
         run: bash web/ios-config/apply.sh
 
       # Marketing version (CFBundleShortVersionString) from the release tag, e.g.
