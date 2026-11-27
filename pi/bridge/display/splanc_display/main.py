@@ -413,6 +413,7 @@ class App:
                 [t.target for t in u.tracks] + [UPDATE_CHECK],
                 lambda k: render_oled.update_row_count(u.track(k), now, st.clients),
             )
+            self.ui.set_update_progress([t.checked_at for t in u.tracks], u.busy)
 
     def _input(self, kind: str, key: str) -> None:
         """A button event (gpiozero's thread): queued for the UI thread, which wakes."""

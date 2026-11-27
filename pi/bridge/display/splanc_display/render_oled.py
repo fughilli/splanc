@@ -335,9 +335,24 @@ def _scrollbar(
     dr.rectangle([W - 3, ty, W - 1, ty + th - 1], fill=ON)
 
 
-def _list(img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, pos: float) -> None:
+# A row hint drawn as a spinner (Check now while a check runs), not as text.
+SPIN = "\0spin"
+SPIN_SIZE = 7
+SPIN_PERIOD = 0.9  # seconds per turn
+
+
+def _spinner(dr: ImageDraw.ImageDraw, x: int, y: int, t: float) -> None:
+    """A 7x7 three-quarter ring turning once per SPIN_PERIOD, top-left at (x, y)."""
+    a = (t % SPIN_PERIOD) / SPIN_PERIOD * 360.0
+    dr.arc([x, y, x + SPIN_SIZE - 1, y + SPIN_SIZE - 1], start=a, end=a + 270, fill=ON, width=1)
+
+
+def _list(
+    img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, pos: float, now: float = 0.0
+) -> None:
     """A selectable list under the header: rows of (glyph condition, name, hint),
-    scrolled by ``top`` rows, with the highlight bar at row ``pos``."""
+    scrolled by ``top`` rows, with the highlight bar at row ``pos``. A hint of
+    SPIN draws a turning spinner (phase from ``now``)."""
     small = F("small")
     n = len(rows)
     scrolls = n > LIST_ROWS
@@ -353,9 +368,13 @@ def _list(img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, pos
         cond, name, hint = rows[i]
         y = round((i - top) * ROW_H)
         _glyph(bd, M + 1, y + 3, cond)
-        hw = d.text_size(bd, hint, small)[0] if hint else 0
-        if hint:
-            d.text(bd, (right - 2 - hw, y + dy), hint, small, ON)
+        if hint == SPIN:
+            hw = SPIN_SIZE
+            _spinner(bd, right - 2 - hw, y + (ROW_H - SPIN_SIZE) // 2, now)
+        else:
+            hw = d.text_size(bd, hint, small)[0] if hint else 0
+            if hint:
+                d.text(bd, (right - 2 - hw, y + dy), hint, small, ON)
         name_w = right - (M + 11) - (hw + 6 if hint else 2)
         d.text(bd, (M + 11, y + dy), d.ellipsize(bd, name, small, name_w), small, ON)
     # The highlight: an inverted bar that glides between rows.
@@ -604,10 +623,9 @@ def _updates(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v
     _header(dr, "Updates", "…" if u.busy else (f"{n} new" if n else ""))
     rows = [(_track_cond(t), t.title, _track_hint(t)) for t in u.tracks]
     checked = u.checked_at
-    rows.append(
-        ("action", "Check now", fmt_age(None if checked is None else max(0, now - checked)))
-    )
-    _list(img, dr, rows, v.update_top, v.update_pos)
+    age = fmt_age(None if checked is None else max(0, now - checked))
+    rows.append(("action", "Check now", SPIN if v.update_checking else age))
+    _list(img, dr, rows, v.update_top, v.update_pos, now)
 
 
 UPDATE_LABELS = ("Now", "New", "Size", "State", "Notes", "Info")
@@ -715,7 +733,9 @@ def _scene_key(status: Status, scene: Scene, view: View, now: float, frames):
     elif scene.page == "client":
         extra = (view.client_scroll,)
     elif scene.page == "updates":
-        extra = (view.update_sel, view.update_pos, view.update_top)
+        extra = (view.update_sel, view.update_pos, view.update_top, view.update_checking)
+        if view.update_checking:  # the spinner turns: a new frame every 1/16 turn
+            extra += (int(now / SPIN_PERIOD * 16),)
     elif scene.page == "update":
         extra = (view.update_scroll,)
     else:
@@ -842,9 +862,19 @@ def _overlay(
         f = title
         text = d.ellipsize(dr, v.overlay_text, f, W - 8)
         tw, _ = d.text_size(dr, text, f)
-        top = min(H - 16, H - 4 - f.height) if d.is_bitmap(f) else H - 16
+        top = toast_top(f)
+        # One black row above the lit band, so it never runs into a highlighted
+        # list row (also lit) behind it.
+        dr.rectangle([0, top - 1, W - 1, top - 1], fill=OFF)
         dr.rectangle([0, top, W - 1, H - 1], fill=ON)
         d.text(dr, ((W - tw) // 2, top + 2), text, f, OFF)
+
+
+def toast_top(f=None) -> int:
+    """The first lit row of a toast in font ``f`` (default: the active title font);
+    the row above it is drawn black."""
+    f = f or F("title")
+    return min(H - 16, H - 4 - f.height) if d.is_bitmap(f) else H - 16
 
 
 def _confirm_update(dr: ImageDraw.ImageDraw, v: View, s: Optional[Status]) -> None:
