@@ -331,6 +331,20 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="november-2026">
 <h2>November 2026<a class="headerlink" href="#november-2026" title="Link to this heading">¶</a></h2>
+<section id="midi-14-bit-controls-colours-and-vectors-on-knobs">
+<h3>MIDI: 14-bit controls, colours and vectors on knobs<a class="headerlink" href="#midi-14-bit-controls-colours-and-vectors-on-knobs" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>14-bit knobs and NRPN are detected automatically</strong> (#665). A CC pair
+(CC n + CC n+32) or an NRPN parameter gets 16,384 steps instead of 128; plain
+7-bit controls work as before, and a knob you already learned keeps its binding.</p></li>
+<li><p><strong>Colour uniforms are MIDI-mappable</strong> (#666): one knob on the hue (saturation
+and value held), three knobs as hue/saturation/value, or red/green/blue. The
+Uniforms pane’s MIDI rows bind a knob to a colour’s hue; ✨ Remap (and the AI
+in chat and Acid Mode) offers all three options and also maps vector and matrix
+uniforms one knob per component. The app converts HSV to RGB, so no firmware
+update is needed.</p></li>
+</ul>
+</section>
 <section id="effect-language-state-initial-values-and-init">
 <h3>Effect language: state initial values and <code class="docutils literal notranslate"><span class="pre">init()</span></code><a class="headerlink" href="#effect-language-state-initial-values-and-init" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -1101,6 +1115,7 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#november-2026">November 2026</a><ul>
+<li><a class="reference internal" href="#midi-14-bit-controls-colours-and-vectors-on-knobs">MIDI: 14-bit controls, colours and vectors on knobs</a></li>
 <li><a class="reference internal" href="#effect-language-state-initial-values-and-init">Effect language: state initial values and <code class="docutils literal notranslate"><span class="pre">init()</span></code></a></li>
 <li><a class="reference internal" href="#effects-stored-on-the-device">Effects stored on the device</a></li>
 </ul>

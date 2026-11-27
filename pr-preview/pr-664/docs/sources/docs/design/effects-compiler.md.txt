@@ -280,6 +280,14 @@ Notes:
   the fields (`name, type, ui_kind, min, max, step, default|options`). The
   compiler is the only thing that produces it; the editor and preview never
   synthesize one.
+- **Slider `step` is the uniform's native precision** (D-541). Values ride the
+  wire and flash as f32, so a `float` slider is continuous (`step: 0`, which the
+  editor renders as `step="any"` and the MIDI router and firmware keypoint blend
+  treat as "no snap"); an `int` steps by 1 and a `fixed`/`fixed16`/`fixed8` by
+  its LSB. An explicit grid is `uniform float n : 0..8 step 0.5 = 2.0;` (`step`
+  follows the range, before the optional unit string). Earlier compilers emitted
+  `(hi-lo)/100` for every range; old firmware and apps read `step: 0` as
+  continuous, so no format bump.
 - **Agent-facing manifest fields.** Each uniform's object also carries an explicit
   `min`/`max` (a slider's range; `0..1` for a toggle or colour; `0..n-1` for a
   dropdown) so an agent can clamp without knowing the UI vocabulary, an optional

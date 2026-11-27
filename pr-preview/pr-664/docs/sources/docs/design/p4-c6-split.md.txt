@@ -104,6 +104,7 @@ running") true by construction.
 | Live mailbox (`set_uniforms` `commit:false`), `ControlAck` | forwards | **owns** |
 | OSC udp/9000 | receives and forwards datagrams | parses into the mailbox, applies at frame boundaries |
 | Time sync (`time_sync_ping`), effect time base | forwards (answers from its own clock only while the P4 is down) | **owns** (the renderer's clock) |
+| Wall clock (`set_wall_clock` / `get_clock`, the zone, the soft-reset carry-over; `wall-clock.md`) | forwards; later a time source (SNTP, forwarded as `pushed_by = FRONTEND`) | **owns** |
 | IMU / sensor drivers | none (the C6 IMU pins are SDIO pins, §4.4) | **owns** |
 
 ### 2.2 Where the split falls in the code
@@ -518,7 +519,7 @@ with its safe pins. **Level shifting** to 5 V (for example 2 × 74HCT245) is a b
 | off | size | field | |
 | --- | --- | --- | --- |
 | 0 | 1 | `ver` | link protocol version (major) |
-| 1 | 1 | `type` | `PLAYER` (ClientMessage bytes), `REPLY` / `PUSH` (ServerMessage bytes), `LINK` (link control), `BULK` (chunked stream), `LOG` (P4 console lines) |
+| 1 | 1 | `type` | `PLAYER` (ClientMessage bytes), `REPLY` / `PUSH` (ServerMessage bytes), `LINK` (link control), `BULK` (chunked stream), `LOG` (P4 console lines), `OSC`, `MESH` (a ClientMessage the mesh relayed to this fixture, §4.3.2) |
 | 2 | 1 | `lane` | 0 = live, 1 = bulk |
 | 3 | 1 | `flags` | `MORE` (fragment follows), `ACK_REQ` |
 | 4 | 2 | `session` | which C6 client session (wss socket or GATT); replies are routed by it |
@@ -576,7 +577,8 @@ buffer bugs. It costs about 1 µs per KB on either core [E].
   MTU, the buffer counts, the build ids, and the P4's player descriptor (features, `board`,
   `fxb_format`). That way the C6 can answer `hello` from cache for a few hundred ms during a P4
   restart.
-- `HEARTBEAT`.
+- `HEARTBEAT`. The P4's carries the player status a mesh member broadcasts (fps, brightness,
+  firmware hash) and its kiosk flag (16 B, `lk_status`); older images send it empty.
 - `RESET` (resync).
 - `NAME` (device name push, C6 to P4).
 - `STATS` (counts and errors for the status line).
@@ -797,6 +799,39 @@ the SDIO link down and reopens it (`relinks=`); every third failed attempt reset
 P4 reply doesn't hold up the other session), and pub/sub pushes (every subscribed session
 instead of the one that spoke last). Every client is one source to the player, for the kiosk
 unlock too (decided 2026-11-08).
+
+### 4.3.2 The front end as a mesh member
+
+The C6 front end runs the mesh layer (`mesh_ffi`, docs/design/mesh.md §8.2): the C6 is the mesh
+node, the P4 the endpoint. It is off until the fixture joins a mesh, and off costs no RAM, as
+on the players.
+
+- **On the C6** (`relay_main.cpp`): the membership (`/lfs/mesh.bin`) and the frame counter's
+  mark (`/lfs/mesh_ctr.bin`) are kept on its littlefs with the player's power-loss-safe writer;
+  `get_mesh` and `mesh_admin` are answered there (provisioning, unlock, admit, leave); flash
+  auto-suspend is on, so a littlefs erase never stalls the SDIO slave. The mesh's own lines
+  (its log, `MESH INFO` every 10 s) go to the P4's console as `[c6] [mesh] ...`, the C6's
+  console not being wired on these boards. While the P4's kiosk is on (its `HEARTBEAT` flag) the
+  front end refuses `get_mesh` / `mesh_admin`, as a locked C6 player's kiosk gate does (no
+  per-session kiosk unlock for them yet). With several wss sessions, the one that last used a
+  mesh arm owns the mesh's wss connection; another taking it over ends the owner's unlock.
+- **Control relayed to this fixture** goes to the P4 as a `MESH` frame, and the P4 answers a
+  5-byte result (`lk_mesh_result`: status, code) on the same session. The P4 dispatches it as a
+  C6 player dispatches a member's relayed control (`lm_mesh_member_dispatch`: no kiosk gate, no
+  push target, no sharded upload). P4 down or silent: the control fails with `0xfff0` (down),
+  `0xfff1` (not sent) or `0xfff2` (no answer), and the gateway lists it.
+- **Status.** The P4's `HEARTBEAT` carries fps, brightness and its firmware hash; the front end
+  broadcasts them for the fixture (0s while the P4 is down).
+- **Welcome.** The front end's `HELLO` ends with a feature byte (`LK_FE_MESH`); the P4 then adds
+  `mesh` to its Welcome, so the app shows the mesh section.
+- **RAM.** The mesh's heap block (the stack and its 14 KB tick stack) comes out of the front end's
+  heap, ~134.6 KB at its all-time minimum with 2 sessions; turning it on also takes a 26 KB
+  create-task stack for a moment.
+
+Not yet (the next step): mesh time on the P4's render clock (a C6↔P4 clock offset, so `apply_at`
+and scenes land on the same frame on every member; the front end keeps the mapped time base
+for itself meanwhile), effect sharing (M6: a shared effect loads on arrival, through the relayed
+control), and the gateway's `mesh_send` (the P4 still answers it with `error{unsupported}`).
 
 ### 4.4 Pin map and conflicts
 
