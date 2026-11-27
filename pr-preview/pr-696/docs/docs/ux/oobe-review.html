@@ -1,0 +1,586 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Out-of-box experience review (D-219) - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../release-clips.html">Feature-preview clips</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/effect-store.html">On-device effect store</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/strided-capture.html">Strided (diffuse) capture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/ux/oobe-review.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/ux/oobe-review.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="out-of-box-experience-review-d-219">
+<h1>Out-of-box experience review (D-219)<a class="headerlink" href="#out-of-box-experience-review-d-219" title="Link to this heading">¶</a></h1>
+<p>A tester took a Splanc lamp home and set it up with the app. This review covers
+what they ran into, the root causes, and what a crisp first run looks like, from
+opening the app to the first effect playing on the lights. The fixes in this PR
+cover the part from “connected” to “playing and tuning”. The connect flow itself
+belongs to two other PRs: #577 (one Connect button, the picker, saved Wi-Fi,
+auto-discovery) and #564 (wrong Wi-Fi password). Requests for those PRs are
+listed at the end.</p>
+<section id="what-the-tester-hit">
+<h2>What the tester hit<a class="headerlink" href="#what-the-tester-hit" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p><strong>“Do I need to flash again when I get home, or should it just connect?”</strong>
+The lamp was set up on one Wi-Fi network and then taken to another. It didn’t
+show up as an available device, and nothing in the app explained why or what
+to do. The answer is “set it up again over Bluetooth, don’t flash”, but the
+app never says so.</p></li>
+<li><p><strong>“I find the app pretty unintuitive.”</strong> What they wanted, in their own words:
+see my device → a menu of effects → apply an effect and tune it. “That flow
+needs to be super clear. And then getting into adjustments to the effect
+nested.”</p></li>
+<li><p><strong>“Where is the way to get to the effects menu from here?”</strong> This was asked
+while looking at the device drawer, which had just connected to the lamp.
+The drawer has no way forward.</p></li>
+<li><p><strong>“A lot of the parts of the app are bleeding off to the side / not polished.”</strong></p></li>
+<li><p>Their screenshot shows a <strong>“Play with the Halloween lights”</strong> button in the
+device drawer. That button was retired on 4 Nov (#437, app-v1.13.1). The
+tester was running a build more than two weeks old.</p></li>
+<li><p>Not a complaint: “Pretty cool having it just buzzing away.” Once an effect was
+running, the product worked.</p></li>
+</ol>
+</section>
+<section id="root-causes">
+<h2>Root causes<a class="headerlink" href="#root-causes" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>Area</p></th>
+<th class="head"><p>Root cause</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1</p></td>
+<td><p>Error state</p></td>
+<td><p>A known fixture that can’t be reached shows only as offline. No copy separates “different Wi-Fi” from “unplugged”, and none says a network move needs Bluetooth setup, not a reflash.</p></td>
+</tr>
+<tr class="row-odd"><td><p>1, 2</p></td>
+<td><p>Flow</p></td>
+<td><p><strong>Every launch opened “Set up your device”.</strong> The installed app starts at a URL with no <code class="docutils literal notranslate"><span class="pre">#</span></code> route, and the router turned an empty route into <code class="docutils literal notranslate"><span class="pre">/onboard</span></code>. The “first run → setup, otherwise home” fallback was unreachable. A returning user with a known, working lamp saw the setup screen and a row of unlabeled icons.</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>Flow</p></td>
+<td><p>After setup, Continue landed on <strong>Maps</strong>, the mapping library. Mapping is an advanced step that most fixtures never need. The effects were one tab over, and nothing pointed there.</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>Flow</p></td>
+<td><p>Tapping an effect opened the <strong>full code editor</strong>: code, a pane strip, disassembly, MIDI, AI chat. “Apply and tune” was buried inside an authoring tool.</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>Copy</p></td>
+<td><p>The effects list led with seeded developer tags (<code class="docutils literal notranslate"><span class="pre">#demo</span> <span class="pre">#spatial</span> <span class="pre">#starter</span> <span class="pre">#test</span> <span class="pre">#topology</span> <span class="pre">#volumetric</span></code>). Every row showed the same sparkle icon and a seed date (“Nov 20”) instead of what the effect looks like. Starters, map showcases and the user’s own drafts were mixed in one list.</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>Copy</p></td>
+<td><p>Tuning controls showed raw shader names (<code class="docutils literal notranslate"><span class="pre">drift</span></code>, <code class="docutils literal notranslate"><span class="pre">base</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>3</p></td>
+<td><p>Flow</p></td>
+<td><p>The device drawer is a dead end: connecting there doesn’t lead anywhere. (Owned by #577.)</p></td>
+</tr>
+<tr class="row-odd"><td><p>4</p></td>
+<td><p>Layout</p></td>
+<td><p>On a phone the code editor’s pane strip overflows. Tabs run under the move/hide controls and off the right edge, and the toolbar buttons sit 0–5 px apart. A first-time user only saw this because a tap on an effect opened the editor.</p></td>
+</tr>
+<tr class="row-even"><td><p>5</p></td>
+<td><p>Updates</p></td>
+<td><p>Testers can sit on old builds. Nothing tells them a newer build exists. #506 (“What’s new?”) only speaks up after an update has happened.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="what-crisp-looks-like">
+<h2>What crisp looks like<a class="headerlink" href="#what-crisp-looks-like" title="Link to this heading">¶</a></h2>
+<p>One straight line, one primary action per screen:</p>
+<ol class="arabic simple">
+<li><p><strong>Welcome</strong>: “Set up your device”. Fixtures already on the network are listed,
+one tap to connect; otherwise <strong>Connect a fixture</strong>. (#577)</p></li>
+<li><p><strong>Connected</strong>: <strong>Continue</strong> goes to <strong>Effects</strong>, the app’s home.</p></li>
+<li><p><strong>Effects (home)</strong>: a card on top says what’s connected (“Living Room — Tap an
+effect to play it on the lights”). Below it are <strong>Starters</strong> in a curated
+order, each with a one-line description, then <strong>Your effects</strong>, then the
+sample-map <strong>Examples</strong>. No developer tags.</p></li>
+<li><p><strong>Tap an effect</strong>: it plays on the fixture right away and a sheet opens:
+“Playing on Living Room”, then <strong>Adjust</strong>, with the effect’s sliders and
+colours under readable names. The editor is one quiet step further in:
+<strong>Open in editor</strong> (change the code, preview on a map, ask AI to remix).</p></li>
+<li><p><strong>Something’s wrong</strong>: the same top card turns red and says what to do:
+“Can’t reach Tegani. Check it’s plugged in and your phone is on the same
+Wi-Fi. Moved it to a different Wi-Fi? Set it up again over Bluetooth. No
+need to flash it again.” The card’s one button is <strong>Open devices</strong>.</p></li>
+</ol>
+<p>The tab bar is now Effects · Maps · Device, so the home tab comes first.</p>
+</section>
+<section id="fixed-in-this-pr">
+<h2>Fixed in this PR<a class="headerlink" href="#fixed-in-this-pr" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Opening the app goes home, not to setup.</strong> An empty route now reaches the
+router’s fallback: setup on a first run (no known fixture), otherwise
+Effects. (<code class="docutils literal notranslate"><span class="pre">app/router.ts</span></code>, with a router test.)</p></li>
+<li><p><strong>Home is Effects.</strong> A returning user and setup’s Continue both land there,
+and Effects is the first tab. (<code class="docutils literal notranslate"><span class="pre">app/main.ts</span></code> fallback, <code class="docutils literal notranslate"><span class="pre">shell.ts</span></code>, one line
+in <code class="docutils literal notranslate"><span class="pre">onboarding.ts</span></code>.)</p></li>
+<li><p><strong>Fixture card</strong> at the top of Effects (<code class="docutils literal notranslate"><span class="pre">effects/quickPlay.ts</span></code>
+<code class="docutils literal notranslate"><span class="pre">fixtureCard</span></code>). It covers four states: none known (Connect a fixture),
+connecting, unreachable (with the Wi-Fi-move copy), and connected (what’s
+playing). It asks the device what it’s running when the tab opens.</p></li>
+<li><p><strong>Tap = play + tune</strong> (<code class="docutils literal notranslate"><span class="pre">screens/effectTune.ts</span></code>). The effect compiles and
+uploads with the editor’s own seams (<code class="docutils literal notranslate"><span class="pre">withDeviceLock</span></code>, <code class="docutils literal notranslate"><span class="pre">submitEffect</span></code>,
+<code class="docutils literal notranslate"><span class="pre">deviceEffects.markSent</span></code>). Controls use the editor’s <code class="docutils literal notranslate"><span class="pre">UniformPanel</span></code> with
+readable labels and live sends through <code class="docutils literal notranslate"><span class="pre">client.live</span></code>. With nothing connected,
+the sheet says so and offers Connect, and it starts the effect once a fixture
+connects. The row ⋯ menu still has Edit / Open in editor, Rename, Tags, Move,
+Duplicate and Delete.</p></li>
+<li><p><strong>Library sections</strong>: Starters (curated order, the colour test last),
+Examples for the sample maps, and Your effects (which come first once you
+have some). Built-ins show a description instead of a date. Tag chips show
+only the user’s own tags. The playing effect gets a green “Playing” mark.
+Names wrap to two lines instead of clipping to “Agentic c…” on desktop. The
+FUG-110 “On <device>” list is gone from this view, because the card and the
+Playing mark already show what’s on the lights. The last row no longer sits
+under the floating + button.</p></li>
+<li><p><strong>User guide</strong> copy and capture steps updated for the new tap behaviour
+(regenerated <code class="docutils literal notranslate"><span class="pre">docs/user-guide*</span></code>).</p></li>
+<li><p><strong>Layout guard</strong> scenarios for the whole path (<code class="docutils literal notranslate"><span class="pre">tools/ui_layout/oobe_scenarios.py</span></code>)
+at phone and desktop, light and dark, plus a <code class="docutils literal notranslate"><span class="pre">fxstub</span></code> demo seam so the tune
+sheet renders without the compiler wasm.</p></li>
+</ul>
+</section>
+<section id="not-in-this-pr">
+<h2>Not in this PR<a class="headerlink" href="#not-in-this-pr" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>The code editor’s phone layout.</strong> The pane strip overflows and the toolbar
+is crammed (the layout guard reports 30+ issues at 390 px). New users no
+longer land there, but it needs its own pass. #586 is editing
+<code class="docutils literal notranslate"><span class="pre">effectEditor.ts</span></code> right now, so the pass should come after #586 merges.</p></li>
+<li><p><strong>Effect thumbnails.</strong> Live previews are behind an experimental flag (slow on
+phones). Pre-rendered stills for the built-ins would replace the sparkle icon.</p></li>
+<li><p><strong>Saving tuned values.</strong> The tune sheet adjusts the effect live, the same way
+the editor’s sliders do. A “keep these settings” step (keypoints) would be a
+follow-up.</p></li>
+</ul>
+</section>
+<section id="requests-for-other-open-prs">
+<h2>Requests for other open PRs<a class="headerlink" href="#requests-for-other-open-prs" title="Link to this heading">¶</a></h2>
+<p><strong>#577 (connect flow)</strong> owns the welcome screen, the device drawer and the
+connect picker:</p>
+<ol class="arabic simple">
+<li><p><strong>Drawer: a way forward.</strong> When the active fixture is connected, put one
+primary button under its row: <strong>Choose an effect</strong>. It closes the drawer and
+opens <code class="docutils literal notranslate"><span class="pre">#/effects</span></code>. “Connect a fixture” and “Flash a new device” stay quiet,
+so the drawer has one primary action.</p></li>
+<li><p><strong>Drawer: an unreachable known fixture says what to do.</strong> In place of a bare
+offline dot, the row reads “Can’t reach it. Moved to a different Wi-Fi? Set
+it up again over Bluetooth. No need to flash it again.” It gets a <strong>Set up
+Wi-Fi again</strong> action that opens the picker on “Set up over Bluetooth”. The
+copy matches the Effects tab’s card (<code class="docutils literal notranslate"><span class="pre">fixtureCard</span></code> in
+<code class="docutils literal notranslate"><span class="pre">web/src/effects/quickPlay.ts</span></code>).</p></li>
+<li><p><strong>Welcome: Continue says where it goes.</strong> Once connected, the CTA reads
+<strong>Choose an effect</strong>. It lands on <code class="docutils literal notranslate"><span class="pre">#/effects</span></code> (this PR changes the <code class="docutils literal notranslate"><span class="pre">done</span></code>
+route; keep that line when rebasing). Update the onboarding doc comment,
+which still says “lands on the Maps tab”.</p></li>
+<li><p><strong>Drawer layout.</strong> On main, the layout guard fails the device drawer at both
+widths: the connected row’s ⋯ overlaps the sheet’s ✕, Disconnect and
+Options, and Disconnect sits 4 px from Options. Run
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//tools/ui_layout:ui_layout_check</span></code> with a drawer scenario
+against #577’s drawer (<code class="docutils literal notranslate"><span class="pre">?demo=device,discovered</span></code>, click
+<code class="docutils literal notranslate"><span class="pre">.tab[data-tab=device]</span></code>, root <code class="docutils literal notranslate"><span class="pre">.k-sheet</span></code>) before merging.</p></li>
+<li><p><strong>Drawer rows on a phone:</strong> the subtitle “on this network · 192.168.1.…”
+truncates next to Connect + ⋯. Drop the IP from the subtitle (it’s in the
+⋯ details) so the row never clips.</p></li>
+</ol>
+<p><strong>#583 / #587 / #579 (sign-in, Apple IAP, privacy notice):</strong> none of them
+should prompt on the first run. Sign-in and the privacy notice appear inside
+the credits flow and Settings, never before the first effect plays.</p>
+<p><strong>#506 (“What’s new?”)</strong> and the <strong>release preview-clips</strong> workstream: the
+“tap an effect, it plays, tune it” path is the strongest first clip. #506 only
+appears after an update. Testers on old builds need an update prompt (owner
+decision below).</p>
+<p><strong>#586 (device metrics):</strong> it edits <code class="docutils literal notranslate"><span class="pre">effectEditor.ts</span></code>, so the editor’s
+phone-layout pass waits for it to merge.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Out-of-box experience review (D-219)</a><ul>
+<li><a class="reference internal" href="#what-the-tester-hit">What the tester hit</a></li>
+<li><a class="reference internal" href="#root-causes">Root causes</a></li>
+<li><a class="reference internal" href="#what-crisp-looks-like">What crisp looks like</a></li>
+<li><a class="reference internal" href="#fixed-in-this-pr">Fixed in this PR</a></li>
+<li><a class="reference internal" href="#not-in-this-pr">Not in this PR</a></li>
+<li><a class="reference internal" href="#requests-for-other-open-prs">Requests for other open PRs</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
