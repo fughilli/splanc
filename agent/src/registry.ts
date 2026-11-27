@@ -465,7 +465,10 @@ export class Registry {
       manifest,
       target: knownTarget(host, { ...(pin ? { pin } : {}), manifest }),
       sources: [...new Set([...(prev?.sources ?? []), ...(prevHost && !isMacId(prevHost.id) ? prevHost.sources : []), source])],
-      lastSeen: Date.now(),
+      // Taken from the cache, nothing answered: it was last seen when the cache says
+      // (the bridge's screens would otherwise call every remembered player "ok" for
+      // a while after each restart).
+      lastSeen: checked === "cached" ? prev?.lastSeen || rememberedSeen(rem ?? this.config.players[id]) : Date.now(),
       checked,
       ...(trust ? { trust } : {}),
     };
@@ -686,6 +689,12 @@ export class Registry {
     this.persist();
     return had;
   }
+}
+
+/** When a remembered player was last seen (ms since the epoch; 0 = unknown). */
+function rememberedSeen(rem: RememberedPlayer | undefined): number {
+  const t = rem?.lastSeen ? Date.parse(rem.lastSeen) : NaN;
+  return Number.isFinite(t) ? t : 0;
 }
 
 export function splitHost(h: string): [string, number] {

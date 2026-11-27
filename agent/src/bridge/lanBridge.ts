@@ -337,7 +337,11 @@ export class LanBridge {
     const out: BridgePlayer = {
       name: p.name,
       host: p.host,
-      ok: hub.isConnected(p.id) || (p.lastSeen > 0 && nowMs - p.lastSeen < 15 * 60_000),
+      // Connected, or heard from lately and not since found unreachable (a failed
+      // connect/heartbeat marks it so: the screens list it as down, with the reason).
+      ok:
+        hub.isConnected(p.id) ||
+        (p.checked !== "unreachable" && p.lastSeen > 0 && nowMs - p.lastSeen < 15 * 60_000),
     };
     if (!p.id.startsWith("host:")) out.id = p.id;
     if (p.fw) out.fw = p.fw;
