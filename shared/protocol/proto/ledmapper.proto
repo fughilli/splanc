@@ -1423,6 +1423,8 @@ enum MeshSendError {
   // This connection holds no gateway session (send get_mesh first).
   MESH_SEND_LOCKED = 5;
   MESH_SEND_BAD_REQUEST = 6;
+  // In the mesh, but no other member is online to send it to (the gateway is alone).
+  MESH_SEND_NO_MEMBERS = 7;
 }
 
 // The outcome of one mesh_send.
