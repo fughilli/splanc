@@ -233,9 +233,11 @@
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release-clips.html">Feature-preview clips</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
@@ -448,9 +450,11 @@ the Pi’s system partition, which Windows can’t read.</p>
 <section id="boot-the-pi">
 <h2>3. Boot the Pi<a class="headerlink" href="#boot-the-pi" title="Link to this heading">¶</a></h2>
 <p>With the Pi unplugged, fit the OLED HAT onto its header if you have one, and plug in the HDMI
-screen if you use one. Insert the card and connect power. In about a minute the screens show
-<strong>Ready to pair</strong> with a code like <code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code>. (The first boot takes a little longer: the Pi
-grows its file system to fill the card.)</p>
+screen if you use one. Insert the card and connect power. Within a few seconds the screens show
+the Splanc logo with a moving “loading” row of lights and what the Pi is doing (Starting…,
+Connecting…, Starting bridge…). In about a minute they show <strong>Ready to pair</strong> with a code like
+<code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code>. (The first boot takes a little longer: the Pi grows its file system to fill the
+card.)</p>
 <p>The bridge starts by itself every time the Pi powers on. It finds your fixtures on the network by
 itself.</p>
 </section>
@@ -479,8 +483,9 @@ last used;</p></li>
 <li><p><strong>Network</strong>: the Pi’s address, the relay and the bridge ID.</p></li>
 </ul>
 <p><img alt="HDMI after pairing" src="docs/img/pi-bridge/hdmi-paired.png" /></p>
-<p><strong>OLED HAT</strong>: when the screen service starts it plays a short Splanc logo animation (about two
-seconds, while the bridge itself starts up), then slides to five pages, which rotate every 8
+<p><strong>OLED HAT</strong>: from power-on it shows the Splanc logo animation and the loading progress
+(on the SD image; on Raspberry Pi OS a two-second logo when the screen service starts), then
+slides to five pages, which rotate every 8
 seconds:</p>
 <ol class="arabic simple">
 <li><p><strong>Home</strong>: the state, the pairing code in large letters, the short pairing link, the time left
@@ -649,8 +654,9 @@ pairings are kept. The previous version stays on the card too.</p></li>
 <li><p>A new system (<strong>System</strong>) restarts the Pi (about a minute without the bridge; your fixtures
 keep playing). If an app is connected through the bridge, the Pi waits until it disconnects;
 press again on <strong>Restart now</strong> to restart anyway. Your pairings and Wi-Fi are kept. If the new
-system doesn’t come up healthy within five minutes, the Pi goes back to the previous one by
-itself. Only updates signed by Splanc are accepted.</p></li>
+system doesn’t start, or doesn’t come up healthy within five minutes, the Pi goes back to the
+previous one by itself, and the screens say so as it starts again (<strong>Recovering…</strong>, then
+<strong>Rolled back to</strong> and the version you’re on). Only updates signed by Splanc are accepted.</p></li>
 </ul>
 </li>
 <li><p><strong>Without the OLED HAT</strong>, install over SSH: <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">splanc-system-update</span> <span class="pre">install</span></code> (system) or

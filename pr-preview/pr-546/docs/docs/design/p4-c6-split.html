@@ -233,9 +233,11 @@
 <li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../release-clips.html">Feature-preview clips</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
@@ -479,7 +481,11 @@ running”) true by construction.</p>
 <td><p>forwards (answers from its own clock only while the P4 is down)</p></td>
 <td><p><strong>owns</strong> (the renderer’s clock)</p></td>
 </tr>
-<tr class="row-even"><td><p>IMU / sensor drivers</p></td>
+<tr class="row-even"><td><p>Wall clock (<code class="docutils literal notranslate"><span class="pre">set_wall_clock</span></code> / <code class="docutils literal notranslate"><span class="pre">get_clock</span></code>, the zone, the soft-reset carry-over; <code class="docutils literal notranslate"><span class="pre">wall-clock.md</span></code>)</p></td>
+<td><p>forwards; later a time source (SNTP, forwarded as <code class="docutils literal notranslate"><span class="pre">pushed_by</span> <span class="pre">=</span> <span class="pre">FRONTEND</span></code>)</p></td>
+<td><p><strong>owns</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>IMU / sensor drivers</p></td>
 <td><p>none (the C6 IMU pins are SDIO pins, §4.4)</p></td>
 <td><p><strong>owns</strong></p></td>
 </tr>

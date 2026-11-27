@@ -233,9 +233,11 @@
 <li class="toctree-l1"><a class="reference internal" href="../docs/pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/home-assistant.html">Use Splanc lamps in Home Assistant</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/release-clips.html">Feature-preview clips</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
@@ -528,6 +530,11 @@ does not create the tag), write the notes and <strong>Save draft</strong>. Then 
 Release workflow finds the draft, keeps its notes, mirrors them, attaches the
 webapp tarball and publishes it. Without a draft, the workflow creates the
 release with generated notes, and you edit them afterwards (step 3 above).</p>
+<p><strong>Feature previews.</strong> Each app release also records short demo clips of its
+new features (from <code class="docutils literal notranslate"><span class="pre">&lt;id&gt;.clip.json</span></code> scripts next to each feature) and shows
+them above the notes, playing inline. The release waits for the owner to
+approve the notes and clips before it deploys. See
+<a class="reference internal" href="../docs/release-clips.html"><span class="std std-doc">docs/release-clips.md</span></a>.</p>
 <p>What survives: headings, paragraphs, lists, links (http, https and mailto),
 bold, italic, code, quotes, tables, <code class="docutils literal notranslate"><span class="pre">&lt;details&gt;</span></code>, images and videos. Scripts,
 styles, iframes, forms and inline event handlers are removed. Media are always
