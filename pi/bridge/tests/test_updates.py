@@ -143,6 +143,34 @@ def test_check_now_asks_both_updaters(u, d, clock):
     assert u.view().overlay_text == ui.DONE_TEXT["update_check"]
 
 
+def test_row_added_above_keeps_a_short_list_at_its_top(d, clock):
+    # The bridge's display: System's status file shows up after the page is on
+    # screen (only Agent + Check now before), with "Check now" selected. The
+    # selection stays on "Check now", and the list, which fits, still starts at
+    # System instead of scrolling it off the top.
+    m = ui.OledUI(d, clock, pages=ui.UPDATES_PAGES)
+    m.set_updates(["agent", "check"], rows_of=lambda k: 6)
+    to_updates(m, clock)
+    m.press("down")
+    assert m.view().update_sel == 1
+    m.set_updates(["system", "agent", "check"], rows_of=lambda k: 6)
+    clock.advance(1)
+    m.tick()
+    v = m.view()
+    assert v.update_sel == 2
+    assert v.update_top == 0
+
+
+def test_list_offset_stays_within_the_list():
+    top_for = ui.OledUI._top_for
+    n = ui.LIST_ROWS
+    assert top_for(2, 1, 3) == 0  # fits on screen: always from the first row
+    assert top_for(5, 3, 10) == 3  # long list: the selection stays where it was
+    assert top_for(9, 0, 10) == 10 - n  # scrolls just enough to show the last row
+    assert top_for(1, 5, 10) == 1  # and back up to a selection above the top
+    assert top_for(0, 0, 0) == 0
+
+
 def test_install_needs_a_yes(u, d, clock):
     to_updates(u, clock)
     u.press("press")  # open System
