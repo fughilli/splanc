@@ -15,11 +15,14 @@
 // The C6 forwards the OTA arms here (relay_main.cpp, the front end). The decisions (offer
 // checks, session bookkeeping, key epochs, the health verdict, the wire) are the
 // host-tested Rust core (firmware/ota) the C6 loader uses; this file is the glue.
+#include <esp_attr.h>
+#include "miniz.h"  // the ROM's tinfl (esp_rom)
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_image_format.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_timer.h>
 #include <esp_system.h>
 #include <hal/rwdt_ll.h>
 #include <mbedtls/ecdsa.h>
@@ -271,7 +274,7 @@ int reply_status(uint8_t state, uint8_t *out, size_t cap) {
   s.app_fw_version = LM_VERSION;
   s.loader_reason = "";
   s.last_result = g_last;
-  s.max_chunk = OTA_MAX_CHUNK;
+  s.max_chunk = OTA_MAX_CHUNK;  // 4 KB: see MAX_CHUNK_P4 (firmware/ota/src/session.rs)
   s.slot_size = g_next ? g_next->size : 0;
   s.key_epoch = g_keys.epoch;
   s.revoked_keys = g_keys.revoked;
@@ -316,9 +319,64 @@ int on_begin(const uint8_t *frame, const OtaClientMsg &m, uint8_t *out, size_t c
   return reply_status(OTA_STATE_RECEIVING, out, cap);
 }
 
+// Compressed chunks ("ota_deflate", ota_chunk.inflated_len): raw deflate of up to 16 KB
+// of the image, inflated by the ROM's tinfl into a PSRAM buffer, then planned and written
+// exactly like a plain chunk. The decompressor (~11 KB: its Huffman tables, read at
+// random per symbol) is static in INTERNAL RAM: in PSRAM it made a compressed update
+// slower than a plain one (73 s vs 47 s). Not on this task's stack, where
+// tinfl_decompress_mem_to_mem would put it. The whole slice fits the output buffer, so
+// no 32 KB dictionary.
+static tinfl_decompressor g_tinfl;
+// Where a transfer's time goes on this side (logged at ota_finish): chunks, the image
+// bytes they carried, and the µs spent inflating, erasing, writing and in everything
+// else between one chunk's arrival and the next (the link, the front end, the network).
+struct ChunkTimes {
+  uint32_t chunks, bytes;
+  int64_t inflate_us, erase_us, write_us, first_us, last_us;
+};
+static ChunkTimes g_ct = {};
+
+// esp_flash_write takes a source outside internal RAM (the link's message buffer and
+// g_inflated are PSRAM) through a 32-byte stack buffer: a bus acquire + cache disable /
+// enable per 32 bytes, 128 per 4 KB. It was 37% of a P4 update (24.6 s of 66.7 s for
+// 3 MB). From internal RAM it writes the 4 KB in one go: so copy each 4 KB here first.
+static uint8_t g_flash_bounce[4096] __attribute__((aligned(4)));
+
+esp_err_t write_via_internal(uint32_t at, const uint8_t *src, size_t len) {
+  for (size_t o = 0; o < len; o += sizeof g_flash_bounce) {
+    const size_t n = len - o < sizeof g_flash_bounce ? len - o : sizeof g_flash_bounce;
+    memcpy(g_flash_bounce, src + o, n);
+    if (const esp_err_t e = esp_partition_write(g_next, at + o, g_flash_bounce, n); e != ESP_OK) return e;
+  }
+  return ESP_OK;
+}
+static EXT_RAM_BSS_ATTR uint8_t g_inflated[16384];
+
+// Inflates m's data into g_inflated: its length, or 0 if it isn't exactly inflated_len
+// bytes of valid raw deflate.
+size_t inflate_chunk(const uint8_t *frame, const OtaClientMsg &m) {
+  if (m.inflated_len == 0 || m.inflated_len > sizeof g_inflated) return 0;
+  tinfl_init(&g_tinfl);
+  size_t in_len = m.data_len, out_len = m.inflated_len;
+  const tinfl_status st = tinfl_decompress(&g_tinfl, frame + m.data_off, &in_len, g_inflated, g_inflated,
+                                           &out_len, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+  return st == TINFL_STATUS_DONE && out_len == m.inflated_len ? out_len : 0;
+}
+
 int on_chunk(const uint8_t *frame, const OtaClientMsg &m, uint8_t *out, size_t cap) {
   OtaPlanC p;
-  const char *err = ota_session_plan(m.offset, frame + m.data_off, m.data_len, OTA_CHIP_ESP32P4, &p);
+  const uint8_t *data = frame + m.data_off;
+  size_t len = m.data_len;
+  const int64_t t0 = esp_timer_get_time();
+  if (g_ct.chunks == 0) g_ct.first_us = t0;
+  if (m.inflated_len != 0) {
+    len = inflate_chunk(frame, m);
+    if (len == 0) return refuse("bad_chunk", out, cap);
+    data = g_inflated;
+  }
+  const int64_t t1 = esp_timer_get_time();
+  g_ct.inflate_us += t1 - t0;
+  const char *err = ota_session_plan(m.offset, data, len, OTA_CHIP_ESP32P4, &p);
   if (err != nullptr) {
     // out_of_order keeps the session: ota_status.offset says where to resume.
     if (strcmp(err, "bad_image") == 0 || strcmp(err, "wrong_chip") == 0) ota_session_reset();
@@ -326,8 +384,15 @@ int on_chunk(const uint8_t *frame, const OtaClientMsg &m, uint8_t *out, size_t c
   }
   if (p.erase_len > 0 && esp_partition_erase_range(g_next, p.erase_off, p.erase_len) != ESP_OK)
     return refuse("flash_error", out, cap);
-  if (esp_partition_write(g_next, p.write_at, frame + m.data_off, p.len) != ESP_OK)
+  const int64_t t2 = esp_timer_get_time();
+  if (write_via_internal(p.write_at, data, p.len) != ESP_OK)
     return refuse("flash_error", out, cap);
+  const int64_t t3 = esp_timer_get_time();
+  g_ct.erase_us += t2 - t1;
+  g_ct.write_us += t3 - t2;
+  g_ct.chunks++;
+  g_ct.bytes += p.len;
+  g_ct.last_us = t3;
   if (ota_session_commit(&p)) save_job();
   g_error = nullptr;
   return reply_status(OTA_STATE_RECEIVING, out, cap);
@@ -335,6 +400,14 @@ int on_chunk(const uint8_t *frame, const OtaClientMsg &m, uint8_t *out, size_t c
 
 int on_finish(uint8_t *out, size_t cap) {
   if (const char *err = ota_session_finish_ready()) return refuse(err, out, cap);
+  if (g_ct.chunks) {
+    const int64_t span = g_ct.last_us - g_ct.first_us;
+    log_line("transfer: %lu chunks, %lu B in %lld ms: inflate %lld ms, erase %lld ms, write %lld ms, the rest %lld ms",
+             (unsigned long)g_ct.chunks, (unsigned long)g_ct.bytes, (long long)(span / 1000),
+             (long long)(g_ct.inflate_us / 1000), (long long)(g_ct.erase_us / 1000), (long long)(g_ct.write_us / 1000),
+             (long long)((span - g_ct.inflate_us - g_ct.erase_us - g_ct.write_us) / 1000));
+    g_ct = {};
+  }
   uint8_t want[32], got[32];
   ota_session_sha256(want);
   const uint32_t size = ota_session_size(), v = ota_session_version(), t0 = millis();

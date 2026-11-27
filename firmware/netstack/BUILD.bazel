@@ -39,6 +39,19 @@ rust_library(
     deps = ["//firmware/bss"],  # BssOption: tcp_slots' table stays .bss
 )
 
+# The stack with bigger TCP windows (12 KB receive / 4 KB send): for a C6 with RAM to
+# spare, a P4's front end, where bulk transfers (OTA, big replies) would otherwise go ~4 KB
+# per network-loop round trip.
+rust_library(
+    name = "netstack_big_windows",
+    srcs = glob(["src/*.rs"]),
+    crate_features = ["big_windows"],
+    crate_name = "ledmapper_netstack",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    deps = ["//firmware/bss"],  # BssOption: tcp_slots' table stays .bss
+)
+
 # Host unit tests (the crate's inline #[cfg(test)] modules: parsers, rings,
 # role state machines, coex arbiter, HTTP).
 rust_test(
@@ -298,19 +311,20 @@ rust_static_library(
     ],
 )
 
-# The same FFI with two TCP server slots (concurrent wss clients): the P4's C6 front end,
+# The same FFI with two TCP server slots (concurrent wss clients) and the stack's bigger
+# TCP windows (12 KB receive / 4 KB send, :netstack_big_windows): the P4's C6 front end,
 # which has the RAM the players don't (docs/design/p4-c6-split.md §4.3.1).
 rust_static_library(
-    name = "wifi_sta_ffi_sessions2",
+    name = "wifi_sta_ffi_frontend",
     srcs = ["examples/wifi_sta_ffi.rs"],
     crate_features = ["sessions2"],
     # Its own crate name: the archive is named after it, and :wifi_sta_ffi's would collide.
-    crate_name = "wifi_sta_ffi_sessions2",
+    crate_name = "wifi_sta_ffi_frontend",
     crate_root = "examples/wifi_sta_ffi.rs",
     edition = "2021",
     target_compatible_with = _C6,
     deps = [
-        ":netstack",
+        ":netstack_big_windows",
         "//firmware/bss",
     ],
 )

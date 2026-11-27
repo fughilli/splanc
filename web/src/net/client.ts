@@ -404,6 +404,11 @@ export class LedMapperClient {
 
   // Single-flight response waiters, keyed by the reply's message type.
   private waiters = new Map<string, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
+  /** OTA chunks in flight, oldest first: the device answers each with an ota_status, in
+   * order, so pipelined chunks (otaUpdate.ts `window`) are matched first-in first-out. */
+  private otaFifo: { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }[] = [];
+  /** otaChunk may be called again before the last one is answered (see otaFifo). */
+  readonly otaPipelined = true;
   // One-shot listeners for the next handshake's welcome (waitForWelcome).
   private welcomeListeners = new Set<(w: WelcomeMessage) => void>();
   private pingWaiters = new Map<number, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
@@ -1261,23 +1266,7 @@ export class LedMapperClient {
 
   private async ota(msg: Record<string, unknown>, timeoutMs = this.requestTimeoutMs): Promise<OtaStatusMessage> {
     const r = (await this.request(msg as unknown as ClientMessage, "ota_status", timeoutMs)) as unknown as Partial<OtaStatusMessage>;
-    return {
-      type: "ota_status",
-      mode: r.mode ?? "MODE_UNKNOWN",
-      state: r.state ?? "STATE_IDLE",
-      version: r.version ?? 0,
-      size: r.size ?? 0,
-      offset: r.offset ?? 0,
-      error: r.error ?? "",
-      appVersion: r.appVersion ?? 0,
-      appFwVersion: r.appFwVersion ?? "",
-      loaderReason: r.loaderReason ?? "",
-      lastResult: r.lastResult ?? "",
-      loaderVersion: r.loaderVersion ?? 0,
-      maxChunk: r.maxChunk ?? 0,
-      slotSize: r.slotSize ?? 0,
-      board: r.board ?? "",
-    };
+    return otaStatusFrom(r);
   }
 
   /** The device's update state (needs the "ota" feature). */
@@ -1306,8 +1295,35 @@ export class LedMapperClient {
    * one: on a lossy Wi-Fi a 4 KB chunk can ride out several TCP retransmits (and the
    * loader a flash erase), and giving up early costs a fresh TLS handshake + resume
    * for a link that was about to deliver (the Python client waits 30 s too). */
-  otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusMessage> {
-    return this.ota({ type: "ota_chunk", offset, data }, Math.max(this.requestTimeoutMs, OTA_TRANSFER_TIMEOUT_MS));
+  otaChunk(offset: number, data: Uint8Array, inflatedLen = 0): Promise<OtaStatusMessage> {
+    const timeoutMs = Math.max(this.requestTimeoutMs, OTA_TRANSFER_TIMEOUT_MS);
+    const reply = new Promise<ServerMessage>((resolve, reject) => {
+      const msg = inflatedLen > 0 ? { type: "ota_chunk", offset, data, inflatedLen } : { type: "ota_chunk", offset, data };
+      if (!this.send(msg as unknown as ClientMessage)) {
+        reject(new Error("not connected"));
+        return;
+      }
+      let settled = false;
+      const waiter = {
+        resolve: (m: ServerMessage) => {
+          if (settled) return;
+          settled = true;
+          resolve(m);
+        },
+        reject: (e: Error) => {
+          if (settled) return;
+          settled = true;
+          reject(e);
+        },
+      };
+      this.otaFifo.push(waiter);
+      this.schedule(() => {
+        const i = this.otaFifo.indexOf(waiter);
+        if (i >= 0) this.otaFifo.splice(i, 1);
+        waiter.reject(new RequestTimeoutError("ota_status", timeoutMs));
+      }, timeoutMs);
+    });
+    return reply.then((r) => otaStatusFrom(r as unknown as Partial<OtaStatusMessage>));
   }
 
   /** Verify (a SHA-256 read-back of ~2 MB) and select the new app. */
@@ -2023,6 +2039,10 @@ export class LedMapperClient {
       // Subscribers see every kiosk_status (pushes included), then any waiter.
       for (const fn of this.kioskSubs) fn(msg as unknown as KioskStatusMessage);
     }
+    if ((msg.type as string) === "ota_status" && this.otaFifo.length > 0) {
+      this.otaFifo.shift()!.resolve(msg);
+      return;
+    }
     if ((msg.type as string) === "power_state" && this.powerSubs.size > 0) {
       // Likewise power_state: every push reaches the subscribers, then a waiter.
       const st = flatPowerState(msg as unknown as PowerStateMessage);
@@ -2179,6 +2199,7 @@ export class LedMapperClient {
   private failWaiters(err: Error): void {
     for (const w of this.waiters.values()) w.reject(err);
     this.waiters.clear();
+    for (const w of this.otaFifo.splice(0)) w.reject(err);
     for (const w of this.pingWaiters.values()) w.reject(err);
     this.pingWaiters.clear();
   }
@@ -2281,5 +2302,26 @@ function normalizeProfile(r: Partial<CaptureProfileFlat>): CaptureProfileFlat {
     lcGain: r.lcGain ?? 0,
     capturedAtMs: Number(r.capturedAtMs ?? 0),
     exposure: r.exposure ?? 0,
+  };
+}
+
+/** An ota_status reply with every field defaulted. */
+function otaStatusFrom(r: Partial<OtaStatusMessage>): OtaStatusMessage {
+  return {
+    type: "ota_status",
+    mode: r.mode ?? "MODE_UNKNOWN",
+    state: r.state ?? "STATE_IDLE",
+    version: r.version ?? 0,
+    size: r.size ?? 0,
+    offset: r.offset ?? 0,
+    error: r.error ?? "",
+    appVersion: r.appVersion ?? 0,
+    appFwVersion: r.appFwVersion ?? "",
+    loaderReason: r.loaderReason ?? "",
+    lastResult: r.lastResult ?? "",
+    loaderVersion: r.loaderVersion ?? 0,
+    maxChunk: r.maxChunk ?? 0,
+    slotSize: r.slotSize ?? 0,
+    board: r.board ?? "",
   };
 }

@@ -42,7 +42,12 @@ export interface OtaDevice {
   readonly welcome: WelcomeMessage | null;
   getOtaStatus(): Promise<OtaStatusFlat>;
   otaBegin(manifest: Uint8Array, allowDowngrade?: boolean, keyEpoch?: Uint8Array, sourceUrl?: string): Promise<OtaStatusFlat>;
-  otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusFlat>;
+  /** `inflatedLen` > 0: `data` is raw deflate of that many image bytes (a device whose
+   * welcome lists "ota_deflate"). */
+  otaChunk(offset: number, data: Uint8Array, inflatedLen?: number): Promise<OtaStatusFlat>;
+  /** otaChunk may be called again before the previous one is answered (replies are
+   * matched in order): the driver then keeps OtaOptions.window chunks in flight. */
+  readonly otaPipelined?: boolean;
   otaFinish(): Promise<OtaStatusFlat>;
   /** Resolve on the next connection handshake whose welcome satisfies `pred`; the
    * connection must keep reconnecting while this is pending (LedMapperClient does,
@@ -113,6 +118,14 @@ export interface OtaOptions {
   maxResumes?: number;
   /** Override the chunk size (≤ the device's max_chunk). */
   chunkBytes?: number;
+  /** Chunks in flight on a device that takes them pipelined (OtaDevice.otaPipelined;
+   * default 4): the next chunk crosses the network while the device writes this one,
+   * instead of one round trip per chunk. The device answers in order; an out_of_order
+   * reply (one went missing) drains the rest and resumes from where it says. */
+  window?: number;
+  /** Raw-deflate `data` (default: CompressionStream("deflate-raw") where the runtime has
+   * it). Used only with a device whose welcome lists "ota_deflate"; `null` sends plain. */
+  deflateRaw?: ((data: Uint8Array) => Promise<Uint8Array>) | null;
   /** The newest signed key-epoch record (80 B, docs/design/ota.md "Key rotation") —
    * how a key revocation reaches devices. Sent with every ota_begin. */
   keyEpoch?: Uint8Array;
@@ -372,12 +385,39 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
         chunk = Math.min(opts.chunkBytes ?? st.maxChunk ?? 4096, st.maxChunk || 4096);
         report("transfer", offset);
       }
-      while (offset < total) {
-        const end = Math.min(offset + chunk, total);
-        const st = await dev.otaChunk(offset, image.subarray(offset, end));
-        if (failed(st) && st.error !== "out_of_order") throw new OtaError(st.error, `Chunk at ${offset}: ${st.error}`);
-        offset = st.offset;
-        report("transfer", offset);
+      // Pipelined by default only where it pays: a device whose welcome says so
+      // ("ota_pipeline": a P4 behind its front end's big TCP windows; 4 in flight there:
+      // 105 s -> 77 s for a P4 package). Into a standalone C6's 4 KB receive window,
+      // chunks in flight just queue (measured: no faster, replies up to 6 s late).
+      const deflt = hasFeature(dev.welcome, "ota_pipeline") ? 4 : 1;
+      const window = dev.otaPipelined ? Math.max(1, Math.floor(opts.window ?? deflt)) : 1;
+      const flight: Promise<OtaStatusFlat>[] = [];
+      let next = offset;
+      const cut = chunker(image, chunk, hasFeature(dev.welcome, "ota_deflate") ? (opts.deflateRaw ?? defaultDeflateRaw()) : null);
+      try {
+        while (offset < total) {
+          while (next < total && flight.length < window) {
+            const c = await cut(next);
+            const end = next + c.len;
+            const p = c.inflatedLen ? dev.otaChunk(next, c.data, c.inflatedLen) : dev.otaChunk(next, c.data);
+            p.catch(() => undefined); // awaited in order below; a later one may fail first
+            flight.push(p);
+            next = end;
+          }
+          const st = await flight.shift()!;
+          if (failed(st) && st.error !== "out_of_order") throw new OtaError(st.error, `Chunk at ${offset}: ${st.error}`);
+          if (failed(st)) {
+            // The device wants st.offset: what's still in flight follows the gap and is
+            // refused too. Let it drain, then go on from there.
+            await Promise.allSettled(flight.splice(0));
+            next = st.offset;
+          }
+          offset = st.offset;
+          report("transfer", offset);
+        }
+      } finally {
+        // On a throw (a dropped link: the resume below), don't leave replies hanging.
+        flight.splice(0);
       }
       break;
     } catch (e) {
@@ -557,4 +597,59 @@ export async function pullUpdate(dev: OtaDevice, manifest: Uint8Array, opts: Ota
     );
   }
   return { version: info.version, outcome, resumes, final, transferMs };
+}
+
+/** Whether a welcome lists `feature`. */
+function hasFeature(w: WelcomeMessage | null, feature: string): boolean {
+  return ((w as unknown as { features?: string[] } | null)?.features ?? []).includes(feature);
+}
+
+/** The image bytes a chunk at an offset carries: `data` on the wire, `len` image bytes. */
+interface Cut {
+  data: Uint8Array;
+  len: number;
+  inflatedLen?: number;
+}
+
+/** Slices to compress, largest first: as much of the image as fits one wire chunk
+ * compressed. On a P4 image (its first MB barely compresses) this sends ~22% fewer bytes,
+ * and the transfer is bound by bytes. 16 KB = the device's inflate buffer. */
+const DEFLATE_SLICES = [16384, 12288, 8192, 4096];
+
+/** Chunks from `offset` on (any offset: a resume can land inside a slice). With
+ * `deflate`: the largest slice whose raw deflate fits `wire` bytes (and is smaller than
+ * the slice), else the plain `wire`-byte chunk. */
+export function chunker(
+  image: Uint8Array,
+  wire: number,
+  deflate: ((d: Uint8Array) => Promise<Uint8Array>) | null,
+): (offset: number) => Promise<Cut> {
+  return async (offset: number) => {
+    const plain = (): Cut => {
+      const end = Math.min(offset + wire, image.length);
+      return { data: image.subarray(offset, end), len: end - offset };
+    };
+    if (!deflate) return plain();
+    for (const size of DEFLATE_SLICES) {
+      const end = Math.min(offset + size, image.length);
+      const slice = image.subarray(offset, end);
+      if (size > slice.length && size !== DEFLATE_SLICES[DEFLATE_SLICES.length - 1]) continue;
+      const z = await deflate(slice);
+      if (z.length <= wire && z.length < slice.length) return { data: z, len: slice.length, inflatedLen: slice.length };
+    }
+    return plain();
+  };
+}
+
+/** CompressionStream("deflate-raw") (browsers, Node 18+), or null where it's missing. */
+function defaultDeflateRaw(): ((d: Uint8Array) => Promise<Uint8Array>) | null {
+  const CS = (globalThis as unknown as { CompressionStream?: new (f: string) => GenericTransformStream }).CompressionStream;
+  if (!CS) return null;
+  return async (d: Uint8Array) => {
+    const cs = new CS("deflate-raw") as unknown as { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> };
+    const w = cs.writable.getWriter();
+    void w.write(d);
+    void w.close();
+    return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+  };
 }

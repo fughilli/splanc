@@ -78,6 +78,7 @@ typedef struct {
   double t0;       // time_sync_ping
   uint32_t epoch_off;  // ota_begin.key_epoch (len 0 = absent)
   uint32_t epoch_len;
+  uint32_t inflated_len;  // ota_chunk: non-zero = data is raw deflate of this many bytes
 } OtaClientMsg;
 
 // 0 = parsed; -1 bad args; -2 malformed.

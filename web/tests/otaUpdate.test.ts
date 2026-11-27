@@ -3,10 +3,12 @@
  * the health wait, rollback and refusals (docs/design/ota.md). */
 
 import assert from "node:assert/strict";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { test } from "node:test";
 import type { WelcomeMessage } from "@ledmapper/protocol";
 import type { OtaStatusFlat } from "../src/net/proto";
 import {
+  chunker,
   inLoader,
   MANIFEST_LEN,
   OtaError,
@@ -49,6 +51,7 @@ class FakeDevice implements OtaDevice {
   private listeners: ((w: WelcomeMessage) => void)[] = [];
   legacy = false;
   failNextChunkAt = -1;
+  maxChunk = 4096;
   /** An ESP32-P4 player: it takes the image in the app (welcome feature "ota_inapp")
    * and a bad image rolls back to the previous app, not a loader. */
   inApp = false;
@@ -173,7 +176,7 @@ class FakeDevice implements OtaDevice {
       loaderReason: "",
       lastResult: this.last,
       loaderVersion: 0,
-      maxChunk: 4096,
+      maxChunk: this.maxChunk,
       slotSize: this.slot.length,
     };
   }
@@ -209,7 +212,17 @@ class FakeDevice implements OtaDevice {
     return this.status("STATE_RECEIVING");
   }
 
-  async otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusFlat> {
+  /** Bytes that crossed the "wire" in ota_chunk data, and chunks that came compressed. */
+  wireBytes = 0;
+  deflatedChunks = 0;
+
+  async otaChunk(offset: number, data: Uint8Array, inflatedLen = 0): Promise<OtaStatusFlat> {
+    this.wireBytes += data.length;
+    if (inflatedLen > 0) {
+      this.deflatedChunks++;
+      data = new Uint8Array(inflateRawSync(data));
+      assert.equal(data.length, inflatedLen, "inflated_len matches");
+    }
     this.live();
     const s = this.session!;
     if (offset !== s.next) return this.status("STATE_FAILED", "out_of_order");
@@ -461,4 +474,123 @@ test("a package signed for another board is refused before anything is sent", as
     return true;
   });
   assert.equal(c6.handoffs, 0);
+});
+
+/** A device that takes chunks pipelined (LedMapperClient: replies matched in order). Each
+ * chunk is answered after a tick, one at a time in arrival order; `loseAt` drops the
+ * chunk at that offset once (it never lands, so the ones behind it are out of order). */
+class PipelinedDevice extends FakeDevice {
+  readonly otaPipelined = true;
+  inFlight = 0;
+  maxInFlight = 0;
+  loseAt = -1;
+  private queue: Promise<unknown> = Promise.resolve();
+
+  static make(): PipelinedDevice {
+    const d = new PipelinedDevice();
+    d.inApp = true;
+    d.welcome = d.makeWelcome();
+    return d;
+  }
+
+  override async otaChunk(offset: number, data: Uint8Array, inflatedLen = 0): Promise<OtaStatusFlat> {
+    this.inFlight++;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    const run = this.queue.then(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      if (offset === this.loseAt) {
+        this.loseAt = -1;
+        return this.status("STATE_RECEIVING"); // as if it never arrived: next stays put
+      }
+      return super.otaChunk(offset, data, inflatedLen);
+    });
+    this.queue = run.catch(() => undefined);
+    try {
+      return await run;
+    } finally {
+      this.inFlight--;
+    }
+  }
+}
+
+test("a pipelining device gets several chunks in flight and the image lands intact", async () => {
+  const dev = PipelinedDevice.make();
+  const image = new Uint8Array(150_000).map((_, i) => (i * 7) & 255);
+  image[0] = 0xe9;
+  const r = await updateFirmware(dev, pkg(image, 1_014_000, true, 16), { ...fast, window: 4 });
+  assert.equal(r.outcome, "ok");
+  assert.equal(dev.maxInFlight, 4);
+  assert.deepEqual(dev.slot.subarray(0, image.length), image);
+});
+
+test("a chunk lost mid-pipeline drains the rest and resumes from the device's offset", async () => {
+  const dev = PipelinedDevice.make();
+  const image = new Uint8Array(150_000).map((_, i) => (i * 11) & 255);
+  image[0] = 0xe9;
+  dev.loseAt = 8 * 4096;
+  const r = await updateFirmware(dev, pkg(image, 1_014_000, true, 16), { ...fast, window: 4 });
+  assert.equal(r.outcome, "ok");
+  assert.deepEqual(dev.slot.subarray(0, image.length), image);
+});
+
+test("by default only a device whose welcome says ota_pipeline gets them pipelined", async () => {
+  const image = new Uint8Array(100_000).map((_, i) => (i * 13) & 255);
+  image[0] = 0xe9;
+  const c6like = PipelinedDevice.make();
+  await updateFirmware(c6like, pkg(image, 1_014_000, true, 16), fast);
+  assert.equal(c6like.maxInFlight, 1, "no ota_pipeline: one at a time");
+  const p4 = PipelinedDevice.make();
+  (p4.welcome as unknown as { features: string[] }).features.push("ota_pipeline");
+  const r = await updateFirmware(p4, pkg(image, 1_014_000, true, 16), fast);
+  assert.equal(r.outcome, "ok");
+  assert.equal(p4.maxInFlight, 4, "ota_pipeline: four in flight");
+  assert.deepEqual(p4.slot.subarray(0, image.length), image);
+});
+
+/** A firmware-like image: code-ish runs that compress, then a stretch that doesn't. */
+function compressibleImage(n: number): Uint8Array {
+  const img = new Uint8Array(n);
+  let x = 1;
+  for (let i = 0; i < n; i++) {
+    x = (x * 1103515245 + 12345) >>> 0;
+    img[i] = i < n * 0.6 ? (i % 64 < 48 ? (i >> 3) & 255 : x >>> 24) : x >>> 24;
+  }
+  img[0] = 0xe9;
+  return img;
+}
+
+test("an ota_deflate device gets compressed chunks; the image lands intact in fewer bytes", async () => {
+  const dev = PipelinedDevice.make();
+  (dev.welcome as unknown as { features: string[] }).features.push("ota_pipeline", "ota_deflate");
+  const image = compressibleImage(150_000);
+  const r = await updateFirmware(dev, pkg(image, 1_014_000, true, 16), fast);
+  assert.equal(r.outcome, "ok");
+  assert.deepEqual(dev.slot.subarray(0, image.length), image);
+  assert.ok(dev.deflatedChunks > 0, "some chunks compressed");
+  assert.ok(dev.wireBytes < image.length * 0.9, `wire ${dev.wireBytes} of ${image.length}`);
+});
+
+test("without ota_deflate every chunk goes plain", async () => {
+  const dev = PipelinedDevice.make();
+  const image = compressibleImage(60_000);
+  await updateFirmware(dev, pkg(image, 1_014_000, true, 16), fast);
+  assert.equal(dev.deflatedChunks, 0);
+  assert.deepEqual(dev.slot.subarray(0, image.length), image);
+});
+
+test("the chunker: compressed slices fit the wire chunk; incompressible data goes plain", async () => {
+  const deflate = async (d: Uint8Array) => new Uint8Array(deflateRawSync(d));
+  const zeros = new Uint8Array(40_000);
+  const cutZ = chunker(zeros, 4096, deflate);
+  const a = await cutZ(0);
+  assert.equal(a.len, 16384, "the largest slice fits compressed");
+  assert.equal(a.inflatedLen, 16384);
+  assert.ok(a.data.length <= 4096);
+  const tail = await cutZ(36_864); // 3136 bytes left
+  assert.equal(tail.len, 3136);
+  let x = 7;
+  const noise = new Uint8Array(20_000).map(() => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) >>> 24));
+  const b = await chunker(noise, 4096, deflate)(0);
+  assert.equal(b.inflatedLen, undefined, "plain");
+  assert.equal(b.len, 4096);
 });

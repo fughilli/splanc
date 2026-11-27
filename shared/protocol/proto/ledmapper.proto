@@ -1930,6 +1930,11 @@ message OtaChunk {
   uint32 offset = 1;
   // At most ota_status.max_chunk (4096) bytes.
   bytes data = 2;
+  // Non-zero: `data` is a raw deflate stream of the image's next `inflated_len` bytes
+  // (at most 16384), which the device inflates before writing. Only to a device whose
+  // welcome lists "ota_deflate" (the P4: its ROM's tinfl). Offsets, resume and the
+  // signed digest are all on the inflated image.
+  uint32 inflated_len = 3;
 }
 
 // Every byte sent: verify the image against the signed digest and boot it.

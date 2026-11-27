@@ -68,7 +68,8 @@ pub enum ClientArm<'a> {
     GetTlsInfo,
     /// `source_url` (field 4) is for pull devices (a Splanc MAX); the C6 ignores it.
     OtaBegin { manifest: &'a [u8], allow_downgrade: bool, key_epoch: &'a [u8], source_url: &'a [u8] },
-    OtaChunk { offset: u32, data: &'a [u8] },
+    /// `inflated_len` non-zero: `data` is raw deflate of that many image bytes.
+    OtaChunk { offset: u32, data: &'a [u8], inflated_len: u32 },
     OtaFinish,
     OtaAbort,
     GetOtaStatus,
@@ -201,15 +202,16 @@ pub fn decode_client(frame: &[u8]) -> Result<ClientArm<'_>, Malformed> {
             }
             CM_OTA_CHUNK => {
                 let mut s = Reader { b: submessage(v)?, o: 0 };
-                let (mut offset, mut data): (u32, &[u8]) = (0, &[]);
+                let (mut offset, mut data, mut inflated_len): (u32, &[u8], u32) = (0, &[], 0);
                 while let Some((n, v)) = s.field()? {
                     match (n, v) {
                         (1, Value::Varint(x)) => offset = x as u32,
                         (2, Value::Bytes(b)) => data = b,
+                        (3, Value::Varint(x)) => inflated_len = x as u32,
                         _ => {}
                     }
                 }
-                ClientArm::OtaChunk { offset, data }
+                ClientArm::OtaChunk { offset, data, inflated_len }
             }
             CM_OTA_FINISH => ClientArm::OtaFinish,
             CM_OTA_ABORT => ClientArm::OtaAbort,

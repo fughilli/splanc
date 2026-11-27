@@ -153,6 +153,8 @@ pub struct OtaClientMsg {
     /// ota_begin.key_epoch (offset into the frame; len 0 = absent).
     pub epoch_off: u32,
     pub epoch_len: u32,
+    /// ota_chunk.inflated_len (0 = `data` is the image bytes themselves).
+    pub inflated_len: u32,
 }
 
 /// 0 = parsed (`out` filled); -1 bad args; -2 malformed frame.
@@ -179,6 +181,7 @@ pub unsafe extern "C" fn ota_parse_client(frame: *const u8, len: usize, out: *mu
         t0: 0.0,
         epoch_off: 0,
         epoch_len: 0,
+        inflated_len: 0,
     };
     match wire::decode_client(f) {
         Err(_) => return -2,
@@ -197,9 +200,10 @@ pub unsafe extern "C" fn ota_parse_client(frame: *const u8, len: usize, out: *mu
                 m.manifest_len = manifest.len() as u32;
                 m.allow_downgrade = allow_downgrade;
             }
-            ClientArm::OtaChunk { offset, data } => {
+            ClientArm::OtaChunk { offset, data, inflated_len } => {
                 m.arm = wire::CM_OTA_CHUNK;
                 m.offset = offset;
+                m.inflated_len = inflated_len;
                 m.data_off = if data.is_empty() { 0 } else { off(data) };
                 m.data_len = data.len() as u32;
             }

@@ -1209,3 +1209,25 @@ test("a waitForWelcome that times out rejects with RequestTimeoutError", async (
   scheduled[scheduled.length - 1]!();
   await assert.rejects(p, (e: unknown) => e instanceof RequestTimeoutError);
 });
+
+test("pipelined otaChunk calls are answered first-in first-out", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  // Three chunks out before any reply (the old single-flight request() refused the 2nd).
+  const a = client.otaChunk(0, new Uint8Array([1]));
+  const b = client.otaChunk(1, new Uint8Array([2]));
+  const c = client.otaChunk(2, new Uint8Array([3]));
+  assert.deepEqual(
+    s.allSent().filter((m) => m.type === "ota_chunk").map((m) => m["offset"] ?? 0),
+    [0, 1, 2],
+  );
+  for (const off of [1, 2, 3]) s.receive({ type: "ota_status", state: "STATE_RECEIVING", offset: off });
+  assert.deepEqual(
+    (await Promise.all([a, b, c])).map((r) => r.offset),
+    [1, 2, 3],
+  );
+});
