@@ -473,6 +473,10 @@ describe("per-version toolchains", () => {
     assert.ok(covers({ version: "1.6.0", firmware: { min: "1.6.0", max: "1.6.0" } }, "1.6.0"));
     assert.ok(!covers({ version: "1.6.0", firmware: { min: "1.6.0", max: "1.6.0" } }, "9.9.9"));
     assert.ok(covers(null, "9.9.9"), "a dev checkout speaks anything");
+    // An agent-v* bundle: its own version line, matched to a firmware release or to none.
+    assert.ok(covers({ version: "1.17.1", firmware: { min: "1.17.0", max: "1.17.0" } }, "1.17.0"));
+    assert.ok(!covers({ version: "1.17.1", firmware: { min: "1.17.0", max: "1.17.0" } }, "1.17.1"));
+    assert.ok(!covers({ version: "1.17.1", firmware: null }, "1.17.0"), "none: every release player's own bundle");
   });
 
   test("a player on other firmware gets its own fetched, sha256-checked bundle", async () => {

@@ -10,8 +10,16 @@ package.json makes the tgz an npm package with a `splanc-agent` bin, so
 `npx -y <url of the tgz>` runs the hub with no install step.
 
 The version comes from the //agent:bundle_version build setting (the release
-workflow passes the firmware tag's version; local builds say 0.0.0-dev, which
-has no published bundle — the bridge then runs from a local checkout).
+workflow passes the tag's version; local builds say 0.0.0-dev, which has no
+published bundle — the bridge then runs from a local checkout).
+
+//agent:bundle_firmware says which released firmware the bundle's compiler + VM
+match (bundle.json "firmware"):
+  ""       the firmware release of the same version (firmware-v* tags)
+  X.Y.Z    firmware X.Y.Z (an agent-v* release whose toolchain is byte-identical
+           to that firmware release's bundle)
+  none     no released firmware: the agent compiles and previews every release
+           player's effects with that player's own bundle (toolchain.ts)
 """
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
@@ -45,6 +53,15 @@ def _strip(f, prefix):
 def _agent_bundle_impl(ctx):
     ver = ctx.attr.version[BuildSettingInfo].value
     stem = "splanc-agent-" + ver
+    fw = ctx.attr.firmware[BuildSettingInfo].value
+    agent_release = fw != ""  # an agent-v* release (its own version line)
+    if fw == "":
+        fw_range = {"min": ver, "max": ver}
+    elif fw == "none":
+        fw_range = None
+    else:
+        fw_range = {"min": fw, "max": fw}
+    fw_text = "none" if fw_range == None else fw_range["min"]
 
     # Named by version (known at analysis): the files ARE the release assets.
     tgz = ctx.actions.declare_file(stem + ".tgz")
@@ -54,10 +71,9 @@ def _agent_bundle_impl(ctx):
     ctx.actions.write(manifest, json.encode_indent({
         "schema": "splanc-agent-bundle/1",
         "version": ver,
-        # One bundle per firmware release: it speaks that release's protocol and
-        # emits its bytecode. (Range, not a single version, so a patch release
-        # that changes neither can reuse a bundle later.)
-        "firmware": {"min": ver, "max": ver},
+        # The firmware releases whose bytecode this bundle's compiler emits and whose
+        # VM it simulates (null: none; the agent then uses each player's bundle).
+        "firmware": fw_range,
         "fxb_format": ctx.attr.fxb_format,
         "protocol": {"package": "ledmapper.v1", "proto": "proto/ledmapper.proto"},
         "mcp": {"command": "node", "args": ["mcp/splanc-agent.mjs", "--host", "{host}"], "node": ">=20"},
@@ -86,8 +102,8 @@ def _agent_bundle_impl(ctx):
         "{{TGZ_URL}}": tgz_url,
         "{{NPX}}": "npx -y " + tgz_url,
         "{{VERSION}}": ver,
-        "{{FIRMWARE_MIN}}": ver,
-        "{{FIRMWARE_MAX}}": ver,
+        "{{FIRMWARE_MIN}}": fw_text,
+        "{{FIRMWARE_MAX}}": fw_text,
         "{{SKILL_INDEX}}": "\n".join(["- [{r}]({b}/agent/skill/{r})".format(r = r, b = base) for r in sorted(skill_rel)]),
     }
     site = []  # (path under site/, file)
@@ -100,11 +116,11 @@ def _agent_bundle_impl(ctx):
     ctx.actions.write(latest, json.encode_indent({
         "schema": "splanc-agent-latest/1",
         "version": ver,
-        "release": "firmware-v" + ver,
+        "release": ("agent-v" if agent_release else "firmware-v") + ver,
         "url": tgz_url,
         "asset": stem + ".tgz",
         "sha256": None,
-        "firmware": {"min": ver, "max": ver},
+        "firmware": fw_range,
         "install": {
             "mcp": "claude mcp add splanc -- npx -y " + tgz_url,
             "cli": "npx -y " + tgz_url + " list-players",
@@ -184,5 +200,6 @@ agent_bundle = rule(
         "site_templates": attr.label_list(allow_files = [".tmpl"], doc = "AGENTS.md / llms.txt / server.json templates"),
         "skill_strip": attr.string(doc = "short_path prefix stripped from skill files"),
         "version": attr.label(mandatory = True),
+        "firmware": attr.label(mandatory = True, doc = "string_flag: the firmware the toolchain matches (see above)"),
     },
 )
