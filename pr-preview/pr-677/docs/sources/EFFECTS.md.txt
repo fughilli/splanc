@@ -83,6 +83,8 @@ opcode):
   uniform vec4  plane : -5 .. 5 = 0, 1, 0, 1;  // ranged vector: numeric, not a colour
   uniform vec3  p : vec3(-1,-1,0) .. vec3(1,1,2) = vec3(0.0);  // per-component range
   uniform mat4  pose;                          // matrix, identity default (`: lo .. hi` optional)
+  uniform vec2  wind : vector -2 .. 2 = 0.5, 0;  // XY pad (vec3: + z slider)
+  uniform vec3  sun  : direction = 0, 1, 0.3;    // unit vector: dial (vec2) / sphere (vec3)
   ```
 
   A `vec3`/`vec4` without a range is a colour (`ui.kind: color`, 0..1); with a
@@ -90,6 +92,17 @@ opcode):
   adds `mins`/`maxs` to the manifest, `min`/`max` being their envelope). A
   `mat3`/`mat4` is `ui.kind: matrix`, width 9/16, column-major, range ±1000
   unless declared.
+
+  `: vector [range] [step N]` and `: direction` (D-541, vec2/vec3 only) are
+  `ui.kind: vector` (`min`/`max`/`step`, default -1..1, per-component
+  `mins`/`maxs` as above) and `ui.kind: direction` (range -1..1; the compiler
+  normalises the default, the keypoint blend and agent ramps renormalise).
+  An effect using either is stamped `.fxb` **format 2**; everything else stays
+  format 1. The VM accepts formats 1..=2 and reports 2 (`welcome.fxb_format`),
+  so firmware from before the bump refuses only the effects that use the new
+  controls, and the app says "update the firmware" before uploading one. Later
+  widget kinds (the mat3 `: transform2d` gizmo, persisted textures) join
+  format 2 rather than bumping again.
 
 - **Matrices** — `mat3`/`mat4` (column-major, GLSL): `m[c]` column, `m[c][r]`
   element, constructors (diagonal scalar, N columns, N×N scalars, `mat3(m4)`,
