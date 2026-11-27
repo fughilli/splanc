@@ -138,6 +138,7 @@ py_library(
         "ble_link_core.py",
         "ble_rename_core.py",
         "board_caps.py",
+        "connect_render_core.py",
         "ctrl_budget_core.py",
         "ctrl_budget_probe.py",
         "device_cert_core.py",
@@ -1449,6 +1450,45 @@ py_test(
     },
     imports = ["."],
     main = "hitl_flash_render.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# PR-42 / desk D-460: a NEW client's TLS handshake never makes frames late under a heavy
+# effect: the handshake runs below render and render holds a reserved slice for it (a lower
+# steady rung for its span). Gate: no [late] frame in steady / connect / after, every client
+# connected within 8 s, [rsv] engaged; SKIP on bench failures (connect_render_core).
+#   bazel run //pi/hitl/harness:connect_render_netstack -- --server http://hitl-rig-1:8087
+py_test(
+    name = "connect_render_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_connect_render.py",
+        "hitl_heavy_effect_reachability.py",
+        "hitl_map_upload.py",
+    ],
+    data = [
+        ":swirl_heavy_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HEAVY_FXB_RUNFILE": "_main/pi/hitl/harness/swirlHeavy.fxb",
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_connect_render.py",
     tags = [
         "hitl",
         "manual",

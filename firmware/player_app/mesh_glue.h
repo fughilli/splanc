@@ -125,6 +125,10 @@ uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) __attribute__((we
 // 10-55 ms ECDSA/ECDH there would round-robin with frames.
 uint32_t lm_prio_below_render() __attribute__((weak));
 void lm_prio_restore(uint32_t prio) __attribute__((weak));
+// main.cpp: below-render work with a deadline (D-460, a TLS handshake) opens / closes; one
+// open long enough makes render hold its reserved slice (half the CPU) until it is done.
+void lm_bg_work_begin() __attribute__((weak));
+void lm_bg_work_end() __attribute__((weak));
 uint8_t *ns_mesh_xfer(void *m, uint32_t *cap) __attribute__((weak));
 // Effect sharing (M6, mesh_blob.rs): scenes applied after the tick, on loopTask's stack.
 void ns_mesh_scenes(void *m, int64_t now_us) __attribute__((weak));
@@ -185,13 +189,19 @@ namespace lm_mesh {
 
 // Mesh work (the tick, session crypto, joins, the app's mesh arms: grant and rotation-order
 // verifies) runs below the render task, whatever loopTask's priority is (PR-40).
+// `deadline`: the work has one (D-460: a client's TLS handshake), so a long span of it makes
+// render hold its reserved slice (lm_bg_work_begin).
 struct BelowRender {
   uint32_t prio;
   bool on;
-  BelowRender() : prio(0), on(lm_prio_below_render != nullptr) {
+  bool bg;
+  explicit BelowRender(bool deadline = false)
+      : prio(0), on(lm_prio_below_render != nullptr), bg(deadline && lm_bg_work_begin != nullptr) {
     if (on) prio = lm_prio_below_render();
+    if (bg) lm_bg_work_begin();
   }
   ~BelowRender() {
+    if (bg) lm_bg_work_end();
     if (on) lm_prio_restore(prio);
   }
 };

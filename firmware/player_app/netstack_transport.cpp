@@ -2880,7 +2880,19 @@ __attribute__((always_inline)) static inline void serve_slot() {
     if (!g_s->tls_hs) {
       int hs = cur_ssl()->MBEDTLS_PRIVATE(state);
       if (hs != g_s->last_hstate) { Serial.printf("  TLS hs state -> %d\n", hs); g_s->last_hstate = hs; }
-      int r = mbedtls_ssl_handshake(cur_ssl());
+      // Strictly below render (D-460, as PR-40 did for the mesh's crypto): the server's
+      // ECDHE + ECDSA steps (~0.5-0.8 s of CPU on a C6) shared render's priority while
+      // netstack_data_plane_active() raised the loop for a new client, and time-sliced
+      // with frames: 20-24 late frames (16-25 ms against 12.5) at every app connect under
+      // a heavy effect (M6 r7/r8). Below render they only run when render sleeps; a span
+      // that long makes render hold its reserve (main.cpp lm_bg_work_begin: half the CPU,
+      // the effect on a lower steady rung), so the handshake still gets the half it had
+      // and finishes inside the client's timeout.
+      int r;
+      {
+        lm_mesh::BelowRender below(true);
+        r = mbedtls_ssl_handshake(cur_ssl());
+      }
       if (r == 0) {
         g_s->tls_hs = true;
         Serial.printf("*** TLS HANDSHAKE COMPLETE (%s) ***\n", mbedtls_ssl_get_ciphersuite(cur_ssl()));

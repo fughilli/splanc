@@ -6511,11 +6511,37 @@ pub unsafe extern "C" fn lm_fps_on_frame(
 }
 
 /// The sleep (ms) a frame owes the lower-priority tasks after `cpu_us` of render
-/// compute (`ledmapper_fps::net_share_ms`): main.cpp floors its wall-clock
-/// re-pacing with it.
+/// compute at the controller's current duty (`ledmapper_fps::net_share_ms_at`:
+/// 80%, 50% while a reserve is held): main.cpp floors its wall-clock re-pacing
+/// with it.
+///
+/// # Safety
+/// Under the player_mutex.
 #[no_mangle]
-pub extern "C" fn lm_fps_net_share_ms(cpu_us: u32) -> u32 {
-    ledmapper_fps::net_share_ms(cpu_us)
+pub unsafe extern "C" fn lm_fps_net_share_ms(cpu_us: u32) -> u32 {
+    (*addr_of!(FPS)).share_ms(cpu_us)
+}
+
+/// Hold (or release) the reserved slice for background work (D-460,
+/// `FpsController::set_reserve`), on a mesh frame grid of `grid_us` (0 = none).
+/// Takes effect on the next `lm_fps_on_frame`.
+///
+/// # Safety
+/// Render task, under the player_mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fps_set_reserve(on: bool, grid_us: u32) {
+    let c = &mut *addr_of_mut!(FPS);
+    c.set_grid_us(grid_us);
+    c.set_reserve(on);
+}
+
+/// True while a reserve is in effect (the rung is the reserve's).
+///
+/// # Safety
+/// Under the player_mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fps_reserved() -> bool {
+    (*addr_of!(FPS)).reserved()
 }
 
 /// The rate the effect runs at now: the autoscaler's rung, or the rate it

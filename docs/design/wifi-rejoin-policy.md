@@ -79,7 +79,30 @@ after 8 s, and a DHCP NAK or 8 unanswered REQUESTs fall back to DISCOVER.
 | 1.12.3 (main da79f829), 2 DUTs | 0/10 within 8 s | none within 80 s | none within 80 s | 25 fps, 3 ms sleeps, loop gaps 4.3-4.7 s |
 | hotfix | 5/5, 1.4-2.5 s | first at 24 s | first at 19 s | 21 fps (lagging), 10 ms sleeps, loop gaps <= 0.67 s |
 
-### Measurement
+#### Handshakes below render, a reserved slice (D-460)
+
+Raising the loop for a mid-handshake client let the handshake's ECDHE + ECDSA (~0.5-0.8 s
+of CPU) time-slice with frames: under an 80 fps effect every app connect cost 20-24 late
+frames of 16-25 ms against the 12.5 ms period (M6 bench, mesh_effect r7/r8). Now:
+
+- **The handshake runs strictly below render** (`mbedtls_ssl_handshake` inside
+  `lm_mesh::BelowRender(true)`, as M7 does for mesh crypto). The rest of the loop still
+  follows the data plane.
+- **A reserved slice for it.** The handshake is work with a deadline (the client's
+  timeout), so its span is counted (`lm_bg_work_begin/end`). Once one has been open
+  100 ms, render holds a reserve until 300 ms after the last one: it takes at most 50% of
+  the CPU instead of 80%, and the autoscaler moves at once to the fastest rung that holds
+  the frame's compute at that duty (`firmware/fps` `set_reserve`), only grid rungs
+  (80/40/20/10/5 fps) while the mesh time base is aligned. The effect runs at a lower
+  steady rate for the handshake (about a second) and gets its rung back straight after;
+  effects integrate phases over dt, so nothing jumps. The handshake gets the same half
+  of the CPU it had at render's priority, so it finishes in about the same time.
+- The mesh pass and littlefs writes also run below render but are not counted: they
+  have no deadline, and the default 20% share is their guarantee.
+
+`[rsv] frames=<n> entered=<k>` follows the `[ft]` line in any second that ran under a
+reserve. `//pi/hitl/harness:connect_render_netstack` gates it (PR-42).
+
 
 `//pi/hitl/harness:wifi_cadence` drives every recovery path on the wired console while an
 effect plays and times the LED output across it from both sides: the rig's logic analyzer

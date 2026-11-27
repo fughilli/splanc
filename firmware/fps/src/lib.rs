@@ -56,6 +56,19 @@
 //!   near-budget effect became unreachable, at every boot too, since the effect
 //!   persists). The effect runs a rung lower instead — it lags, it never starves
 //!   the network.
+//! - **Reserved slice (D-460).** While below-render work with a deadline is in
+//!   flight (a new client's TLS handshake, which the client times out), the
+//!   caller holds a reserve
+//!   ([`set_reserve`](FpsController::set_reserve)): render's duty drops to
+//!   [`RESERVE_RENDER_DUTY_PCT`]% and the controller moves AT ONCE to the fastest
+//!   rung whose period holds the frame's compute at that duty (on a mesh frame
+//!   grid, [`set_grid_us`](FpsController::set_grid_us), only rungs whose period is
+//!   a multiple or a divisor of the grid's). The effect then runs at a lower,
+//!   steady rate for the span instead of time-slicing with that work (late,
+//!   uneven frames: 16-25 ms against 12.5 ms on every app connect, M6 r7/r8);
+//!   when the reserve is released the rung it held before comes straight back.
+//!   Effects integrate their phases over the frame's dt, so a lower rate never
+//!   makes an animation jump.
 //!
 //! Pure, `no_std`, zero-dependency, integer-only (no hardware f64 on the C6) so
 //! it unit-tests on the host and compiles unchanged for the device.
@@ -136,6 +149,11 @@ pub const HEADROOM_PCT: u32 = 95;
 /// overflows (PixieLamp bootloop log), and a near-budget one starved the
 /// netstack loop until no new client could connect (1.12.3 field report).
 pub const RENDER_DUTY_PCT: u32 = 80;
+/// Render's share of the wall clock while a reserve is held
+/// ([`FpsController::set_reserve`]): half, the share a new client's TLS handshake
+/// got when it round-robined with render at the same priority (#371), so the
+/// handshake, now strictly below render, finishes in the same time.
+pub const RESERVE_RENDER_DUTY_PCT: u32 = 50;
 /// The shortest sleep after a frame that overran its period, in ms: a slice
 /// long enough for the lower/equal-priority tasks to run a full pass (the
 /// netstack RX drain + TLS pump, an I2C FIFO read) whatever the frame cost.
@@ -232,7 +250,20 @@ pub struct FpsController {
     /// The sleep after the last overrunning frame, in ms (0 = the last frame was
     /// in period). Damps the sleep's ms rounding: see [`FpsController::on_frame_cpu`].
     last_overrun_ms: u32,
+    /// The caller asked for the reserved slice ([`set_reserve`](Self::set_reserve)).
+    reserve: bool,
+    /// The rung held when the reserve took effect ([`NO_RUNG`] = no reserve in
+    /// effect): restored when it is released.
+    reserved_from: u32,
+    /// The mesh's frame grid period in µs (0 = none): a reserve picks only rungs
+    /// that stay on it.
+    grid_us: u32,
+    /// The last frame's render compute in µs (0 = unknown).
+    last_cpu_us: u32,
 }
+
+/// `reserved_from` while no reserve is in effect.
+const NO_RUNG: u32 = u32::MAX;
 
 impl Default for FpsController {
     fn default() -> Self {
@@ -255,6 +286,10 @@ impl FpsController {
             wire_us: 0,
             leds: 0,
             last_overrun_ms: 0,
+            reserve: false,
+            reserved_from: NO_RUNG,
+            grid_us: 0,
+            last_cpu_us: 0,
         }
     }
 
@@ -263,6 +298,8 @@ impl FpsController {
     /// but the window and the lag state clear so the new program starts clean.
     pub fn reset(&mut self) {
         self.last_overrun_ms = 0;
+        self.reserved_from = NO_RUNG;
+        self.last_cpu_us = 0;
         self.idx = self.clamp_idx(if self.pinned_fps != 0 {
             idx_for_fps(self.pinned_fps)
         } else {
@@ -429,8 +466,98 @@ impl FpsController {
             // pin itself is kept as asked.
             self.idx = self.clamp_idx(idx);
         }
+        if self.reserved() {
+            // The new mode's rung comes back when the reserve ends; until then the
+            // next frame holds the reserve's rung again (on_frame_cpu).
+            self.reserved_from = self.idx;
+        }
         self.clear_window();
         self.lagging = false;
+    }
+
+    /// Hold (or release) the reserved slice for background work: while held,
+    /// render takes at most [`RESERVE_RENDER_DUTY_PCT`]% of the wall clock and the
+    /// rung drops at once to the fastest one that holds the frame's compute at that
+    /// duty ([`reserve_idx`](Self::reserve_idx)); released, the rung held before
+    /// comes back. Takes effect on the next [`on_frame_cpu`](Self::on_frame_cpu).
+    /// A pin does not exempt an effect: the reserve outranks it for its span.
+    pub fn set_reserve(&mut self, on: bool) {
+        self.reserve = on;
+    }
+
+    /// True while a reserve is in effect (the rung is the reserve's).
+    pub fn reserved(&self) -> bool {
+        self.reserved_from != NO_RUNG
+    }
+
+    /// The mesh's frame grid period, in µs (0 = none): a reserve then only picks
+    /// rungs whose period is a whole number of grid periods or divides it
+    /// ([`grid_ok`]), so a member keeps landing on grid frames while it lags.
+    pub fn set_grid_us(&mut self, us: u32) {
+        self.grid_us = us;
+    }
+
+    /// Render's current share of the wall clock, in percent.
+    pub fn duty_pct(&self) -> u32 {
+        if self.reserved() {
+            RESERVE_RENDER_DUTY_PCT
+        } else {
+            RENDER_DUTY_PCT
+        }
+    }
+
+    /// The sleep (ms) a frame owes the rest of the device after `cpu_us` of
+    /// render compute at the current duty ([`net_share_ms_at`]).
+    pub fn share_ms(&self, cpu_us: u32) -> u32 {
+        net_share_ms_at(cpu_us, self.duty_pct())
+    }
+
+    /// The fastest rung at or below the current one whose period holds `cpu_us`
+    /// of compute at [`RESERVE_RENDER_DUTY_PCT`] and, on a grid, stays on it; the
+    /// ladder's bottom when none does (the effect then lags there). The floor
+    /// does not bind: the reserve is a short span.
+    pub fn reserve_idx(&self, cpu_us: u32) -> u32 {
+        let fits = |i: u32| cpu_fits_at(cpu_us, period_us(fps_at(i)), RESERVE_RENDER_DUTY_PCT);
+        let mut any = None;
+        let mut i = self.idx;
+        loop {
+            if fits(i) {
+                if grid_ok(period_us(fps_at(i)), self.grid_us) {
+                    return i;
+                }
+                any.get_or_insert(i);
+            }
+            if i == 0 {
+                break;
+            }
+            i -= 1;
+        }
+        // Nothing on the grid fits: the fastest rung that does, else the bottom.
+        any.unwrap_or(0)
+    }
+
+    /// Enter / leave / follow the reserve before a frame is accounted.
+    fn apply_reserve(&mut self, cpu_us: u32) {
+        let cpu = cpu_us.max(self.last_cpu_us);
+        if self.reserve {
+            if !self.reserved() {
+                self.reserved_from = self.idx;
+                self.clear_window();
+            }
+            // Every frame: a compute that grew since (or a grid that appeared) steps
+            // down at once, too.
+            let period = period_us(self.rung_fps());
+            if cpu > 0
+                && (!cpu_fits_at(cpu, period, RESERVE_RENDER_DUTY_PCT)
+                    || !grid_ok(period, self.grid_us))
+            {
+                self.idx = self.reserve_idx(cpu);
+            }
+        } else if self.reserved() {
+            self.idx = self.clamp_idx(self.reserved_from);
+            self.reserved_from = NO_RUNG;
+            self.clear_window();
+        }
     }
 
     /// Account for one rendered frame whose measured cost (update + shade +
@@ -452,6 +579,9 @@ impl FpsController {
     /// miss — the effect steps down (lags) instead of starving the network.
     /// `cpu_us` = 0 means unknown (the old wall-cost-only behaviour).
     pub fn on_frame_cpu(&mut self, cost_us: u32, cpu_us: u32) -> Decision {
+        self.apply_reserve(cpu_us);
+        self.last_cpu_us = cpu_us;
+        let duty = self.duty_pct();
         let period = period_us(self.rung_fps());
         let headroom_budget = headroom_budget_us(period);
 
@@ -464,7 +594,7 @@ impl FpsController {
         } else {
             headroom_budget
         };
-        if cost_us > miss_over || !cpu_fits(cpu_us, period) {
+        if cost_us > miss_over || !cpu_fits_at(cpu_us, period, duty) {
             self.win_missed += 1;
         }
         if cost_us > self.win_max_cost_us {
@@ -483,7 +613,7 @@ impl FpsController {
         // the rest of the device keeps being serviced.
         // And never less than the network's guaranteed share of this frame's
         // compute (net_share_ms; 0 when the caller reported no compute).
-        let share_ms = if cpu_us > 0 { net_share_ms(cpu_us) } else { 0 };
+        let share_ms = if cpu_us > 0 { net_share_ms_at(cpu_us, duty) } else { 0 };
         let delay_ms = if cost_us > period {
             // A lagging effect's period is cost + this sleep, and the sleep is ~25% of
             // the cost rounded UP to a whole ms. A cost hovering at a rounding boundary
@@ -493,7 +623,7 @@ impl FpsController {
             // frame-period spread doubled (dev p50 1.2 -> 2.6 ms, 98% of the gate).
             // Raise the sleep at once (the duty guarantee holds), but lower it only
             // when it is 2 ms too long, so noise at a boundary settles on the upper value.
-            let want = overrun_yield_ms(cost_us).max(share_ms);
+            let want = overrun_yield_ms_at(cost_us, duty).max(share_ms);
             let d = if self.last_overrun_ms > want && self.last_overrun_ms - want <= 1 {
                 self.last_overrun_ms
             } else {
@@ -543,7 +673,7 @@ impl FpsController {
             }
         } else {
             self.lagging = false;
-            if !self.is_pinned() && missed == 0 && self.idx < self.ceiling_idx() {
+            if !self.is_pinned() && !self.reserved() && missed == 0 && self.idx < self.ceiling_idx() {
                 // Clean window and room to climb: step up only if the worst frame
                 // we saw would still leave 5% headroom at the FASTER rung, so we
                 // don't immediately bounce back down.
@@ -575,8 +705,13 @@ pub fn min_yield_ms(cost_us: u32) -> u32 {
 /// loop, sensors and TLS always get a real slice between its frames.
 #[inline]
 pub fn overrun_yield_ms(cost_us: u32) -> u32 {
-    let free_us =
-        (cost_us as u64 * (100 - RENDER_DUTY_PCT) as u64).div_ceil(RENDER_DUTY_PCT as u64);
+    overrun_yield_ms_at(cost_us, RENDER_DUTY_PCT)
+}
+
+/// [`overrun_yield_ms`] at render duty `duty_pct` (a reserve's, or the default).
+#[inline]
+pub fn overrun_yield_ms_at(cost_us: u32, duty_pct: u32) -> u32 {
+    let free_us = (cost_us as u64 * (100 - duty_pct) as u64).div_ceil(duty_pct as u64);
     (free_us.div_ceil(1000) as u32).clamp(MIN_SLICE_MS, MAX_SLICE_MS)
 }
 
@@ -588,8 +723,13 @@ pub fn overrun_yield_ms(cost_us: u32) -> u32 {
 /// one priority below render and only gets this sleep.
 #[inline]
 pub fn net_share_ms(cpu_us: u32) -> u32 {
-    let free_us =
-        (cpu_us as u64 * (100 - RENDER_DUTY_PCT) as u64).div_ceil(RENDER_DUTY_PCT as u64);
+    net_share_ms_at(cpu_us, RENDER_DUTY_PCT)
+}
+
+/// [`net_share_ms`] at render duty `duty_pct` (a reserve's, or the default).
+#[inline]
+pub fn net_share_ms_at(cpu_us: u32, duty_pct: u32) -> u32 {
+    let free_us = (cpu_us as u64 * (100 - duty_pct) as u64).div_ceil(duty_pct as u64);
     (free_us.div_ceil(1000) as u32).max(1)
 }
 
@@ -597,7 +737,22 @@ pub fn net_share_ms(cpu_us: u32) -> u32 {
 /// ([`net_share_ms`], unrounded) fits in `period_us`. Unknown compute (0) fits.
 #[inline]
 pub fn cpu_fits(cpu_us: u32, period_us: u32) -> bool {
-    (cpu_us as u64) * 100 <= (period_us as u64) * RENDER_DUTY_PCT as u64
+    cpu_fits_at(cpu_us, period_us, RENDER_DUTY_PCT)
+}
+
+/// [`cpu_fits`] at render duty `duty_pct`.
+#[inline]
+pub fn cpu_fits_at(cpu_us: u32, period_us: u32, duty_pct: u32) -> bool {
+    (cpu_us as u64) * 100 <= (period_us as u64) * duty_pct as u64
+}
+
+/// Whether a rung of `period_us` stays on a frame grid of `grid_us` (0 = no
+/// grid: any rung does): its period is a whole number of grid periods, or the
+/// grid's is a whole number of its periods (12.5 ms grid: 80, 40, 20, 10, 5 fps;
+/// 160 on the tracker build).
+#[inline]
+pub fn grid_ok(period_us: u32, grid_us: u32) -> bool {
+    grid_us == 0 || period_us == 0 || period_us % grid_us == 0 || grid_us % period_us == 0
 }
 
 /// The per-frame cost ceiling that still leaves the required headroom.
@@ -1159,5 +1314,150 @@ mod tests {
         c.reset();
         assert_eq!(c.wire_us(), wire_frame_us(1024));
         assert_eq!(c.current_fps(), 30);
+    }
+
+    // -- The reserved slice (D-460) ---------------------------------------------
+
+    /// A controller settled at 80 fps under a 9 ms compute (fits 80% of 12.5 ms).
+    fn at_80(cpu_us: u32) -> FpsController {
+        let mut c = FpsController::new();
+        for _ in 0..(WINDOW_N * 12) {
+            c.on_frame_cpu(cpu_us, cpu_us);
+        }
+        assert_eq!(c.rung_fps(), 80);
+        c
+    }
+
+    #[test]
+    fn a_reserve_drops_to_the_rung_that_keeps_half_the_frame_at_once() {
+        let mut c = at_80(9_000);
+        c.set_reserve(true);
+        let d = c.on_frame_cpu(9_000, 9_000);
+        // 9 ms at 50% needs an 18 ms period: 55 fps is the fastest such rung.
+        assert_eq!(c.rung_fps(), 55);
+        assert!(c.reserved());
+        // The sleep leaves at least the compute again (half the frame).
+        assert!(d.delay_ms >= 9, "{d:?}");
+        assert_eq!(c.share_ms(9_000), 9);
+    }
+
+    #[test]
+    fn on_a_mesh_grid_a_reserve_picks_a_grid_rung() {
+        let mut c = at_80(9_000);
+        c.set_grid_us(12_500);
+        c.set_reserve(true);
+        c.on_frame_cpu(9_000, 9_000);
+        assert_eq!(c.rung_fps(), 40, "55 fps is off the 12.5 ms grid");
+        // A heavier frame mid-reserve steps down again, still on the grid.
+        c.on_frame_cpu(14_000, 14_000);
+        assert_eq!(c.rung_fps(), 20);
+    }
+
+    #[test]
+    fn a_reserve_holds_its_rung_steady_and_never_climbs() {
+        let mut c = at_80(9_000);
+        c.set_grid_us(12_500);
+        c.set_reserve(true);
+        let mut delays = [0u32; (WINDOW_N * 4) as usize];
+        for d in delays.iter_mut() {
+            *d = c.on_frame_cpu(9_000, 9_000).delay_ms;
+            assert_eq!(c.rung_fps(), 40);
+            assert!(!c.lagging());
+        }
+        // period 25 ms - 9 ms of work: one steady sleep, no stutter.
+        assert!(delays.iter().all(|&d| d == 16), "{delays:?}");
+    }
+
+    #[test]
+    fn releasing_the_reserve_restores_the_rung_at_once() {
+        let mut c = at_80(9_000);
+        c.set_grid_us(12_500);
+        c.set_reserve(true);
+        for _ in 0..50 {
+            c.on_frame_cpu(9_000, 9_000);
+        }
+        c.set_reserve(false);
+        c.on_frame_cpu(9_000, 9_000);
+        assert_eq!(c.rung_fps(), 80);
+        assert!(!c.reserved());
+        assert_eq!(c.share_ms(9_000), net_share_ms(9_000));
+    }
+
+    #[test]
+    fn a_reserve_that_already_fits_changes_nothing() {
+        let mut c = FpsController::new(); // 30 fps: 33 ms holds 4 ms at 50%
+        for _ in 0..WINDOW_N {
+            c.on_frame_cpu(4_000, 4_000);
+        }
+        let before = c.rung_fps();
+        c.set_grid_us(12_500);
+        c.set_reserve(true);
+        c.on_frame_cpu(4_000, 4_000);
+        // 30 fps fits but is off the grid: the fastest grid rung below is 20.
+        assert_eq!(c.rung_fps(), 20);
+        let mut d = FpsController::new();
+        for _ in 0..WINDOW_N {
+            d.on_frame_cpu(4_000, 4_000);
+        }
+        assert_eq!(d.rung_fps(), before);
+        d.set_reserve(true);
+        d.on_frame_cpu(4_000, 4_000);
+        assert_eq!(d.rung_fps(), before, "no grid: the rung already keeps the slice");
+    }
+
+    #[test]
+    fn a_reserve_goes_below_the_floor_and_a_lagging_effect_keeps_running() {
+        // 37 ms of compute (the heavy_effect_reachability calibration: 93% of 40 ms).
+        let mut c = FpsController::new();
+        for _ in 0..(WINDOW_N * 3) {
+            c.on_frame_cpu(37_000, 37_000);
+        }
+        c.set_grid_us(12_500);
+        c.set_reserve(true);
+        let d = c.on_frame_cpu(37_000, 37_000);
+        assert_eq!(c.rung_fps(), 10, "74 ms period needed: 10 fps is the grid rung");
+        assert!(d.delay_ms >= 37);
+        // Even a compute no rung holds keeps rendering, sleeping its half.
+        let d = c.on_frame_cpu(300_000, 300_000);
+        assert_eq!(c.rung_fps(), 5);
+        assert!(d.delay_ms >= 300 && d.delay_ms <= MAX_SLICE_MS, "{d:?}");
+    }
+
+    #[test]
+    fn a_pin_during_a_reserve_comes_back_after_it() {
+        let mut c = at_80(9_000);
+        c.set_reserve(true);
+        c.on_frame_cpu(9_000, 9_000);
+        c.set_target(60);
+        c.on_frame_cpu(9_000, 9_000);
+        assert_eq!(c.rung_fps(), 55, "the reserve outranks the pin for its span");
+        c.set_reserve(false);
+        c.on_frame_cpu(9_000, 9_000);
+        assert_eq!(c.rung_fps(), 60);
+    }
+
+    #[test]
+    fn reset_mid_reserve_re_enters_from_the_new_search() {
+        let mut c = at_80(9_000);
+        c.set_reserve(true);
+        c.on_frame_cpu(9_000, 9_000);
+        c.reset();
+        assert!(!c.reserved());
+        c.on_frame_cpu(9_000, 9_000);
+        assert!(c.reserved());
+        assert_eq!(c.rung_fps(), 30, "the default rung already holds 9 ms at 50%");
+        c.set_reserve(false);
+        c.on_frame_cpu(9_000, 9_000);
+        assert_eq!(c.rung_fps(), 30);
+    }
+
+    #[test]
+    fn grid_rungs() {
+        let on: [u32; 5] = [80, 40, 20, 10, 5];
+        for f in (LADDER_MIN_FPS..=MAX_FPS).step_by(FPS_STEP as usize) {
+            assert_eq!(grid_ok(period_us(f), 12_500), on.contains(&f), "{f} fps");
+            assert!(grid_ok(period_us(f), 0));
+        }
+        assert!(grid_ok(period_us(160), 12_500));
     }
 }

@@ -589,6 +589,29 @@ requirements:
       - '//pi/hitl/tests:hitl_test'
       - '//pi/hitl/harness:flash_render_netstack'
 
+  - id: PR-42
+    title: Render leaves a reserved slice and lowers its rate to keep it
+    description: >-
+      Every rendered frame shall leave a guaranteed share of the CPU to the
+      work below render (the network loop, TLS, mesh crypto, flash writes):
+      at least 20% of the wall clock, and half while work with a deadline (a
+      new client's TLS handshake) is waiting on it. When an effect's frame
+      cannot fit the rung's period minus that share, the effect moves at once
+      to a lower steady rung (one on the mesh frame grid while the time base
+      is aligned) and returns when the work is done; it is never parked or
+      cut. A new client's TLS handshake runs strictly below render. Verified
+      on HITL: no late frame (a render-start interval over 1.5 frame periods)
+      while new clients connect under a heavy effect, and every handshake
+      completes within 8 s (//pi/hitl/harness:connect_render_netstack). Desk
+      D-460, 2026-11-22 ("reserve some time outside of render").
+    satisfies: [UN-9, UN-6]
+    method: hitl
+    modules: [firmware, pi/hitl]
+    verified_by:
+      - '//firmware/fps:fps_test'
+      - '//pi/hitl/tests:hitl_test'
+      - '//pi/hitl/harness:connect_render_netstack'
+
 # --------------------------------------------------------------------------- #
 # Risks (FUG-88 RISK-1..12)                                                   #
 # --------------------------------------------------------------------------- #

@@ -490,8 +490,16 @@ int32_t lm_perf_build_report(uint8_t *out, size_t out_cap);
 // share is a miss — the network's guaranteed share (the loop runs below render).
 uint32_t lm_fps_on_frame(uint32_t cost_us, uint32_t cpu_us, uint32_t wire_leds, uint32_t leds);
 // The sleep (ms) a frame owes the lower-priority tasks after cpu_us of render
-// compute: >= 25% of it (render <= 80% of the wall clock) and >= 1 ms.
+// compute: >= 25% of it (render <= 80% of the wall clock) and >= 1 ms; while a
+// reserve is held (lm_fps_set_reserve), >= all of it (render <= 50%).
 uint32_t lm_fps_net_share_ms(uint32_t cpu_us);
+// Hold (on) or release the reserved slice for background work (D-460): render's
+// duty drops to 50% and the next frame moves at once to the fastest rung that holds
+// its compute at that duty (only grid rungs while grid_us != 0); released, the rung
+// held before comes back. Render task, under the player_mutex, before lm_fps_on_frame.
+void lm_fps_set_reserve(bool on, uint32_t grid_us);
+// True while a reserve is in effect.
+bool lm_fps_reserved(void);
 // The rate the effect runs at now (the rung, or what it achieves while lagging).
 uint32_t lm_fps_current_fps(void);
 // Per-frame overrun budget in CPU cycles for the current rung (cpu_hz / fps).

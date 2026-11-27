@@ -388,8 +388,9 @@ static SemaphoreHandle_t tex_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
 
 // Background work that must never delay a frame (PR-40: the mesh's crypto, joins and
-// rotations) drops the calling task strictly below render for its span; render then preempts
-// it the moment a frame is due, whatever priority the data plane gave loopTask (#371).
+// rotations; PR-41: littlefs writes; D-460: a new client's TLS handshake) drops the calling
+// task strictly below render for its span; render then preempts it the moment a frame is
+// due, whatever priority the data plane gave loopTask (#371).
 extern "C" uint32_t lm_prio_below_render() {
   UBaseType_t p = uxTaskPriorityGet(nullptr);
   if (p >= kRenderTaskPrio) vTaskPrioritySet(nullptr, kRenderTaskPrio - 1);
@@ -397,6 +398,26 @@ extern "C" uint32_t lm_prio_below_render() {
 }
 extern "C" void lm_prio_restore(uint32_t prio) {
   if (uxTaskPriorityGet(nullptr) != (UBaseType_t)prio) vTaskPrioritySet(nullptr, (UBaseType_t)prio);
+}
+// Below-render work with a deadline (D-460: a new client's TLS handshake, which the client
+// times out) is also counted (g_bg_depth, opened at g_bg_since_us). One still open after
+// kReserveAfterUs is waiting on the frames' default share (>= 20% of the wall clock), and
+// render holds the reserve for it (render_once: render takes at most half the CPU, the
+// effect on a lower steady rung) so it still finishes in its time. Work without a deadline
+// (the mesh pass, littlefs writes) is not counted: the default share is its guarantee.
+// Nested spans count once, from the outermost.
+static volatile uint32_t g_bg_depth = 0;
+static volatile uint32_t g_bg_since_us = 0;  // (uint32_t)esp_timer_get_time() at its open
+extern "C" void lm_bg_work_begin() {
+  if (__atomic_load_n(&g_bg_depth, __ATOMIC_RELAXED) == 0) {
+    // The start before the count: render never sees an open span with a stale start.
+    g_bg_since_us = (uint32_t)esp_timer_get_time();
+  }
+  __atomic_fetch_add(&g_bg_depth, 1u, __ATOMIC_RELEASE);
+}
+extern "C" void lm_bg_work_end() {
+  if (__atomic_load_n(&g_bg_depth, __ATOMIC_RELAXED) != 0)
+    __atomic_fetch_sub(&g_bg_depth, 1u, __ATOMIC_RELEASE);
 }
 // render: static bound ~3.9 KB (stack_bound_test; render_once -> the FX VM -> a sensor
 // driver's I2C bus recovery, whose Log().printf runs ROM vsnprintf, ~1.5 KB on its own;
@@ -2631,6 +2652,20 @@ static uint32_t g_fx_dt_max_ms = 0;  // largest effect time step this window
 // worst, and how long before the line the worst one started.
 static uint32_t g_late_n = 0, g_late_max_us = 0;
 static int64_t g_late_at_us = 0;
+// The reserve (D-460, render_once's pacing): held while deadline work (lm_bg_work_begin) has
+// been open kReserveAfterUs, and kReserveHoldUs after the last such sighting (a TLS
+// handshake's two crypto steps are a client round trip apart; one reserve spans both). A
+// handshake step that finishes sooner (a light effect leaves it most of the CPU) never
+// lowers the rate.
+static constexpr uint32_t kReserveAfterUs = 100000;
+static constexpr int64_t kReserveHoldUs = 300000;
+// The mesh's frame grid period (mesh_grid.h kGridUs on the mesh step-3 branch: 80 fps):
+// a reserve under an aligned time base only picks rungs on it (80, 40, 20, 10, 5 fps).
+static constexpr uint32_t kMeshGridUs = 12500;
+static int64_t s_reserve_until_us = 0;
+static bool s_rsv_was = false;
+// Frames under a reserve, and reserves entered, this [ft] window (the `[rsv]` line).
+static uint32_t g_rsv_frames = 0, g_rsv_entries = 0;
 static uint32_t g_fx_delay_min = 0xffffffffu, g_fx_delay_max = 0;  // render sleeps this window
 // Last effect frame's render-start time, 0 when the previous frame wasn't an effect
 // frame (so the next one starts its time base fresh instead of seeing a "gap").
@@ -3133,6 +3168,13 @@ static uint32_t render_once() {
           g_late_n = 0;
           g_late_max_us = 0;
         }
+        if (g_rsv_frames != 0) {
+          // The reserve's frames this window (D-460): the rung they ran at is fps= above.
+          Log().printf("[rsv] frames=%u entered=%u\n", (unsigned)g_rsv_frames,
+                       (unsigned)g_rsv_entries);
+          g_rsv_frames = 0;
+          g_rsv_entries = 0;
+        }
         g_fx_delay_min = 0xffffffffu;
         g_fx_delay_max = 0;
         g_cad_render.clear();
@@ -3280,9 +3322,39 @@ static uint32_t render_once() {
     // with just the 1-3 ms a near-budget frame left of its period, a NEW client's
     // TLS handshake, DHCP and the Wi-Fi join starved (1.12.3 field: players stayed
     // unreachable under such an effect, at every boot too since it persists).
+    //
+    // The reserve (D-460): while below-render work with a deadline is waiting on those sleeps
+    // (lm_bg_work_begin open >= kReserveAfterUs: a new client's TLS handshake, which its
+    // client times out), render takes at most half of the CPU and the effect moves AT ONCE
+    // to the rung that keeps that (lm_fps_set_reserve: a steady lower rate, on the mesh grid's
+    // rungs while the time base is aligned), and back once the work is done. Time-slicing
+    // with that work instead made late, uneven frames (M6 r7/r8: 20-24 frames of 16-25 ms at
+    // every app connect under an 80 fps effect).
     uint32_t cpu_us = perf_frame_c / (kCpuHz / 1000000u);
-    uint32_t share_ms = lm_fps_net_share_ms(cpu_us);
+    {
+      const int64_t now_us = esp_timer_get_time();
+      if (__atomic_load_n(&g_bg_depth, __ATOMIC_ACQUIRE) != 0 &&
+          (uint32_t)now_us - g_bg_since_us >= kReserveAfterUs) {
+        s_reserve_until_us = now_us + kReserveHoldUs;
+      }
+      const bool want = now_us < s_reserve_until_us;
+#if defined(LM_NETSTACK)
+      const uint32_t grid_us = g_tb_align ? kMeshGridUs : 0;
+#else
+      const uint32_t grid_us = 0;
+#endif
+      lm_fps_set_reserve(want, grid_us);
+    }
     next_delay_ms = lm_fps_on_frame(cost_us, cpu_us, wire_leds, perf_led_count);
+    // (After lm_fps_on_frame: the share is at the duty that frame took effect at.)
+    uint32_t share_ms = lm_fps_net_share_ms(cpu_us);
+    if (lm_fps_reserved()) {
+      g_rsv_frames++;
+      if (!s_rsv_was) g_rsv_entries++;
+      s_rsv_was = true;
+    } else {
+      s_rsv_was = false;
+    }
     {
       // The autoscaler picked the rung (and, for a frame that overran its period, the
       // bounded-duty-cycle sleep). Within the period, sleep to the next frame START:
