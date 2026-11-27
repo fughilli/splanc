@@ -468,25 +468,43 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
   // -- Feature previews (Debugging tab) -----------------------------------
   // The Splanc AI credits flag, switchable without a console: a TestFlight
   // build's web view can't be inspected, and the sandbox test needs it on.
+  function creditsFlagMode(): "auto" | "on" | "off" {
+    let v: string | null = null;
+    try {
+      v = localStorage.getItem(AI_CREDITS_FLAG);
+    } catch {
+      // storage blocked: automatic
+    }
+    return v === "1" ? "on" : v === "0" ? "off" : "auto";
+  }
+
   function previewsGroup(): HTMLElement {
     const g = group("Feature previews");
     g.append(
       row(
         "Splanc AI credits",
-        "Shows Splanc AI credits in Settings ▸ AI (sandbox: test purchases only). Off by default until launch.",
-        segmented<"on" | "off">(
+        "Auto shows Splanc AI credits in Settings ▸ AI where they're on sale. On forces them on (on a sandbox relay: test purchases only).",
+        segmented<"auto" | "on" | "off">(
           [
-            ["off", "Off"],
+            ["auto", "Auto"],
             ["on", "On"],
+            ["off", "Off"],
           ],
-          aiCreditsEnabled() ? "on" : "off",
+          creditsFlagMode(),
           (v) => {
             try {
-              localStorage.setItem(AI_CREDITS_FLAG, v === "on" ? "1" : "0");
+              if (v === "auto") localStorage.removeItem(AI_CREDITS_FLAG);
+              else localStorage.setItem(AI_CREDITS_FLAG, v === "on" ? "1" : "0");
             } catch {
               // storage blocked: nothing to remember
             }
-            toast(v === "on" ? "Splanc AI credits on. Reopen the app to start App Store deliveries." : "Splanc AI credits hidden");
+            toast(
+              aiCreditsEnabled()
+                ? "Splanc AI credits on. Reopen the app to start App Store deliveries."
+                : v === "auto"
+                  ? "Splanc AI credits: automatic (not on sale here yet)"
+                  : "Splanc AI credits hidden",
+            );
           },
         ),
       ),

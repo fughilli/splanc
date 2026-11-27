@@ -348,10 +348,15 @@ async function main(): Promise<void> {
   // while flashing / setting it up is applied when it connects (D-259).
   if (!demoParam && !driverParam && !startedInPlay) installNewFixtureWatch(router);
 
-  // iOS: App Store purchases still waiting for their credit (a crash or no
-  // network between paying and crediting) and Ask to Buy approvals, from
-  // launch on. A no-op elsewhere, or with credits off (effects/ai/iap.ts).
-  void import("../../effects/ai/iap")
+  // Splanc AI credits are on where the relay sells them for real on this
+  // platform (D-149): ask it once per launch (cached; offline keeps the last
+  // answer). Then, on iOS, App Store purchases still waiting for their credit
+  // (a crash or no network between paying and crediting) and Ask to Buy
+  // approvals. A no-op elsewhere, or with credits off (effects/ai/iap.ts).
+  void import("../../effects/ai/creditsAvailability")
+    .then(({ refreshCreditsAvailability }) => refreshCreditsAvailability())
+    .catch(() => false)
+    .then(() => import("../../effects/ai/iap"))
     .then(({ startIapDelivery }) =>
       startIapDelivery((r) => toast(`Splanc AI credits: ${Math.floor(r.credited)} credits added.`)),
     )

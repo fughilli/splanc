@@ -10,10 +10,25 @@ The owner decides when, and runs the writes. Desk item D-144.
 - Script: `agent/relay/billing_go_live.mjs` (`--check`, `--apply`, `--rollback`, `--off`).
 - Smoke test: `agent/relay/billing_e2e.mjs --live`.
 
-Switching the relay is not the same as turning the feature on for users. The
-app still hides Splanc AI credits behind the `aiCredits` flag until D-149 ships
-an app release without it. So the relay can go live first, with a real purchase
-tested through the flag, before anyone else sees it.
+Switching the relay is not the same as turning the feature on for users. Until
+the D-149 app change ships, the app hides Splanc AI credits behind the
+`aiCredits` flag. So the relay can go live first, with a real purchase tested
+through the flag, before anyone else sees it.
+
+After D-149, the flag defaults to automatic (`web/src/effects/ai/creditsAvailability.ts`).
+At every launch the app asks `GET /billing/pricing?channel=<web|apple>`. It
+shows credits only when the answer has `environment: "production"` and at
+least one pack for that platform. So:
+
+- a sandbox relay (test money) never shows credits to users;
+- the iOS app shows nothing until the production pricing enables an Apple
+  pack (`--apple-packs on`, once the App Store products exist), and it never
+  shows the web checkout;
+- `--off` or `--rollback` hides credits again at the next launch.
+
+`localStorage["splanc.flags.aiCredits"]` stays as an override: `"1"` forces
+credits on (the sandbox smoke test, TestFlight) and `"0"` forces them off.
+Settings ▸ Debugging ▸ Feature previews offers Auto, On and Off.
 
 ## What the switch changes
 
@@ -79,7 +94,10 @@ These affect iOS only and don't block web or Android:
   account whose `environment` tag differs from the relay's mode.
 - The App Store label part of D-145.
 
-D-149 (the flag) comes last, after the smoke test.
+D-149 (the flag) comes last, after the smoke test. Its PR must not merge
+before the live switch and a real smoke purchase. It is safe by design if it
+merges early: it shows nothing until the relay reports production. But the
+owner's go-live order is still switch, then smoke test, then D-149.
 
 | Desk item                         | Web / Android go-live                       | iOS go-live                                 |
 | --------------------------------- | ------------------------------------------- | ------------------------------------------- |
@@ -90,7 +108,7 @@ D-149 (the flag) comes last, after the smoke test.
 | D-145 privacy notice + labels     | **hard blocker** (notice)                   | **hard blocker** (notice + App Store label) |
 | D-142 Apple IAP                   | not needed                                  | **hard blocker**                            |
 | D-143 Sign in with Apple / Google | not needed                                  | not needed (recommended)                    |
-| D-149 remove the flag             | the last step                               | the last step                               |
+| D-149 flag on by default          | the last step                               | the last step                               |
 
 ## Owner-side prerequisites
 

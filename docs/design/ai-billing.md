@@ -889,8 +889,13 @@ paid, and self-serve. Its "paid" tier is this feature. So that the two PRs
 merge in either order, the integration surface is a few stable exports from
 `web/src/effects/ai/providers/credits.ts`:
 
-- `aiCreditsEnabled()`: the feature flag (`AI_CREDITS_FLAG` =
-  `localStorage["splanc.flags.aiCredits"] === "1"`; off by default);
+- `aiCreditsEnabled()` (`web/src/effects/ai/creditsAvailability.ts`, D-149):
+  on where the relay sells credits for real on this platform. Its last
+  `GET /billing/pricing?channel=…` (checked at every launch, cached) said
+  `environment: "production"` and listed a pack for this channel. On iOS
+  that means an Apple pack, so iOS stays off until `--apple-packs on`. The
+  override `AI_CREDITS_FLAG` = `localStorage["splanc.flags.aiCredits"]` forces
+  it on (`"1"`, the sandbox and smoke tests) or off (`"0"`);
 - `CREDITS_KIND` (`"credits"`, a `ProviderKind`) and `CREDITS_LABEL`. Select
   the tier with `updateAiConfig({ kind: CREDITS_KIND })`;
 - `getCreditsSession()` / `setCreditsSession()`, `fetchCreditsBalance()`,

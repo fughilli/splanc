@@ -2,8 +2,9 @@
  * "Splanc AI credits" on the client (providers/credits.ts,
  * docs/design/ai-billing.md):
  *
- * - OFF by default: without the flag the kind normalises back to Cloud and is
- *   never "configured";
+ * - OFF by default until the relay sells credits in production on this
+ *   platform (D-149): without that, or the "1" override, the kind normalises
+ *   back to Cloud and is never "configured";
  * - with the flag + a session it calls OUR proxy with the session token only
  *   (no Anthropic key, no direct-browser header), with the very same body the
  *   BYO-key provider sends, and reads the live balance from `splanc_billing`;
@@ -35,7 +36,10 @@ import {
   mayShowWebCheckout,
   purchaseChannel,
   setCreditsSession,
+  creditsVisible,
+  refreshCreditsAvailability,
 } from "../src/effects/ai/providers/credits";
+import { paidTierEnabled } from "../src/effects/ai/tiers";
 
 class MemStore {
   private m = new Map<string, string>();
@@ -237,4 +241,84 @@ test("web checkout: packs for this platform, the checkout request, never on iOS"
   assert.equal(calls.length, before);
   await fetchCreditPacks(fn);
   assert.equal(calls.at(-1)!.url, "https://relay.example/billing/pricing?channel=apple");
+});
+
+// -- D-149: on where it is on sale (creditsAvailability.ts) ----------------------------
+
+function pricingFetch(status: number, body: unknown) {
+  const urls: string[] = [];
+  const fn = (async (url: string) => {
+    urls.push(url);
+    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+  return { fn, urls };
+}
+const WEB_PACK = { sku: "web.credits.10", channel: "web", credits: 833, reference_price_usd: 10 };
+const APPLE_PACK = { sku: "dev.splanc.app.credits.small", channel: "apple", credits: 356 };
+const IOS = { isNativePlatform: () => true, getPlatform: () => "ios", isPluginAvailable: (n: string) => n === "StoreKitBridge" };
+
+test("D-149: on by default once the relay sells credits in production (web)", async () => {
+  const f = pricingFetch(200, { version: 1, environment: "production", packs: [WEB_PACK] });
+  assert.equal(await refreshCreditsAvailability(f.fn), true);
+  assert.match(f.urls[0]!, /\/billing\/pricing\?channel=web$/);
+  assert.equal(aiCreditsEnabled(), true);
+  assert.equal(creditsVisible(), true);
+  assert.equal(paidTierEnabled(), true);
+  assert.equal(normalizeConfig({ kind: "credits" }).kind, "credits");
+  // The override still wins.
+  g.localStorage.setItem("splanc.flags.aiCredits", "0");
+  assert.equal(aiCreditsEnabled(), false);
+  assert.equal(paidTierEnabled(), false);
+});
+
+test("D-149: a sandbox (test-money) relay, billing off or no pack keeps it off", async () => {
+  assert.equal(await refreshCreditsAvailability(pricingFetch(200, { environment: "sandbox", packs: [WEB_PACK] }).fn), false);
+  assert.equal(await refreshCreditsAvailability(pricingFetch(200, { environment: "production", packs: [] }).fn), false);
+  assert.equal(await refreshCreditsAvailability(pricingFetch(200, { version: 1, packs: [WEB_PACK] }).fn), false, "a relay that predates billing modes");
+  assert.equal(await refreshCreditsAvailability(pricingFetch(200, { environment: "production", packs: [{ ...WEB_PACK, enabled: false }] }).fn), false);
+  await refreshCreditsAvailability(pricingFetch(200, { environment: "production", packs: [WEB_PACK] }).fn);
+  assert.equal(await refreshCreditsAvailability(pricingFetch(503, { error: "not_configured" }).fn), false, "503 = billing off");
+  // The sandbox smoke test still opts in by hand.
+  g.localStorage.setItem("splanc.flags.aiCredits", "1");
+  assert.equal(aiCreditsEnabled(), true);
+});
+
+test("D-149: offline keeps the last answer", async () => {
+  await refreshCreditsAvailability(pricingFetch(200, { environment: "production", packs: [WEB_PACK] }).fn);
+  const offline = (async () => {
+    throw new TypeError("Failed to fetch");
+  }) as unknown as typeof fetch;
+  assert.equal(await refreshCreditsAvailability(offline), true);
+  assert.equal(await refreshCreditsAvailability(pricingFetch(500, {}).fn), true, "a 5xx other than 503 keeps it too");
+});
+
+test("D-149: iOS stays off until the production pricing enables an Apple pack", async () => {
+  g.Capacitor = IOS;
+  try {
+    // Production for the web, Apple packs disabled (the relay lists none for channel=apple).
+    const f = pricingFetch(200, { environment: "production", packs: [] });
+    assert.equal(await refreshCreditsAvailability(f.fn), false);
+    assert.match(f.urls[0]!, /channel=apple$/);
+    assert.equal(creditsVisible(), false);
+    // A web pack leaking into the Apple answer, or a disabled Apple pack, is not "on sale".
+    assert.equal(await refreshCreditsAvailability(pricingFetch(200, { environment: "production", packs: [WEB_PACK, { ...APPLE_PACK, enabled: false }] }).fn), false);
+    // Apple packs on (`--apple-packs on`, after App Store Connect): on, through IAP only.
+    assert.equal(await refreshCreditsAvailability(pricingFetch(200, { environment: "production", packs: [APPLE_PACK] }).fn), true);
+    assert.equal(creditsVisible(), true);
+    assert.equal(mayShowWebCheckout(), false);
+    // The packs the flow lists drop disabled / other-channel ones.
+    const listed = await fetchCreditPacks(pricingFetch(200, { packs: [APPLE_PACK, WEB_PACK, { ...APPLE_PACK, sku: "x", enabled: false }] }).fn);
+    assert.deepEqual(listed.map((p) => p.sku), [APPLE_PACK.sku]);
+  } finally {
+    delete g.Capacitor;
+  }
+});
+
+test("D-149: a production account on this device keeps working while nothing is on sale", async () => {
+  await refreshCreditsAvailability(pricingFetch(200, { environment: "production", packs: [] }).fn);
+  assert.equal(aiCreditsEnabled(), false);
+  setCreditsSession({ account_id: "acct_x", token: "sst1.t" });
+  assert.equal(aiCreditsEnabled(), true);
+  await refreshCreditsAvailability(pricingFetch(200, { environment: "sandbox", packs: [WEB_PACK] }).fn);
+  assert.equal(aiCreditsEnabled(), false, "not a sandbox session");
 });

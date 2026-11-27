@@ -33,6 +33,7 @@ import {
 } from "../../effects/ai/provider";
 import { listOpenAiModels, pullOllamaModel } from "../../effects/ai/providers/openaiCompat";
 import { creditsVisible } from "../../effects/ai/providers/credits";
+import { CREDITS_AVAILABILITY_EVENT } from "../../effects/ai/creditsAvailability";
 import { creditsAccountCard } from "./creditsAccount";
 import {
   isWllamaSupported,
@@ -107,9 +108,12 @@ export function aiSettingsPanel(): HTMLElement {
 
   const sub = document.createElement("p");
   sub.className = "aiset-sub";
-  sub.textContent = creditsVisible()
-    ? "Choose where effect generation and MIDI remapping run. Only Splanc AI credits go through Splanc's server."
-    : "Choose where effect generation and MIDI remapping run. Everything stays on your device or goes straight to the provider you pick.";
+  const syncSub = (): void => {
+    sub.textContent = creditsVisible()
+      ? "Choose where effect generation and MIDI remapping run. Only Splanc AI credits go through Splanc's server."
+      : "Choose where effect generation and MIDI remapping run. Everything stays on your device or goes straight to the provider you pick.";
+  };
+  syncSub();
 
   const status = document.createElement("p");
   status.className = "aiset-status";
@@ -166,6 +170,15 @@ export function aiSettingsPanel(): HTMLElement {
   }
 
   rerender();
+  // Credits went on (or off) sale while this was open (the launch-time check
+  // in main.ts finished late, e.g. on a first launch): show the change.
+  // (globalThis: the unit tests render this without a window.)
+  const onAvailability = (): void => {
+    if (!el.isConnected) return void globalThis.removeEventListener?.(CREDITS_AVAILABILITY_EVENT, onAvailability);
+    syncSub();
+    rerender();
+  };
+  globalThis.addEventListener?.(CREDITS_AVAILABILITY_EVENT, onAvailability);
   // Model setup (docs/design/ai-tiers.md): the tier picker, reachable any time.
   el.append(sub, modelSetupRow(rerender), status, body);
   return el;

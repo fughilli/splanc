@@ -243,27 +243,34 @@ def serve(root: Path) -> tuple[socketserver.TCPServer, int]:
 
 
 def run_steps(page, steps: list[tuple]) -> None:
-    for st in steps:
-        op = st[0]
-        if op == "click":
-            page.locator(st[1]).first.click(timeout=8000)
-        elif op == "fill":
-            page.locator(st[1]).first.fill(st[2], timeout=8000)
-        elif op == "check":
-            page.locator(st[1]).first.check(timeout=8000)
-        elif op == "press":
-            page.locator(st[1]).first.press(st[2], timeout=8000)
-        elif op == "hover":
-            page.locator(st[1]).first.hover(force=True, timeout=8000)
-        elif op == "css":  # inject a stylesheet (the guard's self-test crams a row)
-            page.add_style_tag(content=st[1])
-        elif op == "wait":
-            page.wait_for_timeout(st[1])
-        elif op == "wait_for":
-            page.locator(st[1]).first.wait_for(timeout=st[2] if len(st) > 2 else 8000)
-        else:
-            raise ValueError(f"unknown step {op!r}")
+    for i, st in enumerate(steps):
+        try:
+            run_step(page, st)
+        except Exception as e:  # name the step: "Timeout 8000ms" alone doesn't say which
+            raise RuntimeError(f"step {i + 1}/{len(steps)} {st!r}: {e}") from e
         page.wait_for_timeout(250)
+
+
+def run_step(page, st: tuple) -> None:
+    op = st[0]
+    if op == "click":
+        page.locator(st[1]).first.click(timeout=8000)
+    elif op == "fill":
+        page.locator(st[1]).first.fill(st[2], timeout=8000)
+    elif op == "check":
+        page.locator(st[1]).first.check(timeout=8000)
+    elif op == "press":
+        page.locator(st[1]).first.press(st[2], timeout=8000)
+    elif op == "hover":
+        page.locator(st[1]).first.hover(force=True, timeout=8000)
+    elif op == "css":  # inject a stylesheet (the guard's self-test crams a row)
+        page.add_style_tag(content=st[1])
+    elif op == "wait":
+        page.wait_for_timeout(st[1])
+    elif op == "wait_for":
+        page.locator(st[1]).first.wait_for(timeout=st[2] if len(st) > 2 else 8000)
+    else:
+        raise ValueError(f"unknown step {op!r}")
 
 
 def check_page(page, root: str) -> tuple[list[Violation], int]:
