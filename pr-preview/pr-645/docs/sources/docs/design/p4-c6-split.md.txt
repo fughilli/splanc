@@ -102,6 +102,7 @@ running") true by construction.
 | Live mailbox (`set_uniforms` `commit:false`), `ControlAck` | forwards | **owns** |
 | OSC udp/9000 | receives and forwards datagrams | parses into the mailbox, applies at frame boundaries |
 | Time sync (`time_sync_ping`), effect time base | forwards (answers from its own clock only while the P4 is down) | **owns** (the renderer's clock) |
+| Wall clock (`set_wall_clock` / `get_clock`, the zone, the soft-reset carry-over; `wall-clock.md`) | forwards; later a time source (SNTP, forwarded as `pushed_by = FRONTEND`) | **owns** |
 | IMU / sensor drivers | none (the C6 IMU pins are SDIO pins, §4.4) | **owns** |
 
 ### 2.2 Where the split falls in the code

@@ -1312,6 +1312,17 @@ Phase 1. A member answers anything else with <code class="docutils literal notra
 content id per deck, brightness, scene generation per group, free and min heap, fps, the
 parent it hears best (id + RSSI), time-sync error estimate, Wi-Fi state (associated / mesh-only),
 the hash of its certificate (8 B prefix; full pin on request).</p>
+<p><code class="docutils literal notranslate"><span class="pre">MeshTopology</span></code> (<code class="docutils literal notranslate"><span class="pre">splanc_mesh::topo</span></code>, tag <code class="docutils literal notranslate"><span class="pre">0x24</span></code> on <code class="docutils literal notranslate"><span class="pre">STATUS</span></code>, its own packet so an older member
+ignores it and keeps the 27-byte status): the member’s room pose (translation in cm as 3 × i16,
+the rotation as the quaternion’s x, y, z × 32767 with w ≥ 0, the room name cut to 16 bytes) and
+its radio neighbours (at most 8: id, average RSSI, unicast delivery %). 36 B with no pose, 65 B
+at most. The neighbours go out every 10 s; the pose when it changes and at least once a minute
+(a generation byte tells a peer its copy is stale). It is flooded like the status, so every
+member keeps every live peer’s latest pose and neighbours (<code class="docutils literal notranslate"><span class="pre">MeshStack::peer_topo</span></code>): effects can
+read peers’ positions locally later. The app reads it from the gateway with
+<code class="docutils literal notranslate"><span class="pre">get_mesh{topology}</span></code> (paged: a 16-member mesh does not fit one 2 KB reply) for the mesh map.
+The pose comes from the player at the 1 Hz status point (<code class="docutils literal notranslate"><span class="pre">lm_mesh_pose_fill</span></code>, no render lock);
+a front end that runs the mesh for another processor (the P4’s C6) fills the same hook.</p>
 </section>
 <section id="effect-programs-content-addressed-blobs">
 <h3>5.5 Effect programs: content-addressed blobs<a class="headerlink" href="#effect-programs-content-addressed-blobs" title="Link to this heading">¶</a></h3>

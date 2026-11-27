@@ -158,6 +158,27 @@ export function fx_disassemble(fxb) {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
 }
+
+/**
+ * The language reference table (fx_compiler/src/lang.rs) as JSON: one
+ * `{name, kind, category, scope, sigs, ty, summary, doc, example, related, cost,
+ * constant}` per keyword, type, context, built-in and annotation. The editor's
+ * lang-spec.ts embeds the same JSON (lang-table.gen.ts); the Docs pane can
+ * read it live from the loaded compiler.
+ * @returns {string}
+ */
+export function fx_language() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.fx_language();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,

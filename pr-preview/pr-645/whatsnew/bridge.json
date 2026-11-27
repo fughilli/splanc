@@ -3,6 +3,58 @@
  "product": "bridge",
  "releases": [
   {
+   "version": "1.3.1",
+   "tag": "pi-bridge-v1.3.1",
+   "name": "Splanc bridge 1.3.1",
+   "date": "2026-11-27T04:00:23Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/pi-bridge-v1.3.1",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "p",
+     "c": [
+      "Splanc bridge 1.3.1: a ready-to-flash Raspberry Pi SD image that runs the Splanc cloud bridge, and the ",
+      {
+       "t": "strong",
+       "c": [
+        "Splanc Bridge Flasher"
+       ]
+      },
+      " desktop app that writes it."
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Most people:"
+       ]
+      },
+      " download the flasher for your computer below, open it, pick your Pi, enter your WiFi, pick the SD card. See ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md"
+       },
+       "c": [
+        "docs/pi-bridge.md"
+       ]
+      },
+      "."
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      "The flasher is not code-signed yet: on macOS, open it once via System Settings > Privacy & Security > Open Anyway; on Windows, SmartScreen > More info > Run anyway."
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
    "version": "1.3.0",
    "tag": "pi-bridge-v1.3.0",
    "name": "Splanc bridge 1.3.0",
