@@ -859,8 +859,15 @@ pub(crate) fn classify(prog: &Prog, bufs: &[BufShape]) -> Vec<(String, Variance)
         .collect()
 }
 
-/// Locals a hoisted range needs re-derived in the prep code, dependencies first.
-/// `None` if any is not re-derivable (multi-def, opaque def, or non-frame).
+/// Locals a hoisted range needs re-derived in the prep code, dependencies first,
+/// one representative slot per def (look it up in `an.defs`; the def re-derives
+/// every word it stores). `None` if any is not re-derivable (multi-def, opaque
+/// def, or non-frame).
+///
+/// The representative is the slot that was read, NOT the def's base: two stores
+/// can share a base with different widths (the matrix-lowering scratch reused by
+/// a `mat4 * vec4` then a `mat3 * vec3`), leaving the base multi-def — absent
+/// from `an.defs` — while the wider store's tail words stay single-def.
 fn hoist_deps(an: &Analysis, reads: &BTreeSet<u8>, prog: &Prog) -> Option<Vec<u8>> {
     let mut order: Vec<u8> = Vec::new();
     let mut seen: BTreeSet<u8> = BTreeSet::new();
@@ -888,20 +895,14 @@ fn hoist_deps(an: &Analysis, reads: &BTreeSet<u8>, prog: &Prog) -> Option<Vec<u8
         for r in range_reads(prog, s, e) {
             visit(r, an, prog, seen, order, depth + 1)?;
         }
-        order.push(def.base);
+        // `seen` (keyed by base) already keeps one entry per def.
+        order.push(slot);
         Some(())
     }
     for &r in reads {
         visit(r, an, prog, &mut seen, &mut order, 0)?;
     }
-    // Every slot of a multi-word def is written by one op — dedupe by base.
-    let mut uniq: Vec<u8> = Vec::new();
-    for b in order {
-        if !uniq.contains(&b) {
-            uniq.push(b);
-        }
-    }
-    Some(uniq)
+    Some(order)
 }
 
 /// Run the pass. Mutates `prog` (and nothing else) on success; returns the
@@ -1072,11 +1073,11 @@ pub(crate) fn run(prog: &mut Prog, bufs: &[BufShape], n_state: u8, cfg: &MemoCon
         if stored_slots.contains(&h.slot) {
             continue; // a duplicate expression shares the first one's slot
         }
-        for &base in &h.deps {
-            if !derived.insert(base) {
+        for &slot in &h.deps {
+            let def = &an.defs[&slot];
+            if !derived.insert(def.base) {
                 continue;
             }
-            let def = &an.defs[&base];
             let (s, e) = def.range.expect("hoist_deps checked");
             for ii in &prog.ins[s..=e] {
                 prep.push(Ins {
