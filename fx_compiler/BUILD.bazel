@@ -137,6 +137,20 @@ rust_test(
     ],
 )
 
+# D-541 PR 10 (D-556): `uniform mat3 x : transform2d` (2D affine gizmo), on
+# the same .fxb format 2, and the firmware keypoint blend reading it.
+rust_test(
+    name = "transform2d_test",
+    srcs = ["tests/transform2d.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+        "//firmware/keypoint",
+        "@crates//:serde_json",
+    ],
+)
+
 # FUG-125: differential + hill-climb harness for the bytecode optimizer.
 # #400 signed/vector uniform ranges + mat3/mat4 (lowered to vecN ops): grammar,
 # manifest, and VM equivalence against hand-written dot forms.

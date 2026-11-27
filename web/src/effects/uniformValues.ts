@@ -26,6 +26,7 @@ export function componentRanges(u: FxUniform): Range[] | null {
     switch (u.ui.kind) {
       case "slider":
       case "matrix":
+      case "transform2d":
       case "vector":
         r = { min: u.ui.min, max: u.ui.max };
         break;
@@ -64,7 +65,7 @@ export function clampUniformValue(u: FxUniform, value: readonly number[]): numbe
 
 /** N for an N×N matrix uniform (mat3 = 9 → 3, mat4 = 16 → 4), else null. */
 export function matrixDim(u: { width: number; ui: { kind: string } }): number | null {
-  if (u.ui.kind !== "matrix") return null;
+  if (u.ui.kind !== "matrix" && u.ui.kind !== "transform2d") return null;
   const n = Math.round(Math.sqrt(u.width));
   return n * n === u.width ? n : null;
 }

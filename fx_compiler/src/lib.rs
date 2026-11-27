@@ -205,16 +205,22 @@ pub enum UiKind {
     /// (vec2) or a sphere (vec3). The default is normalised at compile time
     /// and the keypoint blend renormalises. Needs [`FXB_FORMAT_V2`].
     Direction,
+    /// `: transform2d [range]` on a mat3 (D-541 PR 10, D-556): the matrix is a
+    /// 2D homogeneous affine transform (column-major; translation in column
+    /// 2), edited on a flat Move / Rotate / Scale gizmo. A plain `mat3`
+    /// (`Matrix`) is a 3D rotation / linear transform instead. Same range
+    /// rules as `Matrix`. Needs [`FXB_FORMAT_V2`].
+    Transform2d { min: f32, max: f32 },
 }
 
 impl UiKind {
     /// The `.fxb` format an effect using this control needs (D-557): the
     /// widget kinds added after format 1 require firmware that knows them.
-    /// Later widget PRs (the mat3 `: transform2d` gizmo, persisted textures)
-    /// add their kinds here, behind the SAME format 2.
+    /// Later widget PRs (persisted textures) add their kinds here, behind the
+    /// SAME format 2.
     pub fn min_format(&self) -> u8 {
         match self {
-            UiKind::Vector { .. } | UiKind::Direction => FXB_FORMAT_V2,
+            UiKind::Vector { .. } | UiKind::Direction | UiKind::Transform2d { .. } => FXB_FORMAT_V2,
             _ => FXB_FORMAT_V1,
         }
     }
@@ -256,7 +262,7 @@ pub const FXB_FORMAT_VERSION: u8 = FXB_FORMAT_V2;
 /// The original format: the bytecode and manifest every firmware runs.
 pub const FXB_FORMAT_V1: u8 = 1;
 /// Format 1 plus the D-541 widget kinds in the manifest (`vector`,
-/// `direction`; later `transform2d` and persisted textures). The bytecode is
+/// `direction`, `transform2d`; later persisted textures). The bytecode is
 /// unchanged; the bump only tells old firmware to refuse an effect whose
 /// controls it would mishandle.
 pub const FXB_FORMAT_V2: u8 = 2;
@@ -1104,6 +1110,7 @@ impl Compiler {
     // uniform float x : -2.0 .. 2.0 = 0.0;   uniform vec3 dir : -1..1 = 0, 1, 0;
     // uniform int n : 0..8 step 2 = 4;   (a slider grid; default = the type's native step)
     // uniform vec3 p : vec3(-1,-1,0) .. vec3(1,1,2) = vec3(0);   uniform mat4 pose;
+    // uniform mat3 xf : transform2d;   (a 2D affine; a plain mat3 is a 3D rotation/linear)
     fn uniform_decl(&mut self) -> Result<(), Diagnostic> {
         let first_line = self.lx_toks[self.p].1;
         self.advance(); // 'uniform'
@@ -1349,6 +1356,22 @@ impl Compiler {
                 match self.parse_ui_annotation(ty)? {
                     (UiKind::Slider { min, max, step }, cr) => Ok((UiKind::Vector { min, max, step }, cr)),
                     _ => self.err("expected a range after `vector` (`: vector -1..1`)"),
+                }
+            }
+            Tok::Ident(k) if k == "transform2d" => {
+                if ty != Ty::Mat3 {
+                    return self.err(
+                        "`transform2d` is for a mat3 uniform (a 2D affine transform); a mat4 is already a 3D transform",
+                    );
+                }
+                self.advance();
+                // An optional range, as for any matrix (`: transform2d -10 .. 10`).
+                match self.cur() {
+                    Tok::Num(..) | Tok::Sym('-') => match self.parse_ui_annotation(ty)? {
+                        (UiKind::Matrix { min, max }, _) => Ok((UiKind::Transform2d { min, max }, None)),
+                        _ => self.err("expected a range after `transform2d` (`: transform2d -10 .. 10`)"),
+                    },
+                    _ => Ok((UiKind::Transform2d { min: -MAT_DEFAULT_RANGE, max: MAT_DEFAULT_RANGE }, None)),
                 }
             }
             Tok::Ident(k) if k == "color" => {
@@ -4793,6 +4816,7 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
                 format!("{{\"kind\":\"vector\",\"min\":{min},\"max\":{max},\"step\":{step}}}")
             }
             UiKind::Direction => "{\"kind\":\"direction\"}".to_string(),
+            UiKind::Transform2d { min, max } => format!("{{\"kind\":\"transform2d\",\"min\":{min},\"max\":{max}}}"),
             UiKind::Dropdown(o) => {
                 let opts: Vec<String> = o.iter().map(|x| format!("\"{x}\"")).collect();
                 format!("{{\"kind\":\"dropdown\",\"options\":[{}]}}", opts.join(","))
@@ -4802,7 +4826,10 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
         // Explicit range per uniform, even where the UI kind implies it, so an agent
         // can clamp without knowing the UI vocabulary.
         let (min, max) = match &u.ui {
-            UiKind::Slider { min, max, .. } | UiKind::Matrix { min, max } | UiKind::Vector { min, max, .. } => {
+            UiKind::Slider { min, max, .. }
+            | UiKind::Matrix { min, max }
+            | UiKind::Transform2d { min, max }
+            | UiKind::Vector { min, max, .. } => {
                 (*min, *max)
             }
             UiKind::Color | UiKind::Toggle => (0.0, 1.0),

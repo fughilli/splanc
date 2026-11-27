@@ -621,7 +621,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "The active effect's uniforms: names, widths, UI hints, ranges, defaults, current values. A ranged vector " +
         "(ui slider, width > 1) has a range per component (mins/maxs when they differ; bounds may be negative). " +
         "A matrix (ui kind matrix, rows/cols 3 or 4) is width 9/16, values column-major. " +
-        "A vector (ui kind vector) is a vec2/vec3 on a pad; a direction (ui kind direction) is normalised to unit length.",
+        "A vector (ui kind vector) is a vec2/vec3 on a pad; a direction (ui kind direction) is normalised to unit length. " +
+        "A plain mat3 is a 3D rotation/scale; ui kind transform2d marks a mat3 as a 2D affine (translation in column 2).",
       inputSchema: { players },
     },
     ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.listUniforms()))),

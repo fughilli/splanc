@@ -81,6 +81,11 @@ pub enum Kind {
     /// sphere. (Firmware older than format 2 never loads such an effect; had it
     /// done so, the unknown kind fell to `Other`, a plain clamped lerp.)
     Direction,
+    /// A mat3 2D affine transform (`: transform2d`, .fxb format 2): blended
+    /// per component and clamped to its range, exactly as a plain matrix
+    /// (`Other`) is. Named so a later blend (e.g. decompose / slerp) has a
+    /// place to go without another format change.
+    Transform2d,
 }
 
 /// One tracked uniform.
@@ -352,6 +357,7 @@ fn scan_ui<'a>(j: &'a [u8], i: usize, u: &mut Uniform<'a>) -> Option<usize> {
                             b"dropdown" => Kind::Dropdown,
                             b"vector" => Kind::Vector,
                             b"direction" => Kind::Direction,
+                            b"transform2d" => Kind::Transform2d,
                             _ => Kind::Other,
                         };
                         k = e;

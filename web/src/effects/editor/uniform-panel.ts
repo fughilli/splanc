@@ -2,7 +2,8 @@
  * Auto uniform panel (docs/design/effects-compiler.md §"live uniform panel"):
  * renders one control per manifest uniform (slider/HSV colour picker/toggle/dropdown; a
  * ranged vector gets one slider per component, a `: vector` / `: direction`
- * vec2/vec3 an XY pad / direction dial or sphere, a mat3/mat4 an N×N number grid)
+ * vec2/vec3 an XY pad / direction dial or sphere, a mat3/mat4 a Move / Rotate /
+ * Scale gizmo with its N×N number grid behind an "Advanced" disclosure)
  * and holds the live values. Preview and device consume the SAME values — dragging a
  * control fires `onChange(slot, value[])` with the exact numbers both sinks use.
  *
@@ -14,6 +15,8 @@
 
 import type { FxUiKind, FxUniform } from "../../fx/preview";
 import { reassembleUniformValues } from "../../net/uniformWire";
+import { matKindOf, rotationAngle, decompose, type MatKind } from "../../geom/trs";
+import { MatSwatch } from "../../ui/kit/matGizmo";
 import { VectorSwatch, vectorSummary } from "../../ui/kit/vectorPicker";
 import {
   clampUniformValue,
@@ -157,7 +160,8 @@ export class UniformPanel {
   /** Append one uniform's three grid cells (name, control, value). The row is a
    * `display:contents` label so clicking the name targets the control. */
   private row(grid: HTMLElement, s: Slot, i: number): void {
-    const row = document.createElement(s.uniform.ui.kind === "matrix" ? "div" : "label");
+    const isMat = s.uniform.ui.kind === "matrix" || s.uniform.ui.kind === "transform2d";
+    const row = document.createElement(isMat ? "div" : "label");
     row.className = "upanel-row";
 
     const name = document.createElement("span");
@@ -165,10 +169,8 @@ export class UniformPanel {
     name.textContent = this.label(s.uniform.name);
     name.title = s.uniform.name;
 
-    if (s.uniform.ui.kind === "matrix") {
-      // The N×N grid spans the control + value columns.
-      row.append(name, this.matrix(s, i));
-      grid.appendChild(row);
+    if (isMat) {
+      this.matrixRows(grid, row, name, s, i);
       return;
     }
 
@@ -215,9 +217,60 @@ export class UniformPanel {
     this.setters.set(u.slot, (v) => movers.forEach((m, c) => m(v[c] ?? 0)));
   }
 
+  /** A mat3/mat4 (D-541 PR 10): a button opening the Move / Rotate / Scale
+   * gizmo (a full Sheet on phones, a popover on desktop) whose drags stream
+   * through onChange and commit on release, plus the raw N×N grid behind an
+   * "Advanced" disclosure on the next row. Both are registered in `setters`,
+   * so MIDI / the agent move them. */
+  private matrixRows(grid: HTMLElement, row: HTMLElement, name: HTMLElement, s: Slot, i: number): void {
+    const u = s.uniform;
+    const kind = matKindOf(u.width, u.ui.kind);
+    const ranges = componentRanges(u) ?? undefined;
+    const ctrl = document.createElement("span");
+    ctrl.className = "upanel-ctrl";
+    const value = document.createElement("span");
+    value.className = "upanel-val";
+    const label = (v: readonly number[]): string => matValueLabel(kind, v);
+    const gridBox = this.matrix(s, i);
+    const moveGrid = this.setters.get(u.slot);
+    const sw = MatSwatch({
+      value: s.value,
+      kind,
+      ...(ranges ? { ranges } : {}),
+      title: this.label(u.name),
+      onInput: (v) => {
+        const next = clampUniformValue(u, v);
+        this.set(i, next);
+        moveGrid?.(next);
+        value.textContent = label(next);
+      },
+      onCommit: (v) => this.opts.onCommit?.(u.slot, clampUniformValue(u, v)),
+    });
+    ctrl.appendChild(sw.el);
+    value.textContent = label(s.value);
+    value.title = kind === "affine2d" ? "2D transform" : kind === "mat3" ? "3D rotation / scale" : "3D transform";
+    row.append(name, ctrl, value);
+    grid.appendChild(row);
+
+    // The raw numbers, one disclosure away (a full-width grid row).
+    const adv = document.createElement("details");
+    adv.className = "upanel-adv";
+    const sum = document.createElement("summary");
+    sum.textContent = `Advanced: ${u.width === 16 ? "4×4" : "3×3"} numbers`;
+    adv.append(sum, gridBox);
+    grid.appendChild(adv);
+
+    this.setters.set(u.slot, (v) => {
+      moveGrid?.(v);
+      sw.set(v);
+      value.textContent = label(v);
+    });
+  }
+
   /** A mat3/mat4 as an N×N grid of number fields, shown row by row like a
    * written matrix; storage is column-major (GLSL): element (row r, col c) is
-   * value[c*N + r]. A typed entry is clamped to the declared range. */
+   * value[c*N + r]. A typed entry is clamped to the declared range and
+   * committed. Registers a grid-only setter (matrixRows wraps it). */
   private matrix(s: Slot, i: number): HTMLElement {
     const u = s.uniform;
     const n = matrixDim(u) ?? Math.max(1, Math.round(Math.sqrt(u.width)));
@@ -247,6 +300,9 @@ export class UniformPanel {
           const v = clampUniformValue(u, next);
           el.value = fmtNum(v[k] ?? 0);
           this.set(i, v);
+          // Keep the gizmo button in step with a typed entry.
+          this.setters.get(u.slot)?.(v);
+          this.commitSlot(i);
         });
         el.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
@@ -389,7 +445,7 @@ export class UniformPanel {
       return;
     }
 
-    if (ui.kind === "matrix") return; // rendered by matrix()
+    if (ui.kind === "matrix" || ui.kind === "transform2d") return; // rendered by matrixRows()
 
     if (ui.kind === "vector" || ui.kind === "direction") {
       // The XY pad (+ z slider) / direction dial or sphere (D-541 PR 4): a
@@ -440,6 +496,15 @@ export class UniformPanel {
 }
 
 const COMPONENT = ["x", "y", "z", "w"];
+
+/** The value column of a matrix row: its rotation, or its scale when it has
+ * none (the button carries the full move · rotate · scale summary). */
+function matValueLabel(kind: MatKind, v: readonly number[]): string {
+  const deg = kind === "affine2d" ? decompose(kind, v).r[2] : rotationAngle(kind, v);
+  if (Math.abs(deg) >= 0.05) return `${Math.round(deg * 10) / 10}°`;
+  const s = Math.abs(decompose(kind, v).s[0]);
+  return `×${Math.round(s * 100) / 100}`;
+}
 
 /** Compact numeric label (up to 4 decimals, trailing zeros trimmed). */
 function fmtNum(v: number): string {
