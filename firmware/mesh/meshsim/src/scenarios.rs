@@ -398,6 +398,37 @@ fn a_lone_gateway_admits_a_pending_join() {
     eprintln!("lone gateway: admitted {ms} ms after the admin's tap");
 }
 
+/// Once a pending fixture is admitted, the members that heard its join requests stop
+/// forwarding them: the gateway doesn't list it as pending again (D-519 bench: a third member
+/// re-announced the joined lamp every 10 s).
+#[test]
+fn an_admitted_join_stops_being_forwarded() {
+    let mut w = room(6, 11);
+    let c = creds(&w);
+    for i in 0..4 {
+        w.power_on(i, Some((&c, ProvisionSource::App)));
+    }
+    w.run_ms(3_000);
+    let bare = Credentials { mesh_id: w.mesh_id, ..Credentials::default() };
+    w.power_on(5, Some((&bare, ProvisionSource::Factory)));
+    w.run_ms(15_000);
+    let p = *w.nodes[GW].pending().iter().find(|p| p.node == id(5)).expect("the gateway lists it");
+    w.unlock_and_sync(GW, SESSION, &[1, 2, 3], 10_000).unwrap();
+    let t = w.local(GW);
+    w.nodes[GW].stack.admit(t, CONN, &p).unwrap();
+    w.run_until(10_000, |w| is_member(w, 5)).expect("admitted");
+    // Forwards already in flight may land just after the admit; after that, none.
+    w.run_ms(15_000);
+    // Every node, the joined one included (it wasn't a member when the admit went out, so
+    // it never saw it: on the bench it logged its own join re-announced by another member).
+    let since: Vec<usize> = (0..6).map(|g| w.nodes[g].events.len()).collect();
+    w.run_ms(45_000);
+    let again: Vec<usize> = (0..6)
+        .filter(|&g| w.nodes[g].events[since[g]..].iter().any(|(_, e)| matches!(e, Ev::Pending(p) if p.node == id(5))))
+        .collect();
+    assert!(again.is_empty(), "members still announce the joined node as pending: {again:?}");
+}
+
 #[test]
 fn locked_mode_rejects_an_unapproved_device() {
     let mut w = room(6, 7);

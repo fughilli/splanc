@@ -49,6 +49,9 @@ pub const NONCES: usize = 4;
 pub const PENDING: usize = 4;
 /// How often a member re-tells gateways about the same pending join.
 pub const PENDING_FORWARD_US: i64 = 10_000_000;
+/// A join waiting for approval is forgotten once its node stops asking this long (it joined
+/// through another member, or gave up): a waiting node re-asks every JOIN_RETRY_US.
+pub const PENDING_STALE_US: i64 = 30_000_000;
 /// An admission waits this long for the admitted device's next request.
 pub const ADMITTED_US: i64 = 120_000_000;
 pub const ADMITTED: usize = 4;
@@ -427,6 +430,7 @@ pub struct MembershipStats {
 struct PendingReq {
     req: JoinRequest,
     forwarded_us: Option<i64>,
+    heard_us: i64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -649,6 +653,13 @@ impl Membership {
             return req.encode(out).map(Out::Plain);
         }
         if self.phase == Phase::Member {
+            // A node that stopped asking joined through another member (or gave up): forget
+            // it, so its join isn't forwarded to the gateways forever (D-519 bench).
+            for p in self.pending.iter_mut() {
+                if p.is_some_and(|p| now_us - p.heard_us >= PENDING_STALE_US) {
+                    *p = None;
+                }
+            }
             // Forward one join waiting for approval that the gateways have not heard lately.
             for p in self.pending.iter_mut().flatten() {
                 if p.forwarded_us.is_none_or(|t| now_us - t >= PENDING_FORWARD_US) {
@@ -761,7 +772,7 @@ impl Membership {
         };
         if !ok {
             // New to us: list it here too (this member may be the gateway the app is on).
-            let note = if self.remember_pending(r) { self.on_pending(&self.pending_of(r)) } else { Note::None };
+            let note = if self.remember_pending(now_us, r) { self.on_pending(&self.pending_of(r)) } else { Note::None };
             return (None, note);
         }
         let salt = if proof { s.site_secret } else { None };
@@ -784,9 +795,10 @@ impl Membership {
     }
 
     /// Keep a join waiting for approval; true if it is new.
-    fn remember_pending(&mut self, r: &JoinRequest) -> bool {
+    fn remember_pending(&mut self, now_us: i64, r: &JoinRequest) -> bool {
         if let Some(p) = self.pending.iter_mut().flatten().find(|p| p.req.node == r.node) {
             p.req = *r;
+            p.heard_us = now_us;
             return false;
         }
         self.stats.joins_pending += 1;
@@ -803,7 +815,7 @@ impl Membership {
                 best
             }
         };
-        self.pending[slot] = Some(PendingReq { req: *r, forwarded_us: None });
+        self.pending[slot] = Some(PendingReq { req: *r, forwarded_us: None, heard_us: now_us });
         true
     }
 
@@ -849,6 +861,12 @@ impl Membership {
                 self.admitted[slot] = Some((key_hash, now_us + ADMITTED_US));
                 self.gateway_pending.iter_mut().for_each(|p| {
                     if p.is_some_and(|p| p.key_hash == key_hash) {
+                        *p = None;
+                    }
+                });
+                // Admitted: whichever member wraps its keys, this one stops forwarding it.
+                self.pending.iter_mut().for_each(|p| {
+                    if p.is_some_and(|p| crate::crypto::key_hash(&p.req.public_key) == key_hash) {
                         *p = None;
                     }
                 });
