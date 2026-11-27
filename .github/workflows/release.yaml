@@ -6,6 +6,9 @@
 #                       attach them and their signed .ota packages as Release assets;
 #                       then (job `max`) the signed Splanc MAX over-the-air images
 #                       (docs/design/max-ota.md), one per board, on the same release.
+#   agent-vX.Y.Z     -> the agent bundle alone (splanc-agent-X.Y.Z.tgz), between
+#                       firmware releases; job `agent` says which firmware its
+#                       compiler matches. splanc.io then serves the newest bundle.
 #   pi-vX.Y.Z        -> build the Pi 3 player SD image (.img.zst) + wiring README,
 #                       attach as Release assets.
 #   app-vX.Y.Z       -> record the release's feature-preview clips onto a draft
@@ -26,6 +29,7 @@ on:
   push:
     tags:
       - 'app-v*'
+      - 'agent-v*'
       - 'firmware-v*'
       - 'pi-v*'
 
@@ -33,6 +37,122 @@ permissions:
   contents: write # create GitHub Releases + push gh-pages (webapp)
 
 jobs:
+  # --- agent-vX.Y.Z : the agent bundle alone (MCP hub, bridge, CLI, skill) ------
+  # The agent's host code ships on its own line, between firmware releases. Its
+  # bundle still carries a compiler + VM (built from this commit), and bundle.json
+  # must say which released firmware they match (agent/bundle.bzl): byte-identical
+  # to the newest firmware release's bundle -> that version, else "none" (the
+  # agent then compiles each release player's effects with the player's own
+  # bundle, toolchain.ts). A wrong "none" only costs a download; a wrong version
+  # would emit bytecode a player can't load, so only an exact match claims one.
+  # Versions are one line shared with firmware-v*: an agent-v tag may not reuse a
+  # firmware-v version (the firmware job refuses the reverse), and splanc.io stages
+  # the newest bundle of either kind as /agent/latest.json (Studio-Fug/splanc.io
+  # scripts/stage-agent.mjs).
+  agent:
+    if: startsWith(github.ref, 'refs/tags/agent-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so status.sh `git describe` stamps the version
+
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-agent-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-agent-
+          gc-max-store-size-linux: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-agent-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: bazel-disk-${{ runner.os }}-
+
+      - name: Refuse a version a firmware release already has
+        run: |
+          VER="${GITHUB_REF_NAME#agent-v}"
+          if git rev-parse -q --verify "refs/tags/firmware-v${VER}" >/dev/null; then
+            echo "::error::firmware-v${VER} exists: its bundle is splanc-agent-${VER}; pick another agent version"
+            exit 1
+          fi
+
+      - name: Build the agent bundle (toolchain matched to a firmware release, or none)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF_NAME#agent-v}"
+          build() {
+            bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+              --//agent:bundle_version="${VER}" --//agent:bundle_firmware="$1" //agent:bundle
+          }
+          toolchain_sums() { # <unpacked bundle dir>: sha256 of every compiler/ + simulator/ file
+            (cd "$1" && find compiler simulator -type f -print0 | sort -z | xargs -0 sha256sum)
+          }
+          FW=$(git tag -l 'firmware-v*' --merged HEAD --sort=-v:refname | head -1 | sed 's/^firmware-v//')
+          MATCH=none
+          if [ -n "$FW" ] && gh release download "firmware-v${FW}" -p "splanc-agent-${FW}.tgz" -D _fw 2>/dev/null; then
+            build "$FW"
+            mkdir -p _fw/x _new/x
+            tar -xzf "_fw/splanc-agent-${FW}.tgz" -C _fw/x
+            tar -xzf "bazel-bin/agent/splanc-agent-${VER}.tgz" -C _new/x
+            if [ "$(toolchain_sums "_fw/x/splanc-agent-${FW}")" = "$(toolchain_sums "_new/x/splanc-agent-${VER}")" ]; then
+              MATCH="$FW"
+            fi
+          fi
+          echo "toolchain matches firmware: ${MATCH} (newest firmware release in history: ${FW:-none})"
+          [ "$MATCH" = "$FW" ] && [ -n "$FW" ] || build none
+          mkdir -p _assets
+          cp "bazel-bin/agent/splanc-agent-${VER}.tgz" "bazel-bin/agent/splanc-agent-${VER}.tgz.sha256" _assets/
+          python3 - "_assets/splanc-agent-${VER}.tgz" <<'PY'
+          import json, sys, tarfile
+          with tarfile.open(sys.argv[1]) as t:
+              m = next(x for x in t.getmembers() if x.name.endswith("/bundle.json"))
+              print("bundle.json firmware:", json.load(t.extractfile(m))["firmware"])
+          PY
+          {
+            echo "Splanc agent ${VER}: the MCP hub, Pi bridge agent, CLI and skill (no device firmware)."
+            echo
+            if [ "$MATCH" = none ]; then
+              echo "Its effect compiler matches no firmware release, so it compiles each player's effects with that player's own toolchain (downloaded once per firmware version)."
+            else
+              echo "Its effect compiler and simulator are the same as firmware ${MATCH}'s."
+            fi
+            echo
+            echo "Bridges offer it once splanc.io republishes /agent/latest.json. Install anywhere: \`npx -y https://splanc.io/agent/splanc-agent.tgz\`."
+          } > _notes.md
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            _assets/*.tgz
+            _assets/*.tgz.sha256
+          body_path: _notes.md
+          generate_release_notes: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+
   # --- firmware-v* : both ESP32-C6 variants as release assets ------------------
   firmware:
     if: startsWith(github.ref, 'refs/tags/firmware-v')
@@ -81,6 +201,14 @@ jobs:
       # AGENT_BUNDLE_URL / _SHA256 are exported for that handoff (agent/README.md
       # "Release"): the device side passes them as
       #   --//firmware/player_app:agent_bundle_url=... / :agent_bundle_sha256=...
+      - name: Refuse a version an agent release already has
+        run: |
+          VER="${GITHUB_REF_NAME#firmware-v}"
+          if git rev-parse -q --verify "refs/tags/agent-v${VER}" >/dev/null; then
+            echo "::error::agent-v${VER} exists: its bundle is splanc-agent-${VER}; pick another firmware version"
+            exit 1
+          fi
+
       - name: Build the agent bundle
         run: |
           VER="${GITHUB_REF_NAME#firmware-v}"

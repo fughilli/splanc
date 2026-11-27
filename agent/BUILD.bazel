@@ -37,6 +37,14 @@ string_flag(
     build_setting_default = "0.0.0-dev",
 )
 
+# Which released firmware the bundle's compiler + VM match (bundle.bzl): "" = the
+# firmware release of the same version (firmware-v* tags); "X.Y.Z" or "none" for
+# an agent-v* release (release.yaml decides by comparing toolchains).
+string_flag(
+    name = "bundle_firmware",
+    build_setting_default = "",
+)
+
 # The website the bundle's site/ files (AGENTS.md, llms.txt, server.json…) name:
 # the one-liner is `npx -y <site_base>/agent/splanc-agent.tgz`.
 string_flag(
@@ -212,6 +220,7 @@ tsc_bin.tsc_test(
 agent_bundle(
     name = "bundle",
     compiler = "//fx_compiler:fx_compiler_web",
+    firmware = ":bundle_firmware",
     # The .fxb container magic fx_compiler emits (fx_compiler/src/lib.rs). TODO(fxb
     # format version): read it from the compiler once the device PR versions .fxb.
     fxb_format = "FXB1",

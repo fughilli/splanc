@@ -319,7 +319,20 @@ The device side's manifest takes them as build settings:
 ```
 
 (those settings belong to the device PR; add the two flags to the flashbundle
-step when it lands). No npm publish: the bundle is the distribution. A dev
+step when it lands). No npm publish: the bundle is the distribution.
+
+**Agent-only releases (`agent-vX.Y.Z` tags).** The hub, bridge, CLI and skill can
+ship between firmware releases: `release.yaml` job `agent` builds the same bundle
+and publishes it as release `agent-vX.Y.Z`. The bundle's compiler + VM are built
+from that commit, so `--//agent:bundle_firmware` records which released firmware
+they match: the newest `firmware-v*` in history when its bundle's `compiler/` and
+`simulator/` are byte-identical, else `none` (`bundle.json` `"firmware": null`),
+and the agent then compiles each release player's effects with the player's own
+bundle (`toolchain.ts`). Versions share one line with firmware: neither tag kind
+may reuse the other's version (both jobs refuse), so cut the agent as a patch
+after the firmware it follows (`firmware-v1.17.0` -> `agent-v1.17.1`). splanc.io
+stages the newest bundle of either kind as `/agent/latest.json`, which the Pi
+bridge's self-updater and `npx` read. A dev
 build (`0.0.0-dev`) has no published bundle; point `--bundle-root` at a checkout.
 
 ## Tests

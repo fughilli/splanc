@@ -28,7 +28,8 @@ import { progress } from "./progress";
 
 export interface BundleInfo {
   version: string;
-  firmware?: { min?: string; max?: string };
+  /** null: matches no released firmware (an agent-v* bundle built ahead of one). */
+  firmware?: { min?: string; max?: string } | null;
   fxb_format?: string;
 }
 
@@ -59,6 +60,7 @@ export function isRelease(fw: string | undefined): fw is string {
 
 export function covers(info: BundleInfo | null, fw: string): boolean {
   if (info === null) return true; // a dev checkout: speaks whatever it was built from
+  if (info.firmware === null) return false; // an agent-v* bundle ahead of every firmware release
   const min = info.firmware?.min ?? info.version;
   const max = info.firmware?.max ?? info.version;
   if (!isRelease(min) || !isRelease(max)) return true; // a dev bundle
@@ -114,7 +116,7 @@ export class Toolchains {
         toolchain: t,
         source: "host" as const,
         note:
-          `firmware ${fw} is outside this bundle's range (${info?.firmware?.min}..${info?.firmware?.max}) and the ` +
+          `firmware ${fw} is outside this bundle's range (${info?.firmware ? `${info.firmware.min}..${info.firmware.max}` : "none"}) and the ` +
           "player names no bundle: using this bundle's compiler (bytecode may not load)",
       }));
     }
