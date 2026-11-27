@@ -8,10 +8,11 @@ import os
 import shutil
 import tempfile
 import time
+from dataclasses import replace
 
 import pytest
 from splanc_display import fake_bridge, render_hdmi, render_oled, sim, ui, updates
-from splanc_display.status import parse
+from splanc_display.status import Status, parse
 from splanc_display.ui import View
 
 NOW = 1_760_000_000.0
@@ -34,7 +35,6 @@ def ups(system=SYSTEM_OFFER, agent=AGENT_IDLE, supported=True):
 
 
 def with_updates(u, state="paired", **over):
-    from dataclasses import replace
 
     return replace(parse(fake_bridge.sample(state, NOW, **over)), updates=u)
 
@@ -137,10 +137,76 @@ def test_check_now_asks_both_updaters(u, d, clock):
     for _ in range(2):
         u.press("down")
     assert u.view().update_sel == 2
+    u.set_update_progress([100.0, 100.0], False)
     u.press("press")
     assert d.calls == [("update_check", {})]
-    assert u.view().page == "updates"  # stays on the list
-    assert u.view().overlay_text == ui.DONE_TEXT["update_check"]
+    v = u.view()
+    assert v.page == "updates"  # stays on the list
+    assert v.overlay is None, "no toast: the row spins instead"
+    assert v.update_checking and v.animating
+
+
+def test_check_now_spins_until_every_updater_checked_again(u, d, clock):
+    to_updates(u, clock)
+    for _ in range(2):
+        u.press("down")
+    u.set_update_progress([100.0, 100.0], False)
+    u.press("press")
+    clock.advance(1)
+    u.set_update_progress([100.0, 100.0], True)  # the system check is running
+    assert u.view().update_checking
+    u.set_update_progress([100.0, 150.0], True)  # the agent's done, the system's not
+    assert u.view().update_checking
+    u.set_update_progress([151.0, 150.0], False)  # both checked again, none busy
+    assert not u.view().update_checking
+    assert u.view().overlay is None
+    u.press("press")  # and it can be pressed again
+    assert d.calls == [("update_check", {}), ("update_check", {})]
+
+
+def test_check_now_spins_at_least_briefly_and_gives_up_eventually(d, clock):
+    m = ui.OledUI(d, clock, pages=ui.UPDATES_PAGES)
+    m.set_updates(["system", "check"])
+    to_updates(m, clock)
+    m.press("down")
+    m.set_update_progress([1.0], False)
+    m.press("press")
+    m.set_update_progress([2.0], False)  # answered at once
+    assert m.view().update_checking, "shown for CHECK_SPIN_MIN at least"
+    clock.advance(ui.CHECK_SPIN_MIN)
+    assert not m.view().update_checking
+    m.set_update_progress([2.0], False)
+    m.press("press")  # this time nothing ever answers
+    clock.advance(ui.CHECK_SPIN_MAX + 0.1)
+    assert not m.view().update_checking
+
+
+def test_check_now_failure_stops_the_spinner_and_says_why(clock):
+    def failing(cmd, done, **args):
+        done(False, "updates are not managed from this screen")
+
+    m = ui.OledUI(failing, clock, pages=ui.UPDATES_PAGES)
+    m.set_updates(["system", "check"])
+    to_updates(m, clock)
+    m.press("down")
+    m.press("press")
+    v = m.view()
+    assert not v.update_checking
+    assert v.overlay_text == "updates are not managed from this screen"
+
+
+def test_check_now_row_draws_a_turning_spinner(u, clock):
+    to_updates(u, clock)
+    s = Status(
+        state="paired",
+        updates=updates.Updates(system=updates.Track("system", state="idle", checked_at=NOW)),
+    )
+    v = View(page="updates", key="", update_checking=True)
+    a = render_oled.render(s, v, now=NOW).tobytes()
+    b = render_oled.render(s, v, now=NOW + render_oled.SPIN_PERIOD / 4).tobytes()
+    idle = render_oled.render(s, replace(v, update_checking=False), now=NOW).tobytes()
+    assert a != b, "it turns"
+    assert a != idle, "it replaces the last-checked age"
 
 
 def test_row_added_above_keeps_a_short_list_at_its_top(d, clock):
@@ -412,3 +478,45 @@ def test_sim_install_waits_for_apps_then_restart_now(simulator):
     s.tap("key3")
     assert wait(lambda: "restart-system" in b.updates.requests)
     assert wait(lambda: b.updates.docs["system"]["current_version"] == "1.4.0")
+
+
+def test_a_toast_has_a_black_row_above_it_over_a_highlighted_row():
+    s = Status(
+        state="paired",
+        updates=updates.Updates(
+            system=updates.Track("system", state="idle", checked_at=NOW),
+            agent=updates.Track("agent", state="idle", checked_at=NOW),
+        ),
+    )
+    # Highlight on the last row: its bar reaches down to where the toast starts.
+    v = View(page="updates", key="", update_sel=2, update_pos=2.0)
+    plain = render_oled.render(s, v, now=NOW).load()
+    toast = render_oled.render(s, replace(v, overlay="toast", overlay_text="Later"), now=NOW).load()
+    top = render_oled.toast_top()
+    w = render_oled.W
+    assert any(plain[x, top - 1] for x in range(w)), "the bar is lit right above the toast"
+    assert not any(toast[x, top - 1] for x in range(w)), "the toast keeps one black row above it"
+    assert all(toast[x, top] for x in (0, w - 1)), "the toast's band starts at its top row"
+
+
+def test_check_now_spinner_is_as_tall_as_the_text_and_on_its_baseline():
+    s = Status(
+        state="paired",
+        updates=updates.Updates(system=updates.Track("system", state="idle", checked_at=NOW - 60)),
+    )
+    v = View(page="updates", key="", update_sel=0, update_pos=0.0)
+    w = render_oled.W
+    spin = render_oled.render(s, replace(v, update_checking=True), now=NOW)
+    age = render_oled.render(s, v, now=NOW)  # "1m" in the same place
+
+    def ink_rows(img):  # the hint's rows (right-hand 14 px) in the Check now row
+        px = img.load()
+        return [y for y in range(img.size[1]) if any(px[x, y] for x in range(w - 14, w - 2))]
+
+    rows_spin, rows_age = ink_rows(spin), ink_rows(age)
+    y0 = render_oled._body_y() + render_oled.ROW_H  # the Check now row (below System)
+    span = range(y0, y0 + render_oled.ROW_H)
+    check_rows = [y for y in rows_age if y in span]
+    spin_rows = [y for y in rows_spin if y in span]
+    assert check_rows and spin_rows
+    assert (min(spin_rows), max(spin_rows)) == (min(check_rows), max(check_rows))

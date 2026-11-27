@@ -572,7 +572,7 @@ class FakeModel(fake_bridge.FakeBridge):
             self.pairing = {
                 "code": code,
                 "expires_at": int(time.time()) + 300,
-                "url": f"https://splanc.io/pair#{code}",
+                "url": f"https://splanc.pages.dev/pair?code={code}",
             }
             self.publish()
             return {"ok": True, "code": code}
@@ -668,7 +668,7 @@ class FakeModel(fake_bridge.FakeBridge):
                 self.pairing = {
                     "code": code,
                     "expires_at": int(now) + secs,
-                    "url": f"https://splanc.io/pair#{code}",
+                    "url": f"https://splanc.pages.dev/pair?code={code}",
                 }
             else:
                 self.pairing = None

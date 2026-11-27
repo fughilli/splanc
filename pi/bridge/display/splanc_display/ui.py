@@ -74,10 +74,15 @@ DONE_TEXT = {
     "identify": "Identifying fixtures",
     "revoke_all": "All clients revoked",
     "revoke": "Client revoked",
-    "update_check": "Checking for updates",
     "update_install": "Update started",
     "update_restart": "Restarting soon",
 }
+
+# "Check now" spins on its own row (no toast) until every updater has checked
+# again and none is busy: at least CHECK_SPIN_MIN s, so a quick check is seen;
+# at most CHECK_SPIN_MAX s, in case an updater never answers.
+CHECK_SPIN_MIN = 0.6
+CHECK_SPIN_MAX = 60.0
 
 # An updater's action from its detail: "install" | "restart" | None (nothing to do).
 UpdateAction = Callable[[str], Optional[str]]
@@ -108,6 +113,7 @@ class View:
     update_sel: int = 0  # the same four for the Updates page
     update_pos: float = 0.0
     update_top: float = 0.0
+    update_checking: bool = False  # "Check now" spins (a check is running)
     update_scroll: float = 0.0
     revoke: str = ""  # hold/confirm: the client (grant id) being revoked; "" = all
     boot_t: Optional[float] = None  # seconds into the boot animation (while it shows)
@@ -162,6 +168,10 @@ class OledUI:
         self._toast = ""
         self._toast_until = 0.0
         self._busy: Optional[str] = None
+        # Check now: when it was pressed, and each updater's checked_at then.
+        self._check_since: Optional[float] = None
+        self._check_before: tuple = ()
+        self._check_progress: tuple = ((), False)  # (checked_at per updater, any busy)
         self.code_visible = False  # set by main from the status (gates sleep)
         # The fixture menu and the client menu; at most one item open at a time.
         self._fx = _Menu("players", "detail", "Fixture is gone", now)
@@ -233,6 +243,29 @@ class OledUI:
     def set_updates(self, keys, rows_of: Optional[Callable[[str], int]] = None) -> None:
         """The Updates page's rows: the updaters shown ("system", "agent") + "check"."""
         self._set_items(self._up, keys, rows_of)
+
+    def set_update_progress(self, checked_at, busy: bool) -> None:
+        """What the updaters say now: each one's last check time (in a fixed order)
+        and whether any is busy. Ends Check now's spinner once each has checked
+        again since the press and none is busy."""
+        self._check_progress = (tuple(checked_at), bool(busy))
+
+    def _checking(self, now: float) -> bool:
+        if self._check_since is None:
+            return False
+        held = now - self._check_since
+        times, busy = self._check_progress
+        before = self._check_before
+        done = (
+            not busy
+            and self._busy != "update_check"
+            and len(times) == len(before)
+            and all(t is not None and (b is None or t > b) for t, b in zip(times, before))
+        )
+        if held >= CHECK_SPIN_MAX or (done and held >= CHECK_SPIN_MIN):
+            self._check_since = None
+            return False
+        return True
 
     def _set_items(self, m: _Menu, keys, rows_of) -> None:
         now = self.clock()
@@ -392,12 +425,14 @@ class OledUI:
         ):
             boot_t = now - self._boot_t0
             shift = (0, 0)  # pixel for pixel where the boot splash drew it
+        checking = self._checking(now)
         animating = (
             slide is not None
             or scene.page == "boot"
             or self._fx.moving(now)
             or self._cl.moving(now)
             or self._up.moving(now)
+            or checking
         )
         base = dict(
             page=scene.page,
@@ -417,6 +452,7 @@ class OledUI:
             update_pos=self._up.pos.value(now),
             update_top=self._up.top.value(now),
             update_scroll=self._up.scroll.value(now),
+            update_checking=checking,
             boot_t=boot_t,
             boot_text=self._boot_text if boot_t is not None else "",
             animating=animating,
@@ -502,6 +538,10 @@ class OledUI:
         self._page_since = now
         idx = m.sel
         if key == "press" and m is self._up and m.keys[idx] == UPDATE_CHECK:
+            if self._checking(now):
+                return  # already spinning: one check at a time
+            self._check_since = now
+            self._check_before = self._check_progress[0]
             self._run("update_check", now)
             return
         if key == "press":
@@ -575,7 +615,12 @@ class OledUI:
                 and self._cl.open == args.get("grant")
             ):
                 self._back_to_list(t)  # it's gone: back to the list (no "is gone" toast)
-            self._show_toast(DONE_TEXT.get(cmd, "Done") if ok else (message or "Failed"), t)
+            if cmd == "update_check":
+                if not ok:  # the spinner stops; say why
+                    self._check_since = None
+                    self._show_toast(message or "Failed", t)
+            else:
+                self._show_toast(DONE_TEXT.get(cmd, "Done") if ok else (message or "Failed"), t)
             self._last_activity = t
 
         if args:
