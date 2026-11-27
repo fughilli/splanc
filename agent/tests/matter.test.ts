@@ -19,6 +19,7 @@ import { after, before, describe, test } from "node:test";
 import { Environment } from "@matter/main";
 import { BridgedDeviceBasicInformation, Descriptor, LevelControl, OnOff } from "@matter/main/clusters";
 import { GeneralCommissioning } from "@matter/main/clusters";
+import { ControllerCommissioningFlow, PeerSet } from "@matter/main/protocol";
 import { ManualPairingCodeCodec, NodeId } from "@matter/main/types";
 import { CommissioningController } from "@project-chip/matter.js";
 import type { PairedNode } from "@project-chip/matter.js/device";
@@ -77,6 +78,28 @@ class FakeLamps implements LampDriver {
   }
   start(): void {}
   stop(): void {}
+}
+
+/**
+ * The commissioning flow, except that its operational reconnect (commissioning step 18,
+ * CASE after AddNOC) is told where the bridge is: loopback, its port. By default that
+ * step finds the device by operational mDNS (_matter._tcp) only, and multicast between
+ * two nodes in one process doesn't work everywhere (GitHub's macOS runners: "step
+ * 18.1: Reconnect failed"). With an operational address known, matter.js dials it
+ * straight away and still takes whatever mDNS finds, so where multicast works nothing
+ * changes.
+ */
+function knownAddressFlow(peers: () => PeerSet, port: number): typeof ControllerCommissioningFlow {
+  return class extends ControllerCommissioningFlow {
+    constructor(...args: ConstructorParameters<typeof ControllerCommissioningFlow>) {
+      super(...args);
+      const reconnect = this.transitionToCase;
+      (this as unknown as { transitionToCase: typeof reconnect }).transitionToCase = (address, concurrent) => {
+        peers().for(address).descriptor.operationalAddress = { type: "udp", ip: "::1", port };
+        return reconnect(address, concurrent);
+      };
+    }
+  };
 }
 
 async function until(cond: () => boolean | Promise<boolean>, what: string, ms = 15_000): Promise<void> {
@@ -141,11 +164,14 @@ describe("Matter bridge with a real controller", () => {
     controller = new CommissioningController({ environment: { environment: ctrlEnv, id: "test-controller" }, autoConnect: false, adminFabricLabel: "test" });
     await controller.start();
     const passcode = ManualPairingCodeCodec.decode(st.manual).passcode;
-    const nodeId = await controller.commissionNode({
-      commissioning: { regulatoryLocation: GeneralCommissioning.RegulatoryLocationType.IndoorOutdoor, regulatoryCountryCode: "XX" },
-      discovery: { identifierData: {}, knownAddress: { ip: "::1", port, type: "udp" } },
-      passcode,
-    });
+    const nodeId = await controller.commissionNode(
+      {
+        commissioning: { regulatoryLocation: GeneralCommissioning.RegulatoryLocationType.IndoorOutdoor, regulatoryCountryCode: "XX" },
+        discovery: { identifierData: {}, knownAddress: { ip: "::1", port, type: "udp" } },
+        passcode,
+      },
+      { commissioningFlowImpl: knownAddressFlow(() => controller.node.env.get(PeerSet), port) },
+    );
     node = await controller.getNode(NodeId(nodeId));
     node.connect();
     await until(() => node.initialized, "the controller to read the bridge");
