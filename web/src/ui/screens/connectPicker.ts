@@ -126,7 +126,21 @@ export function openConnectPicker(onDone?: () => void): void {
   });
   wifi.classList.add("connect-footer");
 
-  sheet.body.append(found, sectionLabel("Choose how to connect"), modes, wifi);
+  // A bridge isn't a fixture: its own flow (#698), named here so nobody has to guess
+  // that "Set up a new fixture" would do.
+  const bridge = Button({
+    label: "Set up a Splanc bridge",
+    icon: "link",
+    variant: "quiet",
+    block: true,
+    onClick: () => {
+      sheet.close();
+      location.hash = "#/bridge/setup";
+    },
+  });
+  bridge.classList.add("connect-footer");
+
+  sheet.body.append(found, sectionLabel("Choose how to connect"), modes, bridge, wifi);
 }
 
 function sectionLabel(text: string): HTMLElement {

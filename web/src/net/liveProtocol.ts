@@ -126,6 +126,29 @@ export interface LanInfo {
   sha256: string;
 }
 
+/** `GET https://<bridge LAN IP>:8443/healthz` (unauthenticated, CORS *): what the app's
+ * bridge setup flow (#698) reads right after the bridge joins Wi-Fi, before it is paired.
+ * `ok`/`live`/`sha256` are in every bridge since the direct LAN path; the rest came with
+ * #698 (absent: an older bridge, so the app checks the relay link when it pairs).
+ * It never carries the pairing code: reading the code off the bridge's own screen is
+ * the proof that the person pairing is standing at it. */
+export interface LanHealth {
+  ok: boolean;
+  live: number;
+  /** The certificate this endpoint serves (= the welcome's `lan.sha256`). */
+  sha256: string;
+  /** The bridge's state (status.json `state`): starting | offline | unpaired | pairing | paired | error. */
+  state?: string;
+  /** The relay origin it registers with (the one to pair at). */
+  relay?: string;
+  /** Connected to the relay right now. */
+  relay_online?: boolean;
+  /** Why it isn't (the relay link's last error), when it isn't. */
+  relay_error?: string | null;
+  /** A pairing code is on the bridge's screen until this time (unix s); null: none. */
+  code_expires_at?: number | null;
+}
+
 export interface WelcomeMsg {
   t: "welcome";
   v: number;

@@ -328,16 +328,28 @@ test("direct on the LAN with the relay-minted ticket; a player drops and comes b
   const w = await viaRelay.connect();
   viaRelay.close();
   // The certificate the bridge serves is the one it vouched for over the relay.
-  const fp = await new Promise<string>((res, rej) => {
+  const { fp, body } = await new Promise<{ fp: string; body: string }>((res, rej) => {
     const u = new URL(w.lan!.page);
     https
       .get({ host: u.hostname, port: u.port, path: "/healthz", rejectUnauthorized: false }, (r) => {
-        res((r.socket as import("node:tls").TLSSocket).getPeerCertificate().fingerprint256.replace(/:/g, "").toLowerCase());
-        r.resume();
+        const fp = (r.socket as import("node:tls").TLSSocket).getPeerCertificate().fingerprint256.replace(/:/g, "").toLowerCase();
+        let body = "";
+        r.setEncoding("utf8");
+        r.on("data", (d: string) => (body += d));
+        r.on("end", () => res({ fp, body }));
       })
       .on("error", rej);
   });
   assert.equal(fp, w.lan!.sha256);
+  // What the app's bridge setup flow reads (#698): the same certificate, the state and
+  // the relay link, and never the pairing code.
+  const health = JSON.parse(body) as Record<string, unknown>;
+  assert.equal(health["sha256"], w.lan!.sha256);
+  assert.ok(health["state"] === "paired" || health["state"] === "pairing", String(health["state"]));
+  assert.equal(health["relay_online"], true);
+  assert.equal(health["relay_error"], null);
+  assert.equal(typeof health["relay"], "string");
+  assert.ok(!/"code"|pairing/.test(body), body);
 
   const states: LiveState[] = [];
   const d = liveClient({ lan: w.lan!, lanToken: w.lan_token! }, true);

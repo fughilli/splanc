@@ -17,6 +17,7 @@ py_library(
 py_binary(
     name = "ui_layout_check",
     srcs = [
+        "bridge_scenarios.py",
         "connect_scenarios.py",
         "credits_scenarios.py",
         "editor_scenarios.py",

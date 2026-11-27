@@ -103,6 +103,11 @@ itself.
 
 ## 4. Pair
 
+To use the bridge from the Splanc app, open **Live via bridge** and type the code from the Pi's
+screen. A bridge that isn't on your Wi-Fi yet is set up and paired in one go with **Set up a
+Splanc bridge** (the same flow moves it to another network, see
+[Changing settings later](#changing-settings-later)).
+
 To use the bridge from a cloud AI agent (Claude, ChatGPT, …), follow
 [Use Splanc from a cloud agent](guides/cloud-agent.md): you give the agent the relay address and,
 when it asks you to sign in, type the code from the Pi's screen.
@@ -282,14 +287,22 @@ boots.
 | `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                  |
 | `SPLANC_AUTO_UPDATE=1`     | `0` stops the bridge looking for updates by itself (software + system). |
 
-To put the bridge on another Wi-Fi network (a venue, a new router), use the Splanc app on your
-phone, the same way you add a fixture: **Add device over Bluetooth**, choose the network, then
-pick the bridge (it shows up under its name, `splanc-bridge` unless you renamed it) in the
-Bluetooth list. The bridge saves the network next to the ones it already knows and joins it; it
-then joins whichever known network is in range by itself. Sending a network it already knows
-updates that network's password. If the bridge can't join, the app says so and the bridge keeps
-its saved networks as they were. A paired bridge stays paired. You can also write the card again
-with the flasher (that resets the bridge, so you pair again).
+To put the bridge on another Wi-Fi network (a venue, a new router), use **Set up a Splanc
+bridge** in the Splanc app on your phone (Connect a fixture ▸ Set up a Splanc bridge, or Live via
+bridge ▸ Set up a new bridge). Choose the network, then pick the bridge (it shows up under its
+name, `splanc-bridge` unless you renamed it) in the Bluetooth list. The bridge saves the network
+next to the ones it already knows and joins it; it then joins whichever known network is in range
+by itself. Sending a network it already knows updates that network's password. If the bridge
+can't join, the app says so and the bridge keeps its saved networks as they were.
+
+The app then checks the bridge comes online, step by step: **Joined Wi-Fi**, **Bridge running**
+(it answers on the new network), **Relay reachable** (it reconnected to the Splanc relay) and
+**Ready to pair**. A bridge this app is already paired with ends at **Back online, still
+paired**; a new one goes straight on to pairing, where you type the code from its screen. When a
+step fails, the app says why and what to try (for example, a guest network that blocks the
+relay). In a browser, the app can't check the second and third steps directly until the browser
+trusts the bridge's certificate, so it confirms them through the relay when you pair. You can
+also write the card again with the flasher (that resets the bridge, so you pair again).
 
 ## Troubleshooting
 

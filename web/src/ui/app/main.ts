@@ -34,6 +34,7 @@ import { setTuneCompiler } from "../screens/effectTune";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { ShowModeScreen } from "../screens/showMode";
 import { BridgeLiveScreen } from "../screens/bridgeLive";
+import { BridgeSetupScreen } from "../screens/bridgeSetup";
 import { CaptureScreen } from "../screens/capture";
 import { RoomLocalizeScreen } from "../screens/roomLocalize";
 import { PerfPanelScreen } from "../screens/perfPanel";
@@ -174,6 +175,11 @@ async function main(): Promise<void> {
       // Live performance workspace (FUG-110): cue two decks + crossfade.
       shell.setChrome({ title: "Show mode", back: true, tabs: true });
       return ShowModeScreen(router);
+    })
+    .add("/bridge/setup", () => {
+      // Set up a bridge (#698): Wi-Fi over Bluetooth, online in four checked stages, pair.
+      shell.setChrome({ title: "Set up a bridge", back: true, tabs: false });
+      return BridgeSetupScreen(router);
     })
     .add("/bridge", () => {
       // Live VJ through a Splanc bridge: every fixture from one session

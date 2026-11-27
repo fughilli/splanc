@@ -310,6 +310,19 @@ export class LanBridge {
     };
   }
 
+  /** What the LAN endpoint's /healthz tells anyone on the network (the app's bridge setup
+   * flow, #698): the state and the relay link, never the code or the clients. */
+  health(): { state: BridgeState; relay: string; relay_online: boolean; relay_error: string | null; code_expires_at: number | null } {
+    const s = this.status();
+    return {
+      state: s.state,
+      relay: s.relay,
+      relay_online: this.link.online && !this.stopping,
+      relay_error: this.link.online ? null : this.link.lastError,
+      code_expires_at: s.pairing?.expires_at ?? null,
+    };
+  }
+
   /** The relay's grant list, marked live from this bridge's own sessions. */
   private pairedClients(nowMs: number): BridgeClient[] {
     const live = this.live.grants;
@@ -628,6 +641,7 @@ export class LanBridge {
         port,
         ...(cfg.host ? { host: cfg.host } : {}),
         advertise: cfg.advertise ? () => cfg.advertise! : lanIp,
+        health: () => this.health(),
         log: this.log,
       });
       await lan.listen();

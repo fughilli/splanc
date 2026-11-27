@@ -21,7 +21,7 @@ import { join } from "node:path";
 
 import { WebSocketServer, type WebSocket } from "ws";
 
-import { LIVE_BEARER_PREFIX, LIVE_SUBPROTOCOL, type LanInfo } from "../../../web/src/net/liveProtocol";
+import { LIVE_BEARER_PREFIX, LIVE_SUBPROTOCOL, type LanHealth, type LanInfo } from "../../../web/src/net/liveProtocol";
 import type { LanCert } from "./lanCert";
 import type { LiveConn, LiveMux, TicketMinter } from "./live";
 
@@ -130,6 +130,8 @@ export interface LiveLanOptions {
   host?: string;
   /** The address to advertise (default: the first non-loopback IPv4). */
   advertise?: () => string;
+  /** The bridge's public setup state for /healthz (the app's setup flow, #698). */
+  health?: () => Omit<LanHealth, "ok" | "live" | "sha256">;
   log?: (...a: unknown[]) => void;
 }
 
@@ -156,7 +158,9 @@ export class LiveLan {
       if (path === "/healthz") {
         // The app probes this (fetch) to learn whether the browser trusts the cert yet.
         res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-store" });
-        res.end(JSON.stringify({ ok: true, live: 1, sha256: cert.sha256 }));
+        // The app's setup flow (#698) reads the rest: state + relay link, never the code.
+        const body: LanHealth = { ok: true, live: 1, sha256: cert.sha256, ...(this.opts.health?.() ?? {}) };
+        res.end(JSON.stringify(body));
         return;
       }
       if (path === "/") {
