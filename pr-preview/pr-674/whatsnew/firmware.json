@@ -3,6 +3,299 @@
  "product": "firmware",
  "releases": [
   {
+   "version": "1.17.0",
+   "tag": "firmware-v1.17.0",
+   "name": "firmware-v1.17.0",
+   "date": "2026-11-27T03:07:04Z",
+   "url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.17.0",
+   "prerelease": false,
+   "body": [
+    {
+     "t": "h2",
+     "c": [
+      "What's Changed"
+     ]
+    },
+    {
+     "t": "ul",
+     "c": [
+      {
+       "t": "li",
+       "c": [
+        "firmware/clock: wall-clock core crate (civil time, source discipline, step guard) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/663"
+         },
+         "c": [
+          "#663"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FX uniforms: live HSV wheel colour picker (editor, Bridge Live, Acid mode) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/669"
+         },
+         "c": [
+          "#669"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "MIDI: auto-detect 14-bit CC pairs and NRPN per control (7-bit fallback) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/665"
+         },
+         "c": [
+          "#665"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "firmware/clock: POSIX TZ rules (D-562) + the phone zone from Intl by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/667"
+         },
+         "c": [
+          "#667"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "fx_compiler: language reference table (single source for editor, prompt, docs) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/668"
+         },
+         "c": [
+          "#668"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "MIDI: colour and vector uniforms mappable per channel (RGB, HSV, hue-only), exposed to AI auto-mapping by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/666"
+         },
+         "c": [
+          "#666"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "FX editor: Docs pane + selection actions (D-541 PR 6) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/675"
+         },
+         "c": [
+          "#675"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "whatsnew: mirror draft release media served as octet-stream by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/681"
+         },
+         "c": [
+          "#681"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "display: lists that fit on screen never scroll their first rows off (Updates hid System 1.3.0) by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/688"
+         },
+         "c": [
+          "#688"
+         ]
+        }
+       ]
+      },
+      {
+       "t": "li",
+       "c": [
+        "bridge: fixture lists show answering fixtures first, then most recently used by ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli"
+         },
+         "c": [
+          "@fughilli"
+         ]
+        },
+        " in ",
+        {
+         "t": "a",
+         "a": {
+          "href": "https://github.com/fughilli/splanc/pull/689"
+         },
+         "c": [
+          "#689"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "t": "p",
+     "c": [
+      {
+       "t": "strong",
+       "c": [
+        "Full Changelog"
+       ]
+      },
+      ": ",
+      {
+       "t": "a",
+       "a": {
+        "href": "https://github.com/fughilli/splanc/compare/pi-bridge-v1.3.0...firmware-v1.17.0"
+       },
+       "c": [
+        "pi-bridge-v1.3.0...firmware-v1.17.0"
+       ]
+      }
+     ]
+    }
+   ],
+   "media": []
+  },
+  {
    "version": "1.16.0",
    "tag": "firmware-v1.16.0",
    "name": "firmware-v1.16.0",
