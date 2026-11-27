@@ -7,9 +7,10 @@
  *           cloud vendor "openrouter" with a `:free` model, so it needs no new
  *           AiConfig fields.
  *   paid  — "Splanc AI credits" (managed Claude through Splanc's proxy). Built
- *           on branch agent/ai-billing (providers/credits.ts), behind the flag
- *           `splanc.flags.aiCredits`. This module does NOT import it — see
- *           PAID TIER SEAM below — so either PR merges first.
+ *           in providers/credits.ts, on where the relay sells credits for
+ *           real (creditsAvailability.ts; the `splanc.flags.aiCredits`
+ *           override). This module does NOT import the provider — see PAID
+ *           TIER SEAM below.
  *   self  — everything the user brings: an Anthropic key, any OpenAI-compatible
  *           endpoint (OpenRouter paid, Ollama, LM Studio, llama.cpp server…), or
  *           an in-browser model (CPU / WebGPU).
@@ -34,6 +35,7 @@ import {
   fetchOpenRouterKeyInfo,
   isFreeModelId,
 } from "./providers/openrouter";
+import { AI_CREDITS_FLAG, aiCreditsEnabled } from "./creditsAvailability";
 
 export type AiTier = "free" | "paid" | "self";
 
@@ -53,21 +55,22 @@ function ls(): Storage | null {
 // Shared contract with agent/ai-billing (docs/design/ai-billing.md,
 // web/src/effects/ai/providers/credits.ts), which owns everything about the
 // paid tier. Assumed, and nothing more:
-//   - the feature flag is localStorage["splanc.flags.aiCredits"] === "1"
-//     (credits.ts AI_CREDITS_FLAG);
+//   - the tier is on when creditsAvailability.ts aiCreditsEnabled() says so
+//     (production relay with a pack for this platform, or the
+//     localStorage["splanc.flags.aiCredits"] override: "1" on, "0" off);
 //   - selecting the tier = updateAiConfig({ kind: "credits" }) (credits.ts
 //     CREDITS_KIND); provider.ts normalizes an unknown kind back to "cloud", so
 //     BEFORE that PR lands the write does not stick and the tier reads as
 //     "coming soon";
 //   - sign-in / buying credits live in Settings ▸ AI (that PR's credits panel),
 //     and isAiConfigured() is true once a credit session exists.
-export const AI_CREDITS_FLAG = "splanc.flags.aiCredits";
+export { AI_CREDITS_FLAG };
 export const CREDITS_KIND = "credits";
 export const CREDITS_LABEL = "Splanc AI credits";
 
 /** Is the paid tier switched on for this device? */
 export function paidTierEnabled(): boolean {
-  return ls()?.getItem(AI_CREDITS_FLAG) === "1";
+  return aiCreditsEnabled();
 }
 
 /** Does this build know the credits provider? False until agent/ai-billing

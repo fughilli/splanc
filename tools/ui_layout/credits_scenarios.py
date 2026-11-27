@@ -85,7 +85,11 @@ class FakeBilling:
         identities=None,
         conflict=False,
         no_account=False,
+        environment="production",
+        apple_packs=True,
     ):
+        self.environment = environment
+        self.apple_packs = apple_packs
         self.balance = balance
         self.adult = adult
         self.email = email
@@ -174,7 +178,12 @@ class FakeBilling:
                 "low_balance_credits": self.low_mark,
                 "default_model": "claude-sonnet-5-5",
                 "models": [],
-                "packs": APPLE_PACKS if "channel=apple" in self.query else PACKS,
+                "environment": self.environment,
+                "packs": (
+                    (APPLE_PACKS if self.apple_packs else [])
+                    if "channel=apple" in self.query
+                    else PACKS
+                ),
             }
         if key == "POST /billing/account/recover" or key == "POST /billing/recover/start":
             return 202, {"ok": True, "message": "If an account uses this address, we sent a code."}
@@ -412,7 +421,35 @@ FRESH = {**FLAG}
 SIGNED_IN = {**FLAG, **SESSION}
 RET_PRE = {"splanc.aiCredits.preCheckoutBalance": "0"}
 
+# D-149: no flag at all. Credits show because the relay sells them in production
+# (the launch-time check in main.ts), and stay hidden on a sandbox relay.
+CREDITS_ON_SUB = '.aiset-sub:has-text("Only Splanc AI credits")'
+CREDITS_OFF_SUB = '.aiset-sub:has-text("Everything stays on your device")'
+
 SCENARIOS = [
+    Scenario(
+        "ai-tab-default-on",
+        "#/settings/ai",
+        network=fake(),
+        settle_ms=1200,
+        expect=btn("Get Splanc AI credits"),
+    ),
+    Scenario(
+        "ai-tab-default-sandbox-hidden",
+        "#/settings/ai",
+        network=fake(environment="sandbox"),
+        settle_ms=1200,
+        expect=CREDITS_OFF_SUB,
+    ),
+    # Settings ▸ Debugging ▸ Feature previews: the Auto / On / Off override.
+    Scenario(
+        "ai-flag-override",
+        "#/settings",
+        seed={"ledmapper.debugSettings": "1"},
+        network=fake(),
+        steps=[("click", btn("Debugging")), ("wait_for", btn("Auto"))],
+        expect=btn("Auto"),
+    ),
     # Settings ▸ AI (the new home of AI settings)
     Scenario(
         "ai-tab-no-account",
@@ -900,5 +937,25 @@ SCENARIOS += [
         steps=[("click", btn("Model setup")), ("wait", 600)],
         root=".k-sheet",
         expect=btn("Use Splanc AI credits"),
+    ),
+    # D-149 on iOS, no flag: the production relay sells web packs but no Apple
+    # pack yet (App Store products pending), so the iOS app shows no credits,
+    # and never the web checkout.
+    Scenario(
+        "ios-ai-tab-default-no-apple-packs",
+        "#/settings/ai",
+        network=fake(apple_packs=False),
+        init_js=ios_js(),
+        settle_ms=1200,
+        expect=CREDITS_OFF_SUB,
+    ),
+    # ...and once `--apple-packs on` enables them, credits show (through IAP).
+    Scenario(
+        "ios-ai-tab-default-apple-packs-on",
+        "#/settings/ai",
+        network=fake(),
+        init_js=ios_js(),
+        settle_ms=1200,
+        expect=CREDITS_ON_SUB,
     ),
 ]

@@ -2,9 +2,11 @@
  * "Splanc AI credits" (docs/design/ai-billing.md): Claude through OUR metered
  * proxy on the relay, paid with prepaid credits, instead of the user's own key.
  *
- * BEHIND A FLAG, OFF BY DEFAULT: nothing here runs, and the provider is not
- * offered in AI settings, unless `localStorage["splanc.flags.aiCredits"]` is
- * "1" (a developer / sandbox switch until the staged rollout).
+ * ON WHERE IT IS ON SALE (D-149): nothing here runs, and the provider is not
+ * offered in AI settings, unless the relay sells credits for real on this
+ * platform (production mode, a pack for this channel) or the override
+ * `localStorage["splanc.flags.aiCredits"]` is "1" ("0" forces it off). See
+ * ../creditsAvailability.ts.
  *
  * The app holds only a SESSION TOKEN for its credit account. It never sees an
  * Anthropic key: the relay adds ours server-side. The request body is the same
@@ -22,6 +24,16 @@ import { isIosNative } from "../../../net/native";
 import { storeKitAvailable } from "../../../net/storeKit";
 import type { AiProvider, ChatMessage, SendOptions, SendResult } from "../provider";
 import { consumeChatStream, messagesRequestBody } from "./anthropic";
+import {
+  AI_CREDITS_FLAG,
+  CREDITS_RELAY,
+  aiCreditsEnabled,
+  creditsRelay,
+  noteCreditsPricing,
+  packsOnSale,
+  purchaseChannel,
+  refreshCreditsAvailability,
+} from "../creditsAvailability";
 
 /**
  * The integration surface for other UI (e.g. the first-run model picker's
@@ -31,13 +43,8 @@ import { consumeChatStream, messagesRequestBody } from "./anthropic";
  */
 export const CREDITS_KIND = "credits" as const;
 export const CREDITS_LABEL = "Splanc AI credits";
-/** localStorage key of the feature flag ("1" = on). Off by default. */
-export const AI_CREDITS_FLAG = "splanc.flags.aiCredits";
-const FLAG = AI_CREDITS_FLAG;
+export { AI_CREDITS_FLAG, CREDITS_RELAY, aiCreditsEnabled, creditsRelay, purchaseChannel, refreshCreditsAvailability };
 const SESSION = "splanc.aiCredits.session";
-const RELAY_OVERRIDE = "splanc.aiCredits.relay";
-/** The relay origin (the same one bug / feedback reports go to). */
-export const CREDITS_RELAY = "https://splanc.pages.dev";
 export const DEFAULT_CREDITS_MODEL = "claude-sonnet-5-5";
 
 const ls = (): Storage | null => {
@@ -48,25 +55,10 @@ const ls = (): Storage | null => {
   }
 };
 
-/** Is the Splanc AI credits option enabled on this device? (Default: no.) */
-export function aiCreditsEnabled(): boolean {
-  return ls()?.getItem(FLAG) === "1";
-}
-
-/** Where credits are bought on this platform: Apple IAP inside the iOS app,
- * the web checkout everywhere else (owner decision 2026-11-18). */
-export function purchaseChannel(): "apple" | "web" {
-  return isIosNative() ? "apple" : "web";
-}
-
 /** May this platform show a link to the web checkout? Never inside the iOS
  * app (App Store rules: it sells credits through In-App Purchase only). */
 export function mayShowWebCheckout(): boolean {
   return purchaseChannel() === "web";
-}
-
-export function creditsRelay(): string {
-  return (ls()?.getItem(RELAY_OVERRIDE) || CREDITS_RELAY).replace(/\/+$/, "");
 }
 
 export interface CreditsSession {
@@ -231,6 +223,9 @@ export interface CreditPack {
   /** The reference (US) price; web packs only. Stripe Checkout shows the final
    * price with tax. */
   reference_price_usd?: number;
+  channel?: string;
+  /** The relay leaves disabled packs out; one marked false is never shown. */
+  enabled?: boolean;
 }
 
 /** The packs this platform sells (the relay's public pricing view). */
@@ -238,7 +233,7 @@ export async function fetchCreditPacks(fetchImpl: typeof fetch = fetch): Promise
   const r = await fetchImpl(`${creditsRelay()}/billing/pricing?channel=${purchaseChannel()}`);
   if (!r.ok) return [];
   const b = (await r.json().catch(() => null)) as { packs?: CreditPack[] } | null;
-  return Array.isArray(b?.packs) ? b.packs : [];
+  return packsOnSale<CreditPack>(b?.packs);
 }
 
 /** Where Stripe sends the user back: the credits flow's return screen
@@ -604,11 +599,12 @@ export async function fetchCreditsPricing(fetchImpl: typeof fetch = fetch): Prom
   try {
     const r = await fetchImpl(`${creditsRelay()}/billing/pricing?channel=${purchaseChannel()}`);
     if (!r.ok) return null;
-    const b = (await r.json()) as Partial<PublicPricing> | null;
+    const b = (await r.json()) as (Partial<PublicPricing> & { environment?: unknown }) | null;
+    noteCreditsPricing(b);
     return {
       credits_per_usd: typeof b?.credits_per_usd === "number" ? b.credits_per_usd : 100,
       low_balance_credits: typeof b?.low_balance_credits === "number" ? b.low_balance_credits : 50,
-      packs: Array.isArray(b?.packs) ? b.packs : [],
+      packs: packsOnSale<CreditPack>(b?.packs),
     };
   } catch {
     return null;

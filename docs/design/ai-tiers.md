@@ -221,7 +221,9 @@ account. Splanc never sees it.
 This PR does not import the credits provider. It assumes only these four
 things, matching `providers/credits.ts` on agent/ai-billing:
 
-- The flag is `localStorage["splanc.flags.aiCredits"] === "1"`.
+- The tier is on when `aiCreditsEnabled()` (`creditsAvailability.ts`) says
+  so: the relay sells credits in production on this platform, or the
+  `localStorage["splanc.flags.aiCredits"]` override is `"1"` (`"0"` = off).
 - Selecting the tier means `updateAiConfig({kind: "credits"})`.
 - Before the billing PR merges, `normalizeConfig` drops the unknown kind. The
   card checks this with the pure function `paidTierSupported()` and stays
