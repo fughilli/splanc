@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import ssl
 import sys
 import time
@@ -49,9 +50,14 @@ async def run(args) -> dict:
 
     pkg = open(args.package, "rb").read()
     manifest, image, m = oc.split_package(pkg)
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    cafile = os.environ.get("OTA_BENCH_CAFILE")
+    if cafile:
+        # Bench: verify the device against its own certificate (SAN splanc-<mac>.local).
+        ctx = ssl.create_default_context(cafile=cafile)
+    else:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
     sock = await websockets.connect(args.device_ws, ssl=ctx, max_size=2**22)
 
     async def recv_arm(want: str, timeout: float = 30.0):
