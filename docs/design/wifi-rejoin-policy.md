@@ -63,6 +63,7 @@ every boot. Two field players went unreachable this way. Two changes:
 - **Clients count as data plane.** The loop also moves up to render's priority while a
   client is mid-accept, mid-handshake or being served a one-shot GET, not only once its
   wss session is up. A stalled handshake is reclaimed after 4 s, so this can't pin it.
+  (Superseded by D-460 below: a not-yet-streaming client no longer raises the loop.)
 
 Starved handshakes also left the single :443 slot wedged after the effect was gone: a
 client that timed out could still complete the upgrade (its RST lost to the full RX
@@ -86,8 +87,10 @@ of CPU) time-slice with frames: under an 80 fps effect every app connect cost 20
 frames of 16-25 ms against the 12.5 ms period (M6 bench, mesh_effect r7/r8). Now:
 
 - **The handshake runs strictly below render** (`mbedtls_ssl_handshake` inside
-  `lm_mesh::BelowRender(true)`, as M7 does for mesh crypto). The rest of the loop still
-  follows the data plane.
+  `lm_mesh::BelowRender(true)`, as M7 does for mesh crypto), and a client that is not
+  streaming yet (mid-accept, mid-handshake, WS upgrade, a one-shot GET) no longer raises
+  the loop: only an open wss session does. The reserve below is what now guarantees a new
+  client its CPU under a heavy effect.
 - **A reserved slice for it.** The handshake is work with a deadline (the client's
   timeout), so its span is counted (`lm_bg_work_begin/end`). Once one has been open
   100 ms, render holds a reserve until 300 ms after the last one: it takes at most 50% of

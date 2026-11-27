@@ -2550,17 +2550,14 @@ bool netstack_data_plane_active() {
   if (!(g_radio_up && !g_silent && g_leased && !g_hop.active() && ns_pmk_ready())) return false;
   for (const Session &ss : g_sess)
     if (ss.tls_hs && ss.ws_up) return true;  // a live wss session
-  // A client on the :443 slot that isn't streaming yet: mid-accept (SynRcvd), mid-TLS
-  // handshake / WS upgrade (Established), or a one-shot GET being served. A NEW client's
-  // handshake (~0.5 s of ECDHE/ECDSA CPU) must not live on render's leftovers: below
-  // render it only ran in the sleeps between frames, and under a near-budget effect it
-  // never finished inside a client's timeout — no session, so the loop never rose
-  // (1.12.3 field: players stayed unreachable). A stalled handshake is reclaimed after
-  // 4 s without progress (netstack_loop), so this can't pin the loop up.
-  if (!g_tcp_started) return false;
-  if (any_client()) return true;
-  for (const Session &ss : g_sess)
-    if (ss.responding) return true;
+  // A client that isn't streaming yet (mid-accept, mid-TLS-handshake / WS upgrade, a
+  // one-shot GET) no longer raises the loop (D-460): at render's priority its work
+  // time-sliced with frames, ~22 late frames per connect under an 80 fps effect. Below
+  // render it is guaranteed its time instead: every frame leaves >= 20% of the wall
+  // clock, and while the handshake's crypto waits on that, render holds a reserved
+  // slice (half the CPU, the effect on a lower steady rung: main.cpp lm_bg_work_begin)
+  // so a NEW client still connects well inside its timeout under a near-budget effect
+  // (the 1.12.3 field failure the old rule fixed; heavy_effect_reachability).
   return false;
 }
 

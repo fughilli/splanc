@@ -4499,11 +4499,12 @@ static void poll_wifi_policy() {
 // joining / scanning / leasing / deriving a PMK / idle: none of that may delay a frame
 // (wifi_cadence: zero late frames across every rejoin path); render leaves it at least
 // the network's share of every frame (lm_fps_net_share_ms: >= 25% of its compute). AT
-// render's priority while a client is on a settled link — a wss session up, or a new
-// client mid-accept / mid-TLS-handshake (netstack_data_plane_active): the two then
-// round-robin, so the client gets about half of a busy CPU instead of only render's
-// sleeps — what the network had before #371, what a 30 fps texture stream needs, and
-// what lets a new client's handshake finish inside its timeout under a heavy effect.
+// render's priority while a wss session is up on a settled link (netstack_data_plane_active):
+// the two then round-robin, so the session gets about half of a busy CPU instead of only
+// render's sleeps — what the network had before #371 and what a 30 fps texture stream
+// needs. A NEW client (mid-accept / mid-TLS-handshake) stays below render (D-460): render's
+// reserved slice (lm_bg_work_begin) is what lets its handshake finish inside its timeout
+// under a heavy effect.
 // (Measured on hitl-rig-2, video_latency_netstack 30 fps / 120 s: see
 // docs/design/wifi-rejoin-policy.md "Loop priority".) The loop sleeps 1 tick per pass,
 // so an idle session costs render almost nothing; a rejoin always drops the session

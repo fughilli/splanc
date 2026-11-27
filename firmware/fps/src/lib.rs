@@ -623,7 +623,10 @@ impl FpsController {
             // frame-period spread doubled (dev p50 1.2 -> 2.6 ms, 98% of the gate).
             // Raise the sleep at once (the duty guarantee holds), but lower it only
             // when it is 2 ms too long, so noise at a boundary settles on the upper value.
-            let want = overrun_yield_ms_at(cost_us, duty).max(share_ms);
+            // (The reserve's duty applies to the COMPUTE, via share_ms: a frame that ran
+            // long on the wall clock — waiting on the transmit or the player mutex — owes
+            // the usual 25% of that, not 100%, or one stretched frame doubles the next gap.)
+            let want = overrun_yield_ms(cost_us).max(share_ms);
             let d = if self.last_overrun_ms > want && self.last_overrun_ms - want <= 1 {
                 self.last_overrun_ms
             } else {
@@ -1459,5 +1462,17 @@ mod tests {
             assert!(grid_ok(period_us(f), 0));
         }
         assert!(grid_ok(period_us(160), 12_500));
+    }
+
+    #[test]
+    fn a_stretched_frame_under_a_reserve_owes_its_compute_not_its_wall_time() {
+        let mut c = at_80(9_000);
+        c.set_reserve(true);
+        c.on_frame_cpu(9_000, 9_000);
+        assert_eq!(c.rung_fps(), 55);
+        // 31 ms on the wall clock (it waited), 9 ms of compute: the sleep is the larger of
+        // 25% of the wall cost (8 ms) and the reserve's share of the compute (9 ms).
+        let d = c.on_frame_cpu(31_000, 9_000);
+        assert_eq!(d.delay_ms, 9);
     }
 }
