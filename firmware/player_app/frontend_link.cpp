@@ -18,11 +18,13 @@
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "firmware/p4/link/link_codec.h"
+#include "firmware/p4/link/link_mesh.h"
 #include "netstack_transport.h"
 
 namespace {
@@ -63,8 +65,18 @@ uint8_t g_push[kWsSendHeadroom + 2048];
 size_t g_push_len = 0;
 
 struct {
-  uint32_t rx, tx, bad, tx_full, pushes, forwarded, timeouts, fwd_down, fwd_unsent;
+  uint32_t rx, tx, bad, tx_full, pushes, forwarded, timeouts, fwd_down, fwd_unsent, log_dropped;
 } g_stats;
+
+// Lines for the P4's console, batched: one LOG frame carries every line queued since the
+// last one went out. Sent line by line, a report burst (MESH INFO's lines, then [relay] and
+// [link] mt) outran the kTxBufs send slots and its tail was dropped every time.
+constexpr size_t kLogBatch = 1536;
+char g_log[kLogBatch];
+size_t g_log_len = 0;
+// Lines come from loopTask and from the mesh's task (lm_mesh_console_tee).
+StaticSemaphore_t g_log_mux_mem;
+SemaphoreHandle_t g_log_mux = nullptr;
 int64_t g_stats_sent_us = 0;
 
 // LK_OP_NAME payload: op, then "<mac>\0<name>".
@@ -77,6 +89,30 @@ uint8_t g_features = 0;  // LK_FE_* (frontend_link_set_features)
 lk_status g_p4_status = {};
 bool g_p4_status_valid = false;
 bool g_p4_kiosk = false;  // the last status's LK_ST_KIOSK (kept while the P4 is down)
+// Sessions that ended here whose unlock the P4 may still report (its HEARTBEATs sent before
+// it saw the LK_OP_RESET): ignored until one says "locked" (LK_ST_UNLOCKED_* bits).
+uint32_t g_unlock_suppressed = 0;
+// Sessions whose LK_OP_RESET is still to go out (the send queue was full): sent before
+// anything else of theirs, so a new client on a reused id never rides the old one's unlock.
+uint16_t g_reset_pending[4];
+int g_n_reset_pending = 0;
+
+// Mesh time (link_mesh.h): the C6 <-> P4 clock offset from LK_OP_TIME pings, and the time
+// base the mesh maps its show epoch onto, mirrored onto the P4 (LK_OP_TIMEBASE).
+lk_clock g_clock;
+lk_tb g_tb;
+int64_t g_ping_due_us = 0;
+bool g_was_up = false;
+uint32_t g_ups = 0;  // P4 up edges (a restarted P4 lost what it had staged)
+// LK_OP_STAGED events not yet taken (frontend_take_staged).
+struct {
+  uint32_t id;
+  uint8_t r;
+} g_staged_ev[4];
+int g_n_staged_ev = 0;
+constexpr int64_t kPingUs = 500 * 1000;
+constexpr int64_t kPingFastUs = 100 * 1000;  // the first LK_CLOCK_SAMPLES after the P4 comes up
+constexpr int64_t kPongWaitUs = 3000;
 
 void reclaim() {
   void *arg;
@@ -112,6 +148,33 @@ bool send_frame(uint8_t type, uint8_t flags, uint16_t session, const uint8_t *p,
 
 // A line for the P4's console (it prints LOG frames from here as "[c6] ..."): this
 // side's own UART is on a header nobody watches.
+// Lines queue in g_log and go out as one frame from the poll (log_flush), when a send slot
+// is free: one slot per burst, which leaves the others to replies, pings and TIMEBASE. A
+// line that doesn't fit even after a flush attempt is dropped (log_drop=).
+void log_flush_locked() {
+  if (g_log_len && send_frame(LK_LOG, 0, 0, reinterpret_cast<const uint8_t *>(g_log), g_log_len)) g_log_len = 0;
+}
+
+void log_flush() {
+  if (!g_log_mux || xSemaphoreTake(g_log_mux, 0) != pdTRUE) return;
+  log_flush_locked();
+  xSemaphoreGive(g_log_mux);
+}
+
+void log_queue(const char *line, size_t n) {
+  if (!g_up || !g_log_mux || n == 0) return;
+  if (n > kLogBatch) n = kLogBatch;
+  xSemaphoreTake(g_log_mux, portMAX_DELAY);
+  if (g_log_len + n > kLogBatch) log_flush_locked();
+  if (g_log_len + n > kLogBatch) {
+    g_stats.log_dropped++;
+  } else {
+    memcpy(g_log + g_log_len, line, n);
+    g_log_len += n;
+  }
+  xSemaphoreGive(g_log_mux);
+}
+
 void p4_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void p4_log(const char *fmt, ...) {
   char b[160];
@@ -119,7 +182,7 @@ void p4_log(const char *fmt, ...) {
   va_start(ap, fmt);
   const int n = vsnprintf(b, sizeof b, fmt, ap);
   va_end(ap);
-  if (n > 0) send_frame(LK_LOG, 0, 0, reinterpret_cast<const uint8_t *>(b), n < (int)sizeof b ? n : sizeof b - 1);
+  if (n > 0) log_queue(b, n < (int)sizeof b ? (size_t)n : sizeof b - 1);
 }
 
 void send_hello() {
@@ -156,7 +219,25 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       if (h.len >= 2 && p[0] == LK_OP_HELLO) memcpy(g_p4_ver, p + 1, h.len - 1 < 4 ? h.len - 1 : 4);
       if (h.len >= 1 && p[0] == LK_OP_HEARTBEAT) {
         g_p4_status_valid = lk_status_parse(p + 1, h.len - 1, &g_p4_status);
-        if (g_p4_status_valid) g_p4_kiosk = g_p4_status.flags & LK_ST_KIOSK;
+        if (g_p4_status_valid) {
+          g_p4_kiosk = g_p4_status.flags & LK_ST_KIOSK;
+          g_unlock_suppressed &= g_p4_status.flags;  // the P4 says locked: believe it again
+          int64_t off = 0;
+          if (lk_clock_offset(&g_clock, esp_timer_get_time(), &off, nullptr))
+            lk_tb_status(&g_tb, &g_p4_status, lk_round_ms(off));
+        }
+      }
+      if (h.len >= LK_TIME_PONG_LEN && p[0] == LK_OP_TIME) {
+        lk_clock_sample(&g_clock, lk_get64(p + 1), lk_get64(p + 9), esp_timer_get_time());
+      }
+      if (h.len >= LK_STAGED_LEN && p[0] == LK_OP_STAGED) {
+        if (g_n_staged_ev == (int)(sizeof g_staged_ev / sizeof g_staged_ev[0])) {
+          memmove(g_staged_ev, g_staged_ev + 1, sizeof g_staged_ev - sizeof g_staged_ev[0]);
+          g_n_staged_ev--;
+        }
+        g_staged_ev[g_n_staged_ev].id = lk_get32(p + 1);
+        g_staged_ev[g_n_staged_ev].r = p[5];
+        g_n_staged_ev++;
       }
       if (h.len >= 3 && p[0] == LK_OP_RESET && g_waiting && (uint16_t)(p[1] | p[2] << 8) == g_reply_session) {
         g_reply_reset = true;
@@ -171,6 +252,36 @@ void on_frame(const lk_header &h, const uint8_t *p) {
     default:
       return;
   }
+}
+
+// The pending LK_OP_RESETs, in order: false while one still can't go out.
+bool flush_resets() {
+  while (g_n_reset_pending > 0) {
+    const uint16_t s = g_reset_pending[0];
+    const uint8_t b[] = {LK_OP_RESET, (uint8_t)s, (uint8_t)(s >> 8)};
+    if (!send_frame(LK_LINK, 0, 0, b, sizeof b)) return false;
+    memmove(g_reset_pending, g_reset_pending + 1, sizeof g_reset_pending[0] * (size_t)--g_n_reset_pending);
+  }
+  return true;
+}
+
+bool reset_pending(uint16_t session) {
+  for (int i = 0; i < g_n_reset_pending; i++)
+    if (g_reset_pending[i] == session) return true;
+  return false;
+}
+
+void pump(TickType_t wait);
+
+// One clock ping, and its answer waited for here (at most kPongWaitUs): the stamp of its
+// arrival is then exact, so the fastest round trips give the offset to well under a ms.
+void ping() {
+  const int64_t t0 = esp_timer_get_time();
+  uint8_t b[LK_TIME_PING_LEN] = {LK_OP_TIME};
+  lk_put64(b + 1, t0);
+  if (!send_frame(LK_LINK, 0, 0, b, sizeof b)) return;
+  const uint32_t before = g_clock.samples + g_clock.rejected;
+  while (g_clock.samples + g_clock.rejected == before && esp_timer_get_time() - t0 < kPongWaitUs) pump(1);
 }
 
 void pump(TickType_t wait) {
@@ -219,12 +330,12 @@ bool frontend_link_begin() {
     if (!g_tx_bufs[i]) return false;
   }
   if (sdio_slave_start() != ESP_OK) return false;
+  g_log_mux = xSemaphoreCreateMutexStatic(&g_log_mux_mem);
   g_up = true;
   // A session that had a client ended: the P4 stops pushing there (and frees its upload).
-  netstack_session_closed = [](uint16_t session) {
-    const uint8_t b[] = {LK_OP_RESET, (uint8_t)session, (uint8_t)(session >> 8)};
-    send_frame(LK_LINK, 0, 0, b, sizeof b);
-  };
+  netstack_session_closed = [](uint16_t session) { frontend_link_session_closed(session); };
+  lk_clock_init(&g_clock);
+  lk_tb_reset(&g_tb);
   printf("[link] front end: SDIO slave up (%d x %u B receive, %d send)\n", kRxBufs, (unsigned)kRxBuf, kTxBufs);
   return true;
 }
@@ -233,7 +344,34 @@ void frontend_link_poll() {
   if (!g_up) return;
   pump(0);
   reclaim();
+  log_flush();
+  flush_resets();
   const int64_t now = esp_timer_get_time();
+  // The P4 came up / went down: mesh time starts over (a restarted P4 lost its time base and
+  // what it had staged; its first HEARTBEAT is adopted, link_mesh.h).
+  const bool up = frontend_p4_up();
+  if (up != g_was_up) {
+    g_was_up = up;
+    lk_tb_reset(&g_tb);
+    if (up) {
+      g_ups++;
+      lk_clock_init(&g_clock);
+      g_ping_due_us = now;
+    }
+  }
+  if (up && now >= g_ping_due_us) {
+    g_ping_due_us = now + (g_clock.samples < LK_CLOCK_SAMPLES ? kPingFastUs : kPingUs);
+    ping();
+  }
+  {
+    int64_t off = 0;
+    lk_timebase t;
+    if (up && lk_clock_offset(&g_clock, now, &off, nullptr) && lk_tb_take(&g_tb, now, off, &t)) {
+      uint8_t b[1 + LK_TIMEBASE_LEN] = {LK_OP_TIMEBASE};
+      lk_timebase_pack(&t, b + 1);
+      send_frame(LK_LINK, 0, 0, b, sizeof b);  // not echoed: lk_tb_take sends it again
+    }
+  }
   if (now - g_hello_sent_us >= kHelloUs) {
     g_hello_sent_us = now;
     send_hello();
@@ -282,6 +420,11 @@ int forward(uint8_t type, uint16_t session, const uint8_t *msg, size_t len, uint
     }
     return -1;
   }
+  // A reset still owed goes first; this session's own, or the message would ride its old state.
+  if (!flush_resets() && reset_pending(session)) {
+    g_stats.fwd_unsent++;
+    return -2;
+  }
   g_reply = out;
   g_reply_cap = cap;
   g_reply_len = 0;
@@ -326,7 +469,7 @@ int frontend_forward(uint16_t session, const uint8_t *msg, size_t len, uint8_t *
 
 // The session id a relayed control's frames and REPLY carry: none of the wss sessions
 // (1..LM_WSS_SESSIONS) nor the BLE central's (relay_main.cpp kBleSession).
-constexpr uint16_t kMeshSession = 0x200;
+constexpr uint16_t kMeshSession = LK_SESSION_MESH;
 
 int frontend_forward_mesh(const uint8_t *msg, size_t len, uint32_t *code, int timeout_ms) {
   uint8_t r[LK_MESH_RESULT_LEN + 1];
@@ -338,6 +481,86 @@ int frontend_forward_mesh(const uint8_t *msg, size_t len, uint32_t *code, int ti
 }
 
 void frontend_link_set_features(uint8_t bits) { g_features = bits; }
+
+void frontend_link_session_closed(uint16_t session) {
+  g_unlock_suppressed |= lk_unlock_bit(session);
+  if (reset_pending(session)) return;
+  if (g_n_reset_pending == (int)(sizeof g_reset_pending / sizeof g_reset_pending[0])) {
+    // Never more than the sessions; drop the oldest rather than block.
+    memmove(g_reset_pending, g_reset_pending + 1, sizeof g_reset_pending - sizeof g_reset_pending[0]);
+    g_n_reset_pending--;
+  }
+  g_reset_pending[g_n_reset_pending++] = session;
+  flush_resets();
+}
+
+bool frontend_p4_unlocked(uint16_t session) {
+  const uint32_t bit = lk_unlock_bit(session);
+  return bit && frontend_p4_up() && g_p4_status_valid && (g_p4_status.flags & bit) && !(g_unlock_suppressed & bit);
+}
+
+int32_t frontend_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t shift_ms) {
+  if (!frontend_p4_up()) return -1;
+  return lk_tb_op(&g_tb, op, epoch_ms, shift_ms);
+}
+
+int frontend_mesh_stage(uint32_t id, uint32_t apply_at_ms, const uint8_t *frame, size_t len, int8_t *r,
+                        uint32_t *replaced_id) {
+  uint8_t *m = static_cast<uint8_t *>(malloc(LK_STAGE_HDR + len));
+  if (!m) return -1;
+  m[0] = LK_MQ_STAGE;
+  lk_put32(m + 1, id);
+  lk_put32(m + 5, apply_at_ms);
+  memcpy(m + LK_STAGE_HDR, frame, len);
+  uint8_t res[LK_STAGE_RESULT_LEN + 1];
+  const int n = forward(LK_MESH_REQ, kMeshSession, m, LK_STAGE_HDR + len, res, sizeof res, 1000);
+  free(m);
+  return n > 0 && lk_stage_result_parse(res, (size_t)n, r, replaced_id) ? 0 : -1;
+}
+
+void frontend_mesh_cancel() {
+  const uint8_t m[] = {LK_MQ_CANCEL};
+  uint8_t res[4];
+  if (frontend_p4_up()) forward(LK_MESH_REQ, kMeshSession, m, sizeof m, res, sizeof res, 500);
+}
+
+int frontend_mesh_effect_file(uint8_t *out, size_t cap) {
+  const uint8_t m[] = {LK_MQ_EFFECT_FILE};
+  const int n = forward(LK_MESH_REQ, kMeshSession, m, sizeof m, out, cap, 1000);
+  // 0 is both "none" and "no answer": only a REPLY counts (g_reply_done).
+  if (n == 0 && !g_reply_done) return -1;
+  return n;
+}
+
+bool frontend_take_staged(uint32_t *id, uint8_t *r) {
+  if (g_n_staged_ev == 0) return false;
+  *id = g_staged_ev[0].id;
+  *r = g_staged_ev[0].r;
+  memmove(g_staged_ev, g_staged_ev + 1, sizeof g_staged_ev[0] * (size_t)--g_n_staged_ev);
+  return true;
+}
+
+uint32_t frontend_p4_ups() { return g_ups; }
+
+bool frontend_p4_fx_gen(uint32_t *gen) {
+  if (!g_p4_status_valid || !g_p4_status.has_ext || !frontend_p4_up()) return false;
+  *gen = g_p4_status.fx_gen;
+  return true;
+}
+
+int frontend_mesh_time_stats(char *buf, size_t cap) {
+  int64_t off = 0;
+  int32_t rtt = 0;
+  const bool have = lk_clock_offset(&g_clock, esp_timer_get_time(), &off, &rtt);
+  return snprintf(buf, cap,
+                  "[link] mt off_us=%lld rtt_us=%ld samples=%u rej=%u tb=%s%s seq=%u acked=%u epoch=%lld app=%u "
+                  "drift=%u resend=%u",
+                  have ? (long long)off : 0LL, have ? (long)rtt : -1L, (unsigned)g_clock.samples,
+                  (unsigned)g_clock.rejected, g_tb.synced ? "synced" : "unsynced",
+                  g_tb.synced ? (g_tb.set ? "/set" : "/none") : "", (unsigned)g_tb.seq, (unsigned)g_tb.acked,
+                  (long long)g_tb.epoch_ms, (unsigned)g_tb.app_changes, (unsigned)g_tb.drifts,
+                  (unsigned)g_tb.resends);
+}
 
 bool frontend_p4_kiosk() { return g_p4_kiosk; }
 
@@ -355,13 +578,13 @@ void frontend_link_osc(const uint8_t *data, size_t len) {
 
 void frontend_link_log(const char *line) {
   // 700: the mesh's MESH INFO line (mesh_glue.h report) is the longest.
-  const size_t n = strnlen(line, 700);
-  if (n) send_frame(LK_LOG, 0, 0, reinterpret_cast<const uint8_t *>(line), n);
+  log_queue(line, strnlen(line, 700));
 }
 
 int frontend_link_stats(char *buf, size_t cap) {
-  return snprintf(buf, cap, "p4=%s v%u.%u rx=%u tx=%u bad=%u full=%u fwd=%u to=%u push=%u",
+  return snprintf(buf, cap, "p4=%s v%u.%u rx=%u tx=%u bad=%u full=%u log_drop=%u fwd=%u to=%u push=%u",
                   frontend_p4_up() ? "up" : "down", g_p4_ver[0], g_p4_ver[1], (unsigned)g_stats.rx,
                   (unsigned)g_stats.tx, (unsigned)g_stats.bad, (unsigned)g_stats.tx_full,
-                  (unsigned)g_stats.forwarded, (unsigned)g_stats.timeouts, (unsigned)g_stats.pushes);
+                  (unsigned)g_stats.log_dropped, (unsigned)g_stats.forwarded, (unsigned)g_stats.timeouts,
+                  (unsigned)g_stats.pushes);
 }

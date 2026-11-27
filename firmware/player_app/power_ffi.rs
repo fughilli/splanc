@@ -196,7 +196,11 @@ unsafe fn reply_state(out: *mut u8, cap: usize, now: u32) -> i32 {
 
 /// The connection the message being handled came in on subscribes to pushes.
 unsafe fn subscribe() {
-    let src = super::kiosk_ffi::current_src() as usize;
+    let mut src = super::kiosk_ffi::current_src() as usize;
+    // The P4's further link sessions (kiosk_ffi SRC_LINK2/3) get the wss session's pushes.
+    if src >= 3 {
+        src = super::kiosk_ffi::SRC_WSS as usize;
+    }
     if src < 3 {
         (*addr_of_mut!(SUBSCRIBED))[src] = true;
     }

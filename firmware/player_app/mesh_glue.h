@@ -524,6 +524,9 @@ extern "C" uint32_t lm_mesh_report_line(uint32_t what, uint32_t idx, char *out, 
   return ns_mesh_report(g_mesh, what, idx, reinterpret_cast<uint8_t *>(out), cap, esp_timer_get_time());
 }
 
+// Whether the mesh is on (the front end keeps its P4's effect frame only while it is).
+extern "C" uint32_t lm_mesh_on_now() { return g_mesh != nullptr; }
+
 namespace lm_mesh {
 
 // The device key is installed (boot, or a regenerated identity): a fixture that is in a mesh

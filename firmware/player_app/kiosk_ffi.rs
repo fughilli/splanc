@@ -20,7 +20,10 @@
 //!
 //! The owner unlocks ONE connection (`kiosk_unlock{secret}`): the BLE link or the
 //! wss session, until it drops ([`lm_kiosk_tick`] sees the edge). The USB serial
-//! console's `kiosk off` is the recovery path ([`lm_kiosk_console`]).
+//! console's `kiosk off` is the recovery path ([`lm_kiosk_console`]). On the P4 player
+//! every front-end link session is a connection of its own ([`SRC_LINK2`],
+//! [`SRC_LINK3`], [`lm_kiosk_tick_conns`]), and the P4 tells its front end which ones
+//! are unlocked ([`lm_kiosk_unlocked`]): the C6 answers the mesh's arms itself.
 //!
 //! Everything runs on the loop task (the gate + handler under the player mutex,
 //! the pollers right after), so plain statics, like wifi_ffi.rs.
@@ -52,7 +55,12 @@ pub const EVENT_CONFIG: u8 = 3;
 pub const SRC_INTERNAL: u8 = 0;
 pub const SRC_WSS: u8 = 1;
 pub const SRC_BLE: u8 = 2;
-const N_SRC: usize = 3;
+/// The P4 player's second and third front-end link sessions (link_transport.cpp: the C6
+/// serves several wss sessions; the first is [`SRC_WSS`], the BLE central [`SRC_BLE`]).
+/// Never used on a C6 player. Pushes other than the kiosk's (power) treat them as wss.
+pub const SRC_LINK2: u8 = 3;
+pub const SRC_LINK3: u8 = 4;
+const N_SRC: usize = 5;
 
 pub const DEFAULT_TIMEOUT_S: u32 = 120;
 pub const MIN_TIMEOUT_S: u32 = 10;
@@ -614,15 +622,63 @@ pub const TICK_PUSH: u32 = 2;
 /// Loop task.
 #[no_mangle]
 pub unsafe extern "C" fn lm_kiosk_tick(now_ms: u32, wss_open: bool, ble_connected: bool) -> u32 {
+    conns(&[(SRC_WSS, wss_open), (SRC_BLE, ble_connected)]);
+    tick(now_ms)
+}
+
+/// [`lm_kiosk_tick`] for the P4 player, whose front end holds several sessions: bit `src`
+/// of `open_mask` set = that connection is open (SRC_WSS, SRC_BLE, SRC_LINK2, SRC_LINK3).
+///
+/// # Safety
+/// Loop task.
+#[no_mangle]
+pub unsafe extern "C" fn lm_kiosk_tick_conns(now_ms: u32, open_mask: u32) -> u32 {
+    let mut l = [(0u8, false); N_SRC - 1];
+    for (i, e) in l.iter_mut().enumerate() {
+        let src = i as u8 + 1;
+        *e = (src, open_mask & (1 << src) != 0);
+    }
+    conns(&l);
+    tick(now_ms)
+}
+
+/// Whether connection `src` is owner-unlocked now (the P4 tells its front end, which
+/// answers the mesh arms itself: they pass on an unlocked session only).
+///
+/// # Safety
+/// Loop task.
+#[no_mangle]
+pub unsafe extern "C" fn lm_kiosk_unlocked(src: u8) -> bool {
+    (*addr_of!(UNLOCKED)).get(src as usize).copied().unwrap_or(false)
+}
+
+/// Connection `src` ended (the P4: its front end reset that session): its unlock ends now,
+/// not at the next tick, so a client that reuses the session id never finds it unlocked.
+///
+/// # Safety
+/// Loop task.
+#[no_mangle]
+pub unsafe extern "C" fn lm_kiosk_drop(src: u8) {
+    let i = src as usize;
+    if i > 0 && i < N_SRC {
+        (*addr_of_mut!(UNLOCKED))[i] = false;
+        (*addr_of_mut!(CONNECTED))[i] = false;
+    }
+}
+
+unsafe fn conns(l: &[(u8, bool)]) {
     let conn = &mut *addr_of_mut!(CONNECTED);
     let unl = &mut *addr_of_mut!(UNLOCKED);
-    for (src, up) in [(SRC_WSS, wss_open), (SRC_BLE, ble_connected)] {
+    for &(src, up) in l {
         let i = src as usize;
         if conn[i] != up {
             conn[i] = up;
             unl[i] = false; // a new or dropped connection is never unlocked
         }
     }
+}
+
+unsafe fn tick(now_ms: u32) -> u32 {
     let c = *addr_of!(CFG);
     let mut bits = 0;
     if c.enabled {

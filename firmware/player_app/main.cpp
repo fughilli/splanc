@@ -67,6 +67,7 @@
 #endif
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/identify_blink.h"
+#include "firmware/player_app/mesh_grid.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/board_caps_res.h"  // board_caps_binaryproto[] / _len
 #include "firmware/player_app/led_config.h"
@@ -767,6 +768,11 @@ static FILE *fs_open(const char *path, const char *mode) {
 // collide (writes are serialized on this task anyway).
 // Set by every littlefs write; the effect store's cached usage is re-measured (below).
 static bool g_fs_usage_stale = true;
+#if defined(LM_LINK)
+// Bumped by every write of the persisted effect (kEffectPath): the P4 reports it to its front
+// end, whose mesh holds a copy of the frame (link_transport.cpp, lm_link_fx_gen).
+static uint32_t g_fx_gen = 0;
+#endif
 static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
                            size_t more_len);
 static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
@@ -785,6 +791,9 @@ static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, co
   const uint32_t prio = lm_prio_below_render();
   const bool ok = fs_write_parts_(path, data, len, more, more_len, esp_timer_get_time());
   lm_prio_restore(prio);
+#if defined(LM_LINK)
+  if (strcmp(path, kEffectPath) == 0) g_fx_gen++;
+#endif
   return ok;
 }
 
@@ -1030,28 +1039,20 @@ extern "C" int32_t lm_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t shift_ms) {
 // grid_sched_ms: the time to compare apply_at dues against at this frame start (millis()
 // off the grid). pace_adjust_us: how much earlier the next frame should start to land on
 // the grid (bounded to a quarter period per frame, so the cadence never jumps).
+// The grid is the mesh's (mesh_grid.h: one period on every member), not this member's rung.
 static int64_t grid_sched_ms(int64_t now_us, int64_t *k_out) {
   int64_t ep;
   *k_out = -1;
   if (!g_tb_align || !lm_time_base(&ep)) return now_us / 1000;
-  int64_t period = (int64_t)(lm_fps_budget_cycles() / (kCpuHz / 1000000u));
-  int64_t rel = now_us - ep * 1000;
-  if (period <= 0 || rel <= 0) return now_us / 1000;
-  int64_t k = (rel + period / 2) / period;
-  if (llabs(rel - k * period) >= period / 4) return now_us / 1000;  // off the grid: plain time
+  const int64_t k = lm_grid::frame_k(now_us - ep * 1000);
+  if (k < 0) return now_us / 1000;  // off the grid: plain time
   *k_out = k;
-  return ep + (k * period) / 1000;
+  return ep + (k * lm_grid::kGridUs) / 1000;
 }
 static int64_t pace_adjust_us(int64_t next_start_us, uint32_t period_us) {
   int64_t ep;
-  if (!g_tb_align || period_us == 0 || !lm_time_base(&ep)) return 0;
-  int64_t p = period_us;
-  int64_t e = (next_start_us - ep * 1000) % p;
-  if (e < 0) e += p;
-  if (e > p / 2) e -= p;  // e > 0: the next start would be late by e
-  if (e > p / 4) e = p / 4;
-  if (e < -p / 4) e = -p / 4;
-  return e;
+  if (!g_tb_align || !lm_time_base(&ep)) return 0;
+  return lm_grid::pace_adjust(next_start_us - ep * 1000, period_us);
 }
 
 static const DeviceCertStore kTlsStore = {tls_store_read, tls_store_write};
@@ -3752,7 +3753,24 @@ static void power_begin() {
 // the same decode a boot takes (effect, then its uniforms), then park deck B, fade
 // back to deck A and restore the snapshot's brightness. Pushes go to every open
 // connection (the wss / ws session and the BLE central), each with its own unlock.
+#if defined(LM_LINK)
+// link_transport.cpp: the front end's open sessions as kiosk connections, and a push to one.
+extern "C" uint32_t link_kiosk_conns(void);
+extern "C" bool link_push_src(uint8_t src, const uint8_t *data, size_t len);
+#endif
+
 static void kiosk_push_all(uint32_t now) {
+#if defined(LM_LINK)
+  // Every open front-end session, each with its own unlock (LM_KIOSK_SRC_*).
+  const uint32_t open = link_kiosk_conns();
+  for (uint8_t src = LM_KIOSK_SRC_WSS; src <= LM_KIOSK_SRC_LINK3; src++) {
+    if (!(open & (1u << src))) continue;
+    int32_t n = lm_kiosk_build_push(src, now, tx, sizeof tx);
+    if (n > 0) link_push_src(src, tx, (size_t)n);
+  }
+  lm_kiosk_push_done();
+  return;
+#endif
 #if defined(LM_NETSTACK)
   if (netstack_ws_open()) {
     int32_t n = lm_kiosk_build_push(LM_KIOSK_SRC_WSS, now, tx, sizeof tx);
@@ -3773,12 +3791,16 @@ static void kiosk_push_all(uint32_t now) {
 
 static void poll_kiosk() {
   uint32_t now = millis();
+#if defined(LM_LINK)
+  uint32_t bits = lm_kiosk_tick_conns(now, link_kiosk_conns());
+#else
 #if defined(LM_NETSTACK)
   bool ws_open = netstack_ws_open();
 #else
   bool ws_open = ws_state == WsState::kOpen;
 #endif
   uint32_t bits = lm_kiosk_tick(now, ws_open, improv_ble_central_connected());
+#endif
   if (bits & LM_KIOSK_TICK_REVERT) {
     xSemaphoreTake(player_mutex, portMAX_DELAY);
     fs_replay(kKioskFxPath);
@@ -5022,6 +5044,28 @@ extern "C" void lm_link_frontend_features(uint32_t bits) {
   xSemaphoreGive(player_mutex);
   Log().printf("[player] front end features 0x%02x: mesh %s\n", (unsigned)bits, mesh ? "on" : "off");
 }
+
+// One player message from front-end session `src` (link_transport.cpp maps the sessions onto
+// kiosk connections): gated as that connection, so the owner's kiosk_unlock holds for the
+// session that sent it only (as on a C6 player, whose wss and BLE are separate connections).
+extern "C" int lm_link_dispatch(uint32_t src, const uint8_t *in, size_t len, const uint8_t **reply) {
+  g_kiosk_src = (uint8_t)src;
+  int n = lm_ws_dispatch(in, len, reply);
+  g_kiosk_src = LM_KIOSK_SRC_WSS;
+  return n;
+}
+
+// The mesh's time base, mapped onto this chip's clock by the front end (LK_OP_TIMEBASE,
+// link_mesh.h): what lm_mesh_tb's put / clear / align do on a C6 player, in one go. Loop task.
+extern "C" void lm_link_timebase(bool set, int64_t epoch_ms, int32_t shift_ms, bool align) {
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  lm_time_base_put(set ? epoch_ms : 0, set, set ? shift_ms : 0);
+  g_tb_align = set && align;
+  xSemaphoreGive(player_mutex);
+}
+
+// Writes of /lfs/fx.pb so far: the front end refetches it (LK_MQ_EFFECT_FILE) when it moves.
+extern "C" uint32_t lm_link_fx_gen() { return g_fx_gen; }
 #endif
 
 bool lm_module_osc_send(const uint8_t *data, size_t len) {

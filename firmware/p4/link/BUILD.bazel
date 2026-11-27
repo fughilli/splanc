@@ -22,3 +22,20 @@ cc_test(
         "@rules_requirements//cc:case",
     ],
 )
+
+# The front end's mesh time on a P4 + C6 lamp (docs/design/mesh.md §8.2): the C6 <-> P4
+# clock offset and the time-base mirror. Header-only, host-tested.
+cc_library(
+    name = "link_mesh",
+    hdrs = ["link_mesh.h"],
+    deps = [":link_codec"],
+)
+
+cc_test(
+    name = "link_mesh_test",
+    srcs = ["link_mesh_test.cc"],
+    deps = [
+        ":link_mesh",
+        "@rules_requirements//cc:case",
+    ],
+)

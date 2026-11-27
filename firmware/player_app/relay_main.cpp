@@ -12,11 +12,15 @@
 //   - this image's own OTA hooks (ota_app.cpp: crash-loop guard, health check);
 //   - the mesh layer (docs/design/mesh.md §8.2, mesh_glue.h; off until this fixture joins a
 //     mesh): the C6 is the mesh node, the P4 the endpoint. The membership and the frame
-//     counter live in /lfs here; get_mesh / mesh_admin are answered here; a control the mesh
-//     relays to this fixture goes to the P4 (LK_MESH) and its result back to the mesh; the
-//     P4's HEARTBEAT carries the status this member broadcasts. Mesh time on the P4's render
-//     clock, effect sharing (M6) and the gateway's mesh_send are the next step: until then
-//     the P4 answers mesh_send itself (error{unsupported}).
+//     counter live in /lfs here; get_mesh / mesh_admin are answered here (a kiosk refuses
+//     them on a session its owner has not unlocked: the P4 says which are, per session); a
+//     control the mesh relays to this fixture goes to the P4 (LK_MESH) and its result back
+//     to the mesh; the P4's HEARTBEAT carries the status this member broadcasts. Mesh time
+//     is mapped onto the P4's render clock (link_mesh.h: the C6 <-> P4 offset from link
+//     pings, the time base mirrored as LK_OP_TIMEBASE), and a shared effect (M6) is staged
+//     on the P4 for the same frame as every member (LK_MESH_REQ). The gateway role (the
+//     app's mesh_send through this fixture) is the next step: until then the P4 answers
+//     mesh_send itself (error{unsupported}).
 // Every other player message goes to the P4 as link frames over the SDIO slave
 // (frontend_link.cpp) and its reply comes back the same way. While the P4 is down the
 // answer is error{player_unavailable}: there is no second player core here to answer from.
@@ -63,6 +67,7 @@ extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uin
                                const uint8_t **inner, uint32_t *inner_len);
 extern "C" void lm_mesh_sessions(uint32_t ws, uint32_t ble);
 extern "C" uint32_t lm_mesh_report_line(uint32_t what, uint32_t idx, char *out, uint32_t cap);
+extern "C" uint32_t lm_mesh_on_now();
 
 // The netstack's loop with mbedtls nested inside a TLS write, plus the relay's own frames
 // (none large: no player core). The player's 12 KB bound holds with room to spare.
@@ -78,7 +83,7 @@ constexpr const char *kTlsIdentityPath = "/lfs/tls_id.bin";
 constexpr UBaseType_t kLoopPrio = 10;
 // The BLE central's session id over the link; the wss sessions are 1..LM_WSS_SESSIONS
 // (netstack_ws_session()). Its pushes aren't relayed (the P4 pushes to wss sessions).
-constexpr uint16_t kBleSession = 0x100;
+constexpr uint16_t kBleSession = LK_SESSION_BLE;
 
 // ClientMessage arms routed here (shared/protocol/proto/ledmapper.proto).
 constexpr int32_t kArmSetDeviceName = 27;
@@ -110,6 +115,7 @@ bool g_tls_persisted = false;
 
 struct {
   uint32_t forwarded, unavailable, local, mesh_app, mesh_ctl, mesh_ctl_failed;
+  uint32_t staged, stage_late, stage_refused, stage_unsent, loaded, load_refused, fx_fetches, kiosk_refused;
 } g_stats;
 // The lowest free internal heap seen since the last status line (sampled every loop).
 uint32_t g_heap_window_min = UINT32_MAX;
@@ -149,7 +155,12 @@ void poll_mesh_sessions() {
     g_mesh_ws_closed = false;
     g_mesh_ws_owner = 0;
   }
-  lm_mesh_sessions(g_mesh_ws_owner != 0, improv_ble_central_connected());
+  // The BLE central went away: its link session ends on the P4 too (its kiosk unlock with it).
+  static bool ble_was = false;
+  const bool ble = improv_ble_central_connected();
+  if (ble_was && !ble) frontend_link_session_closed(kBleSession);
+  ble_was = ble;
+  lm_mesh_sessions(g_mesh_ws_owner != 0, ble);
 }
 
 // get_mesh / mesh_admin: the reply's length in tx, or -1 when the mesh layer passes on it.
@@ -209,50 +220,170 @@ extern "C" void lm_prio_restore(uint32_t) {}
 // isn't wired on the P4 boards.
 extern "C" void lm_mesh_console_tee(const char *line) { frontend_link_log(line); }
 
-// The show epoch (mesh time, M4) mapped onto the player's time base: the P4's render clock
-// is the next step (the C6<->P4 clock offset, docs/design/mesh.md §10.2). Until then the
-// mapped time base is kept here, so the mesh layer's reconciliation is consistent, and the
-// P4 renders on its own clock (no frame alignment across members).
+// The show epoch (mesh time, M4) mapped onto the player's time base, from the mesh's tick:
+// the time base lives on the P4 (its render clock), so this is the mirror in frontend_link
+// (link_mesh.h): this chip's clock here, the P4's there through the C6 <-> P4 offset, and
+// -1 ("busy", asked again) until the P4's own state is in. The same contract as main.cpp's
+// on a C6 player: a time base the app set on the P4 shows up here as a change.
+extern "C" int32_t lm_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t shift_ms) {
+  return frontend_mesh_tb(op, epoch_ms, shift_ms);
+}
+
+// Effect sharing (mesh M6, mesh_blob.rs): a shared effect is staged on the P4 (its render
+// task loads it on the first frame at/after the show-clock time, as on every member). The
+// mesh keeps the blob here; the P4 its own copy, by our id, until it reports the load
+// (LK_OP_STAGED). Loop task (the mesh's after-tick work), like relayed control.
 namespace {
-int64_t g_tb_ms = 0;
-bool g_tb_set = false;
-bool g_tb_align = false;
-}  // namespace
-extern "C" int32_t lm_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t) {
-  switch (op) {
-    case 0:
-      *epoch_ms = g_tb_ms;
-      return g_tb_set ? 1 : 0;
-    case 1:
-      g_tb_ms = *epoch_ms;
-      g_tb_set = true;
-      return 1;
-    case 2:
-      g_tb_ms = 0;
-      g_tb_set = false;
-      return 1;
-    case 3:
-      g_tb_align = *epoch_ms != 0;
-      return 1;
-    default:
-      return 0;
+struct StageEntry {
+  uint32_t id;
+  const uint8_t *frame;  // the mesh's blob (what staged_take hands back)
+  uint32_t ups;          // frontend_p4_ups() when staged: a restarted P4 lost it
+  uint8_t done;          // 0 staged, 1 loaded, 2 refused
+};
+constexpr int kStageMax = 3;
+StageEntry g_stage[kStageMax];
+int g_n_stage = 0;
+uint32_t g_stage_id = 0;
+
+// The P4's reports, and stages a restarted P4 lost (refused: the mesh's slot is a held blob
+// again).
+void poll_staged_reports() {
+  uint32_t id = 0;
+  uint8_t r = 0;
+  while (frontend_take_staged(&id, &r)) {
+    for (int i = 0; i < g_n_stage; i++) {
+      if (g_stage[i].id == id && !g_stage[i].done) g_stage[i].done = r == 1 ? 1 : 2;
+    }
+  }
+  for (int i = 0; i < g_n_stage; i++) {
+    if (!g_stage[i].done && g_stage[i].ups != frontend_p4_ups()) g_stage[i].done = 2;
   }
 }
 
-// Effect sharing (mesh M6, mesh_blob.rs) is the next step: the effect frames are the P4's.
-// Until then this member holds no effect file, stages nothing (a shared effect then loads
-// at once, through lm_mesh_member_dispatch, i.e. on the P4), and has no deck B or scene to
-// hand a catch-up. lm_fx_check_effect answers for the gateway's share, never reached here.
-extern "C" uint32_t lm_mesh_effect_file(uint8_t *, uint32_t) { return 0; }
-extern "C" int32_t lm_mesh_stage(const uint8_t *, uint32_t, uint32_t, const uint8_t **replaced) {
+void stage_remove(int i) { g_stage[i] = g_stage[--g_n_stage]; }
+}  // namespace
+
+extern "C" int32_t lm_mesh_stage(const uint8_t *frame, uint32_t len, uint32_t apply_at_ms, const uint8_t **replaced) {
   *replaced = nullptr;
-  return 0;  // "its time has passed": loaded now, through the dispatch
+  poll_staged_reports();
+  // Not stageable now (P4 down, every entry in use, no answer): "its time has passed", so
+  // the mesh loads it at once through the relayed control (lm_mesh_member_dispatch).
+  if (!frontend_p4_up() || g_n_stage == kStageMax) {
+    g_stats.stage_unsent++;
+    return 0;
+  }
+  if (++g_stage_id == 0) g_stage_id = 1;
+  const uint32_t id = g_stage_id;
+  int8_t r = -1;
+  uint32_t replaced_id = 0;
+  if (frontend_mesh_stage(id, apply_at_ms, frame, len, &r, &replaced_id) != 0) {
+    g_stats.stage_unsent++;
+    return 0;
+  }
+  if (r == 1) {
+    for (int i = 0; i < g_n_stage; i++) {
+      if (replaced_id && g_stage[i].id == replaced_id && !g_stage[i].done) {
+        *replaced = g_stage[i].frame;
+        stage_remove(i);
+        break;
+      }
+    }
+    g_stage[g_n_stage++] = {id, frame, frontend_p4_ups(), 0};
+    g_stats.staged++;
+  } else if (r == 0) {
+    g_stats.stage_late++;
+  } else {
+    g_stats.stage_refused++;
+  }
+  return r;
 }
+
+// The staged frame the P4's render task loaded (1) or refused (2): handed back to the mesh.
 extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame) {
   *frame = nullptr;
+  poll_staged_reports();
+  for (int i = 0; i < g_n_stage; i++) {
+    if (!g_stage[i].done) continue;
+    *frame = g_stage[i].frame;
+    const uint32_t r = g_stage[i].done;
+    (r == 1 ? g_stats.loaded : g_stats.load_refused)++;
+    stage_remove(i);
+    return r;
+  }
   return 0;
 }
-extern "C" void lm_mesh_staged_cancel() {}
+
+// The mesh turns off and frees its blobs: the P4 forgets what it staged.
+extern "C" void lm_mesh_staged_cancel() {
+  if (g_n_stage) frontend_mesh_cancel();
+  g_n_stage = 0;
+}
+
+// The P4's persisted deck-A frame (/lfs/fx.pb), which a member already showing a shared
+// effect has (no fetch) and a catch-up skips: a copy here while the mesh is on, fetched
+// again whenever the P4's write counter moves (poll_fx_copy). Read from the mesh's tick, so
+// never over the link: 0 while the copy isn't current.
+namespace {
+uint8_t *g_fx = nullptr;
+uint32_t g_fx_len = 0;
+uint32_t g_fx_gen = 0;
+bool g_fx_valid = false;
+int64_t g_fx_tried_us = 0;
+constexpr size_t kFxCap = 10 * 1024;  // splanc_mesh::blob::BLOB_MAX: a bigger frame is no blob
+
+bool fx_current() {
+  uint32_t gen = 0;
+  return g_fx_valid && frontend_p4_fx_gen(&gen) && gen == g_fx_gen;
+}
+
+void fx_drop() {
+  free(g_fx);
+  g_fx = nullptr;
+  g_fx_len = 0;
+  g_fx_valid = false;
+}
+
+void poll_fx_copy() {
+  if (!lm_mesh_on_now()) {
+    if (g_fx || g_fx_valid) fx_drop();
+    return;
+  }
+  uint32_t gen = 0;
+  if (!frontend_p4_fx_gen(&gen) || (g_fx_valid && gen == g_fx_gen)) return;
+  const int64_t now = esp_timer_get_time();
+  if (now - g_fx_tried_us < 500 * 1000) return;
+  g_fx_tried_us = now;
+  fx_drop();
+  uint8_t *b = static_cast<uint8_t *>(malloc(kFxCap));
+  if (!b) return;
+  const int n = frontend_mesh_effect_file(b, kFxCap);
+  g_stats.fx_fetches++;
+  if (n < 0) {
+    free(b);
+    return;
+  }
+  if (n == 0) {
+    free(b);
+  } else {
+    uint8_t *f = static_cast<uint8_t *>(realloc(b, (size_t)n));
+    g_fx = f ? f : b;
+  }
+  g_fx_len = (uint32_t)n;
+  g_fx_gen = gen;
+  g_fx_valid = true;
+}
+}  // namespace
+
+extern "C" uint32_t lm_mesh_effect_file(uint8_t *buf, uint32_t cap) {
+  if (!fx_current() || g_fx_len == 0) return 0;
+  if (buf == nullptr) return g_fx_len;
+  const uint32_t n = cap < g_fx_len ? cap : g_fx_len;
+  memcpy(buf, g_fx, n);
+  return n;
+}
+
+// A gateway's catch-up (its scene and deck B) and its share's check are the gateway role:
+// the next step. Never reached on a member.
 extern "C" int32_t lm_mesh_scene_frames(uint8_t *, uint32_t) { return 0; }
 extern "C" const uint8_t *lm_mesh_deckb_frame(uint32_t *len) {
   *len = 0;
@@ -280,12 +411,14 @@ int handle(uint16_t session, const uint8_t *msg, size_t len) {
     }
   }
   // The mesh's membership and listing are this chip's: the mesh layer runs here. A kiosk
-  // (the P4's player state) refuses them, as a locked C6 player's kiosk gate does; the
-  // owner turns the kiosk off to administer the mesh (no per-session kiosk unlock here yet).
+  // (the P4's player state) refuses them on a session its owner has not unlocked, as a C6
+  // player's kiosk gate does (D-505): the P4 gates every session on its own and says which
+  // are unlocked (frontend_p4_unlocked). While the P4 is down a kiosk stays locked.
   if (arm == kArmGetMesh || arm == kArmMeshAdmin) {
-    if (frontend_p4_kiosk()) {
+    if (frontend_p4_kiosk() && !frontend_p4_unlocked(session)) {
       g_stats.local++;
-      return reply_error("kiosk_locked", "not available while the kiosk is on (turn kiosk mode off first)");
+      g_stats.kiosk_refused++;
+      return reply_error("kiosk_locked", "not available while the kiosk is locked (owner: kiosk_unlock)");
     }
     const int n = mesh_app(session, msg, len);
     if (n >= 0) {
@@ -532,7 +665,7 @@ void log_status() {
   const uint32_t f = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   // win= the lowest free heap since the last line; ws= wss sessions upgraded now. The P4's
   // console gets the line too (this chip's console isn't wired on the P4 boards).
-  char line[220];
+  char line[320];
   snprintf(line, sizeof line,
            "[relay] heap=%u max=%u min=%u win=%u ws=%d rekeys=%u tls=%u/%u slots=%u/%u fb=%u fwd=%u unavail=%u "
            "local=%u\n",
@@ -566,11 +699,22 @@ void log_status() {
       Log().print(info);
       frontend_link_log(info);
     }
-    if (g_stats.mesh_app || g_stats.mesh_ctl) {
-      snprintf(line, sizeof line, "[relay] mesh app=%u ctl=%u ctl_failed=%u\n", (unsigned)g_stats.mesh_app,
-               (unsigned)g_stats.mesh_ctl, (unsigned)g_stats.mesh_ctl_failed);
+    if (g_stats.mesh_app || g_stats.mesh_ctl || lm_mesh_on_now()) {
+      snprintf(line, sizeof line,
+               "[relay] mesh app=%u ctl=%u ctl_failed=%u kiosk_refused=%u staged=%u late=%u refused=%u unsent=%u "
+               "loaded=%u load_refused=%u fx=%s%u/%u fetches=%u\n",
+               (unsigned)g_stats.mesh_app, (unsigned)g_stats.mesh_ctl, (unsigned)g_stats.mesh_ctl_failed,
+               (unsigned)g_stats.kiosk_refused, (unsigned)g_stats.staged, (unsigned)g_stats.stage_late,
+               (unsigned)g_stats.stage_refused, (unsigned)g_stats.stage_unsent, (unsigned)g_stats.loaded,
+               (unsigned)g_stats.load_refused, fx_current() ? "" : "stale:", (unsigned)g_fx_len, (unsigned)g_fx_gen,
+               (unsigned)g_stats.fx_fetches);
       Log().print(line);
       frontend_link_log(line);
+      if (frontend_mesh_time_stats(line, sizeof line - 1) > 0) {
+        strcat(line, "\n");
+        Log().print(line);
+        frontend_link_log(line);
+      }
     }
   }
 }
@@ -740,6 +884,8 @@ void loop() {
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatches here)
   frontend_link_poll();
   poll_mesh_sessions();
+  poll_staged_reports();
+  poll_fx_copy();
   poll_wifi_policy();
   {
     // OTA health: nothing renders here, so "alive" is the loop itself. Offline / manual

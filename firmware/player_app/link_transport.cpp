@@ -29,6 +29,7 @@
 #include "firmware/p4/c6flash/c6_bundle_frontend_res.h"
 #include "firmware/p4/c6flash/c6_flasher.h"
 #endif
+#include <esp_expression_with_stack.h>  // a staged shared effect loads on a stack of its own
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -37,6 +38,7 @@
 #include <string.h>
 
 #include "firmware/p4/link/link_codec.h"
+#include "firmware/p4/link/link_mesh.h"
 #include "netstack_transport.h"
 #include "player_ffi.h"
 
@@ -47,6 +49,20 @@ extern "C" void lm_link_frontend_features(uint32_t bits);
 // as the member's (0 ok, else *code), and the status a member broadcasts.
 extern "C" int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint32_t *code);
 extern "C" void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_t *firmware);
+// main.cpp (mesh_blob.rs's contract on a C6 player; here the front end's mesh asks over the
+// link, LK_MESH_REQ): stage a shared effect for the render task, its outcome, forget it, the
+// persisted deck-A frame, and the time base (op 0: get, try-lock).
+extern "C" int32_t lm_mesh_stage(const uint8_t *frame, uint32_t len, uint32_t apply_at_ms, const uint8_t **replaced);
+extern "C" uint32_t lm_mesh_staged_take(const uint8_t **frame);
+extern "C" void lm_mesh_staged_cancel();
+extern "C" uint32_t lm_mesh_effect_file(uint8_t *buf, uint32_t cap);
+extern "C" int32_t lm_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t shift_ms);
+// main.cpp (LM_LINK): one player message from a front-end session, gated as connection
+// `src` (the P4's kiosk unlock is per session); the mesh's time base applied in one go
+// under the player mutex; a counter of /lfs/fx.pb writes.
+extern "C" int lm_link_dispatch(uint32_t src, const uint8_t *in, size_t len, const uint8_t **reply);
+extern "C" void lm_link_timebase(bool set, int64_t epoch_ms, int32_t shift_ms, bool align);
+extern "C" uint32_t lm_link_fx_gen();
 
 namespace {
 
@@ -90,9 +106,57 @@ constexpr int64_t kUploadIdleUs = 3 * 1000 * 1000;
 int64_t g_host_seen_us = 0;
 int64_t g_hb_sent_us = 0;
 
+// The front end's sessions as kiosk connections (kiosk_ffi.rs: unlock is per connection): wss
+// session 1, the BLE central, wss sessions 2 and 3. Any other id (the host bridge's) counts
+// as session 1's connection, as every session did before. Open from a session's first
+// message until its LK_OP_RESET (or the link going down).
+uint8_t kiosk_src(uint16_t session) {
+  switch (session) {
+    case LK_SESSION_BLE:
+      return LM_KIOSK_SRC_BLE;
+    case 2:
+      return LM_KIOSK_SRC_LINK2;
+    case 3:
+      return LM_KIOSK_SRC_LINK3;
+    default:
+      return LM_KIOSK_SRC_WSS;
+  }
+}
+constexpr int kSrcs = 5;
+uint32_t g_open_srcs = 0;           // bit src: that connection is open
+uint16_t g_src_session[kSrcs] = {};  // the session it is (its pushes go there)
+uint32_t g_hb_unlock = 0;            // the LK_ST_UNLOCKED_* bits the last HEARTBEAT carried
+
+// The mesh's time base as the front end last sent it (LK_OP_TIMEBASE), applied in the loop.
+lk_timebase g_tb_pending;
+bool g_tb_have_pending = false;
+lk_tb_applied g_tb_applied = {0, 0};
+bool g_tb_set = false, g_tb_align = false;  // what the HEARTBEAT reports (last read / applied)
+int64_t g_tb_epoch = 0;
+
+// Shared effects staged for the render task (LK_MQ_STAGE): this chip's own copies (PSRAM),
+// by the front end's id, until the loop takes the outcome back (LK_OP_STAGED).
+struct Staged {
+  uint32_t id;
+  uint8_t *copy;
+};
+constexpr int kStagedMax = 3;
+Staged g_staged[kStagedMax] = {};
+int g_n_staged = 0;
+// The load runs at the frame's start on the render task, on a stack deep enough for a load
+// (the render task's 5 KB is not; the C6 players use the mesh's tick stack): allocated on
+// the first staged share, kept.
+constexpr size_t kLoadStack = 16 * 1024;
+uint8_t *g_load_stack = nullptr;
+SemaphoreHandle_t g_load_lock = nullptr;
+uint32_t (*g_load_fn)(void) = nullptr;
+uint32_t g_load_ret = 0;
+void load_trampoline() { g_load_ret = g_load_fn(); }
+
 struct {
   uint32_t rx_frames, rx_noise, rx_bytes, tx_frames, tx_bytes, too_big, dispatched;
   uint32_t sdio_err, relinks;  // failed ESSL calls; links torn down + reopened (SDIO)
+  uint32_t staged, stage_late, stage_refused, tb_applied, time_pings;
 } g_stats;
 
 bool host_alive(int64_t now) { return g_host_seen_us != 0 && now - g_host_seen_us < kLinkTimeoutUs; }
@@ -243,7 +307,7 @@ void send_msg(uint8_t type, uint16_t session, const uint8_t *data, size_t len) {
 }
 
 void send_link(uint8_t op, const uint8_t *body, size_t n) {
-  uint8_t p[32];
+  uint8_t p[48];
   p[0] = op;
   if (n > sizeof p - 1) n = sizeof p - 1;
   if (n) memcpy(p + 1, body, n);
@@ -255,6 +319,8 @@ void send_hello() {
   const uint8_t b[] = {LK_VERSION, 0, (uint8_t)(LK_MTU & 0xff), (uint8_t)(LK_MTU >> 8)};
   send_link(LK_OP_HELLO, b, sizeof b);
 }
+
+void heartbeat_if_unlock_changed();
 
 void on_player_message(uint16_t session, const uint8_t *msg, size_t len) {
   LmUploadChunk ch;
@@ -269,9 +335,18 @@ void on_player_message(uint16_t session, const uint8_t *msg, size_t len) {
     g_upload_seen_us = now;
   }
   g_session = session;
+  const uint8_t src = kiosk_src(session);
+  if (!(g_open_srcs & (1u << src)) || g_src_session[src] != session) {
+    lm_kiosk_drop(src);  // a session that (re)opens starts locked
+    g_open_srcs |= 1u << src;
+    g_src_session[src] = session;
+  }
   const uint8_t *reply = nullptr;
-  const int n = lm_ws_dispatch(msg, len, &reply);
+  const int n = lm_link_dispatch(src, msg, len, &reply);
   g_stats.dispatched++;
+  // A kiosk_unlock (or anything that changed who is unlocked) reaches the front end before
+  // its reply: the client's next get_mesh / mesh_admin there finds the session unlocked.
+  heartbeat_if_unlock_changed();
   if (n > 0 && reply) {
     send_msg(LK_REPLY, session, reply, (size_t)n);
   } else if (n == 0) {
@@ -297,14 +372,153 @@ void on_mesh_message(uint16_t session, const uint8_t *msg, size_t len) {
   send_msg(LK_REPLY, session, r, sizeof r);
 }
 
+void drop_all_srcs() {
+  for (int src = 1; src < kSrcs; src++) {
+    if (g_open_srcs & (1u << src)) lm_kiosk_drop((uint8_t)src);
+  }
+  g_open_srcs = 0;
+}
+
+// The LK_ST_UNLOCKED_* bits now: the open sessions the owner has unlocked.
+uint32_t unlock_bits() {
+  uint32_t bits = 0;
+  for (int src = 1; src < kSrcs; src++) {
+    if ((g_open_srcs & (1u << src)) && lm_kiosk_unlocked((uint8_t)src)) bits |= lk_unlock_bit(g_src_session[src]);
+  }
+  return bits;
+}
+
 void send_heartbeat() {
-  // The player status the front end's mesh layer broadcasts for this fixture.
+  // The player status the front end's mesh layer broadcasts for this fixture, the kiosk and
+  // which sessions are unlocked, the time base (and the TIMEBASE it came from), fx.pb's counter.
   lk_status s = {};
   lm_mesh_status_fill(&s.fps, &s.brightness, &s.firmware);
   if (lm_kiosk_enabled()) s.flags |= LK_ST_KIOSK;
-  uint8_t b[LK_STATUS_LEN];
+  g_hb_unlock = unlock_bits();
+  s.flags |= g_hb_unlock;
+  int64_t e = 0;
+  const int32_t r = lm_mesh_tb(0, &e, 0);  // try-lock: busy keeps the last one read
+  if (r >= 0) {
+    g_tb_set = r == 1;
+    g_tb_epoch = g_tb_set ? e : 0;
+  }
+  s.tb_epoch_ms = g_tb_epoch;
+  s.tb_flags = (uint16_t)((g_tb_set ? LK_TB_SET : 0) | (g_tb_align ? LK_TB_ALIGN : 0));
+  s.tb_seq = g_tb_applied.seq;
+  s.tb_shift_total = g_tb_applied.shift_total;
+  s.fx_gen = lm_link_fx_gen();
+  s.has_ext = true;
+  uint8_t b[LK_STATUS_EXT_LEN];
   lk_status_pack(&s, b);
   send_link(LK_OP_HEARTBEAT, b, sizeof b);
+}
+
+void heartbeat_if_unlock_changed() {
+  if (unlock_bits() != g_hb_unlock) send_heartbeat();
+}
+
+// The mesh's time base (LK_OP_TIMEBASE), in this chip's clock: applied once per seq, its
+// shift moving the queued apply_at changes with it. Loop task.
+void apply_timebase() {
+  if (!g_tb_have_pending) return;
+  g_tb_have_pending = false;
+  int32_t shift = 0;
+  if (!lk_tb_apply_shift(&g_tb_applied, &g_tb_pending, &shift)) return;
+  const bool set = g_tb_pending.flags & LK_TB_SET, align = g_tb_pending.flags & LK_TB_ALIGN;
+  lm_link_timebase(set, g_tb_pending.epoch_ms, shift, align);
+  g_tb_set = set;
+  g_tb_epoch = set ? g_tb_pending.epoch_ms : 0;
+  g_tb_align = align;
+  g_stats.tb_applied++;
+}
+
+// A request of the front end's mesh layer (LK_MESH_REQ): effect sharing (mesh M6).
+void on_mesh_req(uint16_t session, const uint8_t *msg, size_t len) {
+  g_stats.dispatched++;
+  if (len < 1) return;
+  switch (msg[0]) {
+    case LK_MQ_STAGE: {
+      int8_t r = -1;
+      uint32_t replaced_id = 0;
+      if (len > LK_STAGE_HDR && g_n_staged < kStagedMax) {
+        if (!g_load_stack) {
+          g_load_stack = static_cast<uint8_t *>(heap_caps_malloc(kLoadStack, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+          g_load_lock = g_load_stack ? xSemaphoreCreateMutex() : nullptr;
+          if (g_load_stack && !g_load_lock) {
+            free(g_load_stack);
+            g_load_stack = nullptr;
+          }
+        }
+        const uint32_t id = lk_get32(msg + 1), at = lk_get32(msg + 5);
+        const size_t n = len - LK_STAGE_HDR;
+        uint8_t *copy = g_load_stack ? static_cast<uint8_t *>(heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT))
+                                     : nullptr;
+        if (!copy) {
+          r = 0;  // no room to stage it: the mesh loads it now (the relayed control path)
+        } else {
+          memcpy(copy, msg + LK_STAGE_HDR, n);
+          const uint8_t *replaced = nullptr;
+          r = (int8_t)lm_mesh_stage(copy, (uint32_t)n, at, &replaced);
+          if (r == 1) {
+            for (int i = 0; i < g_n_staged; i++) {
+              if (replaced && g_staged[i].copy == replaced) {
+                replaced_id = g_staged[i].id;
+                free(g_staged[i].copy);
+                g_staged[i] = g_staged[--g_n_staged];
+                break;
+              }
+            }
+            g_staged[g_n_staged++] = {id, copy};
+            g_stats.staged++;
+          } else {
+            free(copy);
+            if (r == 0) g_stats.stage_late++;
+          }
+        }
+      }
+      if (r < 0) g_stats.stage_refused++;
+      uint8_t b[LK_STAGE_RESULT_LEN];
+      lk_stage_result_pack(r, replaced_id, b);
+      send_msg(LK_REPLY, session, b, sizeof b);
+      return;
+    }
+    case LK_MQ_CANCEL:
+      lm_mesh_staged_cancel();
+      for (int i = 0; i < g_n_staged; i++) free(g_staged[i].copy);
+      g_n_staged = 0;
+      send_msg(LK_REPLY, session, nullptr, 0);
+      return;
+    case LK_MQ_EFFECT_FILE: {
+      const uint32_t n = lm_mesh_effect_file(nullptr, 0);
+      uint8_t *b = n ? static_cast<uint8_t *>(heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) : nullptr;
+      const uint32_t got = b ? lm_mesh_effect_file(b, n) : 0;
+      send_msg(LK_REPLY, session, b, got == n ? got : 0);
+      free(b);
+      return;
+    }
+    default:
+      send_msg(LK_REPLY, session, nullptr, 0);
+      return;
+  }
+}
+
+// A staged load the render task did (or refused): this chip's copy goes, the front end
+// hears which. Loop task; lm_mesh_staged_take is a try-lock (asked again next pass).
+void poll_staged() {
+  if (g_n_staged == 0) return;
+  const uint8_t *f = nullptr;
+  const uint32_t r = lm_mesh_staged_take(&f);
+  if (r == 0) return;
+  for (int i = 0; i < g_n_staged; i++) {
+    if (g_staged[i].copy != f) continue;
+    uint8_t b[LK_STAGED_LEN - 1];
+    lk_put32(b, g_staged[i].id);
+    b[4] = (uint8_t)r;
+    send_link(LK_OP_STAGED, b, sizeof b);
+    free(g_staged[i].copy);
+    g_staged[i] = g_staged[--g_n_staged];
+    return;
+  }
 }
 
 void on_frame(const lk_header &h, const uint8_t *p) {
@@ -313,6 +527,7 @@ void on_frame(const lk_header &h, const uint8_t *p) {
   switch (h.type) {
     case LK_PLAYER:
     case LK_MESH:
+    case LK_MESH_REQ:
       // A message's fragments arrive back to back (the front end sends one at a time); a
       // different type mid-message starts over.
       if (g_msg_len && h.type != g_msg_type) {
@@ -333,6 +548,8 @@ void on_frame(const lk_header &h, const uint8_t *p) {
         send_link(LK_OP_RESET, b, sizeof b);
       } else if (h.type == LK_MESH) {
         on_mesh_message(h.session, g_msg, g_msg_len);
+      } else if (h.type == LK_MESH_REQ) {
+        on_mesh_req(h.session, g_msg, g_msg_len);
       } else {
         on_player_message(h.session, g_msg, g_msg_len);
       }
@@ -342,9 +559,18 @@ void on_frame(const lk_header &h, const uint8_t *p) {
     case LK_OSC:
       lm_netstack_osc_rx(p, h.len);  // as if it had arrived on udp/9000 here
       return;
-    case LK_LOG:
-      printf("[c6] %.*s", (int)h.len, (const char *)p);  // the front end's own lines
+    case LK_LOG: {
+      // The front end's own lines, batched (frontend_link.cpp log_queue): "[c6] " on each.
+      const char *s = reinterpret_cast<const char *>(p);
+      size_t at = 0;
+      while (at < h.len) {
+        const char *nl = static_cast<const char *>(memchr(s + at, '\n', h.len - at));
+        const size_t n = nl ? (size_t)(nl - (s + at)) + 1 : h.len - at;
+        printf("[c6] %.*s", (int)n, s + at);
+        at += n;
+      }
       return;
+    }
     case LK_LINK:
       if (h.len == 0) return;
       if (p[0] == LK_OP_HELLO) {
@@ -371,12 +597,29 @@ void on_frame(const lk_header &h, const uint8_t *p) {
         const size_t m = strnlen(b, h.len - 1);
         if (m < h.len - 1) lm_link_identity(b, b + m + 1);
       } else if (p[0] == LK_OP_RESET && h.len >= 3) {
-        // The host closed a session: stop pushing to it.
+        // The host closed a session: stop pushing to it. Its kiosk connection ends (an
+        // unlock ends with it), and the front end hears that at once.
         const uint16_t s = (uint16_t)(p[1] | p[2] << 8);
         if (s == g_session) g_session = 0;
         if (s == g_upload_owner) g_upload_owner = 0;
+        const uint8_t src = kiosk_src(s);
+        if (g_src_session[src] == s && (g_open_srcs & (1u << src))) {
+          g_open_srcs &= ~(1u << src);
+          lm_kiosk_drop(src);
+        }
+        heartbeat_if_unlock_changed();
         g_msg_len = 0;
         g_msg_overflow = false;
+      } else if (p[0] == LK_OP_TIME && h.len >= LK_TIME_PING_LEN) {
+        // A clock ping: answered at once with this chip's clock (the front end keeps the
+        // offset from the fastest round trips).
+        uint8_t b[LK_TIME_PONG_LEN - 1];
+        memcpy(b, p + 1, 8);
+        lk_put64(b + 8, esp_timer_get_time());
+        send_link(LK_OP_TIME, b, sizeof b);
+        g_stats.time_pings++;
+      } else if (p[0] == LK_OP_TIMEBASE && lk_timebase_parse(p + 1, h.len - 1, &g_tb_pending)) {
+        g_tb_have_pending = true;  // applied in the loop, under the player mutex
       }
       return;
     default:
@@ -509,7 +752,13 @@ void netstack_loop(void) {
     g_hb_sent_us = now;
     send_heartbeat();
   }
-  if (!host_alive(now)) g_session = 0;
+  if (!host_alive(now)) {
+    g_session = 0;
+    drop_all_srcs();  // every session is gone with the front end
+  }
+  apply_timebase();
+  poll_staged();
+  heartbeat_if_unlock_changed();
   // The front end heartbeats every 100 ms. Silent this long, the link is gone (the C6
   // restarted, or its SDIO slave stopped answering: sdmmc timeouts): say so, tear it
   // down and let sdio_retry bring it back, instead of polling a dead card forever.
@@ -567,7 +816,13 @@ void netstack_loop(void) {
     g_hb_sent_us = now;
     send_heartbeat();
   }
-  if (!host_alive(now)) g_session = 0;
+  if (!host_alive(now)) {
+    g_session = 0;
+    drop_all_srcs();
+  }
+  apply_timebase();
+  poll_staged();
+  heartbeat_if_unlock_changed();
   uint8_t buf[512];
   for (int rounds = 0; rounds < 64; rounds++) {
     const int n = uart_read_bytes(kUart, buf, sizeof buf, 0);
@@ -595,6 +850,24 @@ bool netstack_ws_send(uint8_t *data, size_t len) {
 
 bool netstack_ws_open(void) { return g_up && g_session != 0 && host_alive(esp_timer_get_time()); }
 
+// main.cpp's kiosk poll (LM_LINK): the open front-end sessions as kiosk connections (bit
+// src), and a kiosk status push to the session that is connection `src`.
+extern "C" uint32_t link_kiosk_conns(void) { return host_alive(esp_timer_get_time()) ? g_open_srcs : 0; }
+extern "C" bool link_push_src(uint8_t src, const uint8_t *data, size_t len) {
+  if (!g_up || src >= kSrcs || !(link_kiosk_conns() & (1u << src))) return false;
+  send_msg(LK_PUSH, g_src_session[src], data, len);
+  return true;
+}
+
+// The render task loads a staged shared effect (main.cpp, SCHED_STAGED_DUE) through this, on
+// a stack deep enough for a load. Without one (nothing was ever staged) it runs in place.
+extern "C" uint32_t lm_mesh_on_tick_stack(uint32_t (*fn)(void)) {
+  if (!g_load_stack) return fn();
+  g_load_fn = fn;
+  esp_execute_shared_stack_function(g_load_lock, g_load_stack, kLoadStack, load_trampoline);
+  return g_load_ret;
+}
+
 // The OTA health check (ota_p4.cpp): the link is up to a front end running the image this
 // P4 carries (SDIO: the ELF SHA-256 in the C6's HELLO). Over the UART the host bridge
 // plays the front end, so being up is enough.
@@ -614,11 +887,15 @@ void netstack_restore_credentials(const char *, const char *) {}
 uint32_t netstack_rekey_count(void) { return 0; }
 
 int netstack_net_stats(char *buf, size_t cap) {
-  return snprintf(buf, cap, "link rx=%u/%uB noise=%u tx=%u/%uB msgs=%u big=%u host=%s session=%u sdio_err=%u relinks=%u",
+  return snprintf(buf, cap,
+                  "link rx=%u/%uB noise=%u tx=%u/%uB msgs=%u big=%u host=%s session=%u open=%02x sdio_err=%u relinks=%u "
+                  "staged=%u late=%u refused=%u tb=%u/%u pings=%u",
                   (unsigned)g_stats.rx_frames, (unsigned)g_stats.rx_bytes, (unsigned)g_stats.rx_noise,
                   (unsigned)g_stats.tx_frames, (unsigned)g_stats.tx_bytes, (unsigned)g_stats.dispatched,
                   (unsigned)g_stats.too_big, host_alive(esp_timer_get_time()) ? "up" : "down",
-                  (unsigned)g_session, (unsigned)g_stats.sdio_err, (unsigned)g_stats.relinks);
+                  (unsigned)g_session, (unsigned)g_open_srcs, (unsigned)g_stats.sdio_err, (unsigned)g_stats.relinks,
+                  (unsigned)g_stats.staged, (unsigned)g_stats.stage_late, (unsigned)g_stats.stage_refused,
+                  (unsigned)g_stats.tb_applied, (unsigned)g_tb_applied.seq, (unsigned)g_stats.time_pings);
 }
 
 void netstack_set_wifi_policy(const NetstackWifiPolicy *) {}
