@@ -642,6 +642,9 @@ export class DeviceSession {
       if (code === "effect_too_large") {
         return new ToolError(`the effect is too large for the player (${e.message}); simplify it`);
       }
+      if (code === "fxb_too_new") {
+        return new ToolError(`the player's firmware (${this.fwVersion}) is too old for this effect: ${e.message}`);
+      }
       if (code === "bad_fxb") {
         return new ToolError(`the player rejected the effect bytecode (${e.message})`);
       }

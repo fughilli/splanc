@@ -2,7 +2,7 @@
 //! get_effect_uniforms): doc strings from comments, explicit ranges, units, and
 //! the `.fxb` format version the device checks.
 
-use ledmapper_fx_compiler::{compile, FXB_FORMAT_VERSION, MAX_UNIFORM_DOC};
+use ledmapper_fx_compiler::{compile, FXB_FORMAT_V1, FXB_FORMAT_VERSION, MAX_UNIFORM_DOC};
 use ledmapper_fx_vm::Program;
 
 const SRC: &str = r#"
@@ -81,10 +81,16 @@ fn the_devices_port_scanner_still_resolves_every_uniform() {
 fn the_compiler_emits_the_format_the_vm_runs() {
     assert_eq!(FXB_FORMAT_VERSION, ledmapper_fx_vm::FORMAT_VERSION);
     let c = compile(SRC).unwrap();
-    assert_eq!(c.fxb[4], ledmapper_fx_vm::FORMAT_VERSION);
-    // An .fxb claiming another format is refused (the firmware answers bad_fxb).
+    // D-557: an effect with no newer widget kind keeps format 1, so firmware
+    // from before the bump still loads it.
+    assert_eq!(c.fxb[4], FXB_FORMAT_V1);
+    assert_eq!(ledmapper_fx_vm::MIN_FORMAT_VERSION, FXB_FORMAT_V1);
+    assert!(Program::parse(&c.fxb).is_ok());
+    // An .fxb claiming a newer format (or format 0) is refused (bad_fxb).
     let mut other = c.fxb.clone();
     other[4] = FXB_FORMAT_VERSION + 1;
+    assert!(Program::parse(&other).is_err());
+    other[4] = 0;
     assert!(Program::parse(&other).is_err());
 }
 

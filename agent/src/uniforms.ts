@@ -9,6 +9,9 @@
  *
  * Ranged vectors (`uniform vec3 p : -1 .. 1`) are `ui.kind "slider"` with width
  * > 1 (bounds may be negative); a per-component range adds `mins`/`maxs`.
+ * `: vector` / `: direction` vec2/vec3 uniforms are `ui.kind "vector"` (a pad,
+ * ranged like a slider) / `"direction"` (unit length: set values are
+ * normalised, ramps stay on the sphere).
  * mat3/mat4 are `ui.kind "matrix"`, width 9/16, column-major (GLSL). On the
  * wire a UniformValue carries at most 4 floats, so {@link resolve} splits a
  * matrix into consecutive slot chunks (web/src/net/uniformWire.ts).
@@ -22,7 +25,9 @@ export type UiKind =
   | { kind: "color" }
   | { kind: "toggle" }
   | { kind: "dropdown"; options: string[] }
-  | { kind: "matrix"; min: number; max: number };
+  | { kind: "matrix"; min: number; max: number }
+  | { kind: "vector"; min: number; max: number; step: number }
+  | { kind: "direction" };
 
 export interface ManifestUniform {
   name: string;
@@ -62,7 +67,10 @@ export function rangeOf(u: ManifestUniform): { min: number; max: number } | null
     case "dropdown":
       return { min: 0, max: Math.max(0, u.ui.options.length - 1) };
     case "matrix":
+    case "vector":
       return { min: u.ui.min, max: u.ui.max };
+    case "direction":
+      return { min: -1, max: 1 };
     default:
       return null;
   }
@@ -118,6 +126,12 @@ export function coerce(u: ManifestUniform, v: UniformInput): number[] {
   if (vals.some((x) => typeof x !== "number" || !Number.isFinite(x))) {
     throw new UniformError(`${u.name}: values must be finite`);
   }
+  if (u.ui.kind === "direction") {
+    // A direction is any non-zero vector, sent at unit length.
+    const unit = normalized(vals);
+    if (!unit) throw new UniformError(`${u.name}: a direction must not be the zero vector`);
+    return unit;
+  }
   const rs = componentRanges(u);
   if (rs) {
     vals.forEach((x, i) => {
@@ -172,7 +186,15 @@ export function currentByName(manifest: ManifestUniform[], values: readonly Unif
  * rotations is generally not a rotation (it shears/shrinks). */
 export function lerpValues(u: ManifestUniform, from: number[], to: number[], t: number): number[] {
   if (u.ui.kind === "dropdown" || u.ui.kind === "toggle") return t >= 1 ? to : from;
-  return from.map((a, i) => a + ((to[i] ?? a) - a) * t);
+  const out = from.map((a, i) => a + ((to[i] ?? a) - a) * t);
+  // A direction ramp stays on the sphere (as the firmware keypoint blend does).
+  return u.ui.kind === "direction" ? (normalized(out) ?? out) : out;
+}
+
+/** `v` scaled to unit length, or null for a (near-)zero vector. */
+function normalized(v: readonly number[]): number[] | null {
+  const len = Math.hypot(...v);
+  return len > 1e-9 ? v.map((x) => x / len) : null;
 }
 
 /** A human/agent-facing description of one uniform (for list_uniforms). */

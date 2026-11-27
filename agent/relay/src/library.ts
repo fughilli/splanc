@@ -50,7 +50,10 @@ export type LibUi =
   | { kind: "slider"; min: number; max: number; step: number }
   | { kind: "color" }
   | { kind: "toggle" }
-  | { kind: "dropdown"; options: string[] };
+  | { kind: "dropdown"; options: string[] }
+  // `: vector` / `: direction` on a vec2/vec3 (D-541 PR 4).
+  | { kind: "vector"; min: number; max: number; step: number }
+  | { kind: "direction" };
 
 /** One uniform of an entry: the compiler's manifest minus the slot. */
 export interface LibUniform {
@@ -205,6 +208,14 @@ function normUi(v: unknown, i: number): LibUi {
       const step = finite(o["step"]) ? o["step"] : 0; // absent = continuous (D-541)
       return { kind: "slider", min, max, step };
     }
+    case "vector": {
+      const min = finite(o["min"]) ? o["min"] : -1;
+      const max = finite(o["max"]) ? o["max"] : 1;
+      const step = finite(o["step"]) ? o["step"] : 0;
+      return { kind: "vector", min, max, step };
+    }
+    case "direction":
+      return { kind: "direction" };
     case "color":
       return { kind: "color" };
     case "toggle":
@@ -217,7 +228,7 @@ function normUi(v: unknown, i: number): LibUi {
       return { kind: "dropdown", options: (opts as string[]).slice(0, 32).map((s) => s.slice(0, 32)) };
     }
     default:
-      throw new LibraryError(`uniforms[${i}].ui.kind must be slider, color, toggle or dropdown`);
+      throw new LibraryError(`uniforms[${i}].ui.kind must be slider, color, toggle, dropdown, vector or direction`);
   }
 }
 
@@ -328,8 +339,21 @@ export function uniformsFromSource(source: string): LibUniform[] {
       ann = ann.slice(0, unitM.index).trim();
     }
     let ui: LibUi;
+    const vecAnn = /^(vector|direction)\b\s*(.*)$/.exec(ann);
     if (ann === "color") ui = { kind: "color" };
-    else if (ann.startsWith("{")) {
+    else if (vecAnn && (ty === "vec2" || ty === "vec3")) {
+      if (vecAnn[1] === "direction") ui = { kind: "direction" };
+      else {
+        const r = /^(-?[0-9.]+(?:[eE][-+]?\d+)?)\s*\.\.\s*(-?[0-9.]+(?:[eE][-+]?\d+)?)(?:\s+step\s+([0-9.]+(?:[eE][-+]?\d+)?))?/.exec(vecAnn[2] ?? "");
+        const st = /\bstep\s+([0-9.]+(?:[eE][-+]?\d+)?)/.exec(vecAnn[2] ?? "");
+        ui = {
+          kind: "vector",
+          min: r ? Number(r[1]) : -1,
+          max: r ? Number(r[2]) : 1,
+          step: st ? Number(st[1]) : nativeStep(ty),
+        };
+      }
+    } else if (ann.startsWith("{")) {
       const opts = [...ann.matchAll(/"([^"]*)"/g)].map((x) => x[1]!);
       ui = { kind: "dropdown", options: opts };
     } else {

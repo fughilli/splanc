@@ -144,9 +144,9 @@ pub static LANG: &[LangEntry] = &[
             "uniform trigger name;",
         ],
         summary: "declare a live, user-tweakable parameter with a range + default",
-        doc: "A uniform is a knob the user, MIDI, OSC or an agent can change while the effect runs, without recompiling. The annotation after `:` picks the control: a numeric range is a slider, `color` a colour picker, `{\"a\",\"b\"}` a dropdown (the value is the option index) and a `bool` a toggle. A vec3/vec4 with no annotation is a colour; with a range it is a numeric vector. A mat3/mat4 defaults to the identity. The comment on the declaration line (or the comment block just above) becomes its doc string in the manifest, and an optional string after the annotation is its unit. Uniforms are read-only in the program. A uniform that sets a rate must be integrated in update(), never multiplied by `time`. Some names are written by the firmware every frame when a sensor runs (`imu_gravity`, `imu_shake`, ...); otherwise they are ordinary knobs.",
+        doc: "A uniform is a knob the user, MIDI, OSC or an agent can change while the effect runs, without recompiling. The annotation after `:` picks the control: a numeric range is a slider, `color` a colour picker, `vector` an XY pad and `direction` a unit-vector dial or sphere (vec2/vec3), `{\"a\",\"b\"}` a dropdown (the value is the option index) and a `bool` a toggle. A vec3/vec4 with no annotation is a colour; with a range it is a numeric vector. A mat3/mat4 defaults to the identity. The comment on the declaration line (or the comment block just above) becomes its doc string in the manifest, and an optional string after the annotation is its unit. Uniforms are read-only in the program. A uniform that sets a rate must be integrated in update(), never multiplied by `time`. Some names are written by the firmware every frame when a sensor runs (`imu_gravity`, `imu_shake`, ...); otherwise they are ordinary knobs.",
         example: "uniform float speed : 0.0 .. 4.0 = 1.0;   // cycles per second\nuniform vec3 tint : color = 0.2, 0.6, 1.0;\nstate float ph;\nvoid update() { ph = fract(ph + dt * speed); }\nvec3 shade(Led led) { return tint * fract(led.s - ph); }",
-        related: &["state", "color", "range", "dropdown", "unit", "trigger"],
+        related: &["state", "color", "range", "vector", "direction", "dropdown", "unit", "trigger"],
         ..E
     },
     LangEntry {
@@ -1341,6 +1341,32 @@ pub static LANG: &[LangEntry] = &[
         doc: "Shows a vec3/vec4 uniform as a colour picker holding linear RGB in 0..1. It is also the default for an unannotated vec3/vec4. Not valid on a matrix.",
         example: "uniform vec3 tint : color = 1.0, 0.4, 0.1;\nvec3 shade(Led led) { return tint * led.s; }",
         related: &["uniform", "range", "hsv2rgb"],
+        ..E
+    },
+    LangEntry {
+        name: "vector",
+        kind: Kind::Annotation,
+        category: "uniform ui",
+        sigs: &[
+            "uniform vec2 name : vector = x, y;",
+            "uniform vec2 name : vector lo .. hi [step s] = x, y;",
+            "uniform vec3 name : vector vec3(lo..) .. vec3(hi..) = vec3(v);",
+        ],
+        summary: "uniform annotation `: vector [lo .. hi] [step s]`: an XY pad for a vec2 (a vec3 adds a z slider); needs .fxb format 2",
+        doc: "Shows a vec2 or vec3 uniform as an XY pad (a vec3 adds a z slider) instead of one slider per component. Without a range every axis is -1..1; the optional range and `step s` take the same forms as a slider's, including a per-component `vecN(...) .. vecN(...)`. Only valid on a vec2/vec3. An effect that uses it is stamped `.fxb` format 2, so firmware from before format 2 refuses it; on those players use a plain range.",
+        example: "uniform vec2 wind : vector -2.0 .. 2.0 = 0.5, 0.0;\nstate vec2 off;\nvoid update() { off = off + wind * dt; }\nvec3 shade(Led led) { return vec3(fract(dot(led.pos.xy, vec2(1.0)) - off.x - off.y)); }",
+        related: &["uniform", "range", "direction", "vec2", "vec3"],
+        ..E
+    },
+    LangEntry {
+        name: "direction",
+        kind: Kind::Annotation,
+        category: "uniform ui",
+        sigs: &["uniform vec2 name : direction = x, y;", "uniform vec3 name : direction = x, y, z;", "uniform vec3 name : direction;"],
+        summary: "uniform annotation `: direction`: a unit vec2 (angle dial) or vec3 (aiming sphere); default normalised, +y when omitted; needs .fxb format 2",
+        doc: "Shows a vec2 uniform as an angle dial and a vec3 as an aiming sphere. The value is always a unit vector: the compiler normalises the default (which must not be zero, and is +y when omitted), and keypoint blends and agent ramps renormalise. Only valid on a vec2/vec3. An effect that uses it is stamped `.fxb` format 2, so firmware from before format 2 refuses it; on those players use a plain range.",
+        example: "uniform vec3 sun : direction = 0.0, 1.0, 0.3;\nvec3 shade(Led led) { return vec3(max(dot(led.pos, sun), 0.0)); }",
+        related: &["uniform", "vector", "normalize", "vec3"],
         ..E
     },
     LangEntry {

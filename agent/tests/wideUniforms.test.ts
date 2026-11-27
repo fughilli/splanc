@@ -119,6 +119,26 @@ describe("uniform values (pure)", () => {
     assert.deepEqual(lerpValues(PVEC, [-1, -1, 0], [1, 1, 2], 0.25), [-0.5, -0.5, 0.5]);
   });
 
+  test("a direction is set and ramped at unit length; a vector is range-checked", () => {
+    const SUN: ManifestUniform = { name: "sun", slot: 0, width: 3, ui: { kind: "direction" }, default: [0, 1, 0], min: -1, max: 1 };
+    const WIND: ManifestUniform = {
+      name: "wind",
+      slot: 3,
+      width: 2,
+      ui: { kind: "vector", min: -2, max: 2, step: 0 },
+      default: [0, 0],
+      min: -2,
+      max: 2,
+    };
+    assert.deepEqual(coerce(SUN, [0, 3, 4]), [0, 0.6, 0.8]);
+    assert.throws(() => coerce(SUN, [0, 0, 0]), UniformError);
+    const mid = lerpValues(SUN, [1, 0, 0], [0, 1, 0], 0.5);
+    assert.ok(Math.abs(Math.hypot(...mid) - 1) < 1e-12 && Math.abs(mid[0]! - mid[1]!) < 1e-12);
+    assert.deepEqual(coerce(WIND, [1.5, -2]), [1.5, -2]);
+    assert.throws(() => coerce(WIND, [3, 0]), UniformError);
+    assert.deepEqual(componentRanges(SUN)?.[2], { min: -1, max: 1 });
+  });
+
   test("the encoder chunks any >4-float UniformValue (set_uniforms, save_keypoint)", () => {
     const vals = [{ slot: 2, value: Array.from({ length: 9 }, (_, i) => i) }];
     const back = decodeClient(encodeClient({ type: "set_uniforms", values: vals } as never)) as unknown as {

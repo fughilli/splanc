@@ -123,6 +123,20 @@ rust_test(
     ],
 )
 
+# D-541 PR 4: `: vector` / `: direction` uniforms, the .fxb format-2 stamp
+# (D-557), and the firmware keypoint blend reading the compiled manifest.
+rust_test(
+    name = "vector_test",
+    srcs = ["tests/vector.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+        "//firmware/keypoint",
+        "@crates//:serde_json",
+    ],
+)
+
 # FUG-125: differential + hill-climb harness for the bytecode optimizer.
 # #400 signed/vector uniform ranges + mat3/mat4 (lowered to vecN ops): grammar,
 # manifest, and VM equivalence against hand-written dot forms.

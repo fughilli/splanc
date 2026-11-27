@@ -61,6 +61,8 @@ function kindLabel(u: FxUniform): string {
   if (u.ui.kind === "toggle") return " (toggle)";
   if (u.ui.kind === "dropdown") return ` (dropdown: ${u.ui.options.join("/")})`;
   if (u.ui.kind === "matrix") return " (matrix)";
+  if (u.ui.kind === "vector") return " (vector)";
+  if (u.ui.kind === "direction") return " (direction, unit length)";
   return "";
 }
 

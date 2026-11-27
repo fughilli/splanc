@@ -196,6 +196,28 @@ pub enum UiKind {
     /// producer bumps (a driver's `fire()`, a client "fire" button); update()
     /// asks `fired(t)` whether it moved since the last frame.
     Trigger,
+    /// `: vector [range] [step N]` on a vec2/vec3 (D-541 PR 4): a free vector
+    /// edited on an XY pad (a vec3 adds a z slider). The range is the envelope
+    /// (a per-component range rides in [`UniformInfo::comp_range`]); without
+    /// one it is -1..1. Needs [`FXB_FORMAT_V2`].
+    Vector { min: f32, max: f32, step: f32 },
+    /// `: direction` on a vec2/vec3: a unit vector, edited on an angle dial
+    /// (vec2) or a sphere (vec3). The default is normalised at compile time
+    /// and the keypoint blend renormalises. Needs [`FXB_FORMAT_V2`].
+    Direction,
+}
+
+impl UiKind {
+    /// The `.fxb` format an effect using this control needs (D-557): the
+    /// widget kinds added after format 1 require firmware that knows them.
+    /// Later widget PRs (the mat3 `: transform2d` gizmo, persisted textures)
+    /// add their kinds here, behind the SAME format 2.
+    pub fn min_format(&self) -> u8 {
+        match self {
+            UiKind::Vector { .. } | UiKind::Direction => FXB_FORMAT_V2,
+            _ => FXB_FORMAT_V1,
+        }
+    }
 }
 
 /// The range of a `mat3`/`mat4` uniform declared without one (`uniform mat4
@@ -222,9 +244,28 @@ pub struct UniformInfo {
     pub comp_range: Option<(Vec<f32>, Vec<f32>)>,
 }
 
-/// The `.fxb` format version the compiler emits (the header's version byte). Must
-/// equal `fx_vm::FORMAT_VERSION` (a test pins it): the device rejects others.
-pub const FXB_FORMAT_VERSION: u8 = 1;
+/// The newest `.fxb` format version the compiler emits (the header's version
+/// byte). Must equal `fx_vm::FORMAT_VERSION` (a test pins it): the device
+/// rejects anything newer than the one it reports (welcome.fxb_format).
+///
+/// D-557: the format is bumped ONCE for the new uniform widget kinds and each
+/// effect is stamped with the OLDEST format that describes it
+/// ([`fxb_format_for`]), so an effect without new widgets still loads on old
+/// firmware and only one that uses them asks for a firmware update.
+pub const FXB_FORMAT_VERSION: u8 = FXB_FORMAT_V2;
+/// The original format: the bytecode and manifest every firmware runs.
+pub const FXB_FORMAT_V1: u8 = 1;
+/// Format 1 plus the D-541 widget kinds in the manifest (`vector`,
+/// `direction`; later `transform2d` and persisted textures). The bytecode is
+/// unchanged; the bump only tells old firmware to refuse an effect whose
+/// controls it would mishandle.
+pub const FXB_FORMAT_V2: u8 = 2;
+
+/// The `.fxb` format an effect with these uniforms is stamped with: the
+/// newest format any of its controls needs (format 1 when none is new).
+pub fn fxb_format_for(uniforms: &[UniformInfo]) -> u8 {
+    uniforms.iter().map(|u| u.ui.min_format()).max().unwrap_or(FXB_FORMAT_V1)
+}
 
 /// Longest doc string embedded per uniform (bytes). The manifest rides inside the
 /// `.fxb`, which the device caps at 4 KiB, so a long comment is truncated there.
@@ -1090,12 +1131,25 @@ impl Compiler {
             }
         }
         // default (optional for a matrix: identity)
-        let default = if ty.is_mat() && *self.cur() == Tok::Sym(';') {
+        let mut default = if ty.is_mat() && *self.cur() == Tok::Sym(';') {
             mat_identity(ty.mat_n())
+        } else if ui == UiKind::Direction && *self.cur() == Tok::Sym(';') {
+            // A direction without a default points along +y (up on a pad).
+            let mut d = vec![0.0; ty.width() as usize];
+            d[1] = 1.0;
+            d
         } else {
             self.expect_sym('=')?;
             self.parse_uniform_default(ty)?
         };
+        if ui == UiKind::Direction {
+            // Stored unit length, so every client starts on the sphere.
+            let len = default.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if !(len > 1e-6) {
+                return self.err("a direction's default must not be the zero vector");
+            }
+            default.iter_mut().for_each(|x| *x /= len);
+        }
         self.expect_sym(';')?;
         let end_line = self.lx_toks[self.p.saturating_sub(1)].1;
         let doc = self.uniform_doc(first_line, end_line);
@@ -1267,8 +1321,36 @@ impl Compiler {
     /// every component; `vecN(..) .. vecN(..)` gives each its own (returned as the
     /// per-component range beside a slider over the envelope). A ranged vector is
     /// a numeric slider, never a colour; a ranged matrix is a `Matrix`.
+    /// `vector [range] [step N]` / `direction` on a vec2/vec3 pick the vector
+    /// pad / direction dial (D-541 PR 4; format 2).
     fn parse_ui_annotation(&mut self, ty: Ty) -> Result<(UiKind, Option<(Vec<f32>, Vec<f32>)>), Diagnostic> {
         match self.cur().clone() {
+            Tok::Ident(k) if k == "vector" || k == "direction" => {
+                if !matches!(ty, Ty::Vec2 | Ty::Vec3) {
+                    return self.err(format!(
+                        "`{k}` is for a vec2 or vec3 uniform (a vec4 or scalar takes a range: `: -1..1`)"
+                    ));
+                }
+                self.advance();
+                if k == "direction" {
+                    return Ok((UiKind::Direction, None));
+                }
+                // `vector` alone is -1..1 on every axis; else the same range
+                // forms as a slider (scalar or per-component, optional step).
+                let ranged = match self.cur() {
+                    Tok::Num(..) | Tok::Sym('-') => true,
+                    Tok::Ident(c) => Self::ty_from_ident(c) == Some(ty),
+                    _ => false,
+                };
+                if !ranged {
+                    let step = self.parse_step_annotation(ty)?;
+                    return Ok((UiKind::Vector { min: -1.0, max: 1.0, step }, None));
+                }
+                match self.parse_ui_annotation(ty)? {
+                    (UiKind::Slider { min, max, step }, cr) => Ok((UiKind::Vector { min, max, step }, cr)),
+                    _ => self.err("expected a range after `vector` (`: vector -1..1`)"),
+                }
+            }
             Tok::Ident(k) if k == "color" => {
                 if ty.is_mat() {
                     return self.err("a matrix uniform cannot be a colour; give it a range (`: -1..1`) or none");
@@ -4245,7 +4327,9 @@ impl Compiler {
             flags |= FLAG_SHARED_STATE;
         }
         b.extend_from_slice(b"FXB1");
-        b.push(FXB_FORMAT_VERSION);
+        // D-557: the oldest format that describes this effect (1 unless it
+        // uses a newer widget kind), so old firmware keeps loading the rest.
+        b.push(if is_driver { FXB_FORMAT_V1 } else { fxb_format_for(&self.uniforms) });
         b.push(flags); // flags
         b.push(self.n_state);
         b.push(self.n_uniform_slots);
@@ -4705,6 +4789,10 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
             UiKind::Toggle => "{\"kind\":\"toggle\"}".to_string(),
             UiKind::Matrix { min, max } => format!("{{\"kind\":\"matrix\",\"min\":{min},\"max\":{max}}}"),
             UiKind::Trigger => "{\"kind\":\"trigger\"}".to_string(),
+            UiKind::Vector { min, max, step } => {
+                format!("{{\"kind\":\"vector\",\"min\":{min},\"max\":{max},\"step\":{step}}}")
+            }
+            UiKind::Direction => "{\"kind\":\"direction\"}".to_string(),
             UiKind::Dropdown(o) => {
                 let opts: Vec<String> = o.iter().map(|x| format!("\"{x}\"")).collect();
                 format!("{{\"kind\":\"dropdown\",\"options\":[{}]}}", opts.join(","))
@@ -4714,8 +4802,11 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
         // Explicit range per uniform, even where the UI kind implies it, so an agent
         // can clamp without knowing the UI vocabulary.
         let (min, max) = match &u.ui {
-            UiKind::Slider { min, max, .. } | UiKind::Matrix { min, max } => (*min, *max),
+            UiKind::Slider { min, max, .. } | UiKind::Matrix { min, max } | UiKind::Vector { min, max, .. } => {
+                (*min, *max)
+            }
             UiKind::Color | UiKind::Toggle => (0.0, 1.0),
+            UiKind::Direction => (-1.0, 1.0),
             // A counter: any non-negative count.
             UiKind::Trigger => (0.0, 16_777_216.0),
             UiKind::Dropdown(o) => (0.0, o.len().saturating_sub(1) as f32),

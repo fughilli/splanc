@@ -23,6 +23,7 @@ import {
   isColorUniform,
   isDrivable,
   isScalarDrivable,
+  componentRange,
 } from "./router";
 import { clamp01, rgbToHsv } from "../color/hsv";
 
@@ -84,13 +85,14 @@ export function midiListSummary(input: {
     if (u.ui.kind === "matrix") {
       return { name: u.name, type: "matrix", channels, min: u.ui.min, max: u.ui.max };
     }
-    const ui = u.ui.kind === "slider" ? u.ui : null;
+    const ranges = channels.map((_, i) => componentRange(u, i));
     return {
       name: u.name,
-      type: "vector",
+      type: u.ui.kind === "direction" ? "direction" : "vector",
       channels,
-      min: u.mins ?? channels.map(() => ui?.min ?? 0),
-      max: u.maxs ?? channels.map(() => ui?.max ?? 1),
+      min: ranges.map((r) => r.min),
+      max: ranges.map((r) => r.max),
+      ...(u.ui.kind === "direction" ? { note: "unit vector: a knob on one axis rescales the others" } : {}),
     };
   });
   const namedControls = input.semantics.map((s) => ({

@@ -1,7 +1,8 @@
 /**
  * Auto uniform panel (docs/design/effects-compiler.md §"live uniform panel"):
  * renders one control per manifest uniform (slider/HSV colour picker/toggle/dropdown; a
- * ranged vector gets one slider per component, a mat3/mat4 an N×N number grid)
+ * ranged vector gets one slider per component, a `: vector` / `: direction`
+ * vec2/vec3 an XY pad / direction dial or sphere, a mat3/mat4 an N×N number grid)
  * and holds the live values. Preview and device consume the SAME values — dragging a
  * control fires `onChange(slot, value[])` with the exact numbers both sinks use.
  *
@@ -13,6 +14,7 @@
 
 import type { FxUiKind, FxUniform } from "../../fx/preview";
 import { reassembleUniformValues } from "../../net/uniformWire";
+import { VectorSwatch, vectorSummary } from "../../ui/kit/vectorPicker";
 import {
   clampUniformValue,
   componentRanges,
@@ -48,7 +50,13 @@ export class UniformPanel {
     /** `label` renames controls for display (the Effects tab's tune sheet shows
      * "Base color" for `base_color`); the editor shows the raw names. `empty`
      * replaces the "No uniforms declared." line. */
-    private readonly opts: { label?: (name: string) => string; empty?: string } = {},
+    private readonly opts: {
+      label?: (name: string) => string;
+      empty?: string;
+      /** Once at the end of a gesture (a pad / slider release, a typed value):
+       * the place to persist (LiveControl.commit) without waiting for idle. */
+      onCommit?: (slot: number, value: number[]) => void;
+    } = {},
   ) {}
 
   private label(name: string): string {
@@ -110,6 +118,12 @@ export class UniformPanel {
       value: (prev.get(keyOf(u)) ?? u.default).slice(),
     }));
     this.render();
+  }
+
+  /** The end of a gesture on slot `slotIndex`: hand its value to onCommit. */
+  private commitSlot(slotIndex: number): void {
+    const s = this.slots[slotIndex];
+    if (s) this.opts.onCommit?.(s.uniform.slot, s.value.slice());
   }
 
   private set(slotIndex: number, value: number[]): void {
@@ -193,7 +207,7 @@ export class UniformPanel {
           const next = s.value.slice();
           next[c] = v;
           this.set(i, clampUniformValue(u, next));
-        }),
+        }, () => this.commitSlot(i)),
       );
       row.append(name, ctrl, value);
       grid.appendChild(row);
@@ -260,6 +274,7 @@ export class UniformPanel {
     step: number,
     current: () => number,
     onValue: (v: number) => void,
+    onRelease?: () => void,
   ): (v: number) => void {
     const cur = current();
     const el = document.createElement("input");
@@ -282,6 +297,7 @@ export class UniformPanel {
       num.value = fmtNum(v);
       onValue(v);
     });
+    el.addEventListener("change", () => onRelease?.());
     // Commit the typed value on Enter/blur: clamp to [min,max] (+ snap to a
     // declared step grid; a continuous uniform keeps exactly what was typed).
     const commit = (): void => {
@@ -293,6 +309,7 @@ export class UniformPanel {
       el.value = String(v);
       num.value = fmtNum(v);
       onValue(v);
+      onRelease?.();
     };
     num.addEventListener("change", commit);
     num.addEventListener("keydown", (e) => {
@@ -346,6 +363,7 @@ export class UniformPanel {
           this.set(i, next);
           value.textContent = value.title = label(next);
         },
+        onCommit: (v) => this.opts.onCommit?.(s.uniform.slot, clampUniformValue(s.uniform, v)),
       });
       ctrl.appendChild(swatch.el);
       value.textContent = value.title = label(s.value);
@@ -373,9 +391,48 @@ export class UniformPanel {
 
     if (ui.kind === "matrix") return; // rendered by matrix()
 
+    if (ui.kind === "vector" || ui.kind === "direction") {
+      // The XY pad (+ z slider) / direction dial or sphere (D-541 PR 4): a
+      // button opening the picker (a Sheet on phones, a popover on desktop).
+      // Every move streams through onChange; the release commits.
+      const dims: 2 | 3 = s.uniform.width >= 3 ? 3 : 2;
+      const mode = ui.kind;
+      const ranges = componentRanges(s.uniform) ?? undefined;
+      const summary = (v: readonly number[]): string => vectorSummary(v, dims, mode);
+      const pad = VectorSwatch({
+        value: s.value,
+        dims,
+        mode,
+        ...(ranges ? { ranges } : {}),
+        step: ui.kind === "vector" ? ui.step : 0,
+        title: this.label(s.uniform.name),
+        onInput: (v) => {
+          const next = clampUniformValue(s.uniform, v);
+          this.set(i, next);
+          value.textContent = value.title = summary(next);
+        },
+        onCommit: (v) => this.opts.onCommit?.(s.uniform.slot, clampUniformValue(s.uniform, v)),
+      });
+      ctrl.appendChild(pad.el);
+      value.textContent = value.title = summary(s.value);
+      // External drivers (MIDI, the agent) move the button and an open picker.
+      this.setters.set(s.uniform.slot, (v) => {
+        pad.set(v);
+        value.textContent = value.title = summary(v);
+      });
+      return;
+    }
+
     // slider + an editable number field (type a value → clamp+snap to range).
-    const move = this.sliderPair(ctrl, value, ui.min, ui.max, ui.step, () => this.slots[i]?.value[0] ?? ui.min, (v) =>
-      this.set(i, [v]),
+    const move = this.sliderPair(
+      ctrl,
+      value,
+      ui.min,
+      ui.max,
+      ui.step,
+      () => this.slots[i]?.value[0] ?? ui.min,
+      (v) => this.set(i, [v]),
+      () => this.commitSlot(i),
     );
     // External (MIDI) driver moves both the slider and the number field.
     this.setters.set(s.uniform.slot, (v) => move(v[0] ?? ui.min));

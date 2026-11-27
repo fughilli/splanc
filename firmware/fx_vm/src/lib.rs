@@ -556,12 +556,19 @@ pub const C_ROOM_MIN: u8 = 14; // 3 — room bounding box (room frame, m)
 pub const C_ROOM_MAX: u8 = 15; // 3
 
 pub const MAGIC: [u8; 4] = *b"FXB1";
-/// The `.fxb` format version this VM executes: the header's version byte (offset
-/// 4). The compiler stamps it, `Program::parse` rejects any other value (the
-/// firmware answers `bad_fxb`), and the device reports it (welcome.fxb_format, the
-/// agent manifest's protocol.fxb_format) so a host toolchain can check it emits
-/// what the device runs.
-pub const FORMAT_VERSION: u8 = 1;
+/// The newest `.fxb` format version this VM executes: the header's version byte
+/// (offset 4). The compiler stamps each effect with the oldest format that
+/// describes it, `Program::parse` accepts [`MIN_FORMAT_VERSION`]..=this and
+/// rejects anything else (the firmware answers `bad_fxb`), and the device
+/// reports it (welcome.fxb_format, the agent manifest's protocol.fxb_format) so
+/// a host can tell before uploading whether the device runs an effect.
+///
+/// Format 2 (D-541/D-557) is format 1's bytecode with newer uniform widget kinds
+/// in the manifest (`vector`, `direction`, ...): firmware older than this
+/// refuses such an effect rather than mishandling its controls.
+pub const FORMAT_VERSION: u8 = 2;
+/// The oldest `.fxb` format this VM still executes (every format-1 effect).
+pub const MIN_FORMAT_VERSION: u8 = 1;
 pub const NO_ENTRY: u16 = 0xFFFF;
 
 /// A parsed program, borrowing the `.fxb` byte buffer.
@@ -821,7 +828,7 @@ impl<'a> Program<'a> {
         if buf[0..4] != MAGIC {
             return Err(ParseErr::BadMagic);
         }
-        if buf[4] != FORMAT_VERSION {
+        if !(MIN_FORMAT_VERSION..=FORMAT_VERSION).contains(&buf[4]) {
             return Err(ParseErr::BadVersion);
         }
         let flags = buf[5];

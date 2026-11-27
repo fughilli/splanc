@@ -56,6 +56,13 @@ export function isColorUniform(u: FxUniform): boolean {
 
 const VEC_NAMES = ["x", "y", "z", "w"];
 
+/** A vec2..vec4 driven per component: a ranged-slider vector, or a `: vector`
+ * (XY pad) / `: direction` (dial/sphere) uniform. */
+export function isVectorUniform(u: FxUniform): boolean {
+  const k = u.ui.kind;
+  return u.width >= 2 && u.width <= 4 && (k === "slider" || k === "vector" || k === "direction");
+}
+
 /**
  * The channels a binding may name on `u`: [] for a scalar (no channel); for
  * a colour `h` `s` `v` `r` `g` `b` (+ `a` for vec4); for a ranged vector its
@@ -65,7 +72,7 @@ const VEC_NAMES = ["x", "y", "z", "w"];
 export function bindingChannels(u: FxUniform): string[] {
   if (isScalarDrivable(u)) return [];
   if (isColorUniform(u)) return ["h", "s", "v", "r", "g", "b", ...(u.width === 4 ? ["a"] : [])];
-  if (u.ui.kind === "slider" && u.width >= 2 && u.width <= 4) return VEC_NAMES.slice(0, u.width);
+  if (isVectorUniform(u)) return VEC_NAMES.slice(0, u.width);
   if (u.ui.kind === "matrix") return Array.from({ length: u.width }, (_, i) => String(i));
   return [];
 }
@@ -98,7 +105,7 @@ export function effectiveChannel(u: FxUniform, b: UniformBinding): string | null
   if (ch === null) return null;
   if (bindingChannels(u).includes(ch)) return ch;
   // Vectors also accept a numeric component index.
-  if (u.ui.kind === "slider" && /^\d+$/.test(ch) && Number(ch) < u.width) return ch;
+  if (isVectorUniform(u) && /^\d+$/.test(ch) && Number(ch) < u.width) return ch;
   return null;
 }
 
@@ -111,12 +118,14 @@ function componentIndex(ch: string): number {
   return Number(ch);
 }
 
-/** The range a component sweeps: per-component for a ranged vector, the
- * declared range for a matrix, 0..1 for a colour. */
-function componentRange(u: FxUniform, i: number): { min: number; max: number } {
-  if (u.ui.kind === "slider") {
+/** The range a component sweeps: per-component for a ranged vector (slider
+ * or XY pad), -1..1 for a direction, the declared range for a matrix, 0..1
+ * for a colour. */
+export function componentRange(u: FxUniform, i: number): { min: number; max: number } {
+  if (u.ui.kind === "slider" || u.ui.kind === "vector") {
     return { min: u.mins?.[i] ?? u.ui.min, max: u.maxs?.[i] ?? u.ui.max };
   }
+  if (u.ui.kind === "direction") return { min: -1, max: 1 };
   if (u.ui.kind === "matrix") return { min: u.ui.min, max: u.ui.max };
   return { min: 0, max: 1 };
 }
@@ -222,8 +231,11 @@ export function resolveControlUpdates(
       const i = componentIndex(ch);
       const { min, max } = componentRange(u, i);
       let v = scaleToRange(event.value, min, max, b);
-      if (u.ui.kind === "slider" && u.ui.step > 0) v = snap(v, min, max, u.ui.step);
+      if ((u.ui.kind === "slider" || u.ui.kind === "vector") && u.ui.step > 0) v = snap(v, min, max, u.ui.step);
       cur[i] = v;
+      // A direction stays a unit vector (as the picker and keypoint blend keep
+      // it): the knob sets its component, the others rescale around it.
+      if (u.ui.kind === "direction") renormalise(cur, i, u.width);
     }
     shadow.set(u, cur);
     touched.set(u.name, [u, cur]);
@@ -238,6 +250,22 @@ function scalarValue(u: FxUniform, b: UniformBinding, value01: number): number {
   const v = scaleToRange(value01, min, max, b);
   // Snap to the slider's step grid so int/quantized uniforms land cleanly.
   return u.ui.kind === "slider" && u.ui.step > 0 ? snap(v, min, max, u.ui.step) : v;
+}
+
+/** Make `v[0..w)` unit length keeping component `keep` fixed (clamped to
+ * [-1,1]) and scaling the others; if they are all zero, spread the rest
+ * evenly over them. */
+function renormalise(v: number[], keep: number, w: number): void {
+  const k = Math.max(-1, Math.min(1, v[keep] ?? 0));
+  v[keep] = k;
+  const rest = Math.sqrt(Math.max(0, 1 - k * k));
+  let len = 0;
+  for (let j = 0; j < w; j++) if (j !== keep) len += (v[j] ?? 0) ** 2;
+  len = Math.sqrt(len);
+  for (let j = 0; j < w; j++) {
+    if (j === keep) continue;
+    v[j] = len > EPS ? ((v[j] ?? 0) / len) * rest : rest / Math.sqrt(w - 1);
+  }
 }
 
 function snap(v: number, min: number, max: number, step: number): number {

@@ -170,6 +170,19 @@ describe("validation + helpers", () => {
         ["g", 0.5, "beats"],
       ],
     );
+    // D-541 PR 4: vector / direction pads.
+    const vecs = uniformsFromSource(
+      'uniform vec2 wind : vector = vec2(0.5, 0);\nuniform vec2 drift : vector -3 .. 3 step 0.5 = 1, -1;\n' +
+        'uniform vec3 sun : direction = vec3(0, 1, 0);\n',
+    );
+    assert.deepEqual(
+      vecs.map((u) => [u.name, u.ui]),
+      [
+        ["wind", { kind: "vector", min: -1, max: 1, step: 0 }],
+        ["drift", { kind: "vector", min: -3, max: 3, step: 0.5 }],
+        ["sun", { kind: "direction" }],
+      ],
+    );
   });
 
   test("the seed effects are the skill's examples, verbatim", () => {

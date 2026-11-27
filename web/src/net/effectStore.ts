@@ -87,6 +87,7 @@ export function storeErrorText(e: unknown): string {
   if (code === "no_store") return "the device's effect store is unavailable";
   if (code === "effect_too_large") return "the effect is too large for this device";
   if (code === "bad_fxb") return "the device rejected the effect";
+  if (code === "fxb_too_new") return "this effect's controls need newer firmware — update the device first";
   if (code === "kiosk_locked") return "the device is locked — unlock it first";
   return e instanceof Error ? e.message : String(e);
 }
