@@ -1,9 +1,9 @@
 # Wall clock (software RTC, time zone, time from the app and the bridge)
 
-Status: PR-2 of the real-time effects plan (desk D-559), plus PR-5: the hardware RTC
-and the module time-source surface (below). The clock is set from the app, the
-bridge and an RTC chip; SNTP on the device, schedules and the `clock*` effect
-uniforms come in other PRs.
+Status: PR-2 of the real-time effects plan (desk D-559), plus the `clock*` effect
+uniforms (PR-3) and PR-5: the hardware RTC and the module time-source surface
+(below). The clock is set from the app, the bridge and an RTC chip; SNTP on the
+device and schedules come in other PRs.
 
 ## What the lamp keeps
 
@@ -64,6 +64,39 @@ carries the time over the P4's soft resets. The C6 front end forwards
 `device_ms`), the source and who pushed it, the error and its age, the drift fit,
 the zone (rule, name, current offset and abbreviation), counters, and the result
 of the set it answers.
+
+## Effect uniforms (PR-3)
+
+Effects read the lamp's LOCAL time through the uniform pool (`uniform_pool.rs`
+`CLOCK_ENTRIES`), bound BY NAME like `imu_*`: no compiler, VM or `.fxb` change,
+and an unbound effect pays nothing new (the per-frame `ANY_BOUND` check is the
+one it already had).
+
+| Uniform | Type | Value |
+|---|---|---|
+| `clock` | `vec4` | (hour 0-23, minute 0-59, second 0-59.999, weekday 0-6, Sunday = 0) |
+| `clock_day` | `float` | local seconds since midnight / 86400, 0..1 |
+| `clock_date` | `vec3` | (year, month 1-12, day 1-31) |
+| `clock_valid` | `float` | 1 while the clock is set, else 0 |
+
+- **Render never reads the clock.** The loop task (`lm_clock_tick`, under the
+  player mutex) caches the local time of day at a raw esp_timer anchor plus the
+  date, every 250 ms and on every accepted time or zone change, only while some
+  deck binds a `clock*` uniform (and once at bind, so the first frame is right).
+  Render extrapolates from the anchor with one esp_timer read, wraps the time of
+  day (and the weekday) at local midnight until the next refresh brings the new
+  date, clamps a step-back to the anchor, and stops extrapolating after 60 s
+  without a refresh rather than guess.
+- **An unset clock** writes only `clock_valid = 0`; the others keep their UI /
+  default values, so an effect previews and can fall back to a neutral look.
+- **Preview.** The editor feeds the same values from the phone's clock
+  (`web/src/fx/clockUniforms.ts`), with a "Preview time" slider
+  (`effects/editor/clockScrubber.ts`) shown only for an effect that binds one;
+  a picked time runs on in real time. MCP `preview_effect` takes them as explicit
+  uniforms (`clock_day: 0.27` = 06:30).
+- The AI system prompts and the agent skill document them (use `clock_day` for
+  daylight curves; never time of day from `time`); `agent/skill/examples/daylight.fx`
+  is the library example.
 
 ## Hardware RTC
 
@@ -190,6 +223,9 @@ every accepted set and every 10 minutes. The USB console takes `CLOCK STATUS` an
 - `//firmware/clock:tz_test`: the POSIX parser and evaluator against tzdata vectors.
 - `//firmware/player_app:clock_test`: the arms through the C ABI, the zone record,
   the step guard, the carry-over, the kiosk visitor rule.
+- `//firmware/player_app:clock_pool_test`: the `clock*` uniforms (unset, local
+  time in the lamp's zone, extrapolation, the midnight wrap, a step-back).
+- `//web:clockUniforms_test`: the preview values and the picked preview time.
 - `//web:posixTz_test`, `//web:wallClock_test`, agent tests.
 - HITL `//pi/hitl/harness:clock_app_netstack`: an app-style sync, then a soft reset
   keeps the clock, while render keeps running with no late frames.
