@@ -131,6 +131,8 @@ describe("stripe pieces", () => {
     assert.equal(p["client_reference_id"], "ref-uuid");
     assert.deepEqual(p["automatic_tax"], { enabled: true });
     assert.deepEqual((p["payment_intent_data"] as { metadata: unknown }).metadata, { account_id: "acct_x", sku: "web.credits.10", channel: "web" });
+    // The account is shared with another business: Splanc charges say so on the statement.
+    assert.equal((p["payment_intent_data"] as { statement_descriptor_suffix: unknown }).statement_descriptor_suffix, "SPLANC");
     assert.equal(p["success_url"], "https://splanc.io/app/?checkout=success&session_id={CHECKOUT_SESSION_ID}#/settings/ai");
     assert.equal(p["cancel_url"], "https://splanc.io/app/?checkout=cancel#/settings/ai");
     assert.equal(p["payment_method_types"], undefined, "dynamic payment methods: cards, Apple Pay, Google Pay from the Dashboard");
@@ -299,8 +301,17 @@ describe("checkout + webhook", () => {
     assert.equal(await balance(env, ctx, a.auth), 0);
     assert.ok(logs.some((l) => l.includes('"ai_refund"') && l.includes('"chargeback"')));
 
-    // A refund for a payment we never credited is acknowledged and ignored.
+    // A refund for a payment we never credited (the shared account's other business)
+    // is acknowledged and ignored, and is not an ai_refund (the refund-spike alert).
+    const before = logs.filter((l) => l.includes('"ai_refund"')).length;
     assert.equal((await hook(env, ctx, await signed({ id: "evt_r9", type: "charge.refunded", data: { object: { payment_intent: "pi_other", amount: 500, amount_refunded: 500 } } }))).status, 200);
+    assert.equal((await hook(env, ctx, await signed({ id: "evt_d9", type: "charge.dispute.created", data: { object: { payment_intent: "pi_other", amount: 500 } } }))).status, 200);
+    assert.equal(logs.filter((l) => l.includes('"ai_refund"')).length, before);
+    assert.equal(logs.filter((l) => l.includes('"stripe_event_ignored"')).length >= 2, true);
+    // Its checkouts (no Splanc metadata) are ignored the same way, crediting nothing.
+    const other = { id: "cs_other", payment_intent: "pi_other2", client_reference_id: null, metadata: {} };
+    assert.equal((await hook(env, ctx, await completed("evt_other", other))).status, 200);
+    assert.ok(logs.some((l) => l.includes('"stripe_event_ignored"') && l.includes("not a Splanc credits session")));
     for (const l of logs) assert.ok(!l.includes(SK) && !l.includes(WHSEC), l);
   });
 

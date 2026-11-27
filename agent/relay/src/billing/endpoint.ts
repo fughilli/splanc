@@ -342,9 +342,13 @@ async function stripeWebhook(
         });
         await bumpLiability(env, ready.environment, log, amount);
       } else {
-        log({ ev: "ai_refund", channel: "web", kind: action.reason, account: null, amount: 0, matched: false, credits: 0 });
+        // Not a payment the relay took: the Stripe account is shared with another
+        // business, whose refunds and disputes arrive here too. Not an ai_refund
+        // (they'd count toward the "refund spike" alert); a plain note instead.
+        log({ ev: "stripe_event_ignored", why: `${action.reason} for a payment the relay didn't take` });
       }
     }
+    if (action.kind === "ignore") log({ ev: "stripe_event_ignored", why: action.why });
     await dir(env, "/stripe/mark", { id: action.eventId });
     return ctx.json({ ok: true });
   } catch (e) {
