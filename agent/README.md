@@ -325,8 +325,10 @@ step when it lands). No npm publish: the bundle is the distribution.
 ship between firmware releases: `release.yaml` job `agent` builds the same bundle
 and publishes it as release `agent-vX.Y.Z`. The bundle's compiler + VM are built
 from that commit, so `--//agent:bundle_firmware` records which released firmware
-they match: the newest `firmware-v*` in history when its bundle's `compiler/` and
-`simulator/` are byte-identical, else `none` (`bundle.json` `"firmware": null`),
+they match: the newest `firmware-v*` in history when the compiler's and VM's repo
+sources (their bazel deps, plus `MODULE.bazel`, its lock and `.bazelrc`) are
+unchanged since that tag, or its bundle's `compiler/` and `simulator/` are
+byte-identical, else `none` (`bundle.json` `"firmware": null`),
 and the agent then compiles each release player's effects with the player's own
 bundle (`toolchain.ts`). Versions share one line with firmware: neither tag kind
 may reuse the other's version (both jobs refuse), so cut the agent as a patch
