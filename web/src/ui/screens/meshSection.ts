@@ -14,11 +14,11 @@
  */
 
 import { Button, Sheet, Switch, confirmDialog, icon, toast } from "../kit";
-import type { MeshAdminOp, MeshAdminResultInfo, MeshStateInfo } from "../../net/mesh";
+import { isBridgeFirmware, type MeshAdminOp, type MeshAdminResultInfo, type MeshStateInfo } from "../../net/mesh";
 import { admitPending, ejectMember, ensureUnlocked, leaveMesh, revokeMembers, MeshAdminFailure } from "../../net/meshAdmin";
 import { keepRevoked, meshStore, type MeshRecord } from "../../store/meshStore";
 import { lastMeshResult, meshSignerLookup, onMeshResults, rememberMeshAll } from "../../store/meshSession";
-import { meshResultSummary, meshSectionModel, nodeLabel, type MeshMemberRow, type MeshResultSummary, type MeshSectionModel } from "./meshModel";
+import { meshResultSummary, meshSectionModel, nodeLabel, pendingLabel, type MeshMemberRow, type MeshResultSummary, type MeshSectionModel } from "./meshModel";
 import { installMeshStyles } from "./meshUi.css";
 import { toHex } from "../../net/meshKeys";
 import { openShareMeshSheet } from "./shareMeshSheet";
@@ -117,7 +117,11 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
       for (const p of m.pending) {
         const row = h("div", "mesh-pending-row");
         const text = h("div", "mesh-row-text");
-        text.append(h("span", "mesh-row-title", nodeLabel(p.node ?? 0)), h("span", "mesh-row-hint", "Nearby, asking to join. Admit it only if it is yours."));
+        const bridge = isBridgeFirmware(p.firmware);
+        text.append(
+          h("span", "mesh-row-title", pendingLabel(p)),
+          h("span", "mesh-row-hint", bridge ? "A Splanc bridge, asking to join on its own radio. Admit it only if it is yours." : "Nearby, asking to join. Admit it only if it is yours."),
+        );
         const admit = Button({
           label: "Admit",
           variant: "primary",
@@ -125,9 +129,9 @@ export function MeshSection(client: MeshSectionClient, opts: MeshSectionOpts): H
             void act(admit, async () => {
               await admitPending(client, p);
               if (rec && p.node && p.keyHash) {
-                await meshStore.putMember(rec.meshId, { deviceId: "", label: nodeLabel(p.node), node: p.node, keyHash: toHex(p.keyHash) });
+                await meshStore.putMember(rec.meshId, { deviceId: "", label: pendingLabel(p), node: p.node, keyHash: toHex(p.keyHash) });
               }
-              toast(`${nodeLabel(p.node ?? 0)} admitted`);
+              toast(`${pendingLabel(p)} admitted`);
             }),
         });
         row.append(text, admit);

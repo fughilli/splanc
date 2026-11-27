@@ -3,7 +3,7 @@
  * the meshes this app administers (pure: no DOM, unit-tested).
  */
 
-import { meshPeers, type MeshMemberInfo, type MeshPendingInfo, type MeshStateInfo } from "../../net/mesh";
+import { isBridgeFirmware, meshPeers, type MeshMemberInfo, type MeshPendingInfo, type MeshStateInfo } from "../../net/mesh";
 import { isMemberOf } from "../../net/meshAdmin";
 import type { MeshRecord } from "../../store/meshStore";
 
@@ -47,8 +47,16 @@ export function nodeLabel(node: number): string {
   return `Fixture ${node.toString(16).toUpperCase().padStart(4, "0")}`;
 }
 
+/** What a Splanc bridge in the mesh is called when the app has no name for it (issue #697). */
+export const BRIDGE_LABEL = "Splanc bridge";
+
+/** A pending joiner's name: a bridge says it is one (its join's firmware marker). */
+export function pendingLabel(p: MeshPendingInfo): string {
+  return isBridgeFirmware(p.firmware) ? BRIDGE_LABEL : nodeLabel(p.node ?? 0);
+}
+
 function memberDetail(m: MeshMemberInfo, self: boolean): string {
-  const parts: string[] = [];
+  const parts: string[] = isBridgeFirmware(m.firmware) ? ["Bridge"] : [];
   const sync = m.sync ?? 0;
   parts.push(sync >= 2 ? "Time synced" : sync === 1 ? "Syncing time" : "Not synced yet");
   if (self) parts.push("connected to this phone");
@@ -84,7 +92,7 @@ export function meshSectionModel(s: MeshStateInfo | null, rec: MeshRecord | unde
     const r = byNode.get(m.node);
     return {
       node: m.node,
-      name: self ? selfName : r?.label || nodeLabel(m.node),
+      name: self ? selfName : r?.label || (isBridgeFirmware(m.firmware) ? BRIDGE_LABEL : nodeLabel(m.node)),
       self,
       detail: memberDetail(m, self),
       synced: (m.sync ?? 0) >= 2,
@@ -92,7 +100,10 @@ export function meshSectionModel(s: MeshStateInfo | null, rec: MeshRecord | unde
     };
   });
   const n = rows.length;
-  const status = `${n} fixture${n === 1 ? "" : "s"} · ${SYNC[s.sync ?? 0] ?? SYNC[0]}`;
+  // A bridge in the mesh (issue #697) is not a fixture: counted apart.
+  const b = [selfState, ...meshPeers(s)].filter((m) => isBridgeFirmware(m.firmware)).length;
+  const f = n - b;
+  const status = `${f} fixture${f === 1 ? "" : "s"}${b ? (b === 1 ? " and the bridge" : ` and ${b} bridges`) : ""} · ${SYNC[s.sync ?? 0] ?? SYNC[0]}`;
   return {
     kind,
     meshName: kind === "dev" ? "Mesh" : kind === "foreign" ? "A mesh from another device" : meshName,

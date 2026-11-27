@@ -1,6 +1,7 @@
 /**
  * The mesh map's 3D view: fixtures as nodes at their room positions (fixtures with no room
- * pose where the force-directed layout puts them, drawn hollow), the radio links between
+ * pose where the force-directed layout puts them, drawn hollow), a Splanc bridge in the mesh
+ * as a rounded square with a radio mark (never a fixture's dot), the radio links between
  * them coloured by signal or by hops, a floor grid and the room axes like the room preview
  * (RoomView, ui/orbit.ts), each node coloured by its health. Drag to orbit, pinch / wheel
  * to zoom, tap a node to select it.
@@ -18,7 +19,7 @@ const HIT_PX = 22;
 
 export class MeshTopoView {
   readonly canvas: HTMLCanvasElement;
-  private model: TopoModel = { nodes: [], links: [], anyPosed: false, noTopology: 0 };
+  private model: TopoModel = { nodes: [], links: [], anyPosed: false, noTopology: 0, bridges: 0 };
   private colouring: LinkColouring = "signal";
   private selected: number | null = null;
   private readonly orbit: Orbit;
@@ -39,8 +40,9 @@ export class MeshTopoView {
 
   update(m: TopoModel): void {
     this.model = m;
-    const n = m.nodes.length;
-    this.canvas.setAttribute("aria-label", `Mesh map: ${n} fixture${n === 1 ? "" : "s"}, ${m.links.length} radio link${m.links.length === 1 ? "" : "s"}`);
+    const n = m.nodes.length - m.bridges;
+    const b = m.bridges ? ` and ${m.bridges} bridge${m.bridges === 1 ? "" : "s"}` : "";
+    this.canvas.setAttribute("aria-label", `Mesh map: ${n} fixture${n === 1 ? "" : "s"}${b}, ${m.links.length} radio link${m.links.length === 1 ? "" : "s"}`);
     this.kick();
   }
 
@@ -179,6 +181,10 @@ export class MeshTopoView {
 }
 
 function drawNode(g: CanvasRenderingContext2D, n: TopoNode, p: Projected, selected: boolean, bg: string, text: string): void {
+  if (n.kind === "bridge") {
+    drawBridge(g, n, p, selected, bg, text);
+    return;
+  }
   const r = n.self ? 11 : 9;
   const col = HEALTH_COLORS[n.health];
   if (selected) {
@@ -212,10 +218,63 @@ function drawNode(g: CanvasRenderingContext2D, n: TopoNode, p: Projected, select
     g.arc(p.x, p.y, 3.5, 0, 2 * Math.PI);
     g.fill();
   }
-  const label = n.name.length > 22 ? n.name.slice(0, 21) + "…" : n.name;
+  drawLabel(g, n.name, p, r, bg, text);
+}
+
+function drawLabel(g: CanvasRenderingContext2D, name: string, p: Projected, r: number, bg: string, text: string): void {
+  const label = name.length > 22 ? name.slice(0, 21) + "…" : name;
   g.lineWidth = 3;
   g.strokeStyle = bg;
   g.strokeText(label, p.x, p.y - r - 7);
   g.fillStyle = text;
   g.fillText(label, p.x, p.y - r - 7);
+}
+
+/** A bridge: a rounded square in its health colour with a radio mark (a mast and two
+ * waves), so it reads as infrastructure, not a light. Solid even without a room position:
+ * a bridge is never localized, so "hollow" (not placed yet) would mislead. */
+function drawBridge(g: CanvasRenderingContext2D, n: TopoNode, p: Projected, selected: boolean, bg: string, text: string): void {
+  const r = 11;
+  const col = HEALTH_COLORS[n.health];
+  if (selected) {
+    g.strokeStyle = text;
+    g.lineWidth = 2;
+    roundRect(g, p.x - r - 6, p.y - r - 6, 2 * (r + 6), 2 * (r + 6), 8);
+    g.stroke();
+  }
+  roundRect(g, p.x - r, p.y - r, 2 * r, 2 * r, 5);
+  g.fillStyle = col;
+  g.fill();
+  g.strokeStyle = bg;
+  g.lineWidth = 2;
+  g.stroke();
+  // The radio mark, in the background colour: a mast with a dot, two arcs either side.
+  g.strokeStyle = bg;
+  g.fillStyle = bg;
+  g.lineWidth = 1.75;
+  g.lineCap = "round";
+  g.beginPath();
+  g.moveTo(p.x, p.y - 1);
+  g.lineTo(p.x, p.y + 6);
+  g.stroke();
+  g.beginPath();
+  g.arc(p.x, p.y - 2.5, 1.8, 0, 2 * Math.PI);
+  g.fill();
+  for (const rad of [4.5, 7.5]) {
+    g.beginPath();
+    g.arc(p.x, p.y - 2.5, rad, -Math.PI * 0.8, -Math.PI * 0.2);
+    g.stroke();
+  }
+  g.lineCap = "butt";
+  drawLabel(g, n.name, p, r, bg, text);
+}
+
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
 }

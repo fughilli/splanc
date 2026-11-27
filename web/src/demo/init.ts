@@ -26,6 +26,8 @@
  *                Its topology (the mesh map, #/mesh/topology) places all three in the room.
  *   meshtopo   — `mesh` plus two more fixtures for the mesh map: one with no room
  *                position, two hops away, and one on older firmware (no topology).
+ *   meshbridge — `mesh` plus a Splanc bridge meshing on its own radio (issue #697): the
+ *                mesh map draws it as a bridge (a square with a radio mark), not a fixture.
  *   meshsim    — (with `device`) simulated closed-mesh fixtures (demo/meshSim.ts):
  *                Living Room, Kitchen, Porch Arch and Stair Rail on mesh firmware, in
  *                no mesh, so "Create a mesh" (#/mesh/new) runs end to end.
@@ -56,6 +58,7 @@
 import { appState } from "../ui/app/state";
 import { deviceStore } from "../store/deviceStore";
 import { LedMapperClient, ServerErrorReply } from "../net/client";
+import { BRIDGE_FIRMWARE } from "../net/mesh";
 import { decodeMappingBundle, encodeMappingBundle } from "../net/proto";
 import { mapStore } from "../store/mapStore";
 
@@ -82,7 +85,7 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("effect")) setupEffectEditor();
   if (scenarios.has("flash")) setupFlashDemo();
   if (scenarios.has("imu")) setupImuDemo();
-  if (scenarios.has("mesh") || scenarios.has("meshtopo")) setupMeshDemo(scenarios.has("meshtopo"));
+  if (scenarios.has("mesh") || scenarios.has("meshtopo") || scenarios.has("meshbridge")) setupMeshDemo(scenarios.has("meshtopo"), scenarios.has("meshbridge"));
   if (scenarios.has("discovered")) void setupDiscovered();
   if (scenarios.has("stale")) void setupStale();
   if (scenarios.has("nousb")) setupNoUsb();
@@ -260,7 +263,7 @@ function setupConnectedDevice(): void {
 
 /** The demo controller is a mesh gateway with two others meshed with it (mesh M5); with
  * `more`, two more for the mesh map (an unplaced one two hops away, one on old firmware). */
-function setupMeshDemo(more = false): void {
+function setupMeshDemo(more = false, bridge = false): void {
   const client = appState.client;
   if (!client) return;
   const pose = (room: string, t: [number, number, number], yaw = 0) => ({
@@ -273,13 +276,22 @@ function setupMeshDemo(more = false): void {
   const members: Record<string, unknown>[] = [
     {
       node: 0x7c02, rssi: -38, seenMsAgo: 400, ...health, hops: 1, poseState: "MESH_POSE_SET", topologyMsAgo: 2100,
-      pose: pose("Living Room", [2.4, 1.1, -0.6], 1.2), neighbours: [nb(0x3a41, -39, 100), nb(0x91e4, -57, 98), ...(more ? [nb(0x52c7, -79, 71)] : [])],
+      pose: pose("Living Room", [2.4, 1.1, -0.6], 1.2),
+      neighbours: [nb(0x3a41, -39, 100), nb(0x91e4, -57, 98), ...(more ? [nb(0x52c7, -79, 71)] : []), ...(bridge ? [nb(0x2e5a, -63, 97)] : [])],
     },
     {
       node: 0x91e4, rssi: -44, seenMsAgo: 700, ...health, hops: 1, poseState: "MESH_POSE_SET", topologyMsAgo: 5400,
-      pose: pose("Living Room", [0.3, 2.2, -2.8], -0.4), neighbours: [nb(0x3a41, -45, 99), nb(0x7c02, -58, 97)],
+      pose: pose("Living Room", [0.3, 2.2, -2.8], -0.4), neighbours: [nb(0x3a41, -45, 99), nb(0x7c02, -58, 97), ...(bridge ? [nb(0x2e5a, -55, 100)] : [])],
     },
   ];
+  if (bridge) {
+    // A Pi bridge on its own radio (pimesh): bridge firmware marker, no frame rate, no pose.
+    members.push({
+      node: 0x2e5a, rssi: -51, seenMsAgo: 300, firmware: BRIDGE_FIRMWARE, fps: 0, sync: 2, uptimeS: 86_400, heapFree: 312_000_000,
+      heapMin: 298_000_000, brightness: 0, hops: 1, poseState: "MESH_POSE_NONE", topologyMsAgo: 1800,
+      neighbours: [nb(0x3a41, -52, 100), nb(0x91e4, -56, 100), nb(0x7c02, -64, 96)],
+    });
+  }
   if (more) {
     members.push(
       {
@@ -307,7 +319,7 @@ function setupMeshDemo(more = false): void {
     members,
     poseState: "MESH_POSE_SET",
     pose: pose("Living Room", [0, 0.9, 0]),
-    neighbours: [nb(0x7c02, -38, 100), nb(0x91e4, -44, 99), ...(more ? [nb(0xa0f3, -66)] : [])],
+    neighbours: [nb(0x7c02, -38, 100), nb(0x91e4, -44, 99), ...(more ? [nb(0xa0f3, -66)] : []), ...(bridge ? [nb(0x2e5a, -51, 100)] : [])],
   };
   // A mesh-variant player says so in welcome.features (the app's mesh UI is gated on it).
   const base = client.welcome;

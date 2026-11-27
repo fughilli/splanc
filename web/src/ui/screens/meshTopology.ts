@@ -116,7 +116,7 @@ export function MeshTopologyScreen(router: Router, client: MeshTopologyClient | 
 
   const renderLegend = (): void => {
     legend.replaceChildren();
-    const item = (color: string, text: string, kind: "line" | "dot" | "ring" = "line"): void => {
+    const item = (color: string, text: string, kind: "line" | "dot" | "ring" | "square" = "line"): void => {
       const li = h("li", "");
       const sw = h("span", `mtopo-swatch mtopo-swatch--${kind}`);
       sw.style.setProperty("--sw", color);
@@ -135,6 +135,7 @@ export function MeshTopologyScreen(router: Router, client: MeshTopologyClient | 
     item("#2fb36d", "Fixture healthy", "dot");
     item("#e0a100", "Not synced, quiet or not rendering", "dot");
     item("#2fb36d", "Hollow: no room position (placed from its links)", "ring");
+    if (model?.bridges) item("#2fb36d", "Square: a Splanc bridge (no lights)", "square");
   };
   renderLegend();
 
@@ -174,9 +175,18 @@ export function MeshTopologyScreen(router: Router, client: MeshTopologyClient | 
     b.type = "button";
     b.dataset["node"] = String(n.node);
     b.setAttribute("aria-pressed", String(n.node === selected));
-    const dot = h("span", `mesh-member-dot mtopo-dot mtopo-dot--${n.health}${n.placed === "layout" ? " mtopo-dot--hollow" : ""}`);
+    const bridge = n.kind === "bridge";
+    const dot = h("span", `mesh-member-dot mtopo-dot mtopo-dot--${n.health}${bridge ? " mtopo-dot--bridge" : n.placed === "layout" ? " mtopo-dot--hollow" : ""}`);
     const text = h("span", "mesh-row-text");
-    const where = n.pose === "set" ? (n.room ? `in ${n.room}` : "placed in the room") : n.noTopology ? "no map data (older firmware)" : "no room position";
+    const where = bridge
+      ? "no lights"
+      : n.pose === "set"
+        ? n.room
+          ? `in ${n.room}`
+          : "placed in the room"
+        : n.noTopology
+          ? "no map data (older firmware)"
+          : "no room position";
     text.append(
       h("span", "mesh-member-name", n.self ? `${n.name} (this one)` : n.name),
       h("span", "mesh-member-detail", `${n.healthText} · ${hopText(n.hops)} · ${where}`),
@@ -209,15 +219,22 @@ export function MeshTopologyScreen(router: Router, client: MeshTopologyClient | 
       showEmpty("This fixture is not in a mesh", "Create a mesh or add this fixture to one from its Mesh section, then come back to see the map.");
       return;
     }
+    const hadBridges = model?.bridges ?? 0;
     model = meshTopoModel(s, (n) => names.get(n), selfName());
     if (!mounted) {
       mounted = true;
       wrap.replaceChildren(status, note, card, hint, segRow, legend, listTitle, list);
     }
-    const n = model.nodes.length;
-    const posed = model.nodes.filter((x) => x.placed === "room").length;
+    if (model.bridges !== hadBridges) renderLegend();
+    const fixtures = model.nodes.filter((x) => x.kind === "fixture");
+    const n = fixtures.length;
+    const posed = fixtures.filter((x) => x.placed === "room").length;
+    const b = model.bridges;
+    listTitle.textContent = b ? (b === 1 ? "Fixtures and the bridge" : "Fixtures and bridges") : "Fixtures";
+    hint.textContent = `Drag to turn the map, pinch or scroll to zoom, tap a fixture${b ? (b === 1 ? " or the bridge" : " or a bridge") : ""} for its details.`;
     status.textContent =
-      `${n} fixture${n === 1 ? "" : "s"} · ${model.links.length} radio link${model.links.length === 1 ? "" : "s"} · ` +
+      `${n} fixture${n === 1 ? "" : "s"}${b ? (b === 1 ? " and the bridge" : ` and ${b} bridges`) : ""} · ` +
+      `${model.links.length} radio link${model.links.length === 1 ? "" : "s"} · ` +
       (posed === n ? "all placed in the room" : posed === 0 ? "none placed in the room yet" : `${posed} of ${n} placed in the room`);
     const notes: string[] = [];
     if (model.noTopology > 0) {
@@ -226,7 +243,7 @@ export function MeshTopologyScreen(router: Router, client: MeshTopologyClient | 
           "it is placed from the signal this phone's fixture hears. Update its firmware for its links and room position.",
       );
     }
-    if (posed < n && model.noTopology < n - posed) {
+    if (posed < n && model.noTopology < n - posed && fixtures.some((x) => x.placed === "layout" && !x.noTopology)) {
       notes.push("Hollow fixtures have no room position yet: localize the room (Maps → Localize room…) to place them.");
     }
     note.textContent = notes.join(" ");
@@ -314,6 +331,7 @@ const CSS = `
 .mtopo-swatch--line { width: 22px; height: 4px; border-radius: 2px; background: var(--sw); }
 .mtopo-swatch--dot { width: 12px; height: 12px; border-radius: 50%; background: var(--sw); margin: 0 5px; }
 .mtopo-swatch--ring { width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%; border: 2px dashed var(--sw); margin: 0 5px; }
+.mtopo-swatch--square { width: 14px; height: 14px; border-radius: 4px; background: var(--sw); margin: 0 4px; }
 .mtopo-list { margin-bottom: 8px; }
 .mtopo-member[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .mtopo-dot--ok { background: #2fb36d; }
@@ -323,6 +341,7 @@ const CSS = `
 .mtopo-dot--hollow.mtopo-dot--ok { color: #2fb36d; }
 .mtopo-dot--hollow.mtopo-dot--warn { color: #e0a100; }
 .mtopo-dot--hollow.mtopo-dot--bad { color: #e5484d; }
+.mtopo-dot--bridge { border-radius: 3px; }
 .mtopo-sheet .mesh-kv > span:last-child { text-align: right; }
 @media (min-width: 900px) {
   .screen--meshtopo { padding: 24px; }
