@@ -1,0 +1,1 @@
+import{c as e}from"./espFlasher-DlnpG4YO.js";export{e as ESP32C2ROM};
