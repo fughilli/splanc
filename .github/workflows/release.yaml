@@ -40,8 +40,10 @@ jobs:
   # --- agent-vX.Y.Z : the agent bundle alone (MCP hub, bridge, CLI, skill) ------
   # The agent's host code ships on its own line, between firmware releases. Its
   # bundle still carries a compiler + VM (built from this commit), and bundle.json
-  # must say which released firmware they match (agent/bundle.bzl): byte-identical
-  # to the newest firmware release's bundle -> that version, else "none" (the
+  # must say which released firmware they match (agent/bundle.bzl): their repo
+  # sources (bazel deps of the compiler + VM, MODULE.bazel(.lock), .bazelrc)
+  # unchanged since the newest firmware-v* tag, or their files byte-identical to
+  # that release's bundle -> that version, else "none" (the
   # agent then compiles each release player's effects with the player's own
   # bundle, toolchain.ts). A wrong "none" only costs a download; a wrong version
   # would emit bytecode a player can't load, so only an exact match claims one.
@@ -109,19 +111,38 @@ jobs:
           toolchain_sums() { # <unpacked bundle dir>: sha256 of every compiler/ + simulator/ file
             (cd "$1" && find compiler simulator -type f -print0 | sort -z | xargs -0 sha256sum)
           }
+          # The repo files the compiler + VM are built from, plus what pins their
+          # toolchains and external crates: unchanged since the firmware tag means the
+          # toolchain is that release's, even if the wasm isn't bit-for-bit the same.
+          toolchain_srcs() {
+            bazel query 'kind("source file", deps(//fx_compiler:fx_compiler_web) + deps(//firmware/fx_vm:fx_vm_web))' 2>/dev/null \
+              | grep '^//' | sed -E 's#^//##; s#:#/#; s#^/##'
+            echo MODULE.bazel; echo MODULE.bazel.lock; echo .bazelrc
+          }
           FW=$(git tag -l 'firmware-v*' --merged HEAD --sort=-v:refname | head -1 | sed 's/^firmware-v//')
           MATCH=none
-          if [ -n "$FW" ] && gh release download "firmware-v${FW}" -p "splanc-agent-${FW}.tgz" -D _fw 2>/dev/null; then
+          WHY="no firmware release in history"
+          if [ -n "$FW" ]; then
+            SRCS=$(toolchain_srcs)
+            if [ "$(echo "$SRCS" | grep -c /)" -lt 3 ]; then
+              WHY="couldn't list the toolchain's sources"
+            elif git diff --quiet "firmware-v${FW}" HEAD -- $SRCS; then
+              MATCH="$FW"; WHY="its compiler/VM sources are unchanged since firmware-v${FW}"
+            else
+              WHY="changed since firmware-v${FW}: $(git diff --name-only "firmware-v${FW}" HEAD -- $SRCS | tr '\n' ' ')"
+            fi
+          fi
+          if [ "$MATCH" = none ] && [ -n "$FW" ] && gh release download "firmware-v${FW}" -p "splanc-agent-${FW}.tgz" -D _fw 2>/dev/null; then
             build "$FW"
             mkdir -p _fw/x _new/x
             tar -xzf "_fw/splanc-agent-${FW}.tgz" -C _fw/x
             tar -xzf "bazel-bin/agent/splanc-agent-${VER}.tgz" -C _new/x
             if [ "$(toolchain_sums "_fw/x/splanc-agent-${FW}")" = "$(toolchain_sums "_new/x/splanc-agent-${VER}")" ]; then
-              MATCH="$FW"
+              MATCH="$FW"; WHY="its compiler/ and simulator/ are byte-identical to firmware-v${FW}'s bundle"
             fi
           fi
-          echo "toolchain matches firmware: ${MATCH} (newest firmware release in history: ${FW:-none})"
-          [ "$MATCH" = "$FW" ] && [ -n "$FW" ] || build none
+          echo "toolchain matches firmware: ${MATCH} (${WHY})"
+          if [ "$MATCH" = none ]; then build none; else build "$MATCH"; fi
           mkdir -p _assets
           cp "bazel-bin/agent/splanc-agent-${VER}.tgz" "bazel-bin/agent/splanc-agent-${VER}.tgz.sha256" _assets/
           python3 - "_assets/splanc-agent-${VER}.tgz" <<'PY'
