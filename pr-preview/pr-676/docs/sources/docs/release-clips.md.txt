@@ -49,6 +49,22 @@ app-vX.Y.Z tag
   real inline player on the GitHub page, drag the MP4 into the release editor
   by hand after publishing; the app keeps using the clip from the manifest.
 
+### Output
+
+| File   | Phone               | Desktop             |
+| ------ | ------------------- | ------------------- |
+| MP4    | 780×1688, H.264     | 1920×1200, H.264    |
+| WebM   | 780×1688, VP9       | 1920×1200, VP9      |
+| GIF    | 320 px wide, 15 fps | 640 px wide, 15 fps |
+| Poster | 780×1688 JPEG       | 1920×1200 JPEG      |
+
+The MP4 and WebM are the screencast's native device pixels (never upscaled) at a
+constant 30 fps. The screencast sends a frame only when the screen changes, so
+each frame is held until the next and the result is resampled to 30 fps. `record`
+prints, and `clips.json` keeps (`capture_fps`), the rate the screencast delivered
+while the screen was moving. Below 30, motion repeats frames, so record on a
+machine that isn't busy.
+
 ## Adding a clip for your feature
 
 1. Put a clip script next to the feature's code:
@@ -105,24 +121,24 @@ Clips are published, so they must never show real data:
 }
 ```
 
-| Field                | Meaning                                                                                                        |
-| -------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `id`                 | `[a-z0-9-]`, 2–48 characters; also the file name and the asset names                                           |
-| `title`              | Up to 60 characters. Shown on the clip in the card and as its heading on GitHub                                |
-| `summary`            | Up to 240 characters. One or two plain sentences under the clip                                                |
-| `prs`                | PRs this clip shows. It is included when any of them is in the release (or the script changed)                 |
-| `route`              | Hash route the recording starts on, e.g. `#/settings/ai`                                                       |
-| `demo`               | `?demo=` scenarios, comma-joined                                                                               |
-| `framing`            | `phone` (390×844 at 2×). Add `desktop` (1280×800) only for a desktop-only feature, with `why_not_phone_dark`   |
-| `theme`              | `dark`. Use `light` only for a light-theme feature, with `why_not_phone_dark`                                  |
-| `why_not_phone_dark` | Required with desktop framing or the light theme: why this feature needs it                                    |
-| `storage`            | `localStorage` seeds (string values), applied before the app boots                                             |
-| `fixtures`           | Served path → repo file, layered over the built app (`"/whatsnew/index.json": "web/src/…/index.json"`)         |
-| `setup`              | Steps run before recording starts (not in the clip)                                                            |
-| `steps`              | The recorded steps                                                                                             |
-| `poster_at`          | Seconds into the clip for the poster frame (default: the last frame)                                           |
-| `tail_ms`            | Hold on the final frame (default 900)                                                                          |
-| `app_version`        | Make a local (non-release) build report this version. Use it for update-only UI such as the What's new sparkle |
+| Field                | Meaning                                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | `[a-z0-9-]`, 2–48 characters; also the file name and the asset names                                                 |
+| `title`              | Up to 60 characters. Shown on the clip in the card and as its heading on GitHub                                      |
+| `summary`            | Up to 240 characters. One or two plain sentences under the clip                                                      |
+| `prs`                | PRs this clip shows. It is included when any of them is in the release (or the script changed)                       |
+| `route`              | Hash route the recording starts on, e.g. `#/settings/ai`                                                             |
+| `demo`               | `?demo=` scenarios, comma-joined                                                                                     |
+| `framing`            | `phone` (390×844 at 2×). Add `desktop` (1280×800 at 1.5×) only for a desktop-only feature, with `why_not_phone_dark` |
+| `theme`              | `dark`. Use `light` only for a light-theme feature, with `why_not_phone_dark`                                        |
+| `why_not_phone_dark` | Required with desktop framing or the light theme: why this feature needs it                                          |
+| `storage`            | `localStorage` seeds (string values), applied before the app boots                                                   |
+| `fixtures`           | Served path → repo file, layered over the built app (`"/whatsnew/index.json": "web/src/…/index.json"`)               |
+| `setup`              | Steps run before recording starts (not in the clip)                                                                  |
+| `steps`              | The recorded steps                                                                                                   |
+| `poster_at`          | Seconds into the clip for the poster frame (default: the last frame)                                                 |
+| `tail_ms`            | Hold on the final frame (default 900)                                                                                |
+| `app_version`        | Make a local (non-release) build report this version. Use it for update-only UI such as the What's new sparkle       |
 
 Steps (selectors are Playwright selectors: CSS, `:has-text('…')`, `>>`):
 
@@ -203,6 +219,22 @@ After **Changes needed**, the run stops. To fix the release:
   `publish --tag …`, or re-tag).
 
 Then **Re-run failed jobs**. The review is asked again with a new desk item.
+
+**The draft.** `app_previews` makes the draft with `release_clips ensure-draft`
+(or reuses the tag's existing one, keeping its notes), and the webapp job
+publishes that same draft with `release_clips finalize`. Both match a draft by
+its name as well as its tag, because GitHub reports a draft's tag as
+`untagged-<id>` once another release claims it. softprops/action-gh-release
+isn't used for app releases: it looks releases up by tag, which never finds a
+draft, so app-v1.17.0 shipped as a new, empty release beside the reviewed draft.
+
+**Clip links in the draft.** A draft's files are served only under the draft's
+placeholder tag (`/releases/download/untagged-<id>/`), so the draft's "Feature
+previews" link those URLs, which play for anyone who can see the draft. The
+final `/releases/download/<tag>/` URLs exist only once the release is
+published, so the publish step runs `release_clips relink --tag <tag>`, which
+points the notes at them. If that step fails (it doesn't block the deploy), run
+`GH_TOKEN=… python3 tools/release_clips/release_clips.py relink --tag <tag>`.
 
 TestFlight builds (`macos.yaml`) are not behind this gate.
 
