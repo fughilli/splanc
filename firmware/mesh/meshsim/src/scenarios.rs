@@ -376,6 +376,28 @@ fn closed_join_with_and_without_the_secret() {
     eprintln!("closed join: with the secret in {ms} ms; without, admitted {ams} ms after the admin's tap");
 }
 
+/// The gateway alone in the mesh (every other member off) admits the fixture waiting to
+/// join: the admit has no roster to reach, but it is the gateway's own command (D-519 bench:
+/// refused with NoRecipients, MESH_ADMIN_NO_MEMBERS in the app).
+#[test]
+fn a_lone_gateway_admits_a_pending_join() {
+    let mut w = room(2, 9);
+    let c = creds(&w);
+    w.power_on(GW, Some((&c, ProvisionSource::App)));
+    w.run_ms(3_000);
+    let bare = Credentials { mesh_id: w.mesh_id, ..Credentials::default() };
+    w.power_on(1, Some((&bare, ProvisionSource::Factory)));
+    w.run_ms(15_000);
+    assert_eq!(w.nodes[1].stack.membership.phase(), Phase::Joining);
+    let p = *w.nodes[GW].pending().iter().find(|p| p.node == id(1)).expect("the gateway lists it");
+    w.unlock_and_sync(GW, SESSION, &[], 1_000);
+    let t = w.local(GW);
+    assert_eq!(w.nodes[GW].stack.admit(t, CONN, &p), Ok(0), "applied here, no packet to send");
+    let ms = w.run_until(10_000, |w| is_member(w, 1)).expect("admitted");
+    assert_eq!(w.nodes[1].stack.membership.admin_key(), Some(&w.admin.public()), "admin key delivered, authenticated");
+    eprintln!("lone gateway: admitted {ms} ms after the admin's tap");
+}
+
 #[test]
 fn locked_mode_rejects_an_unapproved_device() {
     let mut w = room(6, 7);

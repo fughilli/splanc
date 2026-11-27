@@ -1514,6 +1514,15 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             n += 1;
         }
         if n == 0 {
+            // No other member online: a membership command (admit, eject, block, groups) is
+            // still the gateway's own to apply, so a lone gateway can admit the fixture
+            // waiting to join (D-519 bench). Anything else has nobody to reach.
+            if port == Port::Membership {
+                if let Some(c) = MemberCommand::decode(body) {
+                    self.membership.on_command(now_us, &c);
+                    return Ok(0);
+                }
+            }
             return Err(SendError::NoRecipients);
         }
         let per = admin::recipients_per_packet(self.node.max_payload(), body.len());
