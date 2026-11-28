@@ -647,6 +647,22 @@ void lm_clock_save(uint8_t *carry);
 size_t lm_clock_tz_record(uint8_t *out);
 // The "[clock] ..." status line, NUL-terminated. Returns its length.
 size_t lm_clock_status_line(uint8_t *out, size_t cap);
+#define LM_CLOCK_TICK_NTP_CHANGED 4u
+// A network-time sample from the P4's esp_sntp: UTC unix_us at esp_timer at_mono_us,
+// +- err_us. Returns the ClockSetResult. Under the player mutex.
+uint8_t lm_clock_offer_sntp(int64_t unix_us, int64_t at_mono_us, int64_t err_us);
+
+// -- Network time (sntp_ffi.rs, D-561) ------------------------------------------
+// The netstack drives the client (netstack_transport.cpp, weak there); the player persists
+// its config (NVS "clk_ntp") and owns the console.
+#define LM_SNTP_CONFIG_RECORD_MAX 132
+bool lm_sntp_boot(const uint8_t *rec, size_t len);
+size_t lm_sntp_config_record(uint8_t *out);
+void lm_sntp_poll_now(int64_t now_us);
+size_t lm_sntp_status_line(int64_t now_us, uint8_t *out, size_t cap);
+// The owner's settings, for the P4's esp_sntp: enabled, use_dhcp, and server k ("" = none;
+// NUL-terminated into out, cap >= 65). Returns the config generation (bumps on a change).
+uint32_t lm_sntp_config_get(bool *enabled, bool *use_dhcp, uint32_t k, char *out, size_t cap);
 
 // -- Kiosk mode (kiosk_ffi.rs, docs/design/kiosk-mode.md) ----------------------
 // Loop task only (the gate + handler run under the player mutex, the pollers after).

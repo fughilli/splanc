@@ -7,7 +7,7 @@
  */
 
 import { parsePosixTz, posixTzFromIntl, type PhoneTz } from "../../web/src/net/posixTz";
-import { lampLocalTime, lampZoneLabel, type ClockState } from "../../web/src/net/wallClock";
+import { lampLocalTime, lampZoneLabel, ntpDetail, type ClockState } from "../../web/src/net/wallClock";
 
 /** A tool input `tz`: an IANA zone ("Europe/Berlin") or a POSIX rule
  * ("CET-1CEST,M3.5.0,M10.5.0/3"). Throws an Error with a user-facing message. */
@@ -52,5 +52,18 @@ export function clockView(st: ClockState): Record<string, unknown> {
   if (st.driftPpb !== 0) out["drift_ppm"] = Math.round(st.driftPpb / 100) / 10;
   if (st.monoJumps > 0) out["device_clock_jumps"] = st.monoJumps;
   if (st.lastSet !== "none") out["set_result"] = st.lastSet;
+  if (st.ntp) {
+    const n = st.ntp;
+    out["network_time"] = {
+      enabled: n.enabled,
+      servers: n.servers.length > 0 ? n.servers : n.useDhcp && n.dhcpServers.length > 0 ? n.dhcpServers : ["pool.ntp.org"],
+      override: n.servers.length > 0,
+      use_dhcp: n.useDhcp,
+      last_result: n.lastResult,
+      ...(n.server ? { last_server: n.server, rtt_ms: n.rttMs, synced_age_s: n.syncedAgeS } : {}),
+      ...(n.nextPollS ? { next_poll_s: n.nextPollS } : {}),
+      summary: ntpDetail(st),
+    };
+  }
   return out;
 }

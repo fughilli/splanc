@@ -10,6 +10,7 @@ import {
   flatClockState,
   lampLocalTime,
   lampZoneLabel,
+  ntpDetail,
   pushWallClock,
   wallClockRequest,
   type ClockState,
@@ -142,4 +143,50 @@ test("pushWallClock syncs, then sends one request; skips lamps without the featu
   assert.equal(sent[0]!.pushedBy, "WALL_CLOCK_PUSHER_BRIDGE");
   assert.equal(await pushWallClock({ ...client, welcome: { features: [] } }), null);
   assert.equal(deviceHasWallClock(null), false);
+});
+
+test("clock_state.ntp round-trips and the card says where network time stands", () => {
+  const frame = encodeServer({
+    type: "clock_state",
+    valid: true,
+    unixMs: String(T),
+    source: "CLOCK_SOURCE_SNTP",
+    ntp: {
+      enabled: true,
+      useDhcp: true,
+      dhcpServers: ["192.168.1.1"],
+      network: true,
+      server: "162.159.200.1",
+      rttMs: 18,
+      syncedAgeS: 180,
+      lastResult: "CLOCK_NTP_RESULT_SYNCED",
+      rounds: 3,
+      intervalS: 128,
+    },
+  } as unknown as ServerMessage);
+  const st = flatClockState(decodeServer(frame) as never);
+  assert.equal(st.source, "sntp");
+  assert.equal(st.ntp?.lastResult, "synced");
+  assert.deepEqual(st.ntp?.dhcpServers, ["192.168.1.1"]);
+  assert.equal(ntpDetail(st), "Network time: 162.159.200.1 (18 ms)");
+  assert.equal(clockDetail(st).startsWith("Synced to a time server"), true);
+  const n = st.ntp!;
+  assert.equal(ntpDetail({ ...st, ntp: { ...n, lastResult: "timeout" } }), "Network time: no answer from the time server");
+  assert.equal(ntpDetail({ ...st, ntp: { ...n, enabled: false } }), "Network time: off");
+  assert.equal(ntpDetail({ ...st, ntp: { ...n, network: false } }), "Network time: waiting for Wi-Fi");
+  // A lamp without network time: no line.
+  assert.equal(ntpDetail(flatClockState({})), "");
+});
+
+test("set_clock_config encodes the override", () => {
+  const f = encodeClient({
+    type: "set_clock_config",
+    ntpEnabled: true,
+    ntpServers: ["time.cloudflare.com"],
+    replaceNtpServers: true,
+  } as unknown as ClientMessage);
+  const back = decodeClient(f) as unknown as { type: string; ntpServers: string[]; ntpEnabled: boolean };
+  assert.equal(back.type, "set_clock_config");
+  assert.deepEqual(back.ntpServers, ["time.cloudflare.com"]);
+  assert.equal(back.ntpEnabled, true);
 });

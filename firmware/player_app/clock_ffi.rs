@@ -31,6 +31,7 @@ use super::{client_arm, write_arm, CArm, PbOut};
 /// ClientMessage arms (ledmapper.proto "Wall clock").
 pub const ARM_SET_WALL_CLOCK: u32 = 111;
 pub const ARM_GET_CLOCK: u32 = 112;
+pub const ARM_SET_CLOCK_CONFIG: u32 = 113;
 /// ServerMessage.clock_state.
 const SRV_CLOCK_STATE: u32 = 61;
 
@@ -49,6 +50,7 @@ pub const SET_DISAGREES: u8 = 3;
 pub const SET_IMPLAUSIBLE: u8 = 4;
 pub const SET_LOCKED: u8 = 5;
 pub const SET_BAD_TZ: u8 = 6;
+pub const SET_BAD_SERVER: u8 = 7;
 
 /// An `err_ms` of 0 means "unknown": taken as this, µs.
 const UNKNOWN_ERR_US: i64 = 1_000_000;
@@ -149,6 +151,12 @@ unsafe fn mono_now() -> i64 {
     now
 }
 
+/// esp_timer step-backs the guard has absorbed since boot (an SNTP sample measured
+/// across one is dropped: sntp_ffi.rs).
+pub(crate) unsafe fn jumps() -> u32 {
+    JUMPS
+}
+
 unsafe fn clock() -> &'static mut WallClock {
     &mut *addr_of_mut!(CLOCK)
 }
@@ -241,6 +249,7 @@ unsafe fn write_state(w: &mut PbOut, now_us: i64, device_ms: i64, last_set: u8) 
     nz(w, 14, st.steps as u64);
     nz(w, 15, JUMPS as u64);
     nz(w, 16, last_set as u64);
+    super::sntp_ffi::write_ntp(w, now_us);
 }
 
 unsafe fn reply_state(out: *mut u8, cap: usize, now_us: i64, device_ms: i64, last_set: u8) -> i32 {
@@ -252,6 +261,84 @@ unsafe fn reply_state(out: *mut u8, cap: usize, now_us: i64, device_ms: i64, las
 pub(crate) unsafe fn handle_get_clock(recv_ms: i64, out: *mut u8, cap: usize) -> i32 {
     let now = mono_now();
     reply_state(out, cap, now, recv_ms, SET_NONE)
+}
+
+/// set_clock_config (the owner's network-time settings): applies what is set, replies
+/// clock_state. An invalid server name changes nothing (BAD_SERVER).
+pub(crate) unsafe fn handle_set_clock_config(
+    frame: &[u8],
+    recv_ms: i64,
+    out: *mut u8,
+    cap: usize,
+) -> i32 {
+    use ledmapper_sntp::client::Name;
+    let now = mono_now();
+    let mut result = SET_IMPLAUSIBLE;
+    if let Some(CArm::SetClockConfig(m)) = client_arm(frame) {
+        let mut cfg = super::sntp_ffi::config();
+        result = SET_ACCEPTED;
+        if let Some(on) = m.ntp_enabled() {
+            cfg.enabled = on;
+        }
+        if let Some(on) = m.use_dhcp_ntp() {
+            cfg.use_dhcp = on;
+        }
+        if m.replace_ntp_servers() {
+            let mut servers = [Name::EMPTY; 2];
+            let mut k = 0;
+            for s in m.ntp_servers() {
+                let s = s.trim();
+                if s.is_empty() {
+                    continue;
+                }
+                match (k < 2).then(|| Name::new(s.as_bytes())).flatten() {
+                    Some(n) => {
+                        servers[k] = n;
+                        k += 1;
+                    }
+                    None => result = SET_BAD_SERVER,
+                }
+            }
+            cfg.servers = servers;
+        }
+        if result == SET_ACCEPTED {
+            super::sntp_ffi::set_config(cfg, now);
+            if m.sync_now() {
+                super::sntp_ffi::sync_now(now);
+            }
+        }
+    }
+    reply_state(out, cap, now, recv_ms, result)
+}
+
+/// Offers a network-time sample (`Source::Sntp`); returns the ClockSetResult. The
+/// netstack's samples arrive through [`lm_clock_tick`]; the P4's esp_sntp through
+/// [`lm_clock_offer_sntp`].
+unsafe fn offer_sntp(unix_us: i64, at_mono_us: i64, err_us: i64, now: i64) -> u8 {
+    let offer = Offer::new(Source::Sntp, unix_us, at_mono_us, err_us.max(1000));
+    let r = match clock().offer(offer, now) {
+        Ok(_) => {
+            PUSHED_BY = PUSHER_NONE;
+            EVENT_GEN = EVENT_GEN.wrapping_add(1);
+            SET_ACCEPTED
+        }
+        Err(Reject::NotBetter { .. }) => SET_NOT_BETTER,
+        Err(Reject::Disagrees { .. }) => SET_DISAGREES,
+        Err(Reject::BeforeFloor | Reject::Malformed) => SET_IMPLAUSIBLE,
+    };
+    super::sntp_ffi::note_offer(r);
+    r
+}
+
+/// The P4's esp_sntp (IDF lwIP, Ethernet): "UTC was `unix_us` at esp_timer
+/// `at_mono_us`, ± `err_us`". Returns the ClockSetResult.
+///
+/// # Safety
+/// Loop task, under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_offer_sntp(unix_us: i64, at_mono_us: i64, err_us: i64) -> u8 {
+    let now = mono_now();
+    offer_sntp(unix_us, at_mono_us, err_us, now)
 }
 
 /// What a set_wall_clock asks for, decoded (testable without the wire).
@@ -509,7 +596,8 @@ pub unsafe extern "C" fn lm_clock_boot(
 /// the carry record in `carry` (28 bytes of RTC no-init RAM; zeroed while the
 /// clock is invalid). Returns bit 1 when the zone changed since the last
 /// [`lm_clock_tz_record`], bit 2 when a `[clock]` status line is due
-/// ([`lm_clock_status_line`]).
+/// ([`lm_clock_status_line`]), bit 4 when the network-time config changed
+/// (persist `lm_sntp_config_record`). Offers a finished SNTP round to the clock.
 ///
 /// # Safety
 /// `carry` writable for 28 bytes (or null). Loop task.
@@ -517,8 +605,19 @@ pub unsafe extern "C" fn lm_clock_boot(
 pub unsafe extern "C" fn lm_clock_tick(carry: *mut u8) -> u32 {
     static mut SEEN_TZ_GEN: u32 = 0;
     static mut SEEN_EVENT_GEN: u32 = 0;
+    static mut SEEN_NTP_GEN: u32 = 0;
     let now = mono_now();
     let mut bits = 0;
+    // A network-time round finished: offer it, unless esp_timer stepped since.
+    if let Some((s, at_jumps)) = super::sntp_ffi::take_pending() {
+        if at_jumps == JUMPS {
+            offer_sntp(s.unix_us, s.at_mono_us, s.err_us, now);
+        }
+    }
+    if super::sntp_ffi::cfg_gen() != SEEN_NTP_GEN {
+        SEEN_NTP_GEN = super::sntp_ffi::cfg_gen();
+        bits |= 4;
+    }
     if LAST_CARRY_US == i64::MIN
         || now.saturating_sub(LAST_CARRY_US) >= CARRY_EVERY_US
         || LAST_CARRY_US > now

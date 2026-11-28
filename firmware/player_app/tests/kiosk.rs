@@ -164,8 +164,8 @@ fn arm_table() {
     }
     // Refused: mapping, map/topology/led count, rename, colour, hw config, set_jit,
     // pose, keypoint writes, set_fps, sensors/drivers, OTA writes, fx debugger,
-    // Wi-Fi policy, kiosk config, and anything unknown.
-    for arm in [3, 4, 5, 13, 14, 15, 16, 27, 30, 32, 33, 37, 40, 41, 46, 49, 51, 52, 54, 55, 70, 71, 72, 73, 75, 80, 81, 82, 90, 93, 200] {
+    // Wi-Fi policy, kiosk config, the network-time config (113), and anything unknown.
+    for arm in [3, 4, 5, 13, 14, 15, 16, 27, 30, 32, 33, 37, 40, 41, 46, 49, 51, 52, 54, 55, 70, 71, 72, 73, 75, 80, 81, 82, 90, 93, 113, 200] {
         assert_eq!(classify(arm, &[]), Class::Refuse, "arm {arm}");
     }
     // upload_chunk: an effect window plays, a map window is refused.

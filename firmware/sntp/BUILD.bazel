@@ -1,0 +1,42 @@
+"""Network time for the netstack C6 (docs/design/wall-clock.md, desk D-559 PR-4, D-561):
+DNS A-query and SNTP v4 codecs, the hardware RX timestamp floor mapping, and the SNTP
+client state machine (server choice: the DHCP-offered NTP servers, else pool.ntp.org, or
+the owner's override; two-server cross-check; backoff 64 s doubling to 1 h once synced,
+15 s doubling to 5 min while failing).
+
+no_std, zero-dependency, never allocates. The firmware glue (UDP, ARP, DHCP options,
+the clock offer) is firmware/player_app/sntp_ffi.rs + netstack_transport.cpp."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//firmware:rust_size.bzl", "COLD_CRATE_RUSTC_FLAGS")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "sntp",
+    srcs = [
+        "src/client.rs",
+        "src/dns.rs",
+        "src/lib.rs",
+        "src/ntp.rs",
+        "src/stamp.rs",
+    ],
+    crate_name = "ledmapper_sntp",
+    edition = "2021",
+    # Loop task only, a few packets an hour: built for size on the ESP32 images.
+    rustc_flags = COLD_CRATE_RUSTC_FLAGS,
+)
+
+rust_test(
+    name = "codec_test",
+    srcs = ["tests/codec.rs"],
+    edition = "2021",
+    deps = [":sntp"],
+)
+
+rust_test(
+    name = "client_test",
+    srcs = ["tests/client.rs"],
+    edition = "2021",
+    deps = [":sntp"],
+)

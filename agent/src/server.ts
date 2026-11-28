@@ -525,18 +525,31 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "Set lamps' wall clock. With no arguments the bridge pushes its own UTC and time zone (it also does that " +
         "on every connect). tz sets the zone: an IANA name (Europe/Berlin) or a POSIX TZ rule. time (ISO 8601 " +
         "with its zone, e.g. 2026-11-25T07:00:00-05:00) sets the time explicitly, replacing a more accurate one: " +
-        "use it only when the user asks for a specific time.",
+        "use it only when the user asks for a specific time. Network time (lamps with feature sntp): " +
+        "network_time on/off; ntp_servers replaces the time servers (up to 2 host names or IPv4 addresses; [] = " +
+        "the router's, else pool.ntp.org).",
       inputSchema: {
         tz: z.string().max(64).optional().describe("IANA zone or POSIX TZ rule; default: the bridge's zone"),
         time: z.string().optional().describe("ISO 8601 with a zone; default: the bridge's clock"),
+        network_time: z.boolean().optional().describe("the lamp's own SNTP client on/off"),
+        ntp_servers: z
+          .array(z.string().max(64))
+          .max(2)
+          .optional()
+          .describe("override the time servers; [] = the router's (DHCP), else pool.ntp.org"),
         players,
       },
     },
-    ({ tz, time, players: sel }) =>
+    ({ tz, time, network_time, ntp_servers, players: sel }) =>
       guard(async () =>
         ok(
           await fan(sel, (s) =>
-            s.setClock({ ...(tz !== undefined ? { tz } : {}), ...(time !== undefined ? { time } : {}) }),
+            s.setClock({
+              ...(tz !== undefined ? { tz } : {}),
+              ...(time !== undefined ? { time } : {}),
+              ...(network_time !== undefined ? { networkTime: network_time } : {}),
+              ...(ntp_servers !== undefined ? { ntpServers: ntp_servers } : {}),
+            }),
           ),
         ),
       ),

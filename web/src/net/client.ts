@@ -86,6 +86,7 @@ import {
   flatClockState,
   type ClockState,
   type ClockStateMessage,
+  type SetClockConfigMessage,
   type SetWallClockMessage,
 } from "./wallClock";
 import { LiveControl, applyAt } from "./liveControl";
@@ -1501,6 +1502,13 @@ export class LedMapperClient {
    * net/wallClock.ts pushWallClock, which syncs first. Reply: clock_state. */
   async setWallClock(req: Omit<SetWallClockMessage, "type">, timeoutMs = 5000): Promise<ClockState> {
     const msg = { type: "set_wall_clock", ...req } as unknown as ClientMessage;
+    return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
+  }
+
+  /** Network-time settings (feature "sntp"): on/off, the DHCP-offered servers, an
+   * override (up to 2 names or IPv4 literals), or a round now. Reply: clock_state. */
+  async setClockConfig(req: Omit<SetClockConfigMessage, "type">, timeoutMs = 5000): Promise<ClockState> {
+    const msg = { type: "set_clock_config", ...req } as unknown as ClientMessage;
     return flatClockState((await this.request(msg, "clock_state", timeoutMs)) as unknown as ClockStateMessage);
   }
 

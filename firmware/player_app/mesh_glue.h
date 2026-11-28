@@ -753,6 +753,19 @@ bool console(const char *line) {
 bool mesh_spike_rx(uint8_t *rx, uint32_t n, const uint8_t *rxv);
 uint8_t *mesh_spike_rxv();
 #endif
+// Stamp the frame link_recv is returning: its reap time and, when the reap kept the RX
+// vector `v`, the radio's stamp (bytes 12-15), fed to the SNTP client while a request is out.
+static inline uint32_t rx_stamped(uint32_t n, const uint8_t *v) {
+  if (n == 0) return 0;
+  g_rx_reap_us = esp_timer_get_time();
+  g_rx_hw_ok = v != nullptr;
+  if (v) {
+    g_rx_hw_us = (uint32_t)v[12] | ((uint32_t)v[13] << 8) | ((uint32_t)v[14] << 16) | ((uint32_t)v[15] << 24);
+    if (g_sntp_stamp && lm_sntp_note_frame) lm_sntp_note_frame(g_rx_reap_us, g_rx_hw_us);
+  }
+  return n;
+}
+
 static uint32_t link_recv(uint8_t *out, uint32_t cap) {
 #if defined(LM_MESH_SPIKE)
   if (!g_mesh) {
@@ -766,12 +779,16 @@ static uint32_t link_recv(uint8_t *out, uint32_t cap) {
     return 0;
   }
 #endif
-  if (!g_mesh) return ns_mac_recv(out, cap);
+  if (!g_mesh) {
+    // While an NTP request is out, keep each frame's RX vector (the reply's arrival time).
+    if (g_sntp_stamp) return rx_stamped(ns_mac_recv_rxv(out, cap, g_sntp_rxv), g_sntp_rxv);
+    return rx_stamped(ns_mac_recv(out, cap), nullptr);
+  }
   uint8_t *v = ns_mesh_rxv(g_mesh);
   for (int i = 0; i < 16; i++) {
     uint32_t n = ns_mac_recv_rxv(out, cap, v);
     if (n == 0) return 0;
-    if (ns_mesh_rx(g_mesh, out, n, 1, esp_timer_get_time()) == 0) return n;  // the STA path's
+    if (ns_mesh_rx(g_mesh, out, n, 1, esp_timer_get_time()) == 0) return rx_stamped(n, v);  // the STA path's
   }
   return 0;
 }

@@ -3647,10 +3647,97 @@ static void clock_begin() {
   size_t n = prefs.getBytesLength("clk_tz");
   n = n > 0 && n <= sizeof rec ? prefs.getBytes("clk_tz", rec, n) : 0;
   const bool restored = lm_clock_boot(g_clock_carry, soft, n ? rec : nullptr, n);
+  // The owner's network-time settings (D-561; the defaults when none were saved).
+  uint8_t nrec[LM_SNTP_CONFIG_RECORD_MAX];
+  size_t nn = prefs.getBytesLength("clk_ntp");
+  nn = nn > 0 && nn <= sizeof nrec ? prefs.getBytes("clk_ntp", nrec, nn) : 0;
+  if (nn) lm_sntp_boot(nrec, nn);
   Log().printf("[clock] boot %s reset: time %s\n", soft ? "soft" : "cold",
                restored ? "carried over" : "not set");
   clock_log_status();
 }
+
+// The netstack reaches the SNTP client through WEAK references (the OTA loader and the P4's
+// front end link none), and a weak reference never pulls an archive member in: these strong
+// ones make the player link it.
+extern "C" {
+size_t lm_sntp_poll(int64_t, uint8_t *, size_t, uint8_t *, uint16_t *, uint16_t *);
+bool lm_sntp_rx(int64_t, uint32_t, bool, const uint8_t *, uint16_t, uint16_t, const uint8_t *, size_t);
+void lm_sntp_net(const uint8_t *, const uint8_t *, const uint8_t *, const uint8_t *, size_t,
+                 const uint8_t *, size_t, int64_t);
+void lm_sntp_net_down(void);
+void lm_sntp_seed(uint32_t);
+uint16_t lm_sntp_port(void);
+bool lm_sntp_stamping(void);
+void lm_sntp_note_frame(int64_t, uint32_t);
+bool lm_sntp_take_round(void);
+}
+__attribute__((used)) static const void *const kSntpLink[] = {
+    reinterpret_cast<const void *>(&lm_sntp_poll),     reinterpret_cast<const void *>(&lm_sntp_rx),
+    reinterpret_cast<const void *>(&lm_sntp_net),      reinterpret_cast<const void *>(&lm_sntp_net_down),
+    reinterpret_cast<const void *>(&lm_sntp_seed),     reinterpret_cast<const void *>(&lm_sntp_port),
+    reinterpret_cast<const void *>(&lm_sntp_stamping), reinterpret_cast<const void *>(&lm_sntp_note_frame),
+    reinterpret_cast<const void *>(&lm_sntp_take_round),
+};
+
+#if defined(LM_LINK) && __has_include(<esp_sntp.h>)
+// -- Network time on the P4 (D-561): IDF lwIP's esp_sntp on the Ethernet netif -----------
+// The netstack C6 runs its own client (sntp_ffi.rs); the P4's Ethernet has lwIP, so it uses
+// esp_sntp with the same owner settings (override, else the DHCP-offered servers, else
+// pool.ntp.org). esp_sntp sets the system time from lwIP's task; its callback only flags
+// it, and the loop task offers gettimeofday() to the wall clock (Source::Sntp). A P4 + C6
+// lamp without Ethernet takes its time from the app and the bridge.
+#include <esp_sntp.h>
+#include <sys/time.h>
+
+#include "firmware/player_app/eth_p4.h"
+#define LM_P4_SNTP 1
+static volatile bool s_p4_sntp_synced = false;
+static void p4_sntp_cb(struct timeval *) { s_p4_sntp_synced = true; }
+
+static void poll_p4_sntp() {
+  static uint32_t gen_seen = 0xffffffffu;
+  static bool running = false;
+  static char names[2][65];
+  bool en = false, dhcp = false;
+  char s0[65], s1[65];
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
+  const uint32_t gen = lm_sntp_config_get(&en, &dhcp, 0, s0, sizeof s0);
+  lm_sntp_config_get(&en, &dhcp, 1, s1, sizeof s1);
+  xSemaphoreGive(player_mutex);
+  const bool want = en && eth_p4_ready();
+  if (gen != gen_seen || want != running) {
+    if (running) esp_sntp_stop();
+    running = false;
+    gen_seen = gen;
+    if (want) {
+      memcpy(names[0], s0, sizeof s0);
+      memcpy(names[1], s1, sizeof s1);
+      const bool override_set = names[0][0] || names[1][0];
+      esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+      esp_sntp_servermode_dhcp(dhcp && !override_set);
+      esp_sntp_setservername(0, names[0][0] ? names[0] : (names[1][0] ? names[1] : "pool.ntp.org"));
+      if (names[0][0] && names[1][0]) esp_sntp_setservername(1, names[1]);
+      sntp_set_time_sync_notification_cb(p4_sntp_cb);
+      esp_sntp_init();
+      running = true;
+      Log().printf("[sntp] p4 esp_sntp started server=%s dhcp=%u\n", esp_sntp_getservername(0), dhcp);
+    }
+  }
+  if (s_p4_sntp_synced) {
+    s_p4_sntp_synced = false;
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    const int64_t mono = esp_timer_get_time();
+    const int64_t unix_us = (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    // lwIP's SNTP gives no error bound: 50 ms covers an internet server's round trip.
+    const uint8_t r = lm_clock_offer_sntp(unix_us, mono, 50000);
+    xSemaphoreGive(player_mutex);
+    Log().printf("[sntp] p4 esp_sntp synced unix=%lld offer=%u\n", (long long)(unix_us / 1000000), r);
+  }
+}
+#endif
 
 // Every loop pass (try-lock: the handlers touch the same state under the mutex; a busy
 // render frame just defers this to a later pass).
@@ -3659,12 +3746,15 @@ static void poll_clock() {
   uint32_t bits = lm_clock_tick(g_clock_carry);
   uint8_t rec[LM_CLOCK_TZ_RECORD_MAX];
   size_t n = (bits & LM_CLOCK_TICK_TZ_CHANGED) ? lm_clock_tz_record(rec) : 0;
+  uint8_t nrec[LM_SNTP_CONFIG_RECORD_MAX];
+  size_t nn = (bits & LM_CLOCK_TICK_NTP_CHANGED) ? lm_sntp_config_record(nrec) : 0;
   char line[240];
   size_t ln = (bits & LM_CLOCK_TICK_STATUS)
                   ? lm_clock_status_line(reinterpret_cast<uint8_t *>(line), sizeof line)
                   : 0;
   xSemaphoreGive(player_mutex);
   if (n > 0) prefs.putBytes("clk_tz", rec, n);  // only on a zone change (NVS wear levels it)
+  if (nn > 0) prefs.putBytes("clk_ntp", nrec, nn);  // only on an owner change
   if (ln > 0) Log().printf("%s\n", line);
 }
 
@@ -4524,6 +4614,16 @@ void netstack_console_hook(const char *line, size_t len) {
   }
   // "CLOCK STATUS" / "CLOCK RESTART" (clock_ffi.rs): the HITL / USB path. RESTART is a
   // soft reset (esp_restart) with a fresh carry record: the clock must survive it.
+  // "CLOCK SNTP [NOW]" (sntp_ffi.rs): the network-time client's state / run a round now.
+  if (len >= 10 && strncasecmp(line, "CLOCK SNTP", 10) == 0) {
+    char sl[320];
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    if (len >= 14 && strncasecmp(line + 11, "NOW", 3) == 0) lm_sntp_poll_now(esp_timer_get_time());
+    size_t k = lm_sntp_status_line(esp_timer_get_time(), reinterpret_cast<uint8_t *>(sl), sizeof sl);
+    xSemaphoreGive(player_mutex);
+    Serial.printf("%s\n", k > 0 ? sl : "[sntp] console: CLOCK SNTP | CLOCK SNTP NOW");
+    return;
+  }
   if (len >= 6 && strncasecmp(line, "CLOCK ", 6) == 0) {
     if (len >= 13 && strncasecmp(line + 6, "RESTART", 7) == 0) {
       xSemaphoreTake(player_mutex, portMAX_DELAY);
@@ -5213,6 +5313,9 @@ void loop() {
 #endif
   poll_power();
   poll_clock();
+#if defined(LM_P4_SNTP)
+  poll_p4_sntp();
+#endif
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {

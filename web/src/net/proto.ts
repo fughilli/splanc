@@ -113,6 +113,8 @@ const CLIENT_ARMS: Record<string, string> = {
   // The wall clock (docs/design/wall-clock.md; net/wallClock.ts; the "wall_clock" feature).
   set_wall_clock: "setWallClock",
   get_clock: "getClock",
+  // Network time settings (D-561; the "sntp" feature).
+  set_clock_config: "setClockConfig",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",

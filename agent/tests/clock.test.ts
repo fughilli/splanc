@@ -95,6 +95,30 @@ test("firmware without the wall clock gets a clear error and nothing is sent", {
   s.close();
 });
 
+test("set_clock: network-time settings (feature sntp)", { skip }, async () => {
+  player.features = [...player.features, "sntp"];
+  const s = await connect(["wall_clock", "sntp"]);
+  await until(() => sent("set_wall_clock").length > 0);
+  const r = await s.setClock({ ntpServers: ["time.cloudflare.com"] });
+  const m = sent("set_clock_config").at(-1)!;
+  assert.deepEqual(m["ntpServers"], ["time.cloudflare.com"]);
+  assert.equal(m["replaceNtpServers"], true);
+  assert.equal(m["syncNow"], true);
+  const nt = r["network_time"] as Record<string, unknown>;
+  assert.deepEqual(nt["servers"], ["time.cloudflare.com"]);
+  assert.equal(nt["override"], true);
+  await assert.rejects(s.setClock({ ntpServers: ["not a host"] }), /host name/);
+  const off = await s.setClock({ networkTime: false, ntpServers: [] });
+  assert.equal((off["network_time"] as Record<string, unknown>)["enabled"], false);
+  s.close();
+});
+
+test("network-time settings need the sntp feature", { skip }, async () => {
+  const s = await connect(["wall_clock"]);
+  await assert.rejects(s.setClock({ networkTime: true }), /no network time/);
+  s.close();
+});
+
 test("zone and time inputs", () => {
   assert.equal(zoneFromInput("America/New_York").tz, "EST5EDT,M3.2.0,M11.1.0");
   assert.equal(zoneFromInput("<+0545>-5:45").tz, "<+0545>-5:45");
