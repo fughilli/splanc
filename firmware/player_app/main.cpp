@@ -637,6 +637,8 @@ static const char *kLegacyPlaybackPath = "/lfs/play.pb";
 // decode path (lm_player_handle) as a live upload, after map+topology.
 static const char *kEffectPath = "/lfs/fx.pb";
 static const char *kEffectSelPath = "/lfs/fx_sel.pb";
+// Wall-clock schedule rules (sched_ffi.rs): written atomically, only on edit.
+static const char *kSchedPath = "/lfs/sched.pb";
 // The fixture's room pose: the raw set_fixture_pose frame (multi-fixture), replayed
 // after the map so the room-frame cache derives from the restored positions.
 static const char *kPosePath = "/lfs/pose.pb";
@@ -676,6 +678,8 @@ static int dispatch_mesh_upload(const uint8_t *msg, size_t len);  // a sharded m
 static const int32_t kArmErrorReply = 9;  // ServerMessage.error
 static const int32_t kArmBlendKeypoints = 44;
 static const int32_t kArmLoadStoredEffect = 141;
+static const int32_t kArmSetSchedule = 114;
+static const int32_t kArmGetSchedule = 116;
 
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
 // re-send set_uniforms on every tick, so writing flash each time would thrash
@@ -1242,6 +1246,8 @@ static void poll_brightness() {
   if (gen == g_brightness_gen) return;
   g_brightness_gen = gen;
   g_brightness = lm_brightness_u8();
+  // A schedule ramp moves it every few frames: one push and one log line at its end.
+  if (lm_sched_ramping()) return;
   lm_power_note_brightness();  // a power_state push carries it (smart homes)
   Log().printf("[bright] output scale = %u/255 (gen=%u)\n", g_brightness, gen);
 }
@@ -2073,6 +2079,51 @@ static int load_stored_effect(const uint8_t *in, size_t len) {
   return (int)n;
 }
 
+// set_schedule / delete_schedule / get_schedule (sched_ffi.rs): the rules file is read here,
+// the change computed under the mutex, and a changed set written back (temp + fsync + rename)
+// with the mutex released, below render's priority. kNotStaged without a filesystem.
+static uint8_t *sched_read_file(size_t *len) {
+  *len = 0;
+  uint8_t *buf = static_cast<uint8_t *>(malloc(LM_SCHED_FILE_CAP));
+  if (buf == nullptr) return nullptr;
+  FILE *f = fs_open(kSchedPath, "rb");
+  if (f != nullptr) {
+    *len = fread(buf, 1, LM_SCHED_FILE_CAP, f);
+    fclose(f);
+  }
+  return buf;
+}
+
+static int schedule_message(const uint8_t *in, size_t len) {
+  if (!fs_ok) return kNotStaged;
+  // The request is copied out (on the vendor build it may sit in the rx stage); rules are
+  // <= 4 per frame, so 768 B is plenty.
+  if (len > 768) return kNotStaged;
+  uint8_t *msg = static_cast<uint8_t *>(malloc(len ? len : 1));
+  size_t flen = 0;
+  uint8_t *file = sched_read_file(&flen);
+  uint8_t *next = static_cast<uint8_t *>(malloc(LM_SCHED_FILE_CAP));
+  if (msg == nullptr || file == nullptr || next == nullptr) {
+    free(msg);
+    free(file);
+    free(next);
+    return kNotStaged;
+  }
+  memcpy(msg, in, len);
+  size_t nlen = SIZE_MAX;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_sched_handle(msg, len, file, flen, next, LM_SCHED_FILE_CAP, &nlen, tx, sizeof tx);
+  xSemaphoreGive(player_mutex);
+  if (nlen != SIZE_MAX) {
+    const bool ok = nlen == 0 ? (remove(kSchedPath), true) : fs_write_file(kSchedPath, next, nlen);
+    Log().printf("[sched] rules saved (%u bytes)%s\n", (unsigned)nlen, ok ? "" : ": WRITE FAILED");
+  }
+  free(msg);
+  free(file);
+  free(next);
+  return (int)n;
+}
+
 // Compute the reply for the message msg[0..len), read in place. Returns the reply length
 // (bytes written to the global tx, >0), 0 (no reply / fire-and-forget), or -1 (fs error /
 // out-of-order upload window → the transport should drop the connection). Shared verbatim by
@@ -2095,8 +2146,13 @@ static bool ws_reply_pre(const uint8_t *msg, size_t len, int *out) {
 }
 
 static int ws_reply_tail(const uint8_t *msg, size_t len) {
-  if (lm_envelope_arm(msg, len) == kArmLoadStoredEffect) {
+  const int32_t arm = lm_envelope_arm(msg, len);
+  if (arm == kArmLoadStoredEffect) {
     int n = load_stored_effect(msg, len);
+    if (n != kNotStaged) return n;
+  }
+  if (arm >= kArmSetSchedule && arm <= kArmGetSchedule) {
+    int n = schedule_message(msg, len);
     if (n != kNotStaged) return n;
   }
   return dispatch_plain(msg, len);
@@ -3652,6 +3708,92 @@ static void clock_begin() {
   clock_log_status();
 }
 
+// Schedules (sched_ffi.rs): the rules from /lfs/sched.pb and the location from NVS.
+static void schedule_begin() {
+  uint8_t loc[LM_SCHED_LOC_RECORD];
+  const bool have_loc = prefs.getBytesLength("clk_loc") == sizeof loc &&
+                        prefs.getBytes("clk_loc", loc, sizeof loc) == sizeof loc;
+  size_t flen = 0;
+  uint8_t *file = fs_ok ? sched_read_file(&flen) : nullptr;
+  const uint32_t n = lm_sched_boot(file, flen, have_loc ? loc : nullptr, have_loc ? sizeof loc : 0);
+  free(file);
+  Log().printf("[sched] boot: %u rules, location %s\n", (unsigned)n, have_loc ? "set" : "none");
+}
+
+// Every loop pass: fire due rules (their actions queue for a frame boundary), stage what
+// needs flash (the rules file for a trigger's name, a stored effect's record) here on the
+// loop task with the mutex released, and log. A busy render frame defers it (try-lock).
+static void poll_schedule() {
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
+  const int64_t now = (int64_t)millis();
+  uint32_t bits = lm_sched_tick(now);
+  xSemaphoreGive(player_mutex);
+  if (bits & LM_SCHED_TICK_NEED_FILE) {
+    size_t flen = 0;
+    uint8_t *file = fs_ok ? sched_read_file(&flen) : nullptr;
+    for (int guard = 0; guard < 4; guard++) {
+      uint8_t id[64];
+      xSemaphoreTake(player_mutex, portMAX_DELAY);
+      int32_t k = lm_sched_resolve(file, flen, id, sizeof id);
+      int32_t slot = k > 0 ? lm_sched_effect_slot(id, (size_t)k) : -1;
+      xSemaphoreGive(player_mutex);
+      if (k <= 0) break;
+      // The stored effect's record, read with the mutex released (as load_stored_effect).
+      uint8_t *rec = nullptr;
+      size_t rn = 0;
+      if (slot >= 0) {
+        char path[48];
+        snprintf(path, sizeof path, "%s/fxs.%d", kFsBase, (int)slot);
+        FILE *f = fs_open(path, "rb");
+        if (f != nullptr) {
+          fseek(f, 0, SEEK_END);
+          long size = ftell(f);
+          fseek(f, 0, SEEK_SET);
+          rec = size > 0 && (size_t)size <= kRxCap ? static_cast<uint8_t *>(malloc((size_t)size)) : nullptr;
+          rn = rec ? fread(rec, 1, (size_t)size, f) : 0;
+          fclose(f);
+          if (rec != nullptr && rn != (size_t)size) {
+            free(rec);
+            rec = nullptr;
+          }
+        }
+      }
+      size_t off = 0, plen = 0;
+      xSemaphoreTake(player_mutex, portMAX_DELAY);
+      lm_sched_load(rec, rn, &off, &plen);
+      xSemaphoreGive(player_mutex);
+      if (plen > 0) {
+        fs_write_file(kEffectPath, rec + off, plen);  // a deck-A load is the boot effect
+        remove(kEffectSelPath);
+      }
+      free(rec);
+    }
+    free(file);
+    bits |= LM_SCHED_TICK_LOG;
+  }
+  if (bits & LM_SCHED_TICK_LOC_CHANGED) {
+    uint8_t loc[LM_SCHED_LOC_RECORD];
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    size_t n = lm_sched_loc_record(loc);
+    xSemaphoreGive(player_mutex);
+    if (n > 0) {
+      prefs.putBytes("clk_loc", loc, n);
+    } else {
+      prefs.remove("clk_loc");
+    }
+  }
+  if (bits & LM_SCHED_TICK_LOG) {
+    for (int i = 0; i < 6; i++) {
+      char line[160];
+      xSemaphoreTake(player_mutex, portMAX_DELAY);
+      size_t n = lm_sched_status_line((int64_t)millis(), reinterpret_cast<uint8_t *>(line), sizeof line);
+      xSemaphoreGive(player_mutex);
+      if (n == 0) break;
+      Log().printf("%s\n", line);
+    }
+  }
+}
+
 // Every loop pass (try-lock: the handlers touch the same state under the mutex; a busy
 // render frame just defers this to a later pass).
 static void poll_clock() {
@@ -4700,6 +4842,7 @@ void setup() {
 
   prefs.begin("ledmapper");
   clock_begin();  // the wall clock: the zone from NVS, the time across a soft reset
+  schedule_begin();  // the rules from /lfs/sched.pb (they fire once the clock is valid)
 
   // Device identity: factory MAC (the same address the BLE advertisement uses)
   // + a display/BLE name. The default name "Led Widget <6-hex>" comes from an
@@ -5213,6 +5356,7 @@ void loop() {
 #endif
   poll_power();
   poll_clock();
+  poll_schedule();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {

@@ -648,6 +648,37 @@ size_t lm_clock_tz_record(uint8_t *out);
 // The "[clock] ..." status line, NUL-terminated. Returns its length.
 size_t lm_clock_status_line(uint8_t *out, size_t cap);
 
+// -- Wall-clock schedules (sched_ffi.rs, docs/design/schedule.md) ----------------------
+// The rules live in /lfs/sched.pb (<= LM_SCHED_FILE_CAP bytes); main.cpp reads and writes
+// the file on the loop task and hands it in under the player mutex.
+#define LM_SCHED_FILE_CAP 3072
+#define LM_SCHED_LOC_RECORD 8
+#define LM_SCHED_TICK_NEED_FILE 1u
+#define LM_SCHED_TICK_LOG 2u
+#define LM_SCHED_TICK_LOC_CHANGED 4u
+// Boot: the rules file and the NVS location record (either may be null). Returns the rules.
+uint32_t lm_sched_boot(const uint8_t *file, size_t len, const uint8_t *loc, size_t loc_len);
+// set_schedule / delete_schedule / get_schedule with the current file: the reply into out;
+// a changed rule set into new_file with *new_len (SIZE_MAX = unchanged). Returns the reply length.
+int32_t lm_sched_handle(const uint8_t *frame, size_t len, const uint8_t *file, size_t file_len,
+                        uint8_t *new_file, size_t new_cap, size_t *new_len, uint8_t *out, size_t cap);
+// Every loop pass (polls the rules at 4 Hz). Returns LM_SCHED_TICK_* bits.
+uint32_t lm_sched_tick(int64_t now_ms);
+// With the rules file: queue staged triggers; > 0 = a stored effect id (its length in id_out)
+// to read and hand to lm_sched_load. Call until 0.
+int32_t lm_sched_resolve(const uint8_t *file, size_t len, uint8_t *id_out, size_t id_cap);
+// The effect store slot (fxs.<n>) of that id, or -1.
+int32_t lm_sched_effect_slot(const uint8_t *id, size_t len);
+// Load the staged effect's record (null = the read failed) onto the hidden deck and queue
+// its crossfade; a deck-A load sets *persist_off / *persist_len (the boot effect frame).
+bool lm_sched_load(const uint8_t *rec, size_t len, size_t *persist_off, size_t *persist_len);
+// One waiting "[sched] ..." line, NUL-terminated (0 = none).
+size_t lm_sched_status_line(int64_t now_ms, uint8_t *out, size_t cap);
+// The location record to persist ("clk_loc"), 0 = none.
+size_t lm_sched_loc_record(uint8_t *out);
+// A schedule brightness ramp is running (no per-step log / push).
+bool lm_sched_ramping(void);
+
 // -- Kiosk mode (kiosk_ffi.rs, docs/design/kiosk-mode.md) ----------------------
 // Loop task only (the gate + handler run under the player mutex, the pollers after).
 #define LM_KIOSK_SRC_INTERNAL 0

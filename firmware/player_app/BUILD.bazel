@@ -110,6 +110,7 @@ rust_static_library(
         "fxdbg.rs",
         "kiosk_ffi.rs",
         "power_ffi.rs",
+        "sched_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -152,6 +153,7 @@ rust_static_library(
         "//firmware/ota",
         "//firmware/player:player_fw",
         "//firmware/power",
+        "//firmware/schedule",
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
@@ -174,6 +176,7 @@ rust_library(
         "fxdbg.rs",
         "kiosk_ffi.rs",
         "power_ffi.rs",
+        "sched_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -200,6 +203,7 @@ rust_library(
         "//firmware/ota",
         "//firmware/player",
         "//firmware/power",
+        "//firmware/schedule",
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
@@ -294,6 +298,22 @@ rust_test(
 rust_test(
     name = "clock_pool_test",
     srcs = ["tests/clock_pool.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Wall-clock schedules (sched_ffi.rs) through the C ABI with main.cpp's file handling
+# played by the test: set / get / delete, boot reconcile, fires, ramps, the staged
+# stored-effect load + timed crossfade, triggers, the live-show skip. Own binary.
+rust_test(
+    name = "schedule_test",
+    srcs = ["tests/schedule.rs"],
     edition = "2021",
     env = {"RUST_MIN_STACK": "100663296"},
     deps = [
