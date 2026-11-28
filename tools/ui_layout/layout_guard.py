@@ -76,6 +76,10 @@ COLLECT_JS = r"""
       if (r.width < 1 || r.height < 1) continue;
       if (cs.visibility === 'hidden' || Number(cs.opacity) === 0) continue;
       if (el.closest('[hidden]') || el.getClientRects().length === 0) continue;
+      // Inside a closed <details> (not its summary): not rendered, though Chrome still
+      // reports the box (the Advanced ▸ Relay field of Live via bridge's pairing card).
+      const det = el.parentElement && el.parentElement.closest('details:not([open])');
+      if (det && !el.closest('summary')) continue;
       // A visually-hidden native control (custom checkbox / radio skins).
       if (r.width <= 2 && r.height <= 2) continue;
       const joined = el.parentElement && el.parentElement.closest(joinedSel);

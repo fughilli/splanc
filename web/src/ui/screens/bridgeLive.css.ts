@@ -31,5 +31,6 @@ const CSS = `
 .bridge-row { display:flex; align-items:center; gap:var(--sp-2); margin:var(--sp-2) 0; font-size:14px; }
 .bridge-tools, .bridge-pads { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin-top:var(--sp-2); }
 .bridge-footer { display:flex; flex-direction:column; gap:var(--sp-2); margin-top:var(--sp-3); }
+.bridge-setup-link { margin-top: var(--sp-3); }
 .bridge-adv summary { cursor:pointer; color:var(--text-dim); font-size:13px; margin:var(--sp-2) 0; }
 `;

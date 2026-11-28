@@ -511,8 +511,22 @@ export async function pairWithCode(relay: string, code: string, label: string, f
     body: JSON.stringify({ pairing_code: code, label, client: "app" }),
   });
   const j = (await r.json().catch(() => ({}))) as { token?: string; error_description?: string; error?: string };
-  if (!r.ok || !j.token) throw new Error(j.error_description ?? j.error ?? `pairing failed (HTTP ${r.status})`);
+  if (!r.ok || !j.token) {
+    throw new PairError(j.error ?? `http_${r.status}`, j.error_description ?? j.error ?? `pairing failed (HTTP ${r.status})`);
+  }
   return j.token;
+}
+
+/** The relay refused a pairing code: `code` is its OAuth-style error (`invalid_grant`,
+ * `slow_down`, `invalid_request`) or `http_<status>`. A network failure stays a TypeError. */
+export class PairError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PairError";
+  }
 }
 
 /** Revoke this app's credential (and so its live sessions and LAN ticket). */

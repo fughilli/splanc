@@ -57,7 +57,7 @@ export function loadCreds(): BridgeCreds | null {
   }
 }
 
-function saveCreds(c: BridgeCreds | null): void {
+export function saveCreds(c: BridgeCreds | null): void {
   try {
     if (c) localStorage.setItem(STORE_KEY, JSON.stringify(c));
     else localStorage.removeItem(STORE_KEY);
@@ -66,19 +66,19 @@ function saveCreds(c: BridgeCreds | null): void {
   }
 }
 
-function newClientId(): string {
+export function newClientId(): string {
   const b = new Uint8Array(12);
   crypto.getRandomValues(b);
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-function defaultName(): string {
+export function defaultName(): string {
   const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
   const dev = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : "browser";
   return `Splanc app (${dev})`;
 }
 
-export function BridgeLiveScreen(_router: Router): Screen {
+export function BridgeLiveScreen(router: Router): Screen {
   installBridgeLiveStyles();
   const el = document.createElement("div");
   el.className = "screen bridge-screen";
@@ -138,7 +138,16 @@ export function BridgeLiveScreen(_router: Router): Screen {
       "A Splanc bridge (e.g. the Raspberry Pi appliance) keeps the one connection each fixture allows, so " +
       "this app can drive all of them at once — through the relay from anywhere, or directly on the same " +
       "network. Press the bridge's pairing button (or wait for its code), then enter the code here.";
-    el.replaceChildren(Card(intro, code.el, name.el, adv, go));
+    // A bridge not on the network yet (or moving to another one) has its own flow (#698).
+    const setup = Button({
+      label: "Set up a new bridge",
+      icon: "bluetooth",
+      variant: "quiet",
+      block: true,
+      onClick: () => router.navigate("/bridge/setup"),
+    });
+    setup.classList.add("bridge-setup-link");
+    el.replaceChildren(Card(intro, code.el, name.el, adv, go, setup));
   }
 
   // -- live --------------------------------------------------------------------------

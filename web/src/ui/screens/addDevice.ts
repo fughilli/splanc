@@ -32,13 +32,14 @@ import { appState } from "../app/state";
 import { normalizeFixtureName, pendingName } from "../../store/newFixture";
 import { isNativePlatform } from "../../net/native";
 import type { BleDevice } from "../../net/bleTransport";
+import { handOffJoinedBridge } from "./bridgeSetupIO";
 
 /** Get an Improv device to provision: the browser's Web Bluetooth chooser, or —
  * in the native wrapper — our own named scan+picker (the plugin's built-in
  * chooser shows devices as "Unknown" on iOS). On web this stays the FIRST async
  * call in the click handler so the user gesture that Web Bluetooth requires is
  * still unconsumed; the native scan has no such gesture requirement. */
-async function chooseImprovDevice(): Promise<ImprovDevice> {
+export async function chooseImprovDevice(): Promise<ImprovDevice> {
   if (isNativePlatform()) {
     const { pickImprovDeviceNative } = await import("./blePicker");
     return pickImprovDeviceNative();
@@ -394,12 +395,13 @@ async function provisionWithDevice(
   const urls = await provisionViaBle(device, creds.ssid, creds.password, setStatus, { signal });
   prefs.addWifi(creds); // only after the device reports it JOINED
   wifiDraft.clear(); // the draft is now a saved network
-  // A Splanc bridge (Pi) joined the network: it isn't a player to connect to, it
-  // pairs with the code on its screen (Live via bridge). Don't add it as a device.
+  // A Splanc bridge (Pi) joined the network: it isn't a player to connect to. The
+  // bridge setup flow takes it from here (online checks, then pairing, #698).
   const bridgeHost = urls.map((u) => bridgeHostFromRedirect(u)).find((h) => h !== null);
   if (bridgeHost) {
-    setStatus(`Bridge joined ${creds.ssid} (${bridgeHost}).`);
-    toast(`Bridge is on ${creds.ssid}. Not paired yet? Open Live via bridge and enter the code on its screen.`);
+    setStatus(`That's a Splanc bridge: it joined ${creds.ssid}.`);
+    handOffJoinedBridge(bridgeHost, creds.ssid);
+    location.hash = "#/bridge/setup";
     return;
   }
   const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);

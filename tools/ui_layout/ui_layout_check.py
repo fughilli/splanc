@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import bridge_scenarios  # noqa: E402
 import connect_scenarios  # noqa: E402
 import credits_scenarios  # noqa: E402
 import editor_scenarios  # noqa: E402
@@ -29,6 +30,7 @@ import newfixture_scenarios  # noqa: E402
 import oobe_scenarios  # noqa: E402
 
 SCENARIO_MODULES = [
+    bridge_scenarios,
     connect_scenarios,
     credits_scenarios,
     editor_scenarios,

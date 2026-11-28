@@ -41,6 +41,9 @@
  *   newfixture — (with `device`) the controller answers the new-fixture flow's
  *                hardware reads/writes: two outputs (GPIO 20, 21), nothing
  *                counted, GRB, and accepts rename / probe / config nudges.
+ *   bridge-<variant> — a scripted Splanc bridge for "Set up a bridge" (#698,
+ *                #/bridge/setup): fresh, moved, browser, slow, joining, wrongpw,
+ *                unreachable, relayblocked, notbridge, handoff (demo/bridgeSetupDemo.ts).
  *   nousb      — no Web Serial / WebUSB (an iPhone-like browser), so "Flash a
  *                new device" shows the plug-into-a-laptop pictogram.
  *   play / play-revert / play-nomap / play-off — Halloween play mode: a
@@ -58,6 +61,7 @@ import { deviceStore } from "../store/deviceStore";
 import { LedMapperClient, ServerErrorReply } from "../net/client";
 import { decodeMappingBundle, encodeMappingBundle } from "../net/proto";
 import { mapStore } from "../store/mapStore";
+import { setupBridgeSetupDemo } from "./bridgeSetupDemo";
 
 /** Canvas that also exposes captureStream (not in the base DOM lib types). */
 type CaptureCanvas = HTMLCanvasElement & { captureStream(fps?: number): MediaStream };
@@ -87,6 +91,8 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("stale")) void setupStale();
   if (scenarios.has("nousb")) setupNoUsb();
   if (scenarios.has("newfixture")) setupNewFixture();
+  const bridge = [...scenarios].find((s) => s.startsWith("bridge-"));
+  if (bridge) setupBridgeSetupDemo(bridge.slice("bridge-".length));
   const play = [...scenarios].find((s) => s === "play" || s.startsWith("play-"));
   if (play) void setupPlayDemo(play);
   // Last: it wraps the (possibly fxstub'd) effect upload for whole-mesh control.
