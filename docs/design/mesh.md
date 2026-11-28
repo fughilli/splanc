@@ -1555,6 +1555,14 @@ message MeshResult {
 - **Fan-out**: the gateway checks the inner arm against the allow-list, dispatches locally if
   targeted (`lm_ws_dispatch`), and floods one `MeshControl`. One broadcast reaches every target;
   per-member unicast is only for a short explicit node list.
+- **Alone**: with nobody else in the admin session (every other member is off, or none has
+  confirmed the grant yet) the gateway still dispatches the change itself and answers with its
+  own reply, effect programs included; members that come back catch up. Earlier firmware
+  refused instead (`NO_MESH` in 1.17.0, later `NO_MEMBERS`) and applied nothing: a lone fixture
+  ignored every effect, brightness and uniform while power, never relayed, still worked. The
+  app re-sends a change refused with `NO_MEMBERS`, `NO_MESH` or `LOCKED` to the connected
+  fixture alone, says so, and goes direct for 15 s before trying the mesh again; other
+  refusals are shown as errors.
 - **Replies**: each target sends `MeshReply` unicast to the gateway with the `op_id` and a
   status (ok, error code, or a small reply under 150 B). Large replies (`welcome`, effect
   uniforms of a big effect) are not relayed; the app uses `MeshStatus` and targeted `get_*`

@@ -94,9 +94,11 @@ import {
   meshAdminMessage,
   meshTopologyRequest,
   readMeshTopology,
+  meshResultCode,
   meshResultError,
   meshLargeSender,
   meshRoute,
+  MESH_DIRECT_FALLBACK,
   type MeshAdminOp,
   type MeshAdminResultInfo,
   type MeshInfoMessage,
@@ -157,6 +159,12 @@ const CHUNK_BYTES = 4096;
  * pass NO timeout and keep the wait-forever behavior. Sized to comfortably clear
  * a heap-tight C6's worst-case post-welcome round trip. */
 const REQUEST_TIMEOUT_MS = 8000;
+
+/** After the gateway refused a whole-mesh change and the app sent it to the connected
+ * fixture alone, live control stays local this long before trying the mesh again. */
+export const MESH_DIRECT_BACKOFF_MS = 15_000;
+/** Whole-mesh sends remembered for that fallback (they are answered in order, at once). */
+const MESH_SENT_KEEP = 32;
 
 /** Deadline for an OTA begin/chunk reply (see otaChunk). */
 export const OTA_TRANSFER_TIMEOUT_MS = 30_000;
@@ -423,6 +431,14 @@ export class LedMapperClient {
   private meshSubs = new Set<(r: MeshResultInfo) => void>();
   /** Live control drives every fixture meshed with this one (mesh M5; net/mesh.ts). */
   private meshAll_ = false;
+  /** Whole-mesh sends by the op id this client gave them: what to send the connected
+   * fixture alone if the gateway refuses one (MESH_DIRECT_FALLBACK). The newest few. */
+  private meshSent = new Map<number, ClientMessage>();
+  private meshOp = 0;
+  /** After such a refusal, live control goes to this fixture alone until then (this.now()),
+   * then tries the mesh again (a member may be back). */
+  private meshDirectUntil = 0;
+  private meshFallbackSubs = new Set<(code: string) => void>();
   private meshState_: MeshStateInfo | null = null;
   // Lamp power: power_state replies AND the device's unsolicited pushes.
   private powerSubs = new Set<(s: PowerState) => void>();
@@ -917,7 +933,16 @@ export class LedMapperClient {
     // the BLE transport a whole-frame send would blow the small per-frame cap.
     // Small effects still take the single-window fast path inside sendChunked.
     // Whole-mesh control (mesh M6): every member loads it, all on one frame.
-    if (this.meshAll_) return this.meshShareEffect(effectId, fxb, { activate, deck });
+    if (this.meshRouting()) {
+      try {
+        return await this.meshShareEffect(effectId, fxb, { activate, deck });
+      } catch (e) {
+        // The gateway refused it and loaded nothing (alone in its mesh, or this
+        // connection's session is gone): load it on this fixture, and say so.
+        if (!(e instanceof MeshSendRefused) || !MESH_DIRECT_FALLBACK.has(e.reason)) throw e;
+        this.meshFellBack(e.reason);
+      }
+    }
     this.checkFxbFormat(fxb);
     this.live.resetDeck(deck);
     // A sharded upload goes out as upload_chunk frames: count it as activity here.
@@ -1468,6 +1493,24 @@ export class LedMapperClient {
 
   setMeshAll(on: boolean): void {
     this.meshAll_ = on;
+    this.meshDirectUntil = 0;
+  }
+
+  /** Hear when a whole-mesh change went to the connected fixture alone because the gateway
+   * refused it (`code`: the MeshSendError name, one of MESH_DIRECT_FALLBACK). */
+  onMeshFallback(fn: (code: string) => void): () => void {
+    this.meshFallbackSubs.add(fn);
+    return () => this.meshFallbackSubs.delete(fn);
+  }
+
+  /** Whole-mesh control on, and not backing off after a refusal. */
+  private meshRouting(): boolean {
+    return this.meshAll_ && this.now() >= this.meshDirectUntil;
+  }
+
+  private meshFellBack(code: string): void {
+    this.meshDirectUntil = this.now() + MESH_DIRECT_BACKOFF_MS;
+    for (const fn of this.meshFallbackSubs) fn(code);
   }
 
   /** Subscribe to pushed mesh results (a mesh_send with want_reply). */
@@ -1946,14 +1989,23 @@ export class LedMapperClient {
       // Whole-mesh control: relayable messages go through this fixture to every member; the
       // reply is still this fixture's own (net/mesh.ts). One too big for a mesh packet (an
       // effect program) goes here directly and to the others through mesh effect sharing.
-      const route = this.meshAll_ ? meshRoute(msg, encodeClient) : ({ kind: "direct" } as const);
-      this.sock.send(encodeClient(route.kind === "wrap" ? route.wire : msg));
+      const route = this.meshRouting() ? meshRoute(msg, encodeClient) : ({ kind: "direct" } as const);
+      this.sock.send(encodeClient(route.kind === "wrap" ? this.tagMeshSend(route.wire, msg) : msg));
       if (route.kind === "large") meshLargeSender()?.share(this, msg, route.inner);
       if (KIOSK_ACTIVITY_TYPES.has(msg.type as string)) for (const fn of this.activitySubs) fn();
       return true;
     } catch {
       return false;
     }
+  }
+
+  /** Give a wrapped message an op id of this client's (the gateway answers a refusal with
+   * it) and remember what it carried. */
+  private tagMeshSend(wire: ClientMessage, msg: ClientMessage): ClientMessage {
+    this.meshOp = (this.meshOp % 0x3fff_ffff) + 1; // below the gateway's own ids (0x4000_0000+)
+    this.meshSent.set(this.meshOp, msg);
+    if (this.meshSent.size > MESH_SENT_KEEP) this.meshSent.delete(this.meshSent.keys().next().value!);
+    return { ...(wire as unknown as Record<string, unknown>), opId: this.meshOp } as unknown as ClientMessage;
   }
 
   private flushBatches(): void {
@@ -2004,13 +2056,29 @@ export class LedMapperClient {
     if ((msg.type as string) === "mesh") {
       const info = msg as unknown as MeshInfoMessage;
       if (info.result) {
-        // A mesh_send the gateway refused: the waiter for its inner's reply gets the error.
         const err = meshResultError(info.result);
-        if (err !== null) {
+        const code = meshResultCode(info.result);
+        const op = (info.result.opId ?? 0) >>> 0;
+        const sent = op ? this.meshSent.get(op) : undefined;
+        if (sent && err !== null) this.meshSent.delete(op);
+        // A whole-mesh change the gateway refused without applying it anywhere, for a reason
+        // that leaves this fixture reachable (alone in its mesh, or no session): send it here
+        // directly. Its own reply then answers whoever waits for it; the user is told.
+        if (sent && code !== null && MESH_DIRECT_FALLBACK.has(code) && this.sock?.readyState === SOCKET_OPEN) {
+          try {
+            this.sock.send(encodeClient(sent));
+            this.meshFellBack(code);
+            return;
+          } catch {
+            /* the socket went: fall through to the error */
+          }
+        }
+        // A mesh_send the gateway refused: the waiter for its inner's reply gets the error.
+        if (err !== null && code !== null) {
           const pending = [...this.waiters.entries()].find(([k]) => k !== "mesh");
           if (pending) {
             this.waiters.delete(pending[0]);
-            pending[1].reject(new ServerErrorReply("mesh", err));
+            pending[1].reject(new MeshSendRefused(code, err));
             return;
           }
           this.events.onServerError?.("mesh", err);
@@ -2192,6 +2260,17 @@ export class ServerErrorReply extends Error {
   ) {
     super(`${code}: ${message}`);
     this.name = "ServerErrorReply";
+  }
+}
+
+/** The gateway refused a whole-mesh send (`reason`: the MeshSendError name). */
+export class MeshSendRefused extends ServerErrorReply {
+  constructor(
+    readonly reason: string,
+    message: string,
+  ) {
+    super("mesh", message);
+    this.name = "MeshSendRefused";
   }
 }
 

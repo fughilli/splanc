@@ -1505,7 +1505,8 @@ mod stubs {
     }
     #[no_mangle]
     extern "C" fn lm_fx_check_effect(_: *const u8, _: usize) -> u32 {
-        1
+        // Every program loads (a_lone_gateway_applies_mesh_control_itself shares one).
+        0
     }
     #[no_mangle]
     extern "C" fn lm_prio_below_render() -> u32 {
@@ -1793,6 +1794,140 @@ mod tests {
             assert_eq!((*m3).owner_token, None);
             ns_mesh_destroy(m2);
             ns_mesh_destroy(m3);
+        }
+    }
+
+    /// A gateway alone in its mesh (every other member off, or none has joined the session
+    /// yet) still applies whole-mesh control itself. The app wraps an effect switch, the
+    /// uniforms and brightness in `mesh_send` once the connection is unlocked; with an empty
+    /// session roster the mesh send has nobody to reach, and the gateway used to answer
+    /// MESH_SEND_NO_MEMBERS (NO_MESH on 1.17.0) without dispatching the inner here either:
+    /// power (never relayed) worked, effects did nothing. Same for an admin's and a
+    /// delegate's session (the shared-mesh report).
+    #[test]
+    fn a_lone_gateway_applies_mesh_control_itself() {
+        use splanc_mesh::crypto::DeviceKey;
+        use splanc_mesh::gateway::client_arm;
+        use splanc_mesh::host_keys::AdminSigner;
+        fn admin_frame(op: u32, body: impl FnOnce(&mut mesh_gw::Pb<'_>)) -> std::vec::Vec<u8> {
+            let mut b = [0u8; 600];
+            let n = {
+                let mut w = mesh_gw::Pb::new(&mut b);
+                w.msg(101, |a| a.msg(op, body));
+                assert!(w.ok);
+                w.n
+            };
+            b[..n].to_vec()
+        }
+        // ClientMessage{mesh_send{inner, want_reply, lead_ms?}}.
+        fn send_frame(inner: &[u8], lead_ms: u32) -> std::vec::Vec<u8> {
+            let mut b = [0u8; 1200];
+            let n = {
+                let mut w = mesh_gw::Pb::new(&mut b);
+                w.msg(99, |s| {
+                    s.bytes(3, inner);
+                    s.u(4, 1);
+                    if lead_ms > 0 {
+                        s.u(6, lead_ms.into());
+                    }
+                });
+                assert!(w.ok);
+                w.n
+            };
+            b[..n].to_vec()
+        }
+        fn client(arm: u32, body: impl FnOnce(&mut mesh_gw::Pb<'_>)) -> std::vec::Vec<u8> {
+            let mut b = [0u8; 1024];
+            let n = {
+                let mut w = mesh_gw::Pb::new(&mut b);
+                w.msg(arm, body);
+                assert!(w.ok);
+                w.n
+            };
+            b[..n].to_vec()
+        }
+        /// ns_mesh_app: (its return, the reply bytes, the inner it hands back to dispatch).
+        fn app(m: *mut Mesh, conn: u32, f: &[u8]) -> (i32, std::vec::Vec<u8>, std::vec::Vec<u8>) {
+            let mut out = [0u8; 1024];
+            let (mut ip, mut il) = (core::ptr::null(), 0u32);
+            let n = unsafe { mesh_gw::ns_mesh_app(m, conn, f.as_ptr(), f.len() as u32, 0, out.as_mut_ptr(), out.len() as u32, &mut ip, &mut il) };
+            let inner = if n == -3 { unsafe { core::slice::from_raw_parts(ip, il as usize) }.to_vec() } else { vec![] };
+            (n, out[..n.max(0) as usize].to_vec(), inner)
+        }
+        const MESH: u32 = 0x5350_4c39;
+        let owner = AdminSigner::from_secret(b"lone-gw-admin!!!", MESH);
+        let delegate = AdminSigner::from_secret(b"lone-gw-delegate", MESH);
+        for by_delegate in [false, true] {
+            let mut block = vec![0u8; ns_mesh_size() as usize];
+            let mac = [0x8c, 0xfd, 0x49, 0x12, 0x31, 0x70];
+            let m = unsafe { ns_mesh_create(block.as_mut_ptr(), ns_mesh_size(), mac.as_ptr(), 1, 0, 0) };
+            let pk = owner.public();
+            let prov = admin_frame(mesh_gw::op::PROVISION, |p| {
+                p.u(1, MESH.into());
+                p.bytes(2, &[0x53; 32]);
+                p.bytes(3, &pk);
+            });
+            assert!(app(m, 1, &prov).0 > 0);
+            unsafe {
+                let mut t = 0;
+                while t < 6_000_000 {
+                    t += 5_000;
+                    ns_mesh_tick(m, t, 1, 1);
+                }
+                assert!((*m).stack.membership.is_member());
+                // The report's mesh had rotated keys to epoch 5 (new site secret) while the
+                // owner's phone, which made the share link, still held epoch 1. Nothing of
+                // that is in a grant or a delegation: the stale delegate still unlocks.
+                if let Some(st) = (*m).stack.membership.state.as_mut() {
+                    st.epoch = 5;
+                    st.site_secret = Some([0x99; 32]);
+                }
+                let (me, dk) = ((*m).stack.me(), (*m).stack.dev.public_key());
+                let mut gb = [0u8; 200];
+                let mut db = [0u8; 200];
+                let (g, d) = if by_delegate {
+                    (delegate.delegated_grant(MESH, 11, me, dk, 3_600), Some(owner.delegation(MESH, delegate.public(), 0)))
+                } else {
+                    (owner.grant(MESH, 11, me, dk, 3_600), None)
+                };
+                let gn = splanc_mesh::admin::SessionMsg::Grant(g).encode(&mut gb).unwrap();
+                let dn = d.map(|d| d.encode(&mut db).unwrap());
+                let unlock = admin_frame(mesh_gw::op::UNLOCK, |p| {
+                    p.bytes(1, &gb[..gn]);
+                    if let Some(dn) = dn {
+                        p.bytes(2, &db[..dn]);
+                    }
+                });
+                let (n, r, _) = app(m, 1, &unlock);
+                assert!(n > 0 && !r.windows(2).any(|w| w[0] == 0x10 && w[1] != 0), "unlocked (delegate={by_delegate}): {r:02x?}");
+                assert!((*m).stack.signing_session(1));
+                assert_eq!((*m).stack.gateway.as_ref().map(|g| g.len()), Some(0), "nobody else in the session");
+            }
+            // set_effect{effect_id "rain"} and set_brightness (scheduled ahead, as the app does),
+            // set_uniforms{values [{slot 1}]}: each one dispatched here.
+            use splanc_mesh::gateway::arm;
+            let set_effect = client(arm::SET_EFFECT, |e| e.bytes(1, b"rain"));
+            let brightness = client(arm::SET_BRIGHTNESS, |b| b.u(3, 1));
+            let uniforms = client(arm::SET_UNIFORMS, |u| u.msg(1, |v| v.u(1, 1)));
+            for (what, inner, lead) in [("set_effect", &set_effect, 150), ("set_brightness", &brightness, 150), ("set_uniforms", &uniforms, 0)] {
+                let (n, r, dispatched) = app(m, 1, &send_frame(inner, lead));
+                assert_eq!(n, -3, "{what} (delegate={by_delegate}) is dispatched on the gateway, not refused: {r:02x?}");
+                assert_eq!(client_arm(&dispatched).map(|a| a.0), client_arm(inner).map(|a| a.0), "{what}");
+                unsafe { mesh_gw::ns_mesh_gw_local_done(m, 0) };
+            }
+            // An effect program shared with the mesh (M6): loaded here.
+            let effect = client(arm::SUBMIT_EFFECT, |e| {
+                e.bytes(1, b"rain");
+                e.bytes(2, &[0x46u8; 300]);
+                e.u(3, 1);
+            });
+            let (n, r, dispatched) = app(m, 1, &send_frame(&effect, 0));
+            assert_eq!(n, -3, "submit_effect (delegate={by_delegate}) is loaded on the gateway, not refused: {r:02x?}");
+            assert_eq!(dispatched, effect);
+            unsafe {
+                mesh_gw::ns_mesh_gw_local_done(m, 0);
+                ns_mesh_destroy(m);
+            }
         }
     }
 
